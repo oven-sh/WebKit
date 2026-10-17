@@ -3651,6 +3651,7 @@ private:
             ClassInstances,
             RetagSources,
             SubtypesKeptByCast,
+            OtherPrototypes,
         };
 
         Kind kind;
@@ -3773,6 +3774,14 @@ private:
             addCandidate(Candidate::SubtypesKeptByCast, i, m_supertypeTests[i], keptSubtypes, idIndex);
         }
 
+        Vector<uint32_t> layoutsWithOtherPrototype;
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            if (isObjectLayout(layouts[i].kind) && layouts[i].isAllocated && layouts[i].mayHaveOtherPrototype)
+                layoutsWithOtherPrototype.append(i);
+        }
+        uint32_t otherPrototypesCandidate = candidates.size();
+        addCandidate(Candidate::OtherPrototypes, 0, 1, layoutsWithOtherPrototype, std::identity { });
+
         Vector<uint32_t> sortedCandidates(candidates.size(), [](size_t index) {
             return static_cast<uint32_t>(index);
         });
@@ -3813,6 +3822,9 @@ private:
                     findSubtypesKeptByCastTo(candidate.index);
                     for (LayoutID subtype : keptSubtypes)
                         listedLayouts.append(subtype.index());
+                    break;
+                case Candidate::OtherPrototypes:
+                    listedLayouts.appendVector(layoutsWithOtherPrototype);
                     break;
                 }
                 RELEASE_ASSERT(listedLayouts.size() - unsortedTests.last().firstLayout == candidate.layouts.count);
@@ -4215,6 +4227,13 @@ private:
         }
         for (auto& missingFields : m_missingFields)
             layouts[missingFields.layout].fields[missingFields.field].subtypesWithField = resultOf(firstSetCandidate + missingFields.subtypesWithField);
+        m_program.shapesWithOtherPrototype = resultOf(otherPrototypesCandidate);
+        for (uint32_t index : layoutsWithOtherPrototype) {
+            if (layouts[index].kind != LayoutKind::Instance)
+                continue;
+            for (LayoutID ancestor(index); ancestor; ancestor = m_program.at(ancestor).base)
+                layouts[ancestor.index()].hasInstancesWithOtherPrototype = true;
+        }
         auto instructionsOf = [](const ShapeTest& test) -> unsigned {
             if (test.isRange())
                 return test.count == 1 || test.blockByte ? 2 : 4;
@@ -6052,6 +6071,9 @@ public:
         header.functionsOffset = append(names);
         header.functionKindsOffset = append(kinds);
         header.functionLengthsAreBytes = m_program.functionLengthsAreBytes;
+        header.lastShapeWithOtherPrototype = m_program.shapesWithOtherPrototype.count ? m_program.shapesWithOtherPrototype.last() : 0;
+        header.reachOfShapesWithOtherPrototype = m_program.shapesWithOtherPrototype.count;
+        header.setOfShapesWithOtherPrototype = m_program.shapesWithOtherPrototype.set;
         uint32_t firstClosureFunction = m_program.functions.size();
         uint32_t endOfClosureFunctions = m_program.functions.size();
         bool hasClosureEntrypoint = false;

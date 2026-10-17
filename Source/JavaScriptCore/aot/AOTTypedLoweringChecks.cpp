@@ -1177,7 +1177,7 @@ bool Lowering::resultMayInstantiateType(const Type& guarantee, const Type& type)
     if (value.opcode == Opcode::Cast)
         return claimMayAllocate(m_program, m_function, value);
     if (m_isElementOfEntries && (value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
-        return !value.readsElementProvenByStores() || Options::validateAOTTypedFacts();
+        return true;
     if (value.opcode == Opcode::CallDirect)
         return m_program.at(value.function()).writes == Writes::Heap;
     return value.opcode == Opcode::CallBuiltin || fieldReadMayAllocate(m_program, m_function, value) || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
@@ -1513,8 +1513,6 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
 Operand Lowering::ensureElement(CellPointer array, Integer index, Boxed element, const Type& type)
 {
     TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
-    if (m_function.at(m_currentBlock->values[m_currentIndexInBlock]).readsElementProvenByStores() && &m_program.at(given) == &type && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions())
-        return ensure(element, type, type);
     Writes writes = writesOfElementRead(m_program, type);
     if (writes == Writes::Nothing || &m_program.at(given) != &type || Options::auditAOTTypedAssertions())
         return ensure(element, type);
@@ -4222,7 +4220,7 @@ bool Lowering::instanceOfUsesShapeTest(const Value& value)
     if (named.opcode != Opcode::FunctionReference)
         return false;
     LayoutID ofClass = m_program.at(named.function()).constructedClass;
-    if (!ofClass || !m_program.at(ofClass).instances.isRange() || m_program.at(ofClass).instancesMayBecomeRecords)
+    if (!ofClass || !m_program.at(ofClass).instances.isRange() || m_program.at(ofClass).instancesMayBecomeRecords || m_program.at(ofClass).hasInstancesWithOtherPrototype)
         return false;
     for (LayoutID at = ofClass; at; at = m_program.at(at).base) {
         auto& layout = m_program.at(at);
@@ -4233,7 +4231,7 @@ bool Lowering::instanceOfUsesShapeTest(const Value& value)
                 return false;
         }
     }
-    return !acceptsRecordsWithOtherPrototype(m_program, m_program.at(m_function.at(value.child(0)).type));
+    return true;
 }
 
 bool Lowering::isOnlyUsedByShapeInstanceOf(ValueID id)
@@ -4250,10 +4248,47 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
 {
     LayoutID ofClass = m_program.at(m_function.at(value.child(1)).function()).constructedClass;
     ShapeTest instances = m_program.at(ofClass).instances;
+    auto callStub = [&](bool walksChain) {
+        LValue operand = in<Boxed>(value.child(0)).value();
+        m_context.emitsCalls = true;
+        PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+        applyEffects(patchpoint, OperationEffects { });
+        patchpoint->append(ConstrainedValue(operand, ValueRep::reg(firstStubOperandGPR)));
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+#if CPU(X86_64)
+        for (GPRReg reg : stubTemporaryGPRs)
+            patchpoint->clobberLate(RegisterSet { reg });
+#endif
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+        CallSite site { nextSite() };
+        patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site, walksChain, numberOfClass = ofClass.index(), last = instances.count ? instances.last() : 0, count = instances.count](CCallHelpers& jit, const StackmapGenerationParams&) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.move(CCallHelpers::TrustedImm32(numberOfClass), GPRInfo::argumentGPR1);
+            if (walksChain) {
+                stubCalls->call(jit, Stub::InstanceOfClassByChain, site);
+                return;
+            }
+            if (count == 1) {
+                jit.move(CCallHelpers::TrustedImm32(Typed::shapeWordOf(last)), GPRInfo::argumentGPR2);
+                stubCalls->call(jit, Stub::InstanceOfLeafClass, site);
+                return;
+            }
+            jit.move(CCallHelpers::TrustedImm32(last), GPRInfo::argumentGPR2);
+            jit.move(CCallHelpers::TrustedImm32(count), GPRInfo::argumentGPR3);
+            stubCalls->call(jit, Stub::InstanceOfClass, site);
+        });
+        unwindToLandingPad(patchpoint, site);
+        return Word32(patchpoint);
+    };
     if (auto& type = typeOf(value.child(0)); m_isInLoop && m_out.m_block->frequency() >= 1 && holdsCells(get(value.child(0)).rep)) {
         LBasicBlock isOne = m_out.newBlock();
         LBasicBlock isNone = m_out.newBlock();
         LBasicBlock genericPath = newColdBlock();
+        bool hasOnlyTypedObjects = !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.acceptsUntypedObjects(m_program);
+        bool mayHaveOtherPrototype = acceptsRecordsWithOtherPrototype(m_program, type);
+        LBasicBlock chainPath = hasOnlyTypedObjects && !mayHaveOtherPrototype ? nullptr : newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedModifiedClassObjects()), ofClass.index())))), genericPath);
         Operand given = get(value.child(0));
@@ -4269,10 +4304,15 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         LBasicBlock hasOtherShape = m_out.newBlock();
         m_out.branch(passes(shapeWord, instances).value(), unsure(isOne), unsure(hasOtherShape));
         m_out.appendTo(hasOtherShape);
-        if (!type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.acceptsUntypedObjects(m_program))
-            m_out.jump(isNone);
+        if (!hasOnlyTypedObjects) {
+            LBasicBlock hasLayout = m_out.newBlock();
+            m_out.branch(passes(shapeWord, ShapeTest { 1, m_program.numberOfShapes }).value(), usually(hasLayout), rarely(chainPath));
+            m_out.appendTo(hasLayout);
+        }
+        if (mayHaveOtherPrototype)
+            m_out.branch(passes(shapeWord, m_program.shapesWithOtherPrototype).value(), rarely(chainPath), usually(isNone));
         else
-            m_out.branch(passes(shapeWord, ShapeTest { 1, m_program.numberOfShapes }).value(), usually(isNone), rarely(genericPath));
+            m_out.jump(isNone);
         m_out.appendTo(isOne);
         ValueFromBlock yes = m_out.anchor(boolean(true).value());
         m_out.jump(continuation);
@@ -4280,39 +4320,19 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         ValueFromBlock no = m_out.anchor(boolean(false).value());
         m_out.jump(continuation);
         m_out.appendTo(genericPath);
-        ValueFromBlock found = m_out.anchor(m_out.castToInt32(AOT_TYPED_OPERATION(InstanceOfClass, in<Boxed>(value.child(0)), word32(ofClass.index())).value()));
+        ValueFromBlock found = m_out.anchor(callStub(false).value());
+        m_out.jump(continuation);
+        if (!chainPath) {
+            m_out.appendTo(continuation);
+            return Word32(m_out.phi(Int32, yes, no, found));
+        }
+        m_out.appendTo(chainPath);
+        ValueFromBlock walked = m_out.anchor(callStub(true).value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        return Word32(m_out.phi(Int32, yes, no, found));
+        return Word32(m_out.phi(Int32, yes, no, found, walked));
     }
-    LValue operand = in<Boxed>(value.child(0)).value();
-    m_context.emitsCalls = true;
-    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
-    applyEffects(patchpoint, OperationEffects { });
-    patchpoint->append(ConstrainedValue(operand, ValueRep::reg(firstStubOperandGPR)));
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
-#if CPU(X86_64)
-    for (GPRReg reg : stubTemporaryGPRs)
-        patchpoint->clobberLate(RegisterSet { reg });
-#endif
-    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site, numberOfClass = ofClass.index(), last = instances.count ? instances.last() : 0, count = instances.count](CCallHelpers& jit, const StackmapGenerationParams&) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        jit.move(CCallHelpers::TrustedImm32(numberOfClass), GPRInfo::argumentGPR1);
-        if (count == 1) {
-            jit.move(CCallHelpers::TrustedImm32(Typed::shapeWordOf(last)), GPRInfo::argumentGPR2);
-            stubCalls->call(jit, Stub::InstanceOfLeafClass, site);
-            return;
-        }
-        jit.move(CCallHelpers::TrustedImm32(last), GPRInfo::argumentGPR2);
-        jit.move(CCallHelpers::TrustedImm32(count), GPRInfo::argumentGPR3);
-        stubCalls->call(jit, Stub::InstanceOfClass, site);
-    });
-    unwindToLandingPad(patchpoint, site);
-    return Word32(patchpoint);
+    return callStub(false);
 }
 
 Word32 Lowering::lowerGenericInstanceOf(Boxed value, Boxed constructor)

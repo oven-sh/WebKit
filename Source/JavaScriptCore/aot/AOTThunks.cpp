@@ -438,6 +438,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
     AOT_INSTALL_FRONT_END(CompareEq)
     install(Entry::operationAOTTypedPutExtra, Entry::RawTypedPutExtra, Stub::FrontEndTypedPutExtra);
     install(Entry::operationAOTTypedGetExtra, Entry::RawTypedGetExtra, Stub::FrontEndTypedGetExtra);
+    install(Entry::operationAOTTypedHasOwnPropertyByName, Entry::RawTypedHasOwnPropertyByName, Stub::FrontEndTypedHasOwnPropertyByName);
     install(Entry::operationAOTTypedConstruct, Entry::RawTypedConstruct, Stub::FrontEndTypedConstruct);
     install(Entry::operationAOTTypedCloneObject, Entry::RawTypedCloneObject, Stub::FrontEndTypedCloneObject);
     install(Entry::operationAOTTypedCloneObjectAndExtend, Entry::RawTypedCloneObjectAndExtend, Stub::FrontEndTypedCloneObjectAndExtend);

@@ -3286,6 +3286,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedInstanceOfClass, size_t, (Instance* in
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSObject* classObject = state.closure(vm, state.classWithIndex(ofClass)->classData().classConstructor);
+    instance->typedClassPrototypes[ofClass] = state.classPrototype(vm, ofClass);
     OPERATION_RETURN(scope, classObject->hasInstance(globalObject, JSValue::decode(value)));
 }
 
@@ -3345,6 +3346,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedToKey, EncodedJSValue, (Instance* inst
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFmod, double, (double a, double b))
 {
+    constexpr double limit = 4611686018427387904.0;
+    if (std::abs(a) < limit) [[likely]] {
+        int64_t dividend = static_cast<int64_t>(a);
+        if (static_cast<double>(dividend) == a && std::abs(b) < limit) [[likely]] {
+            int64_t divisor = static_cast<int64_t>(b);
+            if (static_cast<double>(divisor) == b && divisor) [[likely]] {
+                int64_t remainder = dividend % divisor;
+                return remainder ? static_cast<double>(remainder) : a * 0.0;
+            }
+        }
+    }
     return Math::fmodDouble(a, b);
 }
 

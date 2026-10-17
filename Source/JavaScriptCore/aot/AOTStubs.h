@@ -739,6 +739,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(CallHasInstance) \
     v(InstanceOfClass) \
     v(InstanceOfLeafClass) \
+    v(InstanceOfClassByChain) \
     v(MapGetCheckingReceiver) \
     v(MapGet) \
     v(MapHasCheckingReceiver) \
@@ -825,6 +826,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(NewMap) \
     v(FrontEndTypedPutExtra) \
     v(FrontEndTypedGetExtra) \
+    v(FrontEndTypedHasOwnPropertyByName) \
     v(FrontEndTypedConstruct) \
     v(FrontEndTypedCloneObject) \
     v(FrontEndTypedCloneObjectAndExtend) \
@@ -1062,7 +1064,12 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly);
+struct ShapesWithOtherPrototype {
+    uint32_t last { 0 };
+    uint32_t reach { 0 };
+    uint32_t set { UINT32_MAX };
+};
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, ShapesWithOtherPrototype, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly);
 constexpr bool isGeneratedOnlyIfCalled(Stub stub) { return (stub >= Stub::GetByIdAsDouble && stub <= Stub::GetByNameAsArrayOrNullishPreservingTwo) || (stub >= Stub::UnboxNumberArgument0ToFPR0 && stub <= Stub::LeafUnboxNumberArgument3ToFPR3); }
 bool thunkIsGeneratedOnlyIfCalled(unsigned thunk);
 

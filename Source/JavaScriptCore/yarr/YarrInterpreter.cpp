@@ -45,6 +45,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace Yarr {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodePattern);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FastProgram);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ByteDisjunction);
 
 class ByteTermDumper {
@@ -3312,14 +3313,959 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
+static bool fastSetContainsSlow(const FastSet& set, char32_t character)
+{
+    const CharacterClass* characterClass = set.characterClass;
+    if (!characterClass)
+        return character == set.first || character == set.second;
+
+    auto contains = [&] {
+        if (characterClass->m_anyCharacter)
+            return true;
+        bool latin1 = isLatin1(character);
+        auto& matches = latin1 ? characterClass->m_matches8 : characterClass->m_matches32;
+        auto& ranges = latin1 ? characterClass->m_ranges8 : characterClass->m_ranges32;
+        if (std::binary_search(matches.begin(), matches.end(), character))
+            return true;
+        auto range = std::upper_bound(ranges.begin(), ranges.end(), character, [](char32_t value, const CharacterRange& item) {
+            return value < item.begin;
+        });
+        return range != ranges.begin() && character <= (range - 1)->end;
+    };
+    return contains() != set.invert;
+}
+
+class FastProgramBuilder {
+public:
+    explicit FastProgramBuilder(YarrPattern& pattern)
+        : m_pattern(pattern)
+        , m_logCaptures(pattern.m_containsBackreferences)
+    {
+    }
+
+    std::unique_ptr<FastProgram> build()
+    {
+        if (m_pattern.eitherUnicode() || m_pattern.m_containsModifiers || m_pattern.m_containsLookbehinds
+            || m_pattern.hasDuplicateNamedCaptureGroups() || m_pattern.containsUnsignedLengthPattern())
+            return nullptr;
+
+        auto program = makeUnique<FastProgram>();
+        m_program = program.get();
+        program->numSubpatterns = m_pattern.m_numSubpatterns;
+        program->endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
+        program->sticky = m_pattern.sticky();
+        program->validate = Options::validateRegExpFastMatcher();
+
+        auto& alternatives = m_pattern.m_body->m_alternatives;
+        unsigned count = alternatives.size();
+        if (alternatives[0]->onceThrough()) {
+            count = 0;
+            while (count < alternatives.size() && alternatives[count]->onceThrough())
+                ++count;
+            program->tryOnlyAtStart = count == alternatives.size();
+        }
+
+        if (!emitAlternatives(alternatives.span().first(count)))
+            return nullptr;
+        emit(FastOp::Kind::Match);
+        if (m_nextRegister > std::numeric_limits<uint16_t>::max() || m_program->sets.size() > std::numeric_limits<uint16_t>::max())
+            return nullptr;
+        program->numRegisters = m_nextRegister;
+
+        WTF::BitSet<256> first;
+        bool canBeEmpty = false;
+        for (unsigned i = 0; i < count; ++i)
+            canBeEmpty |= collectFirstCharacters(*alternatives[i], first);
+        if (!canBeEmpty) {
+            program->hasFirstCharacters = true;
+            for (unsigned c = 0; c < 256; ++c) {
+                if (first.get(c))
+                    program->firstCharacters[c >> 6] |= 1ull << (c & 63);
+            }
+        }
+
+        program->ops.shrinkToFit();
+        program->sets.shrinkToFit();
+        program->text.shrinkToFit();
+        return program;
+    }
+
+private:
+    using Kind = FastOp::Kind;
+
+    unsigned emit(Kind kind, unsigned set = 0, uint32_t argument = 0, uint32_t target = 0)
+    {
+        FastOp op { };
+        op.kind = kind;
+        op.set = static_cast<uint16_t>(set);
+        op.argument = argument;
+        op.target = target;
+        m_program->ops.append(op);
+        return m_program->ops.size() - 1;
+    }
+
+    unsigned here() const { return m_program->ops.size(); }
+    void setTarget(unsigned op) { m_program->ops[op].target = here(); }
+
+    unsigned emitChoice()
+    {
+        m_mayHaveBacktracked = true;
+        return emit(Kind::Choice);
+    }
+
+    unsigned internSet(CharacterClass* characterClass, bool invert, char16_t first, char16_t second)
+    {
+        auto& sets = m_program->sets;
+        for (unsigned i = 0; i < sets.size(); ++i) {
+            if (sets[i].characterClass == characterClass && sets[i].invert == invert && sets[i].first == first && sets[i].second == second)
+                return i;
+        }
+        FastSet set { };
+        set.characterClass = characterClass;
+        set.invert = invert;
+        set.first = first;
+        set.second = second;
+        auto add = [&](char32_t character) {
+            if (character < 256)
+                set.bits[character >> 6] |= 1ull << (character & 63);
+        };
+        if (!characterClass) {
+            add(first);
+            add(second);
+        } else if (characterClass->m_anyCharacter) {
+            for (auto& word : set.bits)
+                word = ~0ull;
+        } else {
+            for (char32_t character : characterClass->m_matches8)
+                add(character);
+            for (auto& range : characterClass->m_ranges8) {
+                for (char32_t character = range.begin; character <= range.end && character < 256; ++character)
+                    add(character);
+            }
+        }
+        if (invert) {
+            for (auto& word : set.bits)
+                word = ~word;
+        }
+        sets.append(set);
+        return sets.size() - 1;
+    }
+
+    unsigned newlineSet()
+    {
+        return internSet(m_pattern.newlineCharacterClass(), false, 0, 0);
+    }
+
+    static bool isCased(const PatternTerm& term)
+    {
+        return term.ignoreCase() && isASCIIAlpha(term.patternCharacter);
+    }
+
+    unsigned setForTerm(const PatternTerm& term)
+    {
+        if (term.type == PatternTerm::Type::CharacterClass)
+            return internSet(term.characterClass, term.invert(), 0, 0);
+        char16_t character = term.patternCharacter;
+        if (isCased(term))
+            return internSet(nullptr, false, toASCIILower(character), toASCIIUpper(character));
+        return internSet(nullptr, false, character, character);
+    }
+
+    struct CaptureRange {
+        unsigned low { std::numeric_limits<unsigned>::max() };
+        unsigned high { 0 };
+    };
+
+    static void addCaptures(const PatternTerm& term, CaptureRange& range)
+    {
+        if (term.type != PatternTerm::Type::ParenthesesSubpattern && term.type != PatternTerm::Type::ParentheticalAssertion)
+            return;
+        if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.capture()) {
+            range.low = std::min(range.low, term.parentheses.subpatternId);
+            range.high = std::max(range.high, term.parentheses.subpatternId);
+        }
+        for (auto& alternative : term.parentheses.disjunction->m_alternatives) {
+            for (auto& nested : alternative->m_terms)
+                addCaptures(nested, range);
+        }
+    }
+
+    void emitClear(const CaptureRange& range)
+    {
+        if (range.low <= range.high)
+            emit(Kind::ClearCaptures, 0, range.low, range.high);
+    }
+
+    bool emitAlternatives(std::span<const std::unique_ptr<PatternAlternative>> alternatives)
+    {
+        if (m_recursionDepth >= 64)
+            return false;
+        ++m_recursionDepth;
+        CaptureRange range;
+        if (alternatives.size() > 1 && !m_logCaptures) {
+            for (auto& alternative : alternatives) {
+                for (auto& term : alternative->m_terms)
+                    addCaptures(term, range);
+            }
+            if (m_mayHaveBacktracked)
+                emitClear(range);
+        }
+
+        Vector<unsigned, 8> jumpsToEnd;
+        for (unsigned i = 0; i < alternatives.size(); ++i) {
+            bool isLast = i + 1 == alternatives.size();
+            if (i)
+                emitClear(range);
+            unsigned choice = isLast ? 0 : emitChoice();
+            if (!emitAlternative(*alternatives[i]))
+                return false;
+            if (!isLast) {
+                jumpsToEnd.append(emit(Kind::Jump));
+                setTarget(choice);
+            }
+        }
+        for (unsigned jump : jumpsToEnd)
+            setTarget(jump);
+        --m_recursionDepth;
+        return true;
+    }
+
+    bool emitGroupBody(const PatternTerm& term)
+    {
+        unsigned slot = term.parentheses.subpatternId << 1;
+        if (term.capture())
+            emit(m_logCaptures ? Kind::LoggedCaptureStart : Kind::CaptureStart, 0, slot);
+        if (!emitAlternatives(term.parentheses.disjunction->m_alternatives.span()))
+            return false;
+        if (term.capture())
+            emit(m_logCaptures ? Kind::LoggedCaptureEnd : Kind::CaptureEnd, 0, slot + 1);
+        return true;
+    }
+
+    bool emitOptionalGroup(const PatternTerm& term)
+    {
+        CaptureRange range;
+        if (!m_logCaptures)
+            addCaptures(term, range);
+        bool canBeEmpty = !term.parentheses.disjunction->m_minimumSize;
+        unsigned start = canBeEmpty ? m_nextRegister++ : 0;
+        if (m_mayHaveBacktracked)
+            emitClear(range);
+
+        auto emitChecked = [&] {
+            if (canBeEmpty)
+                emit(m_logCaptures ? Kind::LoggedSavePosition : Kind::SavePosition, start);
+            if (!emitGroupBody(term))
+                return false;
+            if (canBeEmpty)
+                emit(Kind::FailIfEmpty, start);
+            return true;
+        };
+
+        unsigned choice = emitChoice();
+        if (term.quantityType == QuantifierType::Greedy) {
+            if (!emitChecked())
+                return false;
+            unsigned jump = emit(Kind::Jump);
+            setTarget(choice);
+            emitClear(range);
+            setTarget(jump);
+            return true;
+        }
+        unsigned jump = emit(Kind::Jump);
+        setTarget(choice);
+        if (!emitChecked())
+            return false;
+        setTarget(jump);
+        return true;
+    }
+
+    bool emitLoop(const PatternTerm& term)
+    {
+        unsigned min = term.quantityMinCount;
+        unsigned max = term.quantityMaxCount;
+        bool canBeEmpty = !term.parentheses.disjunction->m_minimumSize;
+        bool needsCounter = min > 1 || max != quantifyInfinite;
+        unsigned counter = needsCounter ? m_nextRegister++ : 0;
+        unsigned start = canBeEmpty ? m_nextRegister++ : 0;
+        CaptureRange range;
+        addCaptures(term, range);
+
+        SetForScope logCaptures(m_logCaptures, true);
+        m_mayHaveBacktracked = true;
+
+        std::optional<unsigned> jumpToBody;
+        std::optional<unsigned> jumpToMandatory;
+        Vector<unsigned, 3> jumpsToExit;
+        if (needsCounter)
+            emit(Kind::LoggedSetRegister, counter, 0);
+        else if (min) {
+            if (canBeEmpty)
+                emit(Kind::LoggedSetRegister, start, offsetNoMatch);
+            jumpToBody = emit(Kind::Jump);
+        }
+
+        unsigned head = here();
+        if (needsCounter && min)
+            jumpToMandatory = emit(Kind::JumpIfBelow, counter, min);
+        if (min == max)
+            jumpsToExit.append(emit(Kind::Jump));
+        else {
+            if (max != quantifyInfinite)
+                jumpsToExit.append(emit(Kind::JumpIfNotBelow, counter, max));
+            if (term.quantityType == QuantifierType::NonGreedy) {
+                unsigned choice = emitChoice();
+                jumpsToExit.append(emit(Kind::Jump));
+                setTarget(choice);
+            } else
+                jumpsToExit.append(emitChoice());
+            if (canBeEmpty)
+                emit(Kind::LoggedSavePosition, start);
+        }
+        if (jumpToMandatory) {
+            if (canBeEmpty) {
+                std::optional<unsigned> skip;
+                if (min != max)
+                    skip = emit(Kind::Jump);
+                setTarget(*jumpToMandatory);
+                emit(Kind::LoggedSetRegister, start, offsetNoMatch);
+                if (skip)
+                    setTarget(*skip);
+            } else
+                setTarget(*jumpToMandatory);
+        }
+        if (jumpToBody)
+            setTarget(*jumpToBody);
+        if (needsCounter)
+            emit(Kind::LoggedIncrement, counter);
+        if (range.low <= range.high)
+            emit(Kind::LoggedClearCaptures, 0, range.low, range.high);
+        if (!emitGroupBody(term))
+            return false;
+        if (canBeEmpty)
+            emit(Kind::FailIfEmpty, start);
+        emit(Kind::LoopBack, 0, 0, head);
+        for (unsigned jump : jumpsToExit)
+            setTarget(jump);
+        return true;
+    }
+
+    bool emitGroup(const PatternTerm& term)
+    {
+        if (term.parentheses.isCopy || term.matchDirection() != Forward)
+            return false;
+        if (!term.quantityMaxCount)
+            return true;
+        if (term.quantityMaxCount == 1)
+            return term.quantityMinCount ? emitGroupBody(term) : emitOptionalGroup(term);
+        return emitLoop(term);
+    }
+
+    bool emitLookahead(const PatternTerm& term)
+    {
+        if (term.matchDirection() != Forward)
+            return false;
+        CaptureRange range;
+        addCaptures(term, range);
+        unsigned registers = m_nextRegister;
+        m_nextRegister += 2;
+        auto alternatives = term.parentheses.disjunction->m_alternatives.span();
+
+        if (!term.invert()) {
+            emit(Kind::LookaheadBegin, registers);
+            if (!emitAlternatives(alternatives))
+                return false;
+            emit(m_logCaptures && range.low <= range.high ? Kind::LookaheadEndKeepingCaptures : Kind::LookaheadEnd, registers);
+            return true;
+        }
+
+        m_mayHaveBacktracked = true;
+        unsigned begin = emit(Kind::NegativeLookaheadBegin, registers);
+        if (!emitAlternatives(alternatives))
+            return false;
+        emit(Kind::NegativeLookaheadEnd, registers);
+        setTarget(begin);
+        if (!m_logCaptures)
+            emitClear(range);
+        return true;
+    }
+
+    void emitAtom(const PatternTerm& term, const PatternTerm* next)
+    {
+        unsigned count = term.quantityMaxCount;
+        if (!count)
+            return;
+        if (term.quantityType == QuantifierType::FixedCount) {
+            if (count > 1) {
+                emit(Kind::SetCount, setForTerm(term), count);
+                return;
+            }
+            if (term.type == PatternTerm::Type::PatternCharacter && !isCased(term)) {
+                emit(Kind::Character, 0, term.patternCharacter);
+                return;
+            }
+            emit(Kind::Set, setForTerm(term));
+            return;
+        }
+
+        if (term.quantityType == QuantifierType::NonGreedy) {
+            m_mayHaveBacktracked = true;
+            emit(Kind::LazyRun, setForTerm(term), count);
+            return;
+        }
+
+        bool endsAtEndOfInput = next && next->type == PatternTerm::Type::AssertionEOL && !next->multiline();
+        if (term.possessive() || endsAtEndOfInput) {
+            emit(Kind::PossessiveRun, setForTerm(term), count);
+            return;
+        }
+        m_mayHaveBacktracked = true;
+        emit(Kind::GreedyRun, setForTerm(term), count);
+    }
+
+    static bool isPlainCharacter(const PatternTerm& term)
+    {
+        return term.type == PatternTerm::Type::PatternCharacter && term.quantityType == QuantifierType::FixedCount && term.quantityMaxCount == 1 && !isCased(term);
+    }
+
+    bool emitAlternative(const PatternAlternative& alternative)
+    {
+        if (alternative.matchDirection() != Forward)
+            return false;
+        auto& terms = alternative.m_terms;
+        for (unsigned i = 0; i < terms.size(); ++i) {
+            const PatternTerm& term = terms[i];
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+                emit(term.multiline() ? Kind::LineStart : Kind::InputStart, term.multiline() ? newlineSet() : 0);
+                break;
+            case PatternTerm::Type::AssertionEOL:
+                emit(term.multiline() ? Kind::LineEnd : Kind::InputEnd, term.multiline() ? newlineSet() : 0);
+                break;
+            case PatternTerm::Type::AssertionWordBoundary:
+                emit(term.invert() ? Kind::NotWordBoundary : Kind::WordBoundary, internSet(m_pattern.wordcharCharacterClass(), false, 0, 0));
+                break;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass: {
+                if (term.matchDirection() != Forward)
+                    return false;
+                unsigned end = i;
+                while (end < terms.size() && isPlainCharacter(terms[end]))
+                    ++end;
+                if (end - i >= 2) {
+                    unsigned offset = m_program->text.size();
+                    for (unsigned j = i; j < end; ++j)
+                        m_program->text.append(static_cast<char16_t>(terms[j].patternCharacter));
+                    emit(Kind::Text, 0, offset, end - i);
+                    i = end - 1;
+                    break;
+                }
+                emitAtom(term, i + 1 < terms.size() ? &terms[i + 1] : nullptr);
+                break;
+            }
+            case PatternTerm::Type::ParenthesesSubpattern:
+                if (!emitGroup(term))
+                    return false;
+                break;
+            case PatternTerm::Type::ParentheticalAssertion:
+                if (!emitLookahead(term))
+                    return false;
+                break;
+            case PatternTerm::Type::NumberedBackReference:
+            case PatternTerm::Type::NamedBackReference:
+                if (term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1 || term.matchDirection() != Forward)
+                    return false;
+                emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, 0, term.backReferenceSubpatternId << 1);
+                break;
+            case PatternTerm::Type::NumberedForwardReference:
+            case PatternTerm::Type::NamedForwardReference:
+                break;
+            case PatternTerm::Type::DotStarEnclosure:
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void addFirstCharacters(const PatternTerm& term, WTF::BitSet<256>& first)
+    {
+        auto& set = m_program->sets[setForTerm(term)];
+        for (unsigned c = 0; c < 256; ++c) {
+            if (set.bits[c >> 6] & (1ull << (c & 63)))
+                first.set(c);
+        }
+    }
+
+    bool collectFirstCharacters(const PatternAlternative& alternative, WTF::BitSet<256>& first)
+    {
+        for (auto& term : alternative.m_terms) {
+            switch (term.type) {
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass:
+                if (!term.quantityMaxCount)
+                    break;
+                addFirstCharacters(term, first);
+                if (term.quantityType == QuantifierType::FixedCount)
+                    return false;
+                break;
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                if (!term.quantityMaxCount)
+                    break;
+                bool groupCanBeEmpty = !term.quantityMinCount;
+                for (auto& nested : term.parentheses.disjunction->m_alternatives)
+                    groupCanBeEmpty |= collectFirstCharacters(*nested, first);
+                if (!groupCanBeEmpty)
+                    return false;
+                break;
+            }
+            case PatternTerm::Type::NumberedBackReference:
+            case PatternTerm::Type::NamedBackReference:
+                return true;
+            default:
+                break;
+            }
+        }
+        return true;
+    }
+
+    YarrPattern& m_pattern;
+    FastProgram* m_program { nullptr };
+    unsigned m_recursionDepth { 0 };
+    unsigned m_nextRegister { 0 };
+    bool m_mayHaveBacktracked { false };
+    bool m_logCaptures;
+};
+
+template<typename CharType>
+static ALWAYS_INLINE bool fastSetContains(const FastSet& set, CharType character)
+{
+    if constexpr (sizeof(CharType) == 1)
+        return set.bits[character >> 6] & (1ull << (character & 63));
+    else {
+        if (character < 256)
+            return set.bits[character >> 6] & (1ull << (character & 63));
+        return fastSetContainsSlow(set, character);
+    }
+}
+
+template<typename CharType>
+static unsigned runFastProgram(const FastProgram& program, std::span<const CharType> subject, unsigned start, unsigned* output)
+{
+    using Kind = FastOp::Kind;
+    struct Frame {
+        uint32_t op;
+        uint32_t position;
+        uint32_t limit;
+        uint32_t extra;
+    };
+    static constexpr unsigned inlineFrames = 128;
+
+    const unsigned length = subject.size();
+    if (start > length)
+        return offsetNoMatch;
+
+    for (unsigned i = 0; i <= program.numSubpatterns; ++i) {
+        output[i << 1] = offsetNoMatch;
+        output[(i << 1) + 1] = offsetNoMatch;
+    }
+
+    if (program.endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet && length >= program.endAnchoredFixedSize)
+        start = std::max(start, length - program.endAnchoredFixedSize);
+
+    const CharType* input = subject.data();
+    const FastOp* ops = program.ops.span().data();
+    const FastSet* sets = program.sets.span().data();
+    const char16_t* text = program.text.span().data();
+    const bool tryOnce = program.tryOnlyAtStart || program.sticky;
+    Frame inlineStorage[inlineFrames];
+    Vector<Frame> overflow;
+    Frame* frames = inlineStorage;
+    unsigned capacity = inlineFrames;
+    Vector<uint32_t, 16> registerStorage;
+    registerStorage.grow(program.numRegisters);
+    uint32_t* registers = registerStorage.mutableSpan().data();
+    unsigned remainingLoops = matchLimit;
+    unsigned depth = 0;
+
+    auto growFrames = [&]() -> bool {
+        size_t newCapacity = static_cast<size_t>(capacity) * 2;
+        if (newCapacity * sizeof(Frame) > Options::maxRegExpStackSize())
+            return false;
+        Vector<Frame> larger;
+        if (!larger.tryGrow(newCapacity))
+            return false;
+        memcpySpan(larger.mutableSpan().first(depth), std::span<const Frame> { frames, depth });
+        overflow = WTF::move(larger);
+        frames = overflow.mutableSpan().data();
+        capacity = newCapacity;
+        return true;
+    };
+
+#define FAST_PUSH(...) do { \
+        if (depth == capacity) [[unlikely]] { \
+            if (!growFrames()) \
+                return offsetNoMatch; \
+        } \
+        frames[depth++] = Frame { __VA_ARGS__ }; \
+    } while (false)
+
+    auto undo = [&](const FastOp& from, const Frame& frame) -> bool {
+        switch (from.kind) {
+        case Kind::LoggedCaptureStart:
+        case Kind::LoggedCaptureEnd:
+            output[from.argument] = frame.position;
+            return true;
+        case Kind::LoggedClearCaptures:
+            output[frame.position << 1] = frame.limit;
+            output[(frame.position << 1) + 1] = frame.extra;
+            return true;
+        case Kind::LoggedSavePosition:
+        case Kind::LoggedSetRegister:
+        case Kind::LoggedIncrement:
+            registers[from.set] = frame.position;
+            return true;
+        default:
+            return false;
+        }
+    };
+
+    for (unsigned matchStart = start; ; ++matchStart) {
+        if (program.hasFirstCharacters && !tryOnce) {
+            while (matchStart < length) {
+                auto character = input[matchStart];
+                if constexpr (sizeof(CharType) > 1) {
+                    if (character > 255)
+                        break;
+                }
+                if (program.firstCharacters[character >> 6] & (1ull << (character & 63)))
+                    break;
+                ++matchStart;
+            }
+            if (matchStart >= length)
+                return offsetNoMatch;
+        }
+
+        unsigned position = matchStart;
+        const FastOp* op = ops;
+        depth = 0;
+
+        for (;;) {
+            bool matched = true;
+            uint32_t index = static_cast<uint32_t>(op - ops);
+            switch (op->kind) {
+            case Kind::Character:
+                matched = position < length && input[position] == op->argument;
+                position += matched;
+                break;
+            case Kind::Text: {
+                unsigned count = op->target;
+                if (length - position < count) {
+                    matched = false;
+                    break;
+                }
+                const char16_t* expected = text + op->argument;
+                for (unsigned i = 0; i < count; ++i) {
+                    if (input[position + i] != expected[i]) {
+                        matched = false;
+                        break;
+                    }
+                }
+                position += matched ? count : 0;
+                break;
+            }
+            case Kind::Set:
+                matched = position < length && fastSetContains(sets[op->set], input[position]);
+                position += matched;
+                break;
+            case Kind::SetCount: {
+                unsigned count = op->argument;
+                if (length - position < count) {
+                    matched = false;
+                    break;
+                }
+                const FastSet& set = sets[op->set];
+                for (unsigned i = 0; i < count; ++i) {
+                    if (!fastSetContains(set, input[position + i])) {
+                        matched = false;
+                        break;
+                    }
+                }
+                position += matched ? count : 0;
+                break;
+            }
+            case Kind::GreedyRun:
+            case Kind::PossessiveRun: {
+                const FastSet& set = sets[op->set];
+                unsigned end = length - position > op->argument ? position + op->argument : length;
+                unsigned begin = position;
+                while (position < end && fastSetContains(set, input[position]))
+                    ++position;
+                if (op->kind == Kind::GreedyRun && position != begin)
+                    FAST_PUSH(index, position, begin, 0);
+                break;
+            }
+            case Kind::LazyRun:
+            case Kind::Choice:
+                FAST_PUSH(index, position, 0, 0);
+                break;
+            case Kind::Jump:
+                op = ops + op->target;
+                continue;
+            case Kind::CaptureStart:
+            case Kind::CaptureEnd:
+                output[op->argument] = position;
+                break;
+            case Kind::ClearCaptures:
+                for (unsigned i = op->argument; i <= op->target; ++i) {
+                    output[i << 1] = offsetNoMatch;
+                    output[(i << 1) + 1] = offsetNoMatch;
+                }
+                break;
+            case Kind::SavePosition:
+                registers[op->set] = position;
+                break;
+            case Kind::FailIfEmpty:
+                matched = registers[op->set] != position;
+                break;
+            case Kind::InputStart:
+                matched = !position;
+                break;
+            case Kind::LineStart:
+                matched = !position || fastSetContains(sets[op->set], input[position - 1]);
+                break;
+            case Kind::InputEnd:
+                matched = position == length;
+                break;
+            case Kind::LineEnd:
+                matched = position == length || fastSetContains(sets[op->set], input[position]);
+                break;
+            case Kind::WordBoundary:
+            case Kind::NotWordBoundary: {
+                const FastSet& set = sets[op->set];
+                bool before = position && fastSetContains(set, input[position - 1]);
+                bool after = position < length && fastSetContains(set, input[position]);
+                matched = (before != after) == (op->kind == Kind::WordBoundary);
+                break;
+            }
+            case Kind::Match:
+                output[0] = matchStart;
+                output[1] = position;
+                return matchStart;
+            case Kind::LoggedCaptureStart:
+            case Kind::LoggedCaptureEnd:
+                FAST_PUSH(index, output[op->argument], 0, 0);
+                output[op->argument] = position;
+                break;
+            case Kind::LoggedClearCaptures:
+                for (unsigned i = op->argument; i <= op->target; ++i) {
+                    if (output[i << 1] == offsetNoMatch && output[(i << 1) + 1] == offsetNoMatch)
+                        continue;
+                    FAST_PUSH(index, i, output[i << 1], output[(i << 1) + 1]);
+                    output[i << 1] = offsetNoMatch;
+                    output[(i << 1) + 1] = offsetNoMatch;
+                }
+                break;
+            case Kind::LoggedSavePosition:
+                FAST_PUSH(index, registers[op->set], 0, 0);
+                registers[op->set] = position;
+                break;
+            case Kind::LoggedSetRegister:
+                FAST_PUSH(index, registers[op->set], 0, 0);
+                registers[op->set] = op->argument;
+                break;
+            case Kind::LoggedIncrement:
+                FAST_PUSH(index, registers[op->set], 0, 0);
+                ++registers[op->set];
+                break;
+            case Kind::JumpIfBelow:
+                if (registers[op->set] < op->argument) {
+                    op = ops + op->target;
+                    continue;
+                }
+                break;
+            case Kind::JumpIfNotBelow:
+                if (registers[op->set] >= op->argument) {
+                    op = ops + op->target;
+                    continue;
+                }
+                break;
+            case Kind::LoopBack:
+                if (!--remainingLoops) [[unlikely]]
+                    return offsetNoMatch;
+                op = ops + op->target;
+                continue;
+            case Kind::LookaheadBegin:
+                registers[op->set] = position;
+                registers[op->set + 1] = depth;
+                break;
+            case Kind::LookaheadEnd:
+                position = registers[op->set];
+                depth = registers[op->set + 1];
+                break;
+            case Kind::LookaheadEndKeepingCaptures: {
+                position = registers[op->set];
+                unsigned kept = registers[op->set + 1];
+                for (unsigned i = kept; i < depth; ++i) {
+                    Kind kind = ops[frames[i].op].kind;
+                    if (kind == Kind::LoggedCaptureStart || kind == Kind::LoggedCaptureEnd || kind == Kind::LoggedClearCaptures)
+                        frames[kept++] = frames[i];
+                }
+                depth = kept;
+                break;
+            }
+            case Kind::NegativeLookaheadBegin:
+                registers[op->set + 1] = depth;
+                FAST_PUSH(index, position, 0, 0);
+                break;
+            case Kind::NegativeLookaheadEnd: {
+                unsigned base = registers[op->set + 1];
+                while (depth > base) {
+                    --depth;
+                    undo(ops[frames[depth].op], frames[depth]);
+                }
+                matched = false;
+                break;
+            }
+            case Kind::BackReference:
+            case Kind::BackReferenceIgnoringCase: {
+                unsigned begin = output[op->argument];
+                unsigned end = output[op->argument + 1];
+                if (begin == offsetNoMatch || end == offsetNoMatch || begin == end)
+                    break;
+                unsigned count = end - begin;
+                if (length - position < count) {
+                    matched = false;
+                    break;
+                }
+                for (unsigned i = 0; i < count; ++i) {
+                    char32_t expected = input[begin + i];
+                    char32_t actual = input[position + i];
+                    if (expected == actual)
+                        continue;
+                    if (op->kind == Kind::BackReferenceIgnoringCase) {
+                        if (isASCII(expected) || isASCII(actual)) {
+                            if (toASCIIUpper(expected) == toASCIIUpper(actual))
+                                continue;
+                        } else if (areCanonicallyEquivalent(expected, actual, CanonicalMode::UCS2))
+                            continue;
+                    }
+                    matched = false;
+                    break;
+                }
+                position += matched ? count : 0;
+                break;
+            }
+            }
+
+            if (matched) [[likely]] {
+                ++op;
+                continue;
+            }
+
+            bool resumed = false;
+            while (depth) {
+                Frame& frame = frames[depth - 1];
+                const FastOp* from = ops + frame.op;
+                if (from->kind == Kind::Choice || from->kind == Kind::NegativeLookaheadBegin) {
+                    position = frame.position;
+                    op = ops + from->target;
+                    --depth;
+                    resumed = true;
+                    break;
+                }
+                if (from->kind == Kind::GreedyRun) {
+                    position = --frame.position;
+                    if (position == frame.limit)
+                        --depth;
+                    op = from + 1;
+                    resumed = true;
+                    break;
+                }
+                if (from->kind == Kind::LazyRun) {
+                    if (frame.limit < from->argument && frame.position < length && fastSetContains(sets[from->set], input[frame.position])) {
+                        ++frame.limit;
+                        position = ++frame.position;
+                        op = from + 1;
+                        resumed = true;
+                        break;
+                    }
+                    --depth;
+                    continue;
+                }
+                undo(*from, frame);
+                --depth;
+            }
+            if (!resumed)
+                break;
+        }
+
+        if (tryOnce || matchStart >= length)
+            return offsetNoMatch;
+        for (unsigned i = 1; i <= program.numSubpatterns; ++i) {
+            output[i << 1] = offsetNoMatch;
+            output[(i << 1) + 1] = offsetNoMatch;
+        }
+    }
+#undef FAST_PUSH
+}
+
+template<typename CharType>
+static unsigned validatedFastProgram(BytecodePattern* bytecode, std::span<const CharType> subject, unsigned start, unsigned* output)
+{
+    const FastProgram& program = *bytecode->m_fastProgram;
+    unsigned slots = (program.numSubpatterns + 1) * 2;
+    Vector<unsigned, 32> fastOutput;
+    fastOutput.grow(slots);
+    for (auto& slot : fastOutput)
+        slot = offsetNoMatch;
+    unsigned fastResult = runFastProgram<CharType>(program, subject, start, fastOutput.mutableSpan().data());
+    unsigned result = Interpreter<CharType>(bytecode, output, subject, start).interpret();
+    bool same = fastResult == result;
+    for (unsigned i = 0; same && result != offsetNoMatch && i <= program.numSubpatterns; ++i) {
+        same = fastOutput[i << 1] == output[i << 1];
+        if (same && output[i << 1] != offsetNoMatch)
+            same = fastOutput[(i << 1) + 1] == output[(i << 1) + 1];
+    }
+    if (!same) {
+        dataLogLn("validateRegExpFastMatcher: results differ at start ", start, ": fast ", static_cast<int>(fastResult), " interpreter ", static_cast<int>(result));
+        for (unsigned i = 0; i <= program.numSubpatterns; ++i)
+            dataLogLn("  group ", i, ": fast ", static_cast<int>(fastOutput[i << 1]), ",", static_cast<int>(fastOutput[(i << 1) + 1]), " interpreter ", static_cast<int>(output[i << 1]), ",", static_cast<int>(output[(i << 1) + 1]));
+        dataLogLn("  subject: ", StringView(subject));
+        CRASH();
+    }
+    return result;
+}
+
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
-    return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    std::unique_ptr<FastProgram> fastProgram;
+    if (Options::useRegExpFastMatcher())
+        fastProgram = FastProgramBuilder(pattern).build();
+    if (fastProgram && !fastProgram->validate) {
+        Vector<std::unique_ptr<ByteDisjunction>> noParentheses;
+        auto bytecode = makeUnique<BytecodePattern>(makeUnique<ByteDisjunction>(pattern.m_numSubpatterns, 0), noParentheses, pattern, allocator, lock, pattern.offsetVectorBaseForNamedCaptures(), pattern.offsetsSize());
+        bytecode->m_fastProgram = WTF::move(fastProgram);
+        return bytecode;
+    }
+    auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    if (bytecode)
+        bytecode->m_fastProgram = WTF::move(fastProgram);
+    return bytecode;
 }
 
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
+    if (auto* program = bytecode->m_fastProgram.get()) {
+        if (program->validate) [[unlikely]] {
+            if (input.is8Bit())
+                return validatedFastProgram<Latin1Character>(bytecode, input.span8(), start, output);
+            return validatedFastProgram<char16_t>(bytecode, input.span16(), start, output);
+        }
+        if (input.is8Bit())
+            return runFastProgram<Latin1Character>(*program, input.span8(), start, output);
+        return runFastProgram<char16_t>(*program, input.span16(), start, output);
+    }
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();

@@ -1590,9 +1590,10 @@ private:
                 if (suspendsBefore(insertion.at.index))
                     return false;
                 if (insertion.step == Step::Begin) {
-                    bool isNested = stack.containsIf([](auto& entry) { return entry.first != callerRegion; });
+                    if (stack.containsIf([](auto& entry) { return entry.first != callerRegion; }))
+                        return false;
                     ValueID flag = at(insertion.value).arguments[0];
-                    m_newValues[flag.index() - m_function.values.size()].setBits(insertion.region << stringAppendBeginRegionShift | (isNested ? stringAppendBeginIsNested : 0));
+                    m_newValues[flag.index() - m_function.values.size()].setBits(insertion.region << stringAppendBeginRegionShift);
                     stack.append({ insertion.region, insertion.stateAfter });
                     continue;
                 }
@@ -1851,7 +1852,7 @@ bool mayBenefit(const Program& program, const Function& function, const BitVecto
 
 } // anonymous namespace
 
-void planStringAppends(Program& program, Vector<String>& findings)
+void planStringAppends(Program& program, Vector<String>&)
 {
     constexpr unsigned maxRounds = 6;
     unsigned count = program.functions.size();
@@ -1900,22 +1901,22 @@ void planStringAppends(Program& program, Vector<String>& findings)
             plans[i] = WTF::move(planner);
     });
     Vector<uint32_t> workerOf;
-    BitVector isChanged(count);
-    for (unsigned i = 0; i < count; ++i) {
-        if (plans[i])
-            isChanged.set(i);
-    }
+    Vector<std::unique_ptr<Function>> planned(count);
     forEachIndexInParallel(count, [&](unsigned i) {
-        if (plans[i])
-            program.functions[i] = std::exchange(plans[i], nullptr)->commit(workerOf);
+        if (!plans[i])
+            return;
+        auto function = makeUniqueWithoutFastMallocCheck<Function>(std::exchange(plans[i], nullptr)->commit(workerOf));
+        Vector<String> findings;
+        verify(program, FunctionID(i), *function, findings);
+        if (findings.isEmpty())
+            planned[i] = WTF::move(function);
+        else
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: dropped the string append plan of function ", i, ": ", findings[0]);
     });
-    Vector<Vector<String>> findingsByFunction(functions.size());
-    forEachIndexInParallel(functions.size(), [&](unsigned i) {
-        if (isChanged.get(i))
-            verify(program, FunctionID(i), functions[i], findingsByFunction[i]);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        if (planned[i])
+            program.functions[i] = WTF::move(*planned[i]);
     });
-    for (auto& ofFunction : findingsByFunction)
-        findings.appendVector(WTF::move(ofFunction));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -608,6 +608,9 @@ struct Data {
     uint32_t countsAllocations;
     uint32_t usesWideReferences;
     uint32_t functionLengthsAreBytes;
+    uint32_t lastShapeWithOtherPrototype;
+    uint32_t reachOfShapesWithOtherPrototype;
+    uint32_t setOfShapesWithOtherPrototype;
     uint32_t numberOfFunctionAliases;
     uint32_t numberOfFunctionAliasRuns;
     uint32_t functionAliasesOffset;

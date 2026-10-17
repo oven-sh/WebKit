@@ -696,8 +696,6 @@ private:
     Effects elementReadEffects(const Value& value) const
     {
         bool convertsArrayStorage = isNumericOperand(m_program.at(value.type)) || (value.prediction() && isNumericOperand(m_program.at(value.prediction())));
-        if (value.readsElementProvenByStores() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions())
-            return { Writes::Nothing, false, convertsArrayStorage };
         Writes writes = writesOfElementRead(m_program, m_program.at(value.type));
         return { writes, writes != Writes::Nothing && m_program.castsMayRetag, convertsArrayStorage };
     }

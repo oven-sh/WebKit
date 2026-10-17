@@ -439,10 +439,8 @@ struct Value {
     uint32_t unsharedConstantLiteral() const { return immediates[1] != Format::none && immediates[1] & 1 ? immediates[1] >> 1 : Format::none; }
     static constexpr uint32_t keyIsListed = 1;
     static constexpr uint32_t isForInKey = 2;
-    static constexpr uint32_t elementTypeIsProvenByStores = 3;
     bool readsForInKey() const { return opcode == Opcode::GetByVal && immediates[0] == keyIsListed; }
     bool readsForInKeys() const { return opcode == Opcode::GetByVal && immediates[0] == isForInKey; }
-    bool readsElementProvenByStores() const { return (opcode == Opcode::GetByVal || opcode == Opcode::IteratorValue) && immediates[0] == elementTypeIsProvenByStores; }
     BlockID parameterBlock() const { return BlockID(immediates[0]); }
     uint32_t parameterIndex() const { return immediates[1]; }
     BuiltinID builtin() const { return BuiltinID(immediates[0]); }
@@ -843,6 +841,7 @@ struct Layout {
     bool hasUntypedBase { false };
     bool hasImmutableMembers { false };
     bool mayHaveOtherPrototype { false };
+    bool hasInstancesWithOtherPrototype { false };
     bool prototypeIsSetByTypedCode { false };
     bool constructorMayBeReplaced { false };
     bool mayBeConstructed { false };
@@ -1378,6 +1377,7 @@ public:
     Vector<uint32_t> shapeCountPrefixSums;
     uint32_t shapeCountInRange(uint32_t first, uint32_t last) const { return first > last ? 0 : shapeCountPrefixSums[last] - shapeCountPrefixSums[first - 1]; }
     BitVector shapeSetBits;
+    ShapeTest shapesWithOtherPrototype;
     struct MultiLayoutShapeTest {
         Vector<LayoutID, 1> objectLayouts;
         ShapeTest test;

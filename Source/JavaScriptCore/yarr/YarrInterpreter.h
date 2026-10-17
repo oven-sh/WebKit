@@ -478,6 +478,78 @@ public:
     unsigned m_frameSize;
 };
 
+struct FastOp {
+    enum class Kind : uint8_t {
+        Character,
+        Text,
+        Set,
+        SetCount,
+        GreedyRun,
+        PossessiveRun,
+        LazyRun,
+        Choice,
+        Jump,
+        CaptureStart,
+        CaptureEnd,
+        ClearCaptures,
+        SavePosition,
+        FailIfEmpty,
+        InputStart,
+        LineStart,
+        InputEnd,
+        LineEnd,
+        WordBoundary,
+        NotWordBoundary,
+        Match,
+        LoggedCaptureStart,
+        LoggedCaptureEnd,
+        LoggedClearCaptures,
+        LoggedSavePosition,
+        LoggedSetRegister,
+        LoggedIncrement,
+        JumpIfBelow,
+        JumpIfNotBelow,
+        LoopBack,
+        LookaheadBegin,
+        LookaheadEnd,
+        LookaheadEndKeepingCaptures,
+        NegativeLookaheadBegin,
+        NegativeLookaheadEnd,
+        BackReference,
+        BackReferenceIgnoringCase,
+    };
+    Kind kind;
+    uint16_t set;
+    uint32_t argument;
+    uint32_t target;
+};
+
+struct FastSet {
+    uint64_t bits[4];
+    CharacterClass* characterClass;
+    char16_t first;
+    char16_t second;
+    bool invert;
+};
+
+struct FastProgram {
+    WTF_MAKE_TZONE_ALLOCATED(FastProgram);
+public:
+    size_t estimatedSizeInBytes() const { return ops.capacity() * sizeof(FastOp) + sets.capacity() * sizeof(FastSet) + text.capacity() * sizeof(char16_t); }
+
+    Vector<FastOp> ops;
+    Vector<FastSet> sets;
+    Vector<char16_t> text;
+    uint64_t firstCharacters[4] { };
+    unsigned numSubpatterns { 0 };
+    unsigned numRegisters { 0 };
+    unsigned endAnchoredFixedSize { 0 };
+    bool hasFirstCharacters { false };
+    bool tryOnlyAtStart { false };
+    bool sticky { false };
+    bool validate { false };
+};
+
 struct BytecodePattern {
     WTF_MAKE_TZONE_ALLOCATED(BytecodePattern);
 public:
@@ -509,7 +581,7 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
+    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes() + (m_fastProgram ? m_fastProgram->estimatedSizeInBytes() : 0); }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
@@ -541,6 +613,7 @@ public:
     bool dotAll() const { return m_flags.contains(Flags::DotAll); }
 
     std::unique_ptr<ByteDisjunction> m_body;
+    std::unique_ptr<FastProgram> m_fastProgram;
     OptionSet<Flags> m_flags;
     // Each BytecodePattern is associated with a RegExp, each RegExp is associated
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.

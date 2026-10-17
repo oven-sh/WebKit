@@ -508,8 +508,6 @@ private:
                 auto& claimed = m_program.at(cast.type);
                 if (claimed.hasObjects() || !claimed.isSubsetOf(m_program.at(read.type), m_program))
                     continue;
-                if (read.readsElementProvenByStores() && read.type != cast.type)
-                    continue;
                 read.type = cast.type;
                 read.rep = repOf(claimed);
                 cast.setCastReason(CastReason::Upcast);

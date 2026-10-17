@@ -602,6 +602,49 @@ static std::optional<Slot::FieldRead> fieldReadFor(Typed::Store store)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+std::optional<FieldPresenceTest> presenceTestFor(const Typed::FieldData& field)
+{
+    using Typed::Store;
+    using Kind = Instance::KeyedHasField;
+    Kind kind;
+    unsigned width;
+    switch (field.store()) {
+    case Store::Cell32:
+    case Store::OptionalCell32:
+    case Store::LiteralString32:
+        kind = Kind::Word32;
+        width = 4;
+        break;
+    case Store::JSValue:
+    case Store::Cell:
+    case Store::LiteralString:
+        kind = Kind::Word64;
+        width = 8;
+        break;
+    case Store::OptionalBoolean:
+        kind = Kind::Byte;
+        width = 1;
+        break;
+    case Store::Int32OrNumberBox:
+        kind = Kind::Int32OrNumberBox;
+        width = 4;
+        break;
+    case Store::OptionalDouble:
+        kind = Kind::Double;
+        width = 8;
+        break;
+    case Store::OptionalInt64:
+        kind = Kind::Int64;
+        width = 8;
+        break;
+    default:
+        return std::nullopt;
+    }
+    if (field.offset % width || field.offset / width > Instance::maxKeyedHasFieldIndex)
+        return std::nullopt;
+    return FieldPresenceTest { kind, field.offset / width };
+}
+
 static bool cacheAbsentCompiledField(JSGlobalObject* globalObject, Data* data, Slot* cache, JSCell* cell, const Identifier& ident, bool mayBePolymorphic)
 {
     VM& vm = globalObject->vm();

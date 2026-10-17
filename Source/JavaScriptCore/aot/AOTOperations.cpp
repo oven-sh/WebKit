@@ -1201,47 +1201,12 @@ static void cacheKeyedHas(Instance* instance, VM& vm, Structure* structure, JSCe
 
 static void cacheKeyedHasOfField(Instance* instance, VM& vm, Structure* structure, JSCell* key, const Typed::FieldData& field, bool isPermanent)
 {
-    using Typed::Store;
-    using Kind = Instance::KeyedHasField;
-    Kind kind;
-    unsigned width;
-    switch (field.store()) {
-    case Store::Cell32:
-    case Store::OptionalCell32:
-    case Store::LiteralString32:
-        kind = Kind::Word32;
-        width = 4;
-        break;
-    case Store::JSValue:
-    case Store::Cell:
-    case Store::LiteralString:
-        kind = Kind::Word64;
-        width = 8;
-        break;
-    case Store::OptionalBoolean:
-        kind = Kind::Byte;
-        width = 1;
-        break;
-    case Store::Int32OrNumberBox:
-        kind = Kind::Int32OrNumberBox;
-        width = 4;
-        break;
-    case Store::OptionalDouble:
-        kind = Kind::Double;
-        width = 8;
-        break;
-    case Store::OptionalInt64:
-        kind = Kind::Int64;
-        width = 8;
-        break;
-    default:
-        return;
-    }
-    if (field.offset % width || field.offset / width > Instance::maxKeyedHasFieldIndex)
+    auto test = presenceTestFor(field);
+    if (!test)
         return;
     Slot& entry = instance->keyedHasFor(structure->id(), key);
     entry.structureID = StructureID();
-    entry.offset = Instance::keyedHasReadsField | field.offset / width << Instance::keyedHasFieldIndexShift | static_cast<uint32_t>(kind) << Instance::keyedHasFieldKindShift | (isPermanent ? MegamorphicCache::permanentEpoch : epochForKey(vm, key, structure));
+    entry.offset = Instance::keyedHasReadsField | test->index << Instance::keyedHasFieldIndexShift | static_cast<uint32_t>(test->kind) << Instance::keyedHasFieldKindShift | (isPermanent ? MegamorphicCache::permanentEpoch : epochForKey(vm, key, structure));
     entry.pointer = key;
     entry.structureID = structure->id();
 }

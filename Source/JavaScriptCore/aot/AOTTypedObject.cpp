@@ -6773,6 +6773,7 @@ State::State(VM& vm, Instance& instance, const Data& data)
     createStatics();
     instance.typedAllocationIndices = reinterpret_cast<uint16_t*>(createZeroedTable<uint8_t>(allocationEntriesAndIndicesSize(data)) + allocationEntriesSize(data));
     instance.typedModifiedClassObjects = createZeroedTable<uint8_t>(data.numberOfLayoutIndices);
+    instance.typedClassPrototypes = createZeroedTable<JSCell*>(data.numberOfLayoutIndices);
     instance.typedShapeSets = data.at<uint32_t>(data.shapeSetsOffset);
     instance.negativeOffsetFields().typedStrings = createStringTable(stringTableInitialCapacity);
     instance.typedLiteralStrings = createZeroedTable<JSCell*>(data.numberOfLiteralStrings);
@@ -6860,6 +6861,7 @@ State::~State()
     destroyStatics();
     destroyZeroedTable(reinterpret_cast<uint8_t*>(instance.typedAllocationIndices) - allocationEntriesSize(data), allocationEntriesAndIndicesSize(data));
     destroyZeroedTable(instance.typedModifiedClassObjects, data.numberOfLayoutIndices);
+    destroyZeroedTable(instance.typedClassPrototypes, data.numberOfLayoutIndices);
     destroyZeroedTable(instance.negativeOffsetFields().typedStrings, stringTableCapacity(instance.negativeOffsetFields().typedStrings));
     destroyZeroedTable(instance.typedLiteralStrings, data.numberOfLiteralStrings);
     destroyZeroedTable(instance.typedLiteralStringCache, 1 << literalStringCacheIndexBits);

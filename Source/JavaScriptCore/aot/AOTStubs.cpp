@@ -206,6 +206,7 @@ static void loadSites(CCallHelpers& jit, GPRReg info, GPRReg result)
 
 static unsigned s_codeGranuleShift;
 static bool s_functionLengthsAreBytes;
+static ShapesWithOtherPrototype s_shapesWithOtherPrototype;
 
 #if CPU(X86_64)
 void loadFunctionIndexAt(CCallHelpers& jit, GPRReg pc)
@@ -7232,7 +7233,8 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf)
     constexpr GPRReg lastShapeOrShapeWord = A2;
     constexpr GPRReg shapeCount = A3;
     constexpr GPRReg scratch = T11;
-    static_assert(noOverlap(R0, numberOfClass, lastShapeOrShapeWord, shapeCount, scratch));
+    constexpr GPRReg prototype = T13;
+    static_assert(noOverlap(R0, numberOfClass, lastShapeOrShapeWord, shapeCount, scratch) && noOverlap(R0, numberOfClass, prototype, T11, T12));
     CCallHelpers::JumpList genericPath;
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedModifiedClassObjects()), scratch);
     genericPath.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::BaseIndex(scratch, numberOfClass, CCallHelpers::TimesOne)));
@@ -7245,13 +7247,42 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf)
         jit.add32(scratch, lastShapeOrShapeWord);
         isInstance = jit.branch32(CCallHelpers::Below, lastShapeOrShapeWord, shapeCount);
     }
-    genericPath.append(jit.branch32(CCallHelpers::GreaterThanOrEqual, scratch, TrustedImm32(0)));
+    Jump hasNoLayout = jit.branch32(CCallHelpers::GreaterThanOrEqual, scratch, TrustedImm32(0));
+    CCallHelpers::JumpList mayHaveOtherPrototype;
+    if (auto& marked = s_shapesWithOtherPrototype; marked.reach) {
+        jit.add32(TrustedImm32(marked.last), scratch);
+        Jump keepsPrototype = jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(marked.reach));
+        if (marked.set == UINT32_MAX)
+            mayHaveOtherPrototype.append(jit.jump());
+        else {
+            jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedShapeSets()), T13);
+            jit.urshift32(scratch, TrustedImm32(5), T12);
+            jit.load32(CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesFour, marked.set / 8), T12);
+            jit.urshift32(scratch, T12);
+            mayHaveOtherPrototype.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1)));
+        }
+        keepsPrototype.link(&jit);
+    }
     notCell.link(&jit);
+    CCallHelpers::Label returnsFalse = jit.label();
     jit.move(TrustedImm32(0), R0);
     jit.ret();
     isInstance.link(&jit);
+    CCallHelpers::Label returnsTrue = jit.label();
     jit.move(TrustedImm32(1), R0);
     jit.ret();
+
+    hasNoLayout.link(&jit);
+    CCallHelpers::JumpList inherits;
+    CCallHelpers::JumpList doesNotInherit;
+    jit.branchIfNotObject(R0).linkTo(returnsFalse, &jit);
+    mayHaveOtherPrototype.link(&jit);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedClassPrototypes()), prototype);
+    jit.loadPtr(CCallHelpers::BaseIndex(prototype, numberOfClass, CCallHelpers::TimesEight), prototype);
+    genericPath.append(jit.branchTestPtr(CCallHelpers::Zero, prototype));
+    followPrototypeChain(jit, prototype, inherits, doesNotInherit, genericPath);
+    inherits.linkTo(returnsTrue, &jit);
+    doesNotInherit.linkTo(returnsFalse, &jit);
 
     genericPath.link(&jit);
     jit.move(numberOfClass, A2);
@@ -7263,6 +7294,35 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf)
 }
 static void generateInstanceOfClass(CCallHelpers& jit) { generateInstanceOfClass(jit, false); }
 static void generateInstanceOfLeafClass(CCallHelpers& jit) { generateInstanceOfClass(jit, true); }
+
+static void generateInstanceOfClassByChain(CCallHelpers& jit)
+{
+    constexpr GPRReg numberOfClass = A1;
+    constexpr GPRReg prototype = T13;
+    static_assert(noOverlap(R0, numberOfClass, prototype, T11, T12));
+    CCallHelpers::JumpList inherits;
+    CCallHelpers::JumpList doesNotInherit;
+    CCallHelpers::JumpList genericPath;
+    doesNotInherit.append(jit.branchIfNotObject(R0));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedClassPrototypes()), prototype);
+    jit.loadPtr(CCallHelpers::BaseIndex(prototype, numberOfClass, CCallHelpers::TimesEight), prototype);
+    genericPath.append(jit.branchTestPtr(CCallHelpers::Zero, prototype));
+    followPrototypeChain(jit, prototype, inherits, doesNotInherit, genericPath);
+    doesNotInherit.link(&jit);
+    jit.move(TrustedImm32(0), R0);
+    jit.ret();
+    inherits.link(&jit);
+    jit.move(TrustedImm32(1), R0);
+    jit.ret();
+
+    genericPath.link(&jit);
+    jit.move(numberOfClass, A2);
+    jit.move(R0, A1);
+    jit.move(instanceGPR, A0);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedInstanceOfClass) * sizeof(void*)), T11);
+    callAndCheckException(jit, T11, Returns::Value);
+}
 
 static void checkStackBeforeCallingAccessor(CCallHelpers& jit)
 {
@@ -10013,6 +10073,9 @@ static void storeByTransition(CCallHelpers& jit, CCallHelpers::JumpList& miss, b
         jit.load32(Address(R0, Typed::offsetOfExtension), previous);
         Jump hasNothingToCopy = jit.branchTest32(CCallHelpers::Zero, previous);
         decodeCell32(jit, previous, previous);
+        static_assert(Typed::offsetOfFirstExtensionSlot == sizeof(uint32_t) && !Typed::offsetOfExtensionSize);
+        jit.load32(Address(previous, Typed::offsetOfFirstExtensionSlot), zero);
+        jit.store32(zero, Address(storage, Typed::offsetOfFirstExtensionSlot));
         jit.load32(Address(previous, Typed::offsetOfExtensionSize), size);
         jit.move(TrustedImm32(sizeof(uint64_t)), T11);
         CCallHelpers::Label copyNext = jit.label();
@@ -12568,6 +12631,78 @@ static void callOperationOnThree(CCallHelpers& jit, Entry operation)
     callAndCheckException(jit, T11, Returns::Void);
 }
 
+static void returnWhetherFieldIsPresent(CCallHelpers& jit, GPRReg object, bool returnsFromOperation)
+{
+    auto finish = [&] {
+        if (returnsFromOperation)
+            jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2);
+        jit.ret();
+    };
+    auto isKind = [&](Instance::KeyedHasField kind) {
+        return jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(kind)));
+    };
+    Jump isWord64 = isKind(Instance::KeyedHasField::Word64);
+    Jump isByte = isKind(Instance::KeyedHasField::Byte);
+    Jump isDouble = isKind(Instance::KeyedHasField::Double);
+    Jump isInt64 = isKind(Instance::KeyedHasField::Int64);
+    jit.load32(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesFour), T12);
+    Jump isInt32OrNumberBox = isKind(Instance::KeyedHasField::Int32OrNumberBox);
+    static_assert(!Typed::absentCell32);
+    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    finish();
+    isInt32OrNumberBox.link(&jit);
+    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(Typed::absentInt32), R0);
+    finish();
+    isWord64.link(&jit);
+    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
+    jit.compare64(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    finish();
+    isByte.link(&jit);
+    jit.load8(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesOne), T12);
+    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
+    finish();
+    isDouble.link(&jit);
+    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
+    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(Typed::absentDouble)), T11);
+    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
+    finish();
+    isInt64.link(&jit);
+    jit.load64(CCallHelpers::BaseIndex(object, T13, CCallHelpers::TimesEight), T12);
+    jit.move(CCallHelpers::TrustedImm64(Typed::absentInteger), T11);
+    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
+    finish();
+}
+
+static void generateFrontEndTypedHasOwnPropertyByName(CCallHelpers& jit)
+{
+    constexpr GPRReg base = A1;
+    constexpr GPRReg name = A2;
+    static_assert(noOverlap(base, name, T9, T10, T11, T12, T13, instanceGPR) && R0 == GPRInfo::returnValueGPR);
+    static_assert(hasOneBitSet(Instance::numberOfOwnFieldPlaces));
+    CCallHelpers::JumpList isNotKnown;
+    isNotKnown.append(jit.branchIfNotCell(base));
+    isNotKnown.append(jit.branch8(CCallHelpers::NotEqual, Address(base, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
+    jit.load32(Address(base, Typed::offsetOfShapeWord), T11);
+    jit.lshift32(T11, TrustedImm32(Instance::namedFieldShapeShift), T13);
+    jit.add32(name, T13);
+    jit.and32(TrustedImm32(Instance::numberOfOwnFieldPlaces - 1), T13);
+    jit.lshiftPtr(TrustedImm32(4), T13);
+    jit.addPtr(instanceGPR, T13);
+    jit.zeroExtend32ToWord(name, T10);
+    jit.lshift64(TrustedImm32(32), T10);
+    jit.or64(T10, T11);
+    isNotKnown.append(jit.branch64(CCallHelpers::NotEqual, Address(T13, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, shapeWordAndName)), T11));
+    jit.load64(Address(T13, Instance::offsetOfOwnFieldPlaces() + OBJECT_OFFSETOF(Instance::NamedField, access)), T13);
+    jit.and32(TrustedImm32(7), T13, T11);
+    jit.urshift32(TrustedImm32(Instance::ownFieldIndexShift), T13);
+    returnWhetherFieldIsPresent(jit, base, true);
+
+    isNotKnown.link(&jit);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::RawTypedHasOwnPropertyByName) * sizeof(void*)), T9);
+    jit.farJump(T9, OperationPtrTag);
+}
+
 static void generateInByValCached(CCallHelpers& jit)
 {
     CCallHelpers::JumpList miss;
@@ -12609,39 +12744,7 @@ static void generateInByValCached(CCallHelpers& jit)
     jit.and32(TrustedImm32(Instance::maxKeyedHasFieldIndex), T13);
     jit.urshift32(TrustedImm32(Instance::keyedHasFieldKindShift), T11);
     jit.and32(TrustedImm32(7), T11);
-    auto isKind = [&](Instance::KeyedHasField kind) {
-        return jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(kind)));
-    };
-    Jump isWord64 = isKind(Instance::KeyedHasField::Word64);
-    Jump isByte = isKind(Instance::KeyedHasField::Byte);
-    Jump isDouble = isKind(Instance::KeyedHasField::Double);
-    Jump isInt64 = isKind(Instance::KeyedHasField::Int64);
-    jit.load32(CCallHelpers::BaseIndex(R0, T13, CCallHelpers::TimesFour), T12);
-    Jump isInt32OrNumberBox = isKind(Instance::KeyedHasField::Int32OrNumberBox);
-    static_assert(!Typed::absentCell32);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
-    jit.ret();
-    isInt32OrNumberBox.link(&jit);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(Typed::absentInt32), R0);
-    jit.ret();
-    isWord64.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(R0, T13, CCallHelpers::TimesEight), T12);
-    jit.compare64(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
-    jit.ret();
-    isByte.link(&jit);
-    jit.load8(CCallHelpers::BaseIndex(R0, T13, CCallHelpers::TimesOne), T12);
-    jit.compare32(CCallHelpers::NotEqual, T12, TrustedImm32(0), R0);
-    jit.ret();
-    isDouble.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(R0, T13, CCallHelpers::TimesEight), T12);
-    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(Typed::absentDouble)), T11);
-    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
-    jit.ret();
-    isInt64.link(&jit);
-    jit.load64(CCallHelpers::BaseIndex(R0, T13, CCallHelpers::TimesEight), T12);
-    jit.move(CCallHelpers::TrustedImm64(Typed::absentInteger), T11);
-    jit.compare64(CCallHelpers::NotEqual, T12, T11, R0);
-    jit.ret();
+    returnWhetherFieldIsPresent(jit, R0, false);
 
     miss.link(&jit);
     callLookUpByKey(jit, Entry::operationAOTHasByKeyGeneric, T12);
@@ -22839,7 +22942,7 @@ bool thunkIsGeneratedOnlyIfCalled(unsigned thunk)
     return thunk < firstCallThunk || (thunk >= firstGetByNameThunk && thunk < numberOfThunks);
 }
 
-std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly)
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, ShapesWithOtherPrototype shapesWithOtherPrototype, const BitVector& calledThunks, const BitVector& calledStubs, bool imageHasWebAssembly)
 {
     UNUSED_PARAM(imageHasWebAssembly);
     RELEASE_ASSERT(codeGranuleShift >= minCodeGranuleShift && codeGranuleShift <= maxCodeGranuleShift);
@@ -22849,6 +22952,7 @@ std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functio
     {
         s_codeGranuleShift = codeGranuleShift;
         s_functionLengthsAreBytes = functionLengthsAreBytes;
+        s_shapesWithOtherPrototype = shapesWithOtherPrototype;
         CCallHelpers jit;
         readTagsFromInstance(jit);
 #if CPU(ARM64) || CPU(X86_64)

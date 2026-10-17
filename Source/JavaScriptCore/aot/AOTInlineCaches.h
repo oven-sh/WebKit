@@ -42,6 +42,14 @@ void recordKeyedExtraPropertyAddition(Instance::KeyedAddition&, Structure* befor
 void cacheKeyedCompiledFieldRead(JSGlobalObject*, Instance::KeyedRead&, JSObject*, const Identifier&);
 void cacheCompiledField(VM&, Data*, Slot* cache, JSCell* object, const Identifier&, bool mayBePolymorphic);
 void cacheNamedFieldRead(Instance*, JSCell* object, const Identifier&, uint32_t name);
+namespace Typed {
+struct FieldData;
+}
+struct FieldPresenceTest {
+    Instance::KeyedHasField kind;
+    uint32_t index;
+};
+std::optional<FieldPresenceTest> presenceTestFor(const Typed::FieldData&);
 void cacheNamedFieldWrite(Instance*, JSCell* object, const Identifier&, uint32_t name);
 void cacheKeyedCompiledFieldStore(Instance*, JSCell* object, JSCell* key, const Identifier&);
 void cacheKeyedDelete(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue key, std::optional<PropertyOffset>);

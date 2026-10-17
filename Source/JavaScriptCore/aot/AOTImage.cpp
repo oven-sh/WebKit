@@ -2291,7 +2291,11 @@ Vector<uint8_t> ImageBuilder::finish()
         recordThunkForMoves(moves, calledStubs, calledThunks);
     std::unique_ptr<StubBlob> imageStubs;
     Ref stubGeneratorThread = Thread::create("AOT image"_s, [&] {
-        imageStubs = createStubBlob(codeGranuleShift, !m_typedData.isEmpty() && reinterpret_cast<const Typed::Data*>(m_typedData.span().data())->functionLengthsAreBytes, calledThunks, calledStubs, !m_webAssemblyCode.isEmpty());
+        auto* typedData = m_typedData.isEmpty() ? nullptr : reinterpret_cast<const Typed::Data*>(m_typedData.span().data());
+        ShapesWithOtherPrototype shapesWithOtherPrototype;
+        if (typedData)
+            shapesWithOtherPrototype = { typedData->lastShapeWithOtherPrototype, typedData->reachOfShapesWithOtherPrototype, typedData->setOfShapesWithOtherPrototype };
+        imageStubs = createStubBlob(codeGranuleShift, typedData && typedData->functionLengthsAreBytes, shapesWithOtherPrototype, calledThunks, calledStubs, !m_webAssemblyCode.isEmpty());
     }, ThreadType::Unknown, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(4 * MB));
     Vector<const ArgumentMoves*> argumentMoves;
     auto argumentMovesAreInOrder = [](const ArgumentMoves* a, const ArgumentMoves* b) {

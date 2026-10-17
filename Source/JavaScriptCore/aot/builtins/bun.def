@@ -115,6 +115,7 @@ $clear Member = PrivateName
 $data Member = PrivateName
 $defineProperty Member = PrivateName
 $delete Member = PrivateName
+$detail Member = PrivateName
 $fastPath Member = PrivateName
 $forEach Member = PrivateName
 $get Member = PrivateName

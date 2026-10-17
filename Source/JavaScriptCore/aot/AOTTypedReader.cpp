@@ -957,7 +957,7 @@ private:
                 m_failed = true;
                 break;
             }
-            if ((value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && value.immediates[0] != Format::none && value.immediates[0] != Value::elementTypeIsProvenByStores) {
+            if ((value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && value.immediates[0] != Format::none) {
                 m_failed = true;
                 break;
             }

@@ -56,11 +56,14 @@ static NEVER_INLINE Latin1Character* appendWideSegment(Instance* instance, Latin
 
 static NEVER_INLINE Latin1Character* growJSONBuffer(Instance* instance, Latin1Character* cursor, size_t size)
 {
+    countOperationNamed(instance, __func__);
     size_t length = cursor - instance->jsonBufferStart;
     size_t capacity = instance->jsonBufferEnd - instance->jsonBufferStart;
     if (size > String::MaxLength || length + size > String::MaxLength)
         return nullptr;
     size_t newCapacity = std::max({ capacity * 2, length + size, minJSONBufferCapacity });
+    if (newCapacity > maxRetainedJSONBufferCapacity)
+        newCapacity = std::max<size_t>(newCapacity, instance->jsonBufferCapacityHint);
     void* storage = nullptr;
     if (!WTF::tryFastRealloc(instance->jsonBufferStart, newCapacity).getValue(storage))
         return nullptr;
@@ -340,18 +343,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendValue, void*, (Inst
     return nullptr;
 }
 
-static NEVER_INLINE RefPtr<StringImpl> makeStringWithWideSegments(std::span<const Latin1Character> characters, std::span<const JSONWideSegment> segments)
+static ALWAYS_INLINE size_t writeWithWideSegments(std::span<char16_t> storage, std::span<const Latin1Character> characters, std::span<const JSONWideSegment> segments)
 {
-    static constexpr size_t vectorOverreadCapacity = 32;
-    CheckedSize most = characters.size() + vectorOverreadCapacity;
-    for (auto& segment : segments)
-        most += CheckedSize(segment.text.length()) * static_cast<size_t>(segment.needsEscaping ? 6 : 1);
-    if (most.hasOverflowed() || most.value() > String::MaxLength)
-        return nullptr;
-    Vector<char16_t, 1024> storage;
-    if (!storage.tryGrow(most.value()))
-        return nullptr;
-    std::span<char16_t> output = storage.mutableSpan();
+    std::span<char16_t> output = storage;
     size_t taken = 0;
     auto copyUpTo = [&](size_t end) {
         StringImpl::copyCharacters(output, characters.subspan(taken, end - taken));
@@ -372,24 +366,61 @@ static NEVER_INLINE RefPtr<StringImpl> makeStringWithWideSegments(std::span<cons
             WTF::appendEscapedJSONStringContent(output, segment.text.span16());
     }
     copyUpTo(characters.size());
-    return StringImpl::create(storage.span().first(output.data() - storage.span().data()));
+    return storage.size() - output.size();
 }
 
-static ALWAYS_INLINE void releaseLargeJSONBuffer(Instance* instance)
+static NEVER_INLINE RefPtr<StringImpl> makeLargeStringWithWideSegments(std::span<const Latin1Character> characters, std::span<const JSONWideSegment> segments, size_t capacity)
+{
+    std::span<char16_t> storage;
+    RefPtr<StringImpl> text = StringImpl::tryCreateUninitialized(capacity, storage);
+    if (!text)
+        return nullptr;
+    size_t length = writeWithWideSegments(storage, characters, segments);
+    if (capacity - length > length / 8)
+        return StringImpl::create(storage.first(length));
+    char16_t* data = nullptr;
+    auto shrunk = StringImpl::tryReallocate(text.releaseNonNull(), length, data);
+    return shrunk ? RefPtr<StringImpl> { WTF::move(*shrunk) } : nullptr;
+}
+
+static NEVER_INLINE RefPtr<StringImpl> makeStringWithWideSegments(std::span<const Latin1Character> characters, std::span<const JSONWideSegment> segments)
+{
+    static constexpr size_t vectorOverreadCapacity = 32;
+    static constexpr size_t inlineCapacity = 1024;
+    CheckedSize most = characters.size() + vectorOverreadCapacity;
+    for (auto& segment : segments)
+        most += CheckedSize(segment.text.length()) * static_cast<size_t>(segment.needsEscaping ? 6 : 1);
+    if (most.hasOverflowed() || most.value() > String::MaxLength)
+        return nullptr;
+    if (most.value() > inlineCapacity)
+        return makeLargeStringWithWideSegments(characters, segments, most.value());
+    std::array<char16_t, inlineCapacity> storage;
+    return StringImpl::create(std::span { storage }.first(writeWithWideSegments(storage, characters, segments)));
+}
+
+static NEVER_INLINE void replaceLargeJSONBuffer(Instance* instance, size_t capacityHint)
+{
+    instance->jsonBufferCapacityHint = std::min<size_t>(capacityHint, std::numeric_limits<uint32_t>::max());
+    fastFree(instance->jsonBufferStart);
+    void* storage = nullptr;
+    size_t capacity = WTF::tryFastMalloc(maxRetainedJSONBufferCapacity).getValue(storage) ? maxRetainedJSONBufferCapacity : 0;
+    instance->jsonBufferStart = static_cast<Latin1Character*>(storage);
+    instance->jsonBufferEnd = instance->jsonBufferStart + capacity;
+}
+
+static ALWAYS_INLINE void releaseLargeJSONBuffer(Instance* instance, const Invocable<size_t()> auto& outputSize)
 {
     if (static_cast<size_t>(instance->jsonBufferEnd - instance->jsonBufferStart) > maxRetainedJSONBufferCapacity) [[unlikely]] {
-        fastFree(instance->jsonBufferStart);
-        instance->jsonBufferStart = nullptr;
-        instance->jsonBufferEnd = nullptr;
+        size_t size = outputSize();
+        replaceLargeJSONBuffer(instance, size + size / 2);
     }
 }
 
-static void resetJSONOutput(Instance* instance)
+static void clearJSONWideSegments(Instance* instance)
 {
     if (instance->jsonWideSegments)
         instance->jsonWideSegments->clear();
     instance->jsonWideSegmentCount = 0;
-    releaseLargeJSONBuffer(instance);
 }
 
 static NEVER_INLINE JSCell* finishWithWideSegments(Instance* instance, JSGlobalObject* globalObject, VM& vm, uint64_t cursor)
@@ -397,7 +428,8 @@ static NEVER_INLINE JSCell* finishWithWideSegments(Instance* instance, JSGlobalO
     RefPtr<StringImpl> text;
     if (!mayHaveToJSON(globalObject, vm, globalObject->objectPrototype()) && !mayHaveToJSON(globalObject, vm, globalObject->arrayPrototype()))
         text = makeStringWithWideSegments({ instance->jsonBufferStart, std::bit_cast<Latin1Character*>(cursor) }, instance->jsonWideSegments->span().first(instance->jsonWideSegmentCount));
-    resetJSONOutput(instance);
+    clearJSONWideSegments(instance);
+    releaseLargeJSONBuffer(instance, [&] -> size_t { return std::bit_cast<Latin1Character*>(cursor) - instance->jsonBufferStart; });
     return text ? jsString(vm, String { text.releaseNonNull() }) : nullptr;
 }
 
@@ -439,14 +471,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
             result = jsString(vm, String { impl.releaseNonNull() });
         }
     }
-    releaseLargeJSONBuffer(instance);
+    releaseLargeJSONBuffer(instance, [&] -> size_t { return result ? result->length() : 0; });
     return result;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDiscard, void, (Instance* instance))
 {
     countOperationNamed(instance, __func__);
-    resetJSONOutput(instance);
+    clearJSONWideSegments(instance);
+    size_t capacity = instance->jsonBufferEnd - instance->jsonBufferStart;
+    if (capacity > maxRetainedJSONBufferCapacity)
+        replaceLargeJSONBuffer(instance, capacity);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONPrepare, void, (Instance* instance, uint64_t cursor, EncodedJSValue value))
@@ -466,7 +501,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONPrepare, void, (Instance*
                 memcpy(copy.data(), characters.data(), characters.size());
         }
     }
-    resetJSONOutput(instance);
+    clearJSONWideSegments(instance);
+    releaseLargeJSONBuffer(instance, [&] -> size_t { return characters.size(); });
     if (!text)
         return;
     holder->preparedJSONString = text.leakRef();

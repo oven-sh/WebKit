@@ -747,6 +747,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnPropertyByName, size_t, (Instanc
                 instance->cacheOwnPropertyResult(object->structureID().bits(), name, true);
                 OPERATION_RETURN(scope, true);
             }
+            if (auto test = field->flags & (Typed::fieldMayExistWithoutStorage | Typed::fieldMayBeUnlisted | Typed::fieldIsOutOfLine) ? std::nullopt : presenceTestFor(*field))
+                instance->cacheOwnFieldPlace(Typed::shapeWordOf(compiled->shape()), name, test->kind, test->index);
             OPERATION_RETURN(scope, !!compiled->read(*field));
         }
         if (hasExtraPropertyByStructure(vm, compiled, identifier)) {

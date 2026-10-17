@@ -172,6 +172,7 @@ struct StringAppender;
     v(RawCompareEq) \
     v(RawTypedPutExtra) \
     v(RawTypedGetExtra) \
+    v(RawTypedHasOwnPropertyByName) \
     v(RawTypedConstruct) \
     v(RawTypedCloneObject) \
     v(RawTypedCloneObjectAndExtend) \
@@ -877,6 +878,7 @@ struct Instance {
         return row ? reinterpret_cast<TypedAllocation*>(typedAllocationIndices) - row : nullptr;
     }
     uint8_t* typedModifiedClassObjects;
+    JSCell** typedClassPrototypes;
     static constexpr unsigned numberOfTypedClosureStructures = 5;
     uint32_t typedClosureStructureIDs[numberOfTypedClosureStructures - 1];
     uint32_t& typedClosureStructureID(unsigned which) { return which ? typedClosureStructureIDs[which - 1] : negativeOffsetFields().typedClosureStructureID; }
@@ -1119,6 +1121,7 @@ struct Instance {
     uint32_t jsonParserGaveUp;
     JSONSourceEncoding jsonSourceEncoding;
     FormatPatternsOrigin formatPatternsOrigin;
+    uint32_t jsonBufferCapacityHint;
     const char16_t* jsonSource16Bit;
     uint8_t* jsonSourceStart;
     const uint8_t* jsonSourceEnd;
@@ -1576,6 +1579,14 @@ struct Instance {
     static_assert(hasOneBitSet(numberOfNamedFields) && sizeof(NamedField) == 16);
     NamedField* namedFieldReads;
     NamedField* namedFieldWrites;
+    static constexpr unsigned numberOfOwnFieldPlaces = 128;
+    static constexpr unsigned ownFieldIndexShift = 3;
+    NamedField ownFieldPlaces[numberOfOwnFieldPlaces];
+    static constexpr ptrdiff_t offsetOfOwnFieldPlaces() { return OBJECT_OFFSETOF(Instance, ownFieldPlaces); }
+    void cacheOwnFieldPlace(uint32_t shapeWord, uint32_t name, KeyedHasField kind, uint32_t index)
+    {
+        ownFieldPlaces[((shapeWord << namedFieldShapeShift) + name) % numberOfOwnFieldPlaces] = { shapeWord | static_cast<uint64_t>(name) << 32, index << ownFieldIndexShift | static_cast<uint32_t>(kind) };
+    }
     struct ImmutableElement {
         uint64_t cellAndIndex;
         EncodedJSValue value;
@@ -1725,6 +1736,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfThrownValue() { return OBJECT_OFFSETOF(Instance, thrownValue); }
     static constexpr ptrdiff_t offsetOfTypedAllocationIndices() { return OBJECT_OFFSETOF(Instance, typedAllocationIndices); }
     static constexpr ptrdiff_t offsetOfTypedModifiedClassObjects() { return OBJECT_OFFSETOF(Instance, typedModifiedClassObjects); }
+    static constexpr ptrdiff_t offsetOfTypedClassPrototypes() { return OBJECT_OFFSETOF(Instance, typedClassPrototypes); }
     static constexpr ptrdiff_t offsetOfTypedShapeSets() { return OBJECT_OFFSETOF(Instance, typedShapeSets); }
     static constexpr ptrdiff_t offsetOfTypedCastTransitions() { return OBJECT_OFFSETOF(Instance, typedCastTransitions); }
     static constexpr ptrdiff_t offsetOfTypedClosureStructureID(unsigned which = 0) { return which ? static_cast<ptrdiff_t>(OBJECT_OFFSETOF(Instance, typedClosureStructureIDs) + (which - 1) * sizeof(uint32_t)) : negativeOffsetOf(OBJECT_OFFSETOF(NegativeOffsetFields, typedClosureStructureID)); }

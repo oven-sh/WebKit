@@ -546,7 +546,7 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
     LBasicBlock inside = m_out.newBlock();
     bool usesIndexUnchanged = !otherwise && get(key).rep == Rep::Int64;
     TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
-    bool holdsOnPath = (usesIndexUnchanged || (!otherwise && get(key).rep == Rep::Double)) && !(type.primitives & Primitive::Number) && &m_program.at(given) == &type && !m_function.at(m_currentBlock->values[m_currentIndexInBlock]).readsElementProvenByStores() && !Options::auditAOTTypedAssertions();
+    bool holdsOnPath = (usesIndexUnchanged || (!otherwise && get(key).rep == Rep::Double)) && !(type.primitives & Primitive::Number) && &m_program.at(given) == &type && !Options::auditAOTTypedAssertions();
     bool sharesSlowPath = returnsAnyValue || (holdsOnPath && !m_activeHandler && (type.primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull);
     LBasicBlock slowPath = otherwise ? otherwise : newColdBlock();
     LBasicBlock outside = otherwise ? otherwise : sharesSlowPath ? slowPath : m_out.newBlock();
@@ -1562,7 +1562,7 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
     switch (keyedAccessOf(m_program, m_function, value)) {
     case KeyedAccess::Array:
         static_assert(static_cast<unsigned>(Stub::LoadElement) + 1 == static_cast<unsigned>(Stub::LeafLoadElement));
-        if (Writes writes = m_function.at(result).readsElementProvenByStores() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions() ? Writes::Nothing : writesOfElementRead(m_program, type); !m_isInLoop && !m_program.isHotOutsideLoops(m_id) && get(key).rep == Rep::Int64 && (writes == Writes::Nothing || (!(type.primitives & Primitive::Number) && &m_program.at(m_function.at(result).type) == &type && !Options::auditAOTTypedAssertions()))) {
+        if (Writes writes = writesOfElementRead(m_program, type); !m_isInLoop && !m_program.isHotOutsideLoops(m_id) && get(key).rep == Rep::Int64 && (writes == Writes::Nothing || (!(type.primitives & Primitive::Number) && &m_program.at(m_function.at(result).type) == &type && !Options::auditAOTTypedAssertions()))) {
             CellPointer array = nonNullish(object, { });
             Integer index = in<Integer>(key);
             static_assert(static_cast<unsigned>(Stub::LoadElementAsDoubleOrNullish) + 1 == static_cast<unsigned>(Stub::LeafLoadElementAsDoubleOrNullish));
