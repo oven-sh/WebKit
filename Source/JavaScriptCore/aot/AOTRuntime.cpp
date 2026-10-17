@@ -976,6 +976,8 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
         typed->moduleRecord = uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord();
         typed->importMeta = nullptr;
     }
+    if (typed && scope->type() == ModuleEnvironmentType && typed->data.isEntryPoint(executable->programModule()->entryOffset))
+        typed->didLoadEntryPoint(executable->programModule()->entryOffset, uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord());
     if (Data* data = dataIfExists(index); data && data->executable() == executable)
         return data->code()->entry();
     DeferGCForAWhile deferGC(vm);
@@ -3373,6 +3375,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
         AOT::writeOperationCounts(*vm);
     }
     releaseLargeJSONSource(*this);
+    zeroBytes(structuresOfThis);
     if (typed) {
         typed->removeDeadCoercionPlans(*vm, newOnly);
         typed->removeDeadDescendantPrototypes(*vm);

@@ -2177,6 +2177,38 @@ std::optional<Operand> Lowering::readAsyncLocalStorage(const Value& call)
     return Operand(Boxed(m_out.phi(Int64, bound, defaultValue)));
 }
 
+bool Lowering::isModuleEvaluatedBefore(ValueID evaluation, uint32_t row)
+{
+    if (!m_moduleEvaluationSites) {
+        m_moduleEvaluationSites.emplace();
+        for (unsigned block = 0; block < m_function.blocks.size(); ++block) {
+            auto& values = m_function.blocks[block].values;
+            for (unsigned index = 0; index < values.size(); ++index) {
+                auto& call = m_function.at(values[index]);
+                if (call.opcode != Opcode::CallDirect)
+                    continue;
+                if (auto found = m_program.moduleEvaluationIndexByFunction.find(call.function().index()); found != m_program.moduleEvaluationIndexByFunction.end())
+                    m_moduleEvaluationSites->append({ values[index], found->value, BlockID(block), index });
+            }
+        }
+    }
+    unsigned ownIndex = 0;
+    for (auto& site : *m_moduleEvaluationSites) {
+        if (site.call == evaluation)
+            ownIndex = site.index;
+    }
+    for (auto& other : *m_moduleEvaluationSites) {
+        if (other.row != row || other.call == evaluation)
+            continue;
+        auto& block = m_function.blocks[other.block.index()];
+        if (block.terminator.kind == TerminatorKind::Invoke && other.index + 1 == block.values.size())
+            continue;
+        if (other.block == m_currentBlockID ? other.index < ownIndex : dominates(other.block, m_currentBlockID))
+            return true;
+    }
+    return false;
+}
+
 Operand Lowering::lowerCallDirect(ValueID result, const Value& value)
 {
     if (value.isJumpToContinuation())
@@ -2189,7 +2221,9 @@ Operand Lowering::lowerCallDirect(ValueID result, const Value& value)
         return *read;
     if (auto row = m_program.moduleEvaluationIndexByFunction.find(value.function().index()); row != m_program.moduleEvaluationIndexByFunction.end()) {
         LType returnedValue = b3TypeOf(resultRepOf(m_program, m_program.moduleEvaluator));
-        if (!m_isInLoop && !m_program.isHotOutsideLoops(m_id)) {
+        if (isModuleEvaluatedBefore(result, row->value))
+            return convert(undefined(), typeOf(result), value.rep);
+        if (!m_out.m_block->frequency()) {
             callFunction(m_program.moduleEvaluatorIfNeeded, returnedValue, { m_out.constInt64(row->value) }, value.function());
             return convert(undefined(), typeOf(result), value.rep);
         }

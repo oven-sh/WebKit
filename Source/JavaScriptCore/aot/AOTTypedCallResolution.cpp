@@ -1246,8 +1246,15 @@ private:
             receiver = appendThrowing(WTF::move(cast));
         }
         Arguments captures;
-        if (!m_program.at(callee).captureTypes.isEmpty()) {
-            auto access = fieldOf(m_program, typeOf(object), original.string());
+        auto access = fieldOf(m_program, typeOf(object), original.string());
+        bool capturesReceiver = m_program.at(callee).closuresCaptureOnlyTheirHolder
+            && m_program.castIsRedundant(typeOf(receiver), m_program.at(m_program.at(callee).captureTypes[0]), CastReason::Flow)
+            && std::ranges::all_of(m_program.at(access->layout).subtypes, [&](LayoutID subtype) {
+                return m_program.at(subtype).kind == LayoutKind::Instance;
+            });
+        if (capturesReceiver)
+            captures.append(receiver);
+        else if (!m_program.at(callee).captureTypes.isEmpty()) {
             Value read = make(Opcode::GetById, m_program.at(access->layout).fields[access->field].type);
             read.children[0] = receiver;
             read.immediates[0] = original.immediates[0];

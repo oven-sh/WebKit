@@ -323,6 +323,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafStringStartsWithLiteral) \
     v(StringEndsWithLiteral) \
     v(LeafStringEndsWithLiteral) \
+    v(FlatStringsAreEqual) \
+    v(LeafFlatStringsAreEqual) \
     v(StringsAreEqual) \
     v(LeafStringsAreEqual) \
     v(ConcatenateTwo) \

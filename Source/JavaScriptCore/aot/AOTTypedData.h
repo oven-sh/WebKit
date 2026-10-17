@@ -577,6 +577,7 @@ struct Data {
     uint32_t closureCountsOffset; // For each from firstClosureFunction to endOfClosureFunctions two bytes: of its closures, how many words the collector follows, which come first, and how many words there are. The offset is of where those of function 0 would stand.
     uint32_t numberOfEntryPoints;
     uint32_t entryPointsOffset;
+    uint32_t entryPointsInOrderOffset;
     uint32_t numberOfBuiltinModules;
     uint32_t builtinModulesOffset;
     uint32_t numberOfBuiltinFunctions;

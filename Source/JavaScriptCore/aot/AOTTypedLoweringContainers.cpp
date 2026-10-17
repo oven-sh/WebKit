@@ -1777,6 +1777,14 @@ Word32 Lowering::isArrayUsedAsIterator(ValueID iterator)
     return below(binary<Word32>(&Output::sub, loadCellType(asCell(in<Boxed>(iterator))), word32(ArrayType)), word32(2));
 }
 
+Word32 Lowering::isArrayUsedAsIteratorBehindStep(ValueID iterator)
+{
+    auto found = m_iteratorKindsBehindSteps.find(iterator.index());
+    if (found == m_iteratorKindsBehindSteps.end() || found->value.block == m_currentBlockID || !dominates(found->value.block, m_currentBlockID))
+        return isArrayUsedAsIterator(iterator);
+    return below(Word32(found->value.kind), word32(2));
+}
+
 void Lowering::findStringIterations()
 {
     Vector<std::pair<ValueID, bool>, 4> found;
@@ -2339,7 +2347,7 @@ std::optional<Operand> Lowering::arrayEntriesPart(ValueID id, const Value& value
             return Operand(either<Word32>(iteratesArrayEntries(value.child(0)), [&] {
                 return below(in<Integer>(value.child(1)), arrayLength(entriesArray(value.child(0))));
             }, [&] {
-                return lowerIteratorHasNext(value);
+                return lowerIteratorHasNext(value, false);
             }));
         }
         auto* pair = pairOf(value.child(0));
@@ -2348,7 +2356,7 @@ std::optional<Operand> Lowering::arrayEntriesPart(ValueID id, const Value& value
         return Operand(either<Word32>(iteratesArrayEntries(pair->iterator), [&] {
             return boolean(m_function.at(value.child(1)).integer() < 2);
         }, [&] {
-            return lowerIteratorHasNext(value);
+            return lowerIteratorHasNext(value, false);
         }));
     }
     case Opcode::IteratorValue: {
@@ -2490,7 +2498,7 @@ Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
     }, genericPath).as<Boxed>(), typeOf(result));
 }
 
-Word32 Lowering::lowerIteratorHasNext(const Value& value)
+Word32 Lowering::lowerIteratorHasNext(const Value& value, bool isUnconditional)
 {
     ValueID iterator = value.child(0);
     if (elementsPerStep(iterator))
@@ -2520,14 +2528,35 @@ Word32 Lowering::lowerIteratorHasNext(const Value& value)
         join.add(logicalNot(isZero(AOT_TYPED_OPERATION(TypedArrayIteratorHasNext, receiver.view, index))));
         return join.finish().as<Word32>();
     }
+    auto hasNextInRecord = [&] {
+        if (auto record = recordInFrameOf(iterator))
+            return low32(Integer(callICStub(Stub::IterHasInFrame, Int64, { { record->value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHasInFrame>())));
+        return low32(Integer(callICStub(Stub::IterHas, Int64, { { in<Boxed>(iterator).value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHas>())));
+    };
     auto genericPath = [&] {
-        return either<Word32>(isArrayUsedAsIterator(iterator), isInsideArray, [&] {
-            if (auto record = recordInFrameOf(iterator))
-                return low32(Integer(callICStub(Stub::IterHasInFrame, Int64, { { record->value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHasInFrame>())));
-            return low32(Integer(callICStub(Stub::IterHas, Int64, { { in<Boxed>(iterator).value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsForOperation<operationAOTTypedIterHas>())));
-        });
+        return either<Word32>(isArrayUsedAsIterator(iterator), isInsideArray, hasNextInRecord);
     };
     auto* iteration = stringIteration(iterator);
+    if (!iteration && isUnconditional) {
+        static_assert(DerivedArrayType == ArrayType + 1);
+        Word32 kind = binary<Word32>(&Output::sub, loadCellType(asCell(in<Boxed>(iterator))), word32(ArrayType));
+        LBasicBlock isArray = m_out.newBlock();
+        LBasicBlock isOther = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(below(kind, word32(2)).value(), usually(isArray), rarely(isOther));
+        m_out.appendTo(isArray);
+        ValueFromBlock hasInArray = m_out.anchor(isInsideArray().value());
+        ValueFromBlock kindOfArray = m_out.anchor(kind.value());
+        m_out.jump(continuation);
+        m_out.appendTo(isOther);
+        ValueFromBlock hasInOther = m_out.anchor(hasNextInRecord().value());
+        ValueFromBlock kindOfOther = m_out.anchor(m_out.constInt32(2));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        LValue has = m_out.phi(Int32, hasInArray, hasInOther);
+        m_iteratorKindsBehindSteps.set(iterator.index(), IteratorKindBehindStep { m_out.phi(Int32, kindOfArray, kindOfOther), m_currentBlockID });
+        return Word32(has);
+    }
     if (!iteration)
         return genericPath();
     if (iteration->isCertain)
@@ -2598,7 +2627,7 @@ Operand Lowering::valueOfArrayOrRecord(ValueID result, const Value& value)
         auto& asked = m_function.at(asking.values.last());
         return asked.opcode == Opcode::IteratorHasNext && asked.child(0) == iterator && asked.child(1) == value.child(1);
     }();
-    return eitherOperand(isArrayUsedAsIterator(iterator), repOf(type), [&] {
+    return eitherOperand(isArrayUsedAsIteratorBehindStep(iterator), repOf(type), [&] {
         return ifPredictionHolds({ }, repOf(type), [&](LBasicBlock otherwise) {
             m_defersNumbersToLoadElement = m_function.at(result).type == m_program.types.anything && !predictionOf(result);
             m_indexIsKnownInBounds = wasJustBoundsChecked;

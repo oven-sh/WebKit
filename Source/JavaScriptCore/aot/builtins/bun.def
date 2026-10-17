@@ -12,6 +12,7 @@ inline LinkTimeConstant
 inline RequireBuiltinModule
 inline NativeBinding
 inline HasHostClassStructure
+inline IsGlobalCachedAsBuiltin
 inline ScanPlainURL
 inline FindPlainQueryValue
 inline HasHostObjectCachedValue
@@ -40,6 +41,7 @@ operation ToLength (any/G) -> number ; CallsUserCode ; Inline(ToLength)
 operation GetOwnProperty (any/GP, any/-) -> anything ; CallsUserCode ; Inline(GetOwnProperty)
 operation PutByValDirect (any/Ww, any/G, any/KR) -> arg2 ; CallsUserCode ; Inline(PutByValDirect)
 operation HasHostClassStructure (any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostClassStructure)
+operation IsGlobalCachedAsBuiltin (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsGlobalCachedAsBuiltin)
 operation ScanPlainURL (any/-) -> anything ; Pure ; Inline(ScanPlainURL)
 operation FindPlainQueryValue (any/-, any/-, any/-) -> number ; Pure ; Inline(FindPlainQueryValue)
 operation HasHostObjectCachedValue (any/-, any/-, any/-) -> boolean ; ReadsArguments ReadsRuntimeState ; Inline(HasHostObjectCachedValue)

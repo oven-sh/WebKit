@@ -3086,7 +3086,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
     }
     case Typed::LanguageOperation::GetImportMeta: {
         auto& state = *instance->typed;
-        if (count)
+        if (count && argument(0).isInt32()) {
+            JSObject* meta = state.importMetaForEntryPoint(globalObject, argument(0).asInt32());
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (meta)
+                OPERATION_RETURN(scope, JSValue::encode(meta));
+        } else if (count)
             OPERATION_RETURN(scope, JSValue::encode(state.importMetaForModule(globalObject, asString(argument(0)))));
         if (!state.importMeta) {
             auto* importer = uncheckedDowncast<JSModuleRecord>(state.moduleRecord);
@@ -3167,6 +3172,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         OPERATION_RETURN(scope, JSValue::encode(Symbol::create(vm, PrivateSymbolImpl::create(*description.impl()).get())));
     }
     case Typed::LanguageOperation::PrivateGet:
+    case Typed::LanguageOperation::PrivateFieldGet:
         OPERATION_RETURN(scope, JSValue::encode(privateGet(globalObject, vm, argument(0), PropertyName(asSymbol(argument(1))->privateName()))));
     case Typed::LanguageOperation::PrivateSet:
         privateSet(globalObject, vm, argument(0), PropertyName(asSymbol(argument(1))->privateName()), argument(2));
@@ -4920,6 +4926,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisWithStores, JSCell*, (Instan
 {
     AOT_OPERATION_BEGIN_AT(instance, cache);
     constexpr uint32_t isStoredTo = 1u << 31;
+    Instance::StructureOfThis& known = instance->structureOfThis(newTarget, cache);
+    if (known.newTarget == newTarget && known.site == cache && known.prototypeEpoch == instance->negativeOffsetFields().typedPrototypeEpoch) {
+        JSValue prototype = known.structure->storedPrototype();
+        bool isUnchanged = true;
+        for (unsigned i = 0; i < known.numberOfPrototypes && isUnchanged; ++i) {
+            isUnchanged = prototype.isObject() && asObject(prototype)->structureID().bits() == known.prototypeStructureIDs[i];
+            if (isUnchanged)
+                prototype = asObject(prototype)->structure()->storedPrototype();
+        }
+        if (isUnchanged && !prototype.isObject()) {
+            JSObject* object = constructEmptyObject(vm, known.structure);
+            for (unsigned i = 0; i < count; ++i)
+                object->putDirectOffset(vm, i, JSValue::decode(values[i]));
+            OPERATION_RETURN(scope, object);
+        }
+    }
     auto* constructor = uncheckedDowncast<Typed::Closure>(constructorCell);
     const uint32_t* nameIndicesOf = caller(instance, callFrame).info().function()->plans() + rowOfNames;
     Data* data = callerData(instance, callFrame);
@@ -4947,6 +4969,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisWithStores, JSCell*, (Instan
             object->setStructure(vm, structure);
             if (mayCacheForThis(instance, data, cache))
                 fill(object, structure);
+            else {
+                Instance::StructureOfThis remembered { newTarget, cache, structure, instance->negativeOffsetFields().typedPrototypeEpoch, 0, { } };
+                JSValue prototype = structure->storedPrototype();
+                while (prototype.isObject() && remembered.numberOfPrototypes < Instance::StructureOfThis::maxPrototypes) {
+                    remembered.prototypeStructureIDs[remembered.numberOfPrototypes++] = asObject(prototype)->structureID().bits();
+                    prototype = asObject(prototype)->structure()->storedPrototype();
+                }
+                if (!prototype.isObject())
+                    known = remembered;
+            }
             OPERATION_RETURN(scope, object);
         }
     }

@@ -53,6 +53,7 @@ operation ConstructorResult (any/R, any/R) -> arg0 | arg1 ; Pure ; Operation(Con
 operation DerivedConstructorResult (any/R, any/R) -> arg0 | arg1 ; MayThrow ; Operation(DerivedConstructorResult)
 operation NewPrivateName (any) -> symbol ; Allocates ; Operation(NewPrivateName)
 operation PrivateGet (any, any) -> anything ; CallsUserCode ; Operation(PrivateGet)
+operation PrivateFieldGet (any, any) -> anything ; MayThrow ReadsRuntimeState WritesRuntimeState ; Operation(PrivateFieldGet)
 operation PrivateSet (any, any, any) -> undefined ; CallsUserCode ; Operation(PrivateSet)
 operation PrivateHas (any, any) -> boolean ; CallsUserCode ; Operation(PrivateHas)
 operation PrivateFieldAdd (any/W, any/-, any/K) -> undefined ; CallsUserCode ; Operation(PrivateFieldAdd)

@@ -25,6 +25,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewResponse, EncodedJSValue, (Instance
     OPERATION_RETURN(scope, response);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewResponseFromResponse, EncodedJSValue, (Instance* instance, EncodedJSValue other))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    EncodedJSValue response = s_hostClassEntryPoints.newResponseFromResponse(globalObject, other);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, response);
+}
+
 namespace Typed {
 
 using namespace B3;
@@ -41,12 +49,14 @@ const HostClassEntryPoints& hostClassEntryPoints()
 
 std::optional<Writes> writesOfInlineHost(InlineBuiltin which, std::span<const Type>)
 {
-    RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
+    RELEASE_ASSERT(which == InlineBuiltin::NewResponse || which == InlineBuiltin::NewResponseFromResponse);
     return Writes::Heap;
 }
 
 std::optional<Operand> Lowering::lowerInlineHost(InlineBuiltin which, ValueID result, const Value& value, Writes)
 {
+    if (which == InlineBuiltin::NewResponseFromResponse)
+        return ensure(AOT_TYPED_OPERATION(NewResponseFromResponse, in<Boxed>(value.arguments[0])), typeOf(result));
     RELEASE_ASSERT(which == InlineBuiltin::NewResponse);
     constexpr unsigned firstHeaderOperand = 4;
     auto& arguments = value.arguments;

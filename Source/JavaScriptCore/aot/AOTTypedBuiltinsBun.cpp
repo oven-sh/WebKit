@@ -313,6 +313,7 @@ std::optional<Writes> writesOfInlineBun(InlineBuiltin which, std::span<const Typ
     case InlineBuiltin::IsCallable:
     case InlineBuiltin::GetInternalField:
     case InlineBuiltin::HasHostClassStructure:
+    case InlineBuiltin::IsGlobalCachedAsBuiltin:
     case InlineBuiltin::HasHostObjectCachedValue:
     case InlineBuiltin::HostObjectCachedValue:
         return Writes::Nothing;
@@ -483,6 +484,13 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         m_out.appendTo(isNot);
         join.add(boolean(false));
         return booleanResult(join.finish().as<Word32>(), type);
+    }
+    case InlineBuiltin::IsGlobalCachedAsBuiltin: {
+        BuiltinName global(integer32(0));
+        uint32_t cacheNumber = m_program.globalPropertyCacheNumber(m_program.stringOf(global), false);
+        if (!cacheNumber)
+            return booleanResult(boolean(false), type);
+        return booleanResult(equal(Boxed(globalPropertyCacheWord(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value))), box(builtinCell(m_builtins.cellOf(global)))), type);
     }
     case InlineBuiltin::HostObjectCachedValue:
         return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);

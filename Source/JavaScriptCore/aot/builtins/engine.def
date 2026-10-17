@@ -23,6 +23,8 @@ omitted PromiseConstructor.Promise
 # They resume a generator of bytecode. A generator of a program is another object.
 written GeneratorPrototype
 written JSIteratorHelperPrototype
+written MapPrototype
+written SetPrototype
 omitted GeneratorPrototype.generatorResume
 
 inline IsConstructor
@@ -126,25 +128,15 @@ $Iterator Value = LinkTimeConstant
 $iteratorHelperCreate Call = LinkTimeConstant
 $makeTypeError Call = LinkTimeConstant
 $Map Value = LinkTimeConstant
-$mapIterationEntry Call = LinkTimeConstant
-$mapIterationEntryKey Call = LinkTimeConstant
-$mapIterationEntryValue Call = LinkTimeConstant
-$mapIterationNext Call = LinkTimeConstant
-$mapStorage Call = LinkTimeConstant
 $newRejectedPromise Call = LinkTimeConstant
 $newResolvedPromise Call = LinkTimeConstant
 $Object Value = LinkTimeConstant
-$orderedHashTableSentinel Value = LinkTimeConstant
 $ownKeys Call = LinkTimeConstant
 $performPromiseThen Call = LinkTimeConstant
 $promiseReject Call = LinkTimeConstant
 $promiseResolve Call = LinkTimeConstant
 $promiseReturnUndefinedOnFulfilled Value = LinkTimeConstant
 $ReferenceError Value = LinkTimeConstant
-$setIterationEntry Call = LinkTimeConstant
-$setIterationEntryKey Call = LinkTimeConstant
-$setIterationNext Call = LinkTimeConstant
-$setStorage Call = LinkTimeConstant
 $SuppressedError Value = LinkTimeConstant
 $toIntegerOrInfinity Call = LinkTimeConstant
 $typedArrayFromFast Call = LinkTimeConstant
@@ -165,6 +157,12 @@ $stepGenerator Call = Operation(StepGenerator)
 $generatorStepStatus Call = Operation(GeneratorStepStatus)
 $makeIteratorResult Call = Operation(MakeIteratorResult)
 $resumeGenerator Call = Operation(ResumeGenerator)
+$collectionTable Call = Operation(CollectionTable)
+$mapNext Call = Operation(MapNext)
+$mapKeyAt Call = Operation(MapKeyAt)
+$mapValueAt Call = Operation(MapValueAt)
+$setNext Call = Operation(SetNext)
+$setKeyAt Call = Operation(SetKeyAt)
 
 # Builtins written in JavaScript that other builtins call: `$linkTimeConstant;`.
 $addDisposableResource Call = LinkedFunction

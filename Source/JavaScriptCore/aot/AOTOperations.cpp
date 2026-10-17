@@ -2062,7 +2062,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyGeneric, size_t, (JSCell* 
         while (Structure* previous = first->previousID())
             first = previous;
         PropertyOffset place;
-        if ((first == instance->emptyStructuresForKeyedStores[0] || first == instance->emptyStructuresForKeyedStores[1]) && !Structure::addPropertyTransitionToExistingStructure(structure, uid, 0, place) && !instance->wasTransitionRequestedBefore(structure->id(), uid))
+        if ((first == instance->emptyStructuresForKeyedStores[0] || first == instance->emptyStructuresForKeyedStores[1]) && !Structure::addPropertyTransitionToExistingStructure(structure, uid, 0, place) && !instance->wasTransitionRequestedBefore(structure->id(), uid, vm.random().getUint32()))
             object->convertToDictionary(vm);
     }
     PutPropertySlot slot(object, true);

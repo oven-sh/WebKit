@@ -382,6 +382,8 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
     using ReadKind = Typed::Object::ReadKind;
     constexpr unsigned copyStride = Typed::State::KeysAsJSON::copyStride;
     constexpr uint32_t offsetMask = (1u << Typed::Object::readKindShift) - 1;
+    constexpr auto firstOf = [](ReadKind kind) { return static_cast<uint32_t>(kind) << Typed::Object::readKindShift; };
+    static_assert(!firstOf(ReadKind::Int32OrNumberBox));
     size_t fixedSize = plan.fixedSize;
     cursor = reserveInJSONBuffer(instance, cursor, fixedSize);
     if (!cursor) [[unlikely]]
@@ -401,31 +403,14 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
         uint32_t offset = key.readKindAndOffset & offsetMask;
         auto field = [&]() ALWAYS_INLINE_LAMBDA -> const Typed::FieldData& { return object.layout().fields()[key.fieldIndex]; };
         JSValue value;
-        switch (static_cast<ReadKind>(key.readKindAndOffset >> Typed::Object::readKindShift)) {
-        case ReadKind::Int32OrNumberBox:
+        if (key.readKindAndOffset < firstOf(ReadKind::Cell32)) {
             if (int32_t word = WTF::unalignedLoad<int32_t>(body + offset); word >= Typed::minInlineInt32) [[likely]] {
                 appendKey(key);
                 cursor = appendInteger(cursor, word);
                 continue;
             }
             value = object.read(field());
-            break;
-        case ReadKind::Int32:
-            appendKey(key);
-            cursor = appendInteger(cursor, WTF::unalignedLoad<int32_t>(body + offset));
-            continue;
-        case ReadKind::Double:
-            appendKey(key);
-            cursor = appendNumber(cursor, WTF::unalignedLoad<double>(body + offset));
-            continue;
-        case ReadKind::Boolean: {
-            bool isTrue = body[offset];
-            appendKey(key);
-            memcpy(cursor, isTrue ? "true\0\0\0" : "false\0\0", 8);
-            cursor += 5 - isTrue;
-            continue;
-        }
-        case ReadKind::Cell32: {
+        } else if (key.readKindAndOffset < firstOf(ReadKind::Double)) {
             uint32_t word = WTF::unalignedLoad<uint32_t>(body + offset);
             if (word == Typed::unmaterializedClosureCell32) [[unlikely]]
                 value = object.read(field());
@@ -433,15 +418,24 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
                 value = JSValue::decode(word);
             else
                 value = MarkedBlockCage::decode(word);
-            break;
-        }
-        case ReadKind::JSValue:
+        } else if (key.readKindAndOffset < firstOf(ReadKind::Boolean)) {
+            appendKey(key);
+            cursor = appendNumber(cursor, WTF::unalignedLoad<double>(body + offset));
+            continue;
+        } else if (key.readKindAndOffset < firstOf(ReadKind::JSValue)) {
+            bool isTrue = body[offset];
+            appendKey(key);
+            memcpy(cursor, isTrue ? "true\0\0\0" : "false\0\0", 8);
+            cursor += 5 - isTrue;
+            continue;
+        } else if (key.readKindAndOffset < firstOf(ReadKind::Int32))
             value = JSValue::decode(WTF::unalignedLoad<EncodedJSValue>(body + offset));
-            break;
-        case ReadKind::General:
+        else if (key.readKindAndOffset < firstOf(ReadKind::General)) {
+            appendKey(key);
+            cursor = appendInteger(cursor, WTF::unalignedLoad<int32_t>(body + offset));
+            continue;
+        } else
             value = object.read(field());
-            break;
-        }
         if (!value || value.isUndefined())
             continue;
         appendKey(key);

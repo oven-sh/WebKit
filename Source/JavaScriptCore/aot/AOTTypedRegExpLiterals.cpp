@@ -1229,7 +1229,7 @@ private:
             return isObject(0) ? argument(0) : argument(1);
         if (is(Operations::NewPrivateName))
             return Symbol::create(m_vm);
-        if (is(Operations::PrivateGet)) {
+        if (is(Operations::PrivateGet) || is(Operations::PrivateFieldGet)) {
             if (!isObject(0) || !argument(1) || !argument(1).isSymbol())
                 return { };
             return attempt([&] {

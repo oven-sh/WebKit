@@ -770,7 +770,7 @@ private:
     TypedPointer pinnedFieldsGuard(SlotID);
     Word32 hasShapePinnedTo(const PinnedRead&, StringID text);
     Word32 isPinnedTo(const PinnedRead&, ValueID constant);
-    void guardPinnedFields(LayoutID holder, const Field&, ValueID stored);
+    void guardPinnedFields(LayoutID holder, ValueID object, const Field&, ValueID stored);
     bool mayFuseWithRead(size_t readIndex);
     bool readsLengthOfPredictedArrayOrString(size_t readIndex);
     std::optional<ValueID> elementReadAfterLengthCheck(ValueID array);
@@ -986,6 +986,10 @@ private:
     Operand getFromObjectWithExtraProperties(CellPointer, StringID name, const Type&);
     Word32 hasPrototypeOfLayout(CellPointer);
     Word32 hasOtherPrototype(CellPointer);
+    bool isPrivateNameOfOneInstance(StringID) const;
+    LValue instanceOwning(CellPointer);
+    Word32 belongsToThisInstance(CellPointer);
+    void throwIfOfAnotherInstance(CellPointer, StringID privateName);
     void branchIfOwnFieldRequested(CellPointer, LBasicBlock isNotRequested, LBasicBlock asks);
     Word32 hasField(CellPointer, const Field&);
     Word32 hasOwnField(CellPointer, const Field&);
@@ -1221,6 +1225,7 @@ private:
     const Field* fieldOfStoreAfterShapeTestOnlyAt(size_t index, ValueID object);
     bool isSideEffectFreeFieldRead(size_t index);
     bool m_isAfterStoreShapeTest { false };
+    bool m_receiverIsNotOfAnotherInstance { false };
     std::optional<FieldCreationRun> fieldCreationRunAt(size_t index, ValueID object);
     void createFieldsInRun(CellPointer, const FieldCreationRun&);
     bool isCreatedWithRun(CellPointer, ValueID object);
@@ -1442,6 +1447,7 @@ private:
     bool canCallInsteadOfClosure(FunctionID, unsigned numberOfArguments) const;
     Operand callClosure(FunctionID, CellPointer closure, ValueID thisValue, const Arguments&, const Type& result, LBasicBlock otherwise);
     Operand lowerCallDirect(ValueID result, const Value&);
+    bool isModuleEvaluatedBefore(ValueID evaluation, uint32_t row);
     std::optional<Operand> readHostObjectMember(const Value&);
     std::optional<Operand> readHostObjectMemberInline(ValueID result, const Value&);
     std::optional<Operand> readAsyncLocalStorage(const Value&);
@@ -1609,9 +1615,15 @@ private:
     Operand lowerGetByVal(ValueID result, const Value&);
     void lowerPutByVal(const Value&);
     Word32 isArrayUsedAsIterator(ValueID);
+    Word32 isArrayUsedAsIteratorBehindStep(ValueID);
+    struct IteratorKindBehindStep {
+        LValue kind { nullptr };
+        BlockID block;
+    };
+    UncheckedKeyHashMap<uint32_t, IteratorKindBehindStep, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_iteratorKindsBehindSteps;
     bool arraysMayChangeDuringIteration(ValueID iterator) const;
     Operand lowerIteratorOpen(ValueID result, const Value&);
-    Word32 lowerIteratorHasNext(const Value&);
+    Word32 lowerIteratorHasNext(const Value&, bool isUnconditional = true);
     Operand lowerIteratorValue(ValueID result, const Value&);
     void lowerIteratorClose(const Value&);
 
@@ -1948,6 +1960,13 @@ private:
     Word32 m_argumentCount;
     Pointer m_argumentBuffer;
     bool m_isInLoop { false };
+    struct ModuleEvaluationSite {
+        ValueID call;
+        uint32_t row;
+        BlockID block;
+        unsigned index;
+    };
+    std::optional<Vector<ModuleEvaluationSite>> m_moduleEvaluationSites;
     bool m_hasFailedInt32Test { false };
     bool m_retestsOperands { false };
     uint32_t m_nextSite { 1 };

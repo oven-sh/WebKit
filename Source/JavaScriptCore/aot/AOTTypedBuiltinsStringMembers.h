@@ -147,7 +147,7 @@
     static constexpr unsigned maxLiteralsComparedByCalls = 2;
     void branchOnLiteralByOneCall(ValueID subject, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
     void branchOnLiteralByOneCall(LValue, bool isString, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
-    Characters charactersOfStringWithLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise);
+    Characters charactersOfStringWithLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise, bool opensRopes = false);
     void lowerBranchOnLiteral();
     unsigned numberOfPredecessorsOf(BlockID);
     Vector<unsigned> m_numberOfPredecessors;

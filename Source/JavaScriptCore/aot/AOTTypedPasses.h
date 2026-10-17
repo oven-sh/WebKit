@@ -287,6 +287,7 @@ std::optional<FreshResultReads> computeFreshResultReads(const Program&, const Fu
 bool isLocalAllocation(const Function&, ValueID);
 std::span<const ValueID> initialStoresOf(const Function&);
 Writes writesOf(const Program&, const Function&, const Block&, size_t index);
+TypeID widestStoredFieldType(const Program&, LayoutID supertype, StringID name);
 std::optional<LanguageOperation> languageOperationOf(const Program&, const Value&);
 struct UserInBlock {
     unsigned block;

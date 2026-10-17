@@ -2159,12 +2159,13 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         }
         break;
     case LanguageOperation::PrivateGet:
+    case LanguageOperation::PrivateFieldGet:
     case LanguageOperation::PrivateHas: {
-        if (builtin.implementation.operation == LanguageOperation::PrivateGet) {
+        if (builtin.implementation.operation != LanguageOperation::PrivateHas) {
             if (auto read = lowerPrivateAccessAtSite(value, false))
                 return ensure(*read, type);
         }
-        Stub stub = builtin.implementation.operation == LanguageOperation::PrivateGet ? Stub::PrivateGet : Stub::PrivateHas;
+        Stub stub = builtin.implementation.operation != LanguageOperation::PrivateHas ? Stub::PrivateGet : Stub::PrivateHas;
         return ensure(Boxed(callICStub(stub, Int64, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 } }, std::nullopt, builtinCallEffects(value))), type);
     }
     case LanguageOperation::PrivateMethodsAdd:
@@ -3460,7 +3461,14 @@ static bool emitCode(const Program&, FunctionID, const Function&, Lowering&, Low
 
 static UTF8CString sourceNameOf(const Module& module, std::span<const char8_t> path)
 {
-    if (module.isBuiltin || path.empty() || path.front() == '/')
+#if OS(WINDOWS)
+    constexpr bool pathsHaveDrives = true;
+#else
+    constexpr bool pathsHaveDrives = false;
+#endif
+    bool hasDrive = path.size() > 2 && (path[0] | 0x20) >= 'a' && (path[0] | 0x20) <= 'z' && path[1] == ':' && (path[2] == '\\' || path[2] == '/');
+    bool hasShare = path.size() > 2 && path[0] == '\\' && path[1] == '\\';
+    if (module.isBuiltin || path.empty() || path.front() == '/' || (pathsHaveDrives && (hasDrive || hasShare)))
         return UTF8CString(path);
     Vector<char8_t, 128> name;
     name.append(ProgramData::relativeSourceNameMarker);

@@ -676,6 +676,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnProperty, size_t, (Instance* ins
     OPERATION_RETURN(scope, result);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedPropertyIsEnumerable, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedKey))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    {
+        UniquedStringImpl* uid;
+        PropertyOffset offset;
+        unsigned attributes;
+        if (findOwnPropertyByKeyGeneric(instance, JSValue::decode(encodedBase), JSValue::decode(encodedKey), uid, offset, attributes))
+            OPERATION_RETURN(scope, isValidOffset(offset) && !(attributes & PropertyAttribute::DontEnum));
+    }
+    auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    PropertyDescriptor descriptor;
+    bool isOwn = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    OPERATION_RETURN(scope, isOwn && descriptor.enumerable());
+}
+
 static uint64_t headerWith(Structure* structure)
 {
     return static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
@@ -792,6 +812,7 @@ std::optional<Writes> writesOfInlineObject(InlineBuiltin which, std::span<const 
 {
     switch (which) {
     case InlineBuiltin::ObjectHasOwn:
+    case InlineBuiltin::ObjectPropertyIsEnumerable:
     case InlineBuiltin::ObjectKeys:
     case InlineBuiltin::ObjectGetOwnPropertyNames:
     case InlineBuiltin::ObjectGetOwnPropertySymbols:
@@ -1743,6 +1764,8 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
         m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
         return yielded;
     }
+    case InlineBuiltin::ObjectPropertyIsEnumerable:
+        return booleanResult(AOT_TYPED_OPERATION(PropertyIsEnumerable, in<Boxed>(value.arguments[0]), in<Boxed>(value.arguments[1])), type);
     case InlineBuiltin::ObjectKeys:
     case InlineBuiltin::ObjectGetOwnPropertyNames:
     case InlineBuiltin::ObjectGetOwnPropertySymbols:

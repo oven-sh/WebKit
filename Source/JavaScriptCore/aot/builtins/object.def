@@ -1,6 +1,7 @@
 # The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
 
 inline ObjectHasOwn
+inline ObjectPropertyIsEnumerable
 inline ObjectKeys
 inline ObjectGetOwnPropertyNames
 inline ObjectGetOwnPropertySymbols
@@ -18,6 +19,7 @@ inline ReflectGetPrototypeOf
 
 runtime HasOwnProperty : Heap size_t (EncodedJSValue object, EncodedJSValue key)
 runtime HasOwnPropertyByName : Heap size_t (EncodedJSValue object, uint32_t name)
+runtime PropertyIsEnumerable : Heap size_t (EncodedJSValue object, EncodedJSValue key)
 runtime OwnPropertyKeys : Heap JSCell* (EncodedJSValue object, uint32_t which)
 runtime ObjectValues : Heap JSCell* (EncodedJSValue object)
 runtime ObjectEntries : RuntimeState JSCell* (EncodedJSValue object) noexcept
@@ -55,6 +57,8 @@ static Object.getOwnPropertyDescriptor (any/GP?, any/G?, any/-...) -> new Object
 static Object.getPrototypeOf (any/GP) -> new Object | null ; MayThrow ReadsArguments ; Inline(ObjectGetPrototypeOf)
 static Object.hasOwn (any/G, toPropertyKey) -> boolean ; MayThrow ReadsArguments ; Inline(ObjectHasOwn)
 static Object.is (any/-, any/-) -> boolean ; Pure ; Inline(ObjectIs)
+
+operation PropertyIsEnumerable (any/G, any/G) -> boolean ; CallsUserCode ; Inline(ObjectPropertyIsEnumerable)
 
 method Object.prototype.hasOwnProperty this/G (toPropertyKey) -> boolean ; ReadsReceiver ; HostCall
 method Object.prototype.isPrototypeOf this/- (any/G) -> boolean ; ReadsArguments ; HostCall

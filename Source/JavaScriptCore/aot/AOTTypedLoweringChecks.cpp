@@ -452,8 +452,7 @@ Word32 Lowering::lowerHasShapeOf(const Value& value)
         if (value.immediates[1] != shapeTestIsForThisInstance)
             return hasShape;
         return either<Word32>(hasShape, [&] {
-            LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
-            return Word32(m_out.equal(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(Structure::offsetOfAOTInstance())))), m_instance));
+            return belongsToThisInstance(cell);
         }, [&] {
             return boolean(false);
         });
@@ -4305,7 +4304,10 @@ Word32 Lowering::lowerInstanceOfByShape(const Value& value)
         }
         Word32 shapeWord = shapeWordOf(cell);
         LBasicBlock hasOtherShape = m_out.newBlock();
-        m_out.branch(passes(shapeWord, instances).value(), unsure(isOne), unsure(hasOtherShape));
+        Word32 isInstance = passes(shapeWord, instances);
+        if (m_program.mayRunInMultipleInstances)
+            isInstance = Word32(m_out.bitAnd(isInstance.value(), belongsToThisInstance(cell).value()));
+        m_out.branch(isInstance.value(), unsure(isOne), unsure(hasOtherShape));
         m_out.appendTo(hasOtherShape);
         if (!hasOnlyTypedObjects) {
             LBasicBlock hasLayout = m_out.newBlock();
@@ -4521,6 +4523,8 @@ Word32 Lowering::lowerIsInstanceOfClass(const Value& value)
     auto test = [&](CellPointer cell) {
         Word32 shapeWord = shapeWordOf(cell);
         Word32 isInstance = passes(shapeWord, m_program.at(value.layout()).instances);
+        if (m_program.mayRunInMultipleInstances)
+            isInstance = Word32(m_out.bitAnd(isInstance.value(), belongsToThisInstance(cell).value()));
         auto walksChain = [&] {
             return AOT_TYPED_OPERATION(InheritsFromClass, cell, word32(value.layout().index()));
         };

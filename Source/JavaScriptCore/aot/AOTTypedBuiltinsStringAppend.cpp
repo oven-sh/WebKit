@@ -28,6 +28,7 @@ static constexpr size_t minStringAppenderCapacity = 4 * KB;
 static constexpr size_t maxRetainedStringAppenderCapacity = 256 * KB;
 static constexpr size_t minLengthAppendedByReference = 64 * KB;
 static constexpr uint64_t maxStringLength = JSString::MaxLength;
+static constexpr size_t maxLengthCopiedInline = 16;
 
 struct StringAppenderFrame {
     uint64_t owner { 0 };
@@ -295,7 +296,7 @@ static NEVER_INLINE Appended pushStringAppenderFrame(Instance* instance, uint64_
 {
     auto& appender = *instance->stringAppender;
     size_t offset = stringAppenderOffset(instance);
-    appender.frames.append(StringAppenderFrame { frame, instance->stringAppenderLength, offset, static_cast<uint32_t>(appender.segments.size()), static_cast<uint32_t>(instance->stringAppenderStartsTop - appender.starts), region, false });
+    appender.frames.constructAndAppend(frame, instance->stringAppenderLength, offset, static_cast<uint32_t>(appender.segments.size()), static_cast<uint32_t>(instance->stringAppenderStartsTop - appender.starts), region, false);
     instance->stringAppenderOwner = frame;
     instance->stringAppenderLimit = instance->stringAppenderLength + std::min<uint64_t>(appender.capacity - offset, maxStringLength);
     JSValue first = JSValue::decode(std::exchange(*firstPiece, 0));
@@ -872,6 +873,10 @@ std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin, ValueID 
         auto field = [&](ptrdiff_t offset) {
             return m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, offset);
         };
+        auto isStringIfCell = [](const Type& type) {
+            return type.primitives & Primitive::String && !type.hasObjects() && !(type.primitives & (Primitive::Symbol | Primitive::BigInt));
+        };
+        bool copiesInline = !prefersGenericPathInColdCode();
         LBasicBlock continuation = nullptr;
         if (operation == Operations::StringAppendMeasure) {
             Word32 isBounded = boolean(true);
@@ -887,14 +892,72 @@ std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin, ValueID 
             continuation = m_out.newBlock();
             m_out.branch(isBounded.value(), usually(continuation), rarely(mayBeTooLong));
             m_out.appendTo(mayBeTooLong);
-        } else if (constexpr uint64_t valueAndCheck = static_cast<uint64_t>(StringAppendPart::Value) | static_cast<uint64_t>(StringAppendPart::CheckRegionLength) << stringAppendPartBits; region && (kinds == static_cast<uint64_t>(StringAppendPart::Value) || kinds == valueAndCheck) && typeOf(value.arguments[1]).isString() && !constantASCIIString(value.arguments[1])) {
+        } else if (constexpr uint64_t valueAndCheck = static_cast<uint64_t>(StringAppendPart::Value) | static_cast<uint64_t>(StringAppendPart::CheckRegionLength) << stringAppendPartBits; region && (kinds == static_cast<uint64_t>(StringAppendPart::Value) || kinds == valueAndCheck) && (copiesInline ? isStringIfCell(typeOf(value.arguments[1])) : typeOf(value.arguments[1]).isString()) && !constantASCIIString(value.arguments[1])) {
             LBasicBlock mayBeFirst = m_out.newBlock();
             LBasicBlock isFirst = m_out.newBlock();
             LBasicBlock isNotFirst = m_out.newBlock();
             continuation = m_out.newBlock();
             LValue firstPiece = firstPieceOf(region);
-            LValue piece = in<CellPointer>(value.arguments[1]).value();
-            m_out.branch(m_out.above(owner(), frame.value()), unsure(mayBeFirst), unsure(isNotFirst));
+            LValue piece;
+            if (auto& pieceType = typeOf(value.arguments[1]); pieceType.isString())
+                piece = in<CellPointer>(value.arguments[1]).value();
+            else {
+                LBasicBlock isString = m_out.newBlock();
+                Boxed boxed = in<Boxed>(value.arguments[1]);
+                m_out.branch(isCell(boxed, pieceType).value(), usually(isString), rarely(isNotFirst));
+                m_out.appendTo(isString);
+                piece = asCell(boxed).value();
+            }
+            LValue currentOwner = owner();
+            if (copiesInline) {
+                LBasicBlock isOpen = m_out.newBlock();
+                LBasicBlock isFlat = m_out.newBlock();
+                LBasicBlock isNarrow = m_out.newBlock();
+                LBasicBlock isShort = m_out.newBlock();
+                LBasicBlock fits = m_out.newBlock();
+                LBasicBlock isOneCharacter = m_out.newBlock();
+                LBasicBlock isNotOneCharacter = m_out.newBlock();
+                LBasicBlock copiesNext = m_out.newBlock();
+                LBasicBlock isCopied = m_out.newBlock();
+                LBasicBlock isNotOpen = m_out.newBlock();
+                m_out.branch(m_out.equal(currentOwner, frame.value()), usually(isOpen), rarely(isNotOpen));
+                m_out.appendTo(isOpen);
+                Pointer fiber = loadField<Pointer>(CellPointer(piece), m_heaps.JSString_value);
+                m_out.branch(hasNoBits(fiber, JSString::isRopeInPointer).value(), usually(isFlat), rarely(isNotFirst));
+                m_out.appendTo(isFlat);
+                m_out.branch(hasBits(loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()).value(), usually(isNarrow), rarely(isNotFirst));
+                m_out.appendTo(isNarrow);
+                LValue size = m_out.zeroExtPtr(loadField<Word32>(fiber, m_heaps.StringImpl_length).value());
+                m_out.branch(m_out.belowOrEqual(size, m_out.constIntPtr(maxLengthCopiedInline)), usually(isShort), rarely(isNotFirst));
+                m_out.appendTo(isShort);
+                LValue length = m_out.load64(field(OBJECT_OFFSETOF(Instance, stringAppenderLength)));
+                LValue end = m_out.add(length, size);
+                m_out.branch(m_out.belowOrEqual(end, m_out.load64(field(OBJECT_OFFSETOF(Instance, stringAppenderLimit)))), usually(fits), rarely(isNotFirst));
+                m_out.appendTo(fits);
+                LValue from = loadField<Pointer>(fiber, m_heaps.StringImpl_data).value();
+                LValue to = m_out.add(m_out.load64(field(OBJECT_OFFSETOF(Instance, stringAppenderOrigin))), length);
+                auto copyCharacterAt = [&](LValue index) {
+                    m_out.store32As8(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(from, index))), m_out.address(m_heaps.AOTTyped_runtimeState, m_out.add(to, index), 0));
+                };
+                m_out.branch(m_out.equal(size, m_out.constIntPtr(1)), unsure(isOneCharacter), unsure(isNotOneCharacter));
+                m_out.appendTo(isOneCharacter);
+                copyCharacterAt(m_out.constIntPtr(0));
+                m_out.jump(isCopied);
+                m_out.appendTo(isNotOneCharacter);
+                ValueFromBlock firstIndex = m_out.anchor(m_out.constIntPtr(0));
+                m_out.branch(m_out.isZero64(size), rarely(isCopied), usually(copiesNext));
+                m_out.appendTo(copiesNext);
+                LValue index = m_out.phi(pointerType(), firstIndex);
+                copyCharacterAt(index);
+                LValue nextIndex = m_out.add(index, m_out.constIntPtr(1));
+                m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
+                m_out.branch(m_out.below(nextIndex, size), usually(copiesNext), rarely(isCopied));
+                m_out.appendTo(isCopied);
+                m_out.store64(end, field(OBJECT_OFFSETOF(Instance, stringAppenderLength)));
+                m_out.jump(continuation);
+                m_out.appendTo(isNotOpen);
+            }
+            m_out.branch(m_out.above(currentOwner, frame.value()), unsure(mayBeFirst), unsure(isNotFirst));
             m_out.appendTo(mayBeFirst);
             m_out.branch(m_out.isZero64(m_out.load64(m_out.address(m_heaps.AOTTyped_argumentBuffer, firstPiece, 0))), unsure(isFirst), unsure(isNotFirst));
             m_out.appendTo(isFirst);
@@ -964,13 +1027,20 @@ std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin, ValueID 
     RELEASE_ASSERT(operation == Operations::StringAppendFinish);
     auto region = static_cast<uint32_t>(m_function.at(value.arguments[0]).integer());
     LValue firstPiece = firstPieceOf(region);
-    CellPointer string = either<CellPointer>(Word32(m_out.above(owner(), frame.value())), [&] {
-        LValue first = m_out.load64(m_out.address(m_heaps.AOTTyped_argumentBuffer, firstPiece, 0));
-        return CellPointer(m_out.select(m_out.isZero64(first), emptyString(), first));
-    }, [&] {
-        return AOT_TYPED_OPERATION(StringAppendFinish, frame, word32(region), Pointer(firstPiece));
-    });
-    return ensure(string, m_program.at(m_program.types.string), type);
+    LBasicBlock isNotOpen = m_out.newBlock();
+    LBasicBlock isOpen = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.above(owner(), frame.value()), unsure(isNotOpen), unsure(isOpen));
+    m_out.appendTo(isNotOpen);
+    LValue first = m_out.load64(m_out.address(m_heaps.AOTTyped_argumentBuffer, firstPiece, 0));
+    ValueFromBlock kept = m_out.anchor(m_out.select(m_out.isZero64(first), emptyString(), first));
+    m_out.jump(continuation);
+    m_out.appendTo(isOpen);
+    CellPointer finished = AOT_TYPED_OPERATION(StringAppendFinish, frame, word32(region), Pointer(firstPiece));
+    ValueFromBlock made = m_out.anchor(finished.value());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return ensure(CellPointer(m_out.phi(pointerType(), kept, made)), m_program.at(m_program.types.string), type);
 }
 
 } } } // namespace JSC::AOT::Typed

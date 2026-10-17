@@ -195,11 +195,16 @@ JS_EXPORT_PRIVATE void setHostClassCachedGetters(std::span<const HostClassCached
 static constexpr unsigned maxNumberOfHostClasses = 256;
 static constexpr unsigned firstDOMConstructorHostClass = 128;
 static constexpr unsigned bunRequestHostClass = firstDOMConstructorHostClass - 1;
+static constexpr unsigned responseHostClass = firstDOMConstructorHostClass - 2;
+static constexpr unsigned firstHostClassNumberedByHand = firstDOMConstructorHostClass - 2;
+static_assert(bunRequestHostClass != responseHostClass && bunRequestHostClass >= firstHostClassNumberedByHand && responseHostClass >= firstHostClassNumberedByHand);
 JS_EXPORT_PRIVATE void didCreateHostClassStructure(JSGlobalObject*, unsigned number, Structure*);
 struct HostClassEntryPoints {
     using NewResponse = EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue bodyOrValue, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, unsigned headerCount, const EncodedJSValue* headerNamesAndValues);
     NewResponse newResponse { nullptr };
     NewResponse newJSONResponse { nullptr };
+    using NewResponseFromResponse = EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue other);
+    NewResponseFromResponse newResponseFromResponse { nullptr };
 };
 JS_EXPORT_PRIVATE void setHostClassEntryPoints(const HostClassEntryPoints&);
 const HostClassEntryPoints& hostClassEntryPoints();
@@ -212,6 +217,7 @@ void destroyStringAppender(Instance&);
 void destroyFormatPatternState(Instance&);
 void releaseLargeJSONSource(Instance&);
 JSValue tryParseJSONWithLearnedShapes(JSGlobalObject*, StringView);
+JS_EXPORT_PRIVATE JSValue tryParseUTF8JSONWithLearnedShapes(JSGlobalObject*, std::span<const uint8_t>);
 String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
 JS_EXPORT_PRIVATE void registerAsyncLocalStorage(JSGlobalObject*, JSObject* storage, JSObject* frame, JSCell* getStore);

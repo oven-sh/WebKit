@@ -3873,6 +3873,10 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
     jit.loadPtr(Address(T12, JSString::offsetOfValue()), T14);
     jit.or64(T13, T14, T9);
     Jump oneIsRope = jit.branchTestPtr(CCallHelpers::NonZero, T9, TrustedImm32(JSString::isRopeInPointer));
+    CCallHelpers::JumpList lengthsDiffer;
+    jit.load32(Address(T13, StringImpl::lengthMemoryOffset()), result);
+    lengthsDiffer.append(jit.branch32(CCallHelpers::NotEqual, Address(T14, StringImpl::lengthMemoryOffset()), result));
+    stubLabels()[static_cast<unsigned>(isLeaf ? Stub::LeafFlatStringsAreEqual : Stub::FlatStringsAreEqual)] = jit.label();
     is.append(jit.branchPtr(CCallHelpers::Equal, T13, T14));
     jit.load32(Address(T13, StringImpl::lengthMemoryOffset()), result);
     is.append(jit.branchTest32(CCallHelpers::Zero, result));
@@ -3899,6 +3903,13 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
     firstIsRope.link(&jit);
     jit.load32(Address(T11, JSRopeString::offsetOfLength()), result);
     isLoaded.link(&jit);
+    Jump secondIsRope = jit.branchIfRopeStringImpl(T14);
+    jit.load32(Address(T14, StringImpl::lengthMemoryOffset()), T9);
+    Jump secondIsLoaded = jit.jump();
+    secondIsRope.link(&jit);
+    jit.load32(Address(T12, JSRopeString::offsetOfLength()), T9);
+    secondIsLoaded.link(&jit);
+    lengthsDiffer.append(jit.branch32(CCallHelpers::NotEqual, result, T9));
     loadCharacters8(jit, T11, T13, T9, slowCases);
     loadCharacters8(jit, T12, T14, T9, slowCases);
     jit.move(T14, T12);
@@ -3906,6 +3917,10 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
 
     is.link(&jit);
     jit.move(TrustedImm32(1), result);
+    returnToTypedCaller(jit, isLeaf);
+
+    lengthsDiffer.link(&jit);
+    jit.move(TrustedImm32(0), result);
     returnToTypedCaller(jit, isLeaf);
 
     slowCases.link(&jit);
@@ -3926,6 +3941,8 @@ static void generateStringsAreEqual(CCallHelpers& jit, bool isLeaf)
 #endif
 }
 static void generateStringsAreEqual(CCallHelpers& jit) { generateStringsAreEqual(jit, false); }
+static void generateFlatStringsAreEqual(CCallHelpers&) { }
+static void generateLeafFlatStringsAreEqual(CCallHelpers&) { }
 #if CPU(ARM64)
 static void generateLeafStringsAreEqual(CCallHelpers& jit) { generateStringsAreEqual(jit, true); }
 #else
@@ -7305,6 +7322,15 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf)
     jit.move(TrustedImm32(0), R0);
     jit.ret();
     isInstance.link(&jit);
+    CCallHelpers::JumpList isOfAnotherInstanceWithOtherPrototype;
+    if (s_mayRunInMultipleInstances) {
+        jit.load32(Address(R0, JSCell::structureIDOffset()), scratch);
+        structureWithID(jit, scratch);
+        Jump belongsToThisInstance = jit.branchPtr(CCallHelpers::Equal, Address(scratch, Structure::offsetOfAOTInstance()), instanceGPR);
+        jit.branchTest8(CCallHelpers::Zero, Address(scratch, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(Structure::hasOtherPrototype)).linkTo(returnsFalse, &jit);
+        isOfAnotherInstanceWithOtherPrototype.append(jit.jump());
+        belongsToThisInstance.link(&jit);
+    }
     CCallHelpers::Label returnsTrue = jit.label();
     jit.move(TrustedImm32(1), R0);
     jit.ret();
@@ -7314,6 +7340,7 @@ static void generateInstanceOfClass(CCallHelpers& jit, bool isLeaf)
     CCallHelpers::JumpList doesNotInherit;
     jit.branchIfNotObject(R0).linkTo(returnsFalse, &jit);
     hasOtherPrototype.link(&jit);
+    isOfAnotherInstanceWithOtherPrototype.link(&jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedClassPrototypes()), prototype);
     jit.loadPtr(CCallHelpers::BaseIndex(prototype, numberOfClass, CCallHelpers::TimesEight), prototype);
     genericPath.append(jit.branchTestPtr(CCallHelpers::Zero, prototype));
@@ -22854,6 +22881,8 @@ static std::optional<RegisterSet> registersNamedByGenerator(Stub stub)
             return changes({ });
         case Stub::RememberElement:
             return changes({ T12 });
+        case Stub::FlatStringsAreEqual:
+        case Stub::StringsAreEqual:
         case Stub::LoadElement:
             return changes({ T9, T11, T12, T13, T14 });
         case Stub::LoadElementAsDoubleOrNullish:
@@ -23072,6 +23101,8 @@ static std::optional<RegisterSet> registersNamedByGenerator(Stub stub)
     case Stub::LeafStringStartsWithLiteral:
     case Stub::StringEndsWithLiteral:
     case Stub::LeafStringEndsWithLiteral:
+    case Stub::FlatStringsAreEqual:
+    case Stub::LeafFlatStringsAreEqual:
     case Stub::StringsAreEqual:
     case Stub::LeafStringsAreEqual:
     case Stub::ConcatenateTwo:

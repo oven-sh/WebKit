@@ -349,6 +349,8 @@ public:
     BuiltinID callOrApply(BuiltinName name) const { return name && (name == callName() || name == applyName()) ? find(BuiltinKind::Method, functionClass().name, name) : BuiltinID(); }
     BuiltinID hasOwnProperty(BuiltinName name) const { return name == BuiltinName(AOT_TYPED_BUILTIN_NAME_hasOwnProperty) ? find(BuiltinKind::Method, objectClass().name, name) : BuiltinID(); }
     BuiltinID hasOwn() const { return findStatic(BuiltinKind::StaticFunction, objectClass().name, BuiltinName(AOT_TYPED_BUILTIN_NAME_hasOwn)); }
+    BuiltinID propertyIsEnumerable(BuiltinName name) const { return name == BuiltinName(AOT_TYPED_BUILTIN_NAME_propertyIsEnumerable) ? find(BuiltinKind::Method, objectClass().name, name) : BuiltinID(); }
+    BuiltinID propertyIsEnumerableOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_PropertyIsEnumerable); }
     const EngineClass* classSpeculatedFor(BuiltinName method) const;
     std::optional<PreludeFunction> preludeFunctionNamed(std::span<const uint8_t>) const;
     BuiltinID entryImplementedBy(PreludeFunction) const;

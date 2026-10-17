@@ -7130,6 +7130,34 @@ JSObject* State::importMetaForModule(JSGlobalObject* globalObject, JSString* pat
     return meta;
 }
 
+void State::didLoadEntryPoint(uint32_t moduleEntryOffset, AbstractModuleRecord* record)
+{
+    if (data.numberOfEntryPoints < 2 || loadedEntryPoints.containsIf([&](auto& loaded) { return loaded.moduleEntryOffset == moduleEntryOffset; }))
+        return;
+    didCreate(record);
+    loadedEntryPoints.append({ moduleEntryOffset, record, nullptr });
+}
+
+JSObject* State::importMetaForEntryPoint(JSGlobalObject* globalObject, uint32_t index)
+{
+    RELEASE_ASSERT(index < data.numberOfEntryPoints);
+    uint32_t moduleEntryOffset = data.at<uint32_t>(data.entryPointsInOrderOffset)[index];
+    for (auto& loaded : loadedEntryPoints) {
+        if (loaded.moduleEntryOffset != moduleEntryOffset)
+            continue;
+        if (!loaded.importMeta) {
+            JSModuleLoader* ownLoader = instance.loader() ? instance.loader() : globalObject->moduleLoader();
+            JSObject* meta = ownLoader->createImportMetaProperties(globalObject, identifierToJSValue(*instance.vm, loaded.record->moduleKey()), uncheckedDowncast<JSModuleRecord>(loaded.record), nullptr);
+            if (!meta)
+                return nullptr;
+            didCreate(meta);
+            loaded.importMeta = meta;
+        }
+        return loaded.importMeta;
+    }
+    return nullptr;
+}
+
 void State::didCreate(JSCell* cell)
 {
     Locker locker { m_cellsLock };

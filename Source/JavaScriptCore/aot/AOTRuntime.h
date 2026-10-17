@@ -997,11 +997,24 @@ struct Instance {
     Structure* argumentsStructure;
     std::array<Structure*, 2> emptyStructuresForKeyedStores;
     std::array<uint32_t, 128> transitionsRequestedOnce;
-    bool wasTransitionRequestedBefore(StructureID structureID, const UniquedStringImpl* name)
+    bool wasTransitionRequestedBefore(StructureID structureID, const UniquedStringImpl* name, uint32_t random)
     {
+        constexpr unsigned ways = 4;
+        static_assert(std::tuple_size_v<decltype(transitionsRequestedOnce)> == ways << 5);
         uint32_t step = (structureID.bits() + static_cast<uint32_t>(std::bit_cast<uintptr_t>(name) >> 4)) * 0x9e3779b1u | 1;
-        uint32_t& noted = transitionsRequestedOnce[step >> 25];
-        return std::exchange(noted, step) == step;
+        uint32_t* set = transitionsRequestedOnce.data() + (step >> 27) * ways;
+        uint32_t* place = random % ways ? nullptr : set + (random >> 8) % ways;
+        for (unsigned way = 0; way < ways; ++way) {
+            if (set[way] == step) {
+                set[way] = 0;
+                return true;
+            }
+            if (!set[way])
+                place = set + way;
+        }
+        if (place)
+            *place = step;
+        return false;
     }
     JSCell* argumentsCallee;
     JSCell* argumentsIterator;
@@ -1848,6 +1861,18 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfHostClassStructureID(unsigned number) { return OBJECT_OFFSETOF(Instance, hostClassStructureIDs) + number * sizeof(uint32_t); }
     BiasedDataPointer linkedFunctionsSharedData;
     BiasedDataPointer ownData[maxNumberOfOwnData];
+    struct StructureOfThis {
+        static constexpr unsigned maxPrototypes = 3;
+        JSCell* newTarget;
+        Slot* site;
+        Structure* structure;
+        uint32_t prototypeEpoch;
+        uint32_t numberOfPrototypes;
+        uint32_t prototypeStructureIDs[maxPrototypes];
+    };
+    static constexpr unsigned numberOfStructuresOfThis = 64;
+    StructureOfThis structuresOfThis[numberOfStructuresOfThis];
+    StructureOfThis& structureOfThis(JSCell* newTarget, Slot* site) { return structuresOfThis[((std::bit_cast<uintptr_t>(newTarget) >> 4) ^ (std::bit_cast<uintptr_t>(site) >> 4)) % numberOfStructuresOfThis]; }
     static constexpr unsigned numberOfTypedStringsWithWord = 4096;
     uint32_t typedStringWords[numberOfTypedStringsWithWord];
     static constexpr ptrdiff_t offsetOfTypedStringWord(unsigned place) { return OBJECT_OFFSETOF(Instance, typedStringWords) + place * sizeof(uint32_t); }

@@ -2038,6 +2038,14 @@ struct State {
     Vector<ImportFromHost, 1> importsFromHost;
     JSObject* importMeta { nullptr };
     JSObject* importMetaForModule(JSGlobalObject*, JSString* path);
+    struct LoadedEntryPoint {
+        uint32_t moduleEntryOffset;
+        AbstractModuleRecord* record;
+        JSObject* importMeta;
+    };
+    Vector<LoadedEntryPoint, 1> loadedEntryPoints;
+    void didLoadEntryPoint(uint32_t moduleEntryOffset, AbstractModuleRecord*);
+    JSObject* importMetaForEntryPoint(JSGlobalObject*, uint32_t index);
     Vector<std::pair<AbstractModuleRecord*, JSObject*>, 1> entryPointImports;
     bool entryPointIsCommonJS { false };
     JSValue newTarget;

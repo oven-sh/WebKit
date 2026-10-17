@@ -460,9 +460,9 @@ for entry in entries:
     rows.append((entry, '{ %d, %d }, %s, %s, %d, %s' % (runs[parameters], len(parameters), result, cpp_effects(entry['where'], entry['effects']), entry['uses_of_this'], cpp_lowering(entry) + (', true' if entry.get('has_private_twin') else ''))))
     listing.append('%s %s %s (%s) -> %s ; %s ; %s' % (kind, entry['holder'] or '-', entry['name'], ', '.join(entry['parameters']), entry['result'], ' '.join(entry['effects']), entry['lowering']))
 
-WELL_KNOWN_NAMES = ['TypedArray', 'prototype', 'call', 'apply', 'hasOwn', 'hasOwnProperty']
+WELL_KNOWN_NAMES = ['TypedArray', 'prototype', 'call', 'apply', 'hasOwn', 'hasOwnProperty', 'propertyIsEnumerable']
 WELL_KNOWN_CLASSES = ['Array', 'Promise', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Function', 'Object']
-WELL_KNOWN_OPERATIONS = ['HasOriginalStructure', 'Call']
+WELL_KNOWN_OPERATIONS = ['HasOriginalStructure', 'Call', 'PropertyIsEnumerable']
 texts = set(WELL_KNOWN_NAMES) | set(replaceable)
 for entry in entries:
     texts.update(text for text in (entry['holder'], entry['name']) if text)
@@ -601,7 +601,7 @@ for where, name, is_prefix, position, what, payload in intrinsics:
     holder, _, function = (payload or '').rpartition('.')
     if what in BARE_INTRINSICS and payload is None:
         variant = what
-    elif what == 'Operation' and any(entry['kind'] == 'operation' and entry['name'] == payload for entry in entries):
+    elif what == 'Operation' and any(entry['kind'] in ('operation', 'intrinsic') and entry['name'] == payload for entry in entries):
         variant = 'Operation(Operation::%s)' % payload
     elif what == 'HasJSType' and len(parts) == 2:
         for part in parts:

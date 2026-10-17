@@ -45,6 +45,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCreateIteratorResult, Runt
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewError, Heap, JSCell*, (Instance*, uint32_t type, EncodedJSValue message, EncodedJSValue options));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedPrepareBoundFunctionAllocation, RuntimeState, void, (Instance*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue body, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewResponseFromResponse, Heap, EncodedJSValue, (Instance*, EncodedJSValue other));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewConstantFormatter, RuntimeState, JSCell*, (Instance*, uint32_t pattern));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatDateTime, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double timeValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFormatNumber, RuntimeState, JSCell*, (Instance*, EncodedJSValue formatter, double number));
@@ -123,6 +124,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedParseInt16, Pure, double, 
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringToNumber16, Pure, double, (Instance*, uint64_t characters, uint32_t length));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasOwnProperty, Heap, size_t, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasOwnPropertyByName, Heap, size_t, (Instance*, EncodedJSValue object, uint32_t name));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPropertyIsEnumerable, Heap, size_t, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedOwnPropertyKeys, Heap, JSCell*, (Instance*, EncodedJSValue object, uint32_t which));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectValues, Heap, JSCell*, (Instance*, EncodedJSValue object));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectEntries, RuntimeState, JSCell*, (Instance*, EncodedJSValue object));

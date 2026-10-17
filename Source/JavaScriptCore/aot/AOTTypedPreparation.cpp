@@ -995,7 +995,7 @@ private:
             if (call.opcode == Opcode::CallMethod)
                 name.append(static_cast<uint8_t>('r'));
             else {
-                if (factsOf(location.function).blocksInLoops.get(location.block))
+                if (factsOf(location.function).blocksInLoops.get(location.block) || (m_program.mayRunInMultipleInstances && !function.has(Format::FunctionIsInBuiltinModule)))
                     continue;
                 if (mayRunAgain(location.function)) {
                     m_treatsFailureAsFinal = true;
@@ -6307,6 +6307,43 @@ static void shareCallsOfFunctionFields(Program& program)
         body.created = count + created.size();
         created.append(WTF::move(shared));
     }
+    BitVector mayCaptureOnlyHolder;
+    for (auto& body : bodies) {
+        if (!body.hasWarmSite)
+            continue;
+        FunctionID callee = functionPinnedToField(program, program.at(body.receiver), functions[body.firstFunction].at(body.firstSite).string());
+        if (callee && std::as_const(program).at(callee).captureTypes.size() == 1)
+            mayCaptureOnlyHolder.set(callee.index());
+    }
+    if (!mayCaptureOnlyHolder.isEmpty()) {
+        static constexpr OpcodeSet closures { Opcode::NewClosure, Opcode::NewClosureOnce };
+        static constexpr OpcodeSet stores { Opcode::PutById, Opcode::PutField };
+        Vector<Vector<uint32_t, 0>> capturingAnotherValue(count);
+        forEachIndexInParallel(count, [&](unsigned i) {
+            if (!functions.mayContain(i, closures))
+                return;
+            auto& function = functions[i];
+            auto withoutCasts = [&](ValueID id) {
+                while (function.at(id).opcode == Opcode::Cast)
+                    id = function.at(id).child(0);
+                return id;
+            };
+            functions.forEachIndexedValue(i, stores, [&](ValueID id) {
+                auto& store = function.at(id);
+                auto& stored = function.at(withoutCasts(store.child(1)));
+                if (!closures.contains(stored.opcode) || !mayCaptureOnlyHolder.get(stored.function().index()))
+                    return;
+                if (stored.arguments.size() != 1 || withoutCasts(stored.arguments[0]) != withoutCasts(store.child(0)))
+                    capturingAnotherValue[i].append(stored.function().index());
+            });
+        });
+        for (auto& found : capturingAnotherValue) {
+            for (uint32_t index : found)
+                mayCaptureOnlyHolder.clear(index);
+        }
+        for (size_t index : mayCaptureOnlyHolder)
+            program.functions.atKeepingValueIndex(index).closuresCaptureOnlyTheirHolder = true;
+    }
     for (auto& body : bodies) {
         if (!body.hasWarmSite)
             continue;
@@ -6355,6 +6392,7 @@ static void shareCallsOfFunctionFields(Program& program)
         test.type = types.boolean;
         test.rep = repOf(program.at(types.boolean));
         test.immediates = { access->layout.index(), access->field };
+        test.guardsFastPath = true;
         ValueID testID(tests.values.size());
         tests.values.append(WTF::move(test));
         tests.blocks[0].values.append(testID);
@@ -11439,51 +11477,77 @@ static void createTypedOnlySupertypes(Program& program)
     }
 }
 
-static TypeID computeWidestStoredFieldType(const Program& program, LayoutID supertype, StringID name)
+static TypeID findOnceByLayoutAndName(std::array<Program::LayoutAndNameTypeCache, 64>& cache, LayoutID layout, StringID name, const Invocable<TypeID()> auto& compute)
 {
-    TypeID widest;
-    auto include = [&](const Layout& layout, bool isSubtype) {
-        auto field = layout.fieldNamed(name);
-        if (!field)
-            return !isSubtype;
-        TypeID type = layout.fields[*field].type;
-        if (!type)
-            return false;
-        if (isSubtype && !(layout.fields[*field].flags & fieldIsNeverObservedAbsentAsDeclared) && !(program.at(type).primitives & Primitive::Undefined))
-            return false;
-        if (!widest || program.at(widest).isSubsetOf(program.at(type), program, false)) {
-            widest = type;
-            return true;
-        }
-        return program.at(type).isSubsetOf(program.at(widest), program, false);
-    };
-    for (LayoutID subtype : program.at(supertype).subtypes) {
-        if (!include(program.at(subtype), true))
-            return { };
-        for (uint32_t i = program.firstSupertypeOfLayout[subtype.index()]; i < program.firstSupertypeOfLayout[subtype.index() + 1]; ++i) {
-            LayoutID other = program.supertypesOfLayouts[i];
-            if (program.fieldsStoredThroughLayouts.contains(static_cast<uint64_t>(other.index()) << 32 | name.index()) && !include(program.at(other), false))
-                return { };
-        }
-    }
-    return widest;
-}
-
-static TypeID widestStoredFieldType(const Program& program, LayoutID supertype, StringID name)
-{
-    if (program.firstSupertypeOfLayout.isEmpty())
-        return { };
-    uint64_t key = static_cast<uint64_t>(supertype.index()) << 32 | name.index();
-    auto& table = program.widestStoredFieldTypeCache[(supertype.index() * 31 + name.index()) % program.widestStoredFieldTypeCache.size()];
+    uint64_t key = static_cast<uint64_t>(layout.index()) << 32 | name.index();
+    auto& table = cache[(layout.index() * 31 + name.index()) % cache.size()];
     {
         Locker locker { table.lock };
         if (auto found = table.types.find(key); found != table.types.end())
             return found->value;
     }
-    TypeID type = computeWidestStoredFieldType(program, supertype, name);
+    TypeID type = compute();
     Locker locker { table.lock };
     table.types.add(key, type);
     return type;
+}
+
+static bool widenTo(const Program& program, TypeID& widest, TypeID type)
+{
+    if (!widest || program.at(widest).isSubsetOf(program.at(type), program, false)) {
+        widest = type;
+        return true;
+    }
+    return program.at(type).isSubsetOf(program.at(widest), program, false);
+}
+
+static TypeID widestTypeStoredThroughSupertypes(const Program& program, LayoutID subtype, StringID name)
+{
+    return findOnceByLayoutAndName(program.widestTypeStoredThroughSupertypesCache, subtype, name, [&] {
+        TypeID widest;
+        for (uint32_t i = program.firstSupertypeOfLayout[subtype.index()]; i < program.firstSupertypeOfLayout[subtype.index() + 1]; ++i) {
+            LayoutID other = program.supertypesOfLayouts[i];
+            if (!program.fieldsStoredThroughLayouts.contains(static_cast<uint64_t>(other.index()) << 32 | name.index()))
+                continue;
+            auto field = program.at(other).fieldNamed(name);
+            if (!field)
+                continue;
+            TypeID type = program.at(other).fields[*field].type;
+            if (!type || !widenTo(program, widest, type))
+                return program.types.anything;
+        }
+        return widest;
+    });
+}
+
+static TypeID computeWidestStoredFieldType(const Program& program, LayoutID supertype, StringID name)
+{
+    TypeID widest;
+    for (LayoutID subtype : program.at(supertype).subtypes) {
+        auto& layout = program.at(subtype);
+        auto field = layout.fieldNamed(name);
+        if (!field)
+            return { };
+        TypeID type = layout.fields[*field].type;
+        if (!type)
+            return { };
+        if (!(layout.fields[*field].flags & fieldIsNeverObservedAbsentAsDeclared) && !(program.at(type).primitives & Primitive::Undefined))
+            return { };
+        if (!widenTo(program, widest, type))
+            return { };
+        if (TypeID stored = widestTypeStoredThroughSupertypes(program, subtype, name); stored && !widenTo(program, widest, stored))
+            return { };
+    }
+    return widest;
+}
+
+TypeID widestStoredFieldType(const Program& program, LayoutID supertype, StringID name)
+{
+    if (program.firstSupertypeOfLayout.isEmpty())
+        return { };
+    return findOnceByLayoutAndName(program.widestStoredFieldTypeCache, supertype, name, [&] {
+        return computeWidestStoredFieldType(program, supertype, name);
+    });
 }
 
 static constexpr int bytesSavedByAccess = 32;
@@ -13110,9 +13174,6 @@ Vector<String> optimize(Program& program)
     }
     didFinish("- the loop over the functions"_s);
     program.sizesForInlining.clear();
-    program.firstSupertypeOfLayout.clear();
-    program.supertypesOfLayouts.clear();
-    program.fieldsStoredThroughLayouts.clear();
     program.inliningFacts.clear();
     for (unsigned i = 0; i < program.noReturnBlocks.size(); ++i) {
         if (program.noReturnBlocks[i].get(0))

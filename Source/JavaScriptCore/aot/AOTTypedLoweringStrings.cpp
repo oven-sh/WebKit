@@ -1126,16 +1126,43 @@ CellPointer Lowering::makeSubstring(const StringReceiver& receiver, Integer leng
     };
     if (prefersGenericPathInColdCode())
         return byStub(false);
-    if (!m_isInLoop && !m_activeHandler) {
+    if (!m_activeHandler) {
         LBasicBlock several = m_out.newBlock();
         LBasicBlock part = m_out.newBlock();
         LBasicBlock flat = m_out.newBlock();
         LBasicBlock otherwise = newColdBlock();
         Join join(m_out, Rep::Cell, Int64);
         Integer span = sub(to, from);
-        m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(otherwise));
-        m_out.appendTo(several);
-        m_out.branch(equal(span, length).value(), rarely(otherwise), usually(part));
+        if (m_isInLoop) {
+            LBasicBlock atMostOne = m_out.newBlock();
+            LBasicBlock none = m_out.newBlock();
+            LBasicBlock one = m_out.newBlock();
+            LBasicBlock oneOfFlat = m_out.newBlock();
+            LBasicBlock oneOfNarrow = m_out.newBlock();
+            LBasicBlock whole = m_out.newBlock();
+            m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(atMostOne));
+            m_out.appendTo(atMostOne);
+            m_out.branch(equal(span, integer(1)).value(), unsure(one), unsure(none));
+            m_out.appendTo(none);
+            join.add(CellPointer(emptyString()));
+            m_out.appendTo(one);
+            Pointer impl = fiberOf(receiver);
+            m_out.branch(hasNoBits(impl, JSString::isRopeInPointer).value(), usually(oneOfFlat), rarely(otherwise));
+            m_out.appendTo(oneOfFlat);
+            m_out.branch(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()).value(), usually(oneOfNarrow), rarely(otherwise));
+            m_out.appendTo(oneOfNarrow);
+            LValue codeUnit = marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), offsetBy(loadField<Pointer>(impl, m_heaps.StringImpl_data), from, 0).value())), IsFixed);
+            ensureStillAliveHere(receiver.string);
+            join.add(CellPointer(singleCharacterString(codeUnit)));
+            m_out.appendTo(several);
+            m_out.branch(equal(span, length).value(), rarely(whole), usually(part));
+            m_out.appendTo(whole);
+            join.add(receiver.string);
+        } else {
+            m_out.branch(greaterThan(span, integer(1)).value(), usually(several), rarely(otherwise));
+            m_out.appendTo(several);
+            m_out.branch(equal(span, length).value(), rarely(otherwise), usually(part));
+        }
         m_out.appendTo(part);
         static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
         Pointer fiber = fiberOf(receiver);
@@ -2943,7 +2970,7 @@ void Lowering::branchOnLiteralByOneCall(LValue value, bool isString, ValueID con
     });
 }
 
-Lowering::Characters Lowering::charactersOfStringWithLength(const StringReceiver& receiver, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise)
+Lowering::Characters Lowering::charactersOfStringWithLength(const StringReceiver& receiver, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise, bool opensRopes)
 {
     auto look = [&](Word32 found, bool isCold) {
         LBasicBlock isAsLong = isCold ? newColdBlock() : m_out.newBlock();
@@ -2963,14 +2990,27 @@ Lowering::Characters Lowering::charactersOfStringWithLength(const StringReceiver
     look(loadField<Word32>(fiber, m_heaps.StringImpl_length), false);
     Pointer data = loadField<Pointer>(fiber, m_heaps.StringImpl_data);
     Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
+    if (!opensRopes) {
+        m_out.jump(continuation);
+        m_out.appendTo(isRope);
+        look(loadField<Word32>(receiver.string, m_heaps.JSRopeString_length), true);
+        m_out.jump(otherwise);
+        m_out.appendTo(continuation);
+        return { data, flags, integer(length), receiver.string };
+    }
+    ValueFromBlock flatData = m_out.anchor(data.value());
+    ValueFromBlock flatFlags = m_out.anchor(flags.value());
     m_out.jump(continuation);
 
     m_out.appendTo(isRope);
     look(loadField<Word32>(receiver.string, m_heaps.JSRopeString_length), true);
-    m_out.jump(otherwise);
+    SubstringCharacters opened = ropeCharacters(receiver.string);
+    ValueFromBlock openedData = m_out.anchor(opened.data);
+    ValueFromBlock openedFlags = m_out.anchor(opened.flags);
+    m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    return { data, flags, integer(length), receiver.string };
+    return { Pointer(m_out.phi(Int64, flatData, openedData)), Word32(m_out.phi(Int32, flatFlags, openedFlags)), integer(length), receiver.string };
 }
 
 Word32 Lowering::equalsLiteralOfLengthByStub(const StringReceiver& receiver, ValueID constant, std::span<const uint8_t> text)
@@ -3069,7 +3109,6 @@ Word32 Lowering::isStringEqualTo(ValueID id, ValueID constant, std::span<const u
         join.add(boolean(false));
         return join.finish().as<Word32>();
     }
-    LBasicBlock isAsLong = m_out.newBlock();
     LBasicBlock isNotAsLong = m_out.newBlock();
     Join join(m_out, Rep::Int32, Int32);
     StringReceiver receiver = stringReceiver(id);
@@ -3086,15 +3125,19 @@ Word32 Lowering::isStringEqualTo(ValueID id, ValueID constant, std::span<const u
         m_out.branch(receiver.isString.value(), unsure(isString), unsure(isNotAsLong));
         m_out.appendTo(isString);
     }
-    m_out.branch(equal(stringLength(receiver), integer(text.size())).value(), unsure(isAsLong), unsure(isNotAsLong));
-    m_out.appendTo(isNotAsLong);
-    join.add(boolean(false));
-    m_out.appendTo(isAsLong);
+    bool checksRopeOnce = text.size() <= maxInlineStringCompareLength && !m_activeHandler;
+    if (!checksRopeOnce) {
+        LBasicBlock isAsLong = m_out.newBlock();
+        m_out.branch(equal(stringLength(receiver), integer(text.size())).value(), unsure(isAsLong), unsure(isNotAsLong));
+        m_out.appendTo(isNotAsLong);
+        join.add(boolean(false));
+        m_out.appendTo(isAsLong);
+    }
     if (text.size() > maxInlineStringCompareLength) {
         join.add(hasSubstringAt(receiver, integer(0), constant, text));
         return join.finish().as<Word32>();
     }
-    Characters characters = charactersOf(receiver);
+    Characters characters = checksRopeOnce ? charactersOfStringWithLength(receiver, text.size(), isNotAsLong, nullptr, true) : charactersOf(receiver);
     join.add(either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
         Word32 result = hasText(characters.data, text);
         ensureStillAliveHere(characters.owner);
@@ -3102,6 +3145,10 @@ Word32 Lowering::isStringEqualTo(ValueID id, ValueID constant, std::span<const u
     }, [&] {
         return Word32(AOT_TYPED_OPERATION(StringEqualsLiteral, receiver.string, word32(m_function.at(stringConstantOf(constant)).string().index())));
     }));
+    if (checksRopeOnce) {
+        m_out.appendTo(isNotAsLong);
+        join.add(boolean(false));
+    }
     return join.finish().as<Word32>();
 }
 
@@ -3322,7 +3369,7 @@ void Lowering::lowerBranchOnLiteral()
         if (!lengths.contains(lengthOf(one)))
             lengths.append(lengthOf(one));
     }
-    bool checksLengthFirst = !flattensRopes && lengths.size() == 1;
+    bool checksLengthFirst = (!flattensRopes || !m_activeHandler) && lengths.size() == 1;
     LBasicBlock wide = newColdBlock();
     auto flatStringCharacters = [&]() -> Characters {
         if (auto opened = openedStringCharacters(receiver))
@@ -3335,7 +3382,7 @@ void Lowering::lowerBranchOnLiteral()
         Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
         return { data, flags, zeroExtended(loadField<Word32>(fiber, m_heaps.StringImpl_length)), receiver.string };
     };
-    Characters characters = flattensRopes ? charactersOf(receiver) : checksLengthFirst ? charactersOfStringWithLength(receiver, lengths[0], otherwise, wide) : flatStringCharacters();
+    Characters characters = checksLengthFirst ? charactersOfStringWithLength(receiver, lengths[0], otherwise, wide, flattensRopes) : flattensRopes ? charactersOf(receiver) : flatStringCharacters();
     orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), wide);
 
     bool returnsNarrow = !flattensRopes && cases.size() > 1;
@@ -3515,12 +3562,29 @@ Word32 Lowering::areStringsEqual(ValueID a, ValueID b)
         if (receiver->isString)
             when(logicalNot(receiver->isString), boolean(false));
     }
+    if (!openedString(first.id) && !openedString(second.id)) {
+#if CPU(ARM64)
+        constexpr GPRReg secondFiberGPR = stubTemporaryGPRs[5];
+#else
+        constexpr GPRReg secondFiberGPR = GPRInfo::argumentGPR3;
+#endif
+        Pointer firstFiber = fiberOf(first);
+        Pointer secondFiber = fiberOf(second);
+        LBasicBlock areFlat = m_out.newBlock();
+        LBasicBlock oneIsRope = newColdBlock();
+        m_out.branch(hasNoBits(Pointer(m_out.bitOr(firstFiber.value(), secondFiber.value())), JSString::isRopeInPointer).value(), usually(areFlat), rarely(oneIsRope));
+        m_out.appendTo(oneIsRope);
+        join.add(Word32(m_out.castToInt32(callAllocationStub(Stub::StringsAreEqual, { { first.string.value(), stubTemporaryGPRs[2] }, { second.string.value(), stubTemporaryGPRs[3] } }, { Writes::Nothing, false }, false, true))));
+        m_out.appendTo(areFlat);
+        when(notEqual(loadField<Word32>(firstFiber, m_heaps.StringImpl_length), loadField<Word32>(secondFiber, m_heaps.StringImpl_length)), boolean(false));
+        join.add(Word32(m_out.castToInt32(callAllocationStub(Stub::FlatStringsAreEqual, { { first.string.value(), stubTemporaryGPRs[2] }, { second.string.value(), stubTemporaryGPRs[3] }, { firstFiber.value(), stubTemporaryGPRs[4] }, { secondFiber.value(), secondFiberGPR } }, { Writes::Nothing, false }, false))));
+        Word32 areEqual = join.finish().as<Word32>();
+        ensureStillAliveHere(first.string);
+        ensureStillAliveHere(second.string);
+        return areEqual;
+    }
     Integer length = stringLength(first);
     when(notEqual(length, stringLength(second)), boolean(false));
-    if (!m_isInLoop) {
-        join.add(Word32(m_out.castToInt32(callAllocationStub(Stub::StringsAreEqual, { { first.string.value(), stubTemporaryGPRs[2] }, { second.string.value(), stubTemporaryGPRs[3] } }, { Writes::Nothing, false }, false))));
-        return join.finish().as<Word32>();
-    }
     Characters p = charactersOf(first);
     Characters q = charactersOf(second);
     when(equal(p.data, q.data), boolean(true));

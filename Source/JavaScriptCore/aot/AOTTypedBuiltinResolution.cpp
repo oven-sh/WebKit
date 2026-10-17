@@ -727,6 +727,10 @@ private:
             become(value, entry, holder, { }, Arguments(value.arguments));
             return true;
         }
+        if (BuiltinID found = m_builtins.propertyIsEnumerable(nameOf(method)); found && holder && value.arguments.size() == 2 && m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(method)) == found) {
+            become(value, m_builtins.propertyIsEnumerableOperation(), nullptr, { }, Arguments(value.arguments));
+            return true;
+        }
         const EngineClass* engineClass = classOf(typeOf(value.arguments[0]));
         if (!holder || !engineClass || typeOf(value.arguments[0]).hasObjects())
             return false;

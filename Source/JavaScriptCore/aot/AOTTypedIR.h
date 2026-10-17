@@ -660,6 +660,7 @@ struct Function {
     bool isSharedOutlinedBody { false };
     bool isSharedCallBody { false };
     bool testsPinnedFunction { false };
+    bool closuresCaptureOnlyTheirHolder { false };
     bool isGuardedPreludeEntry { false };
     bool onlyDestructuresParameter { false };
     bool copiesFirstArgumentToHeap { false };
@@ -1478,6 +1479,7 @@ public:
         UncheckedKeyHashMap<uint64_t, TypeID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> types;
     };
     mutable std::array<LayoutAndNameTypeCache, 64> widestStoredFieldTypeCache;
+    mutable std::array<LayoutAndNameTypeCache, 64> widestTypeStoredThroughSupertypesCache;
     bool isStaticallyHot(FunctionID id) const { return staticallyHotFunctions.get(id.index()); }
     BitVector staticallyWarmFunctions;
     bool isStaticallyWarm(FunctionID id) const { return staticallyWarmFunctions.get(id.index()); }

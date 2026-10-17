@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTTypedPasses.h"
 
+#include "AOTFunction.h"
 #include "AOTTypedThreads.h"
 
 #if ENABLE(AOT)
@@ -517,6 +518,238 @@ private:
         return !!block;
     }
 
+    struct BodyRead {
+        ValueID id;
+        BlockID block;
+        ValueID receiver;
+        size_t firstValueBehind;
+    };
+
+    bool readsReplaceableGlobalThroughCache(ValueID id) const
+    {
+        auto& value = m_function.at(id);
+        auto& source = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+        return value.opcode == Opcode::GetGlobal && !source.has(Format::FunctionIsInBuiltinModule);
+    }
+
+    bool writesNothingBetween(BlockID block, size_t begin, size_t end, ValueID callee) const
+    {
+        auto& values = m_function.at(block).values;
+        for (size_t i = begin; i < end; ++i) {
+            if (values[i] == callee && readsReplaceableGlobalThroughCache(callee))
+                continue;
+            auto& value = m_function.at(values[i]);
+            if (value.opcode == Opcode::Operation || value.opcode == Opcode::CallBuiltin) {
+                BuiltinID operation = m_program.operationOf(value);
+                if (operation == Operations::HostObjectCachedValue || operation == Operations::HasHostObjectCachedValue)
+                    return false;
+            }
+            Writes writes = value.opcode == Opcode::Operation ? writesOfResolvedBuiltinCall(m_program, m_function, value) : writesOf(m_program, m_function, m_function.at(block), i);
+            if (writes > Writes::RuntimeState)
+                return false;
+        }
+        return true;
+    }
+
+    bool areUsedOnlyUpTo(BlockID block, size_t begin, size_t last) const
+    {
+        auto& values = m_function.at(block).values;
+        for (size_t i = begin; i < last; ++i) {
+            unsigned uses = 0;
+            for (size_t user = i + 1; user <= last; ++user) {
+                std::as_const(m_function).at(values[user]).forEachChild([&](ValueID child) {
+                    uses += child == values[i];
+                });
+            }
+            if (uses != useCountInRemainingValues(values[i]))
+                return false;
+        }
+        return true;
+    }
+
+    bool isBodyRead(ValueID id) const
+    {
+        auto& value = m_function.at(id);
+        return value.opcode == Opcode::GetById && equalSpans(m_program.string(value.string()), asBytes("body"_s.span8())) && useCountInRemainingValues(id) == 1;
+    }
+
+    bool isUncheckedCastUsedOnce(ValueID id) const
+    {
+        auto& value = m_function.at(id);
+        if (value.opcode != Opcode::Cast || useCountInRemainingValues(id) != 1)
+            return false;
+        auto reason = static_cast<CastReason>(value.immediates[1]);
+        return reason == CastReason::Claim || reason == CastReason::Upcast;
+    }
+
+    std::optional<BodyRead> bodyReadUsedOnlyBy(ValueID operand, BlockID block, size_t user, ValueID callee) const
+    {
+        size_t first = m_remainingValueCounts[block.index()];
+        if (m_function.at(operand).opcode == Opcode::Cast) {
+            if (!isUncheckedCastUsedOnce(operand))
+                return std::nullopt;
+            operand = m_function.at(operand).child(0);
+        }
+        if (isBodyRead(operand)) {
+            size_t index = m_function.at(block).values.reverseFind(operand);
+            if (index == notFound || index < first || index >= user || !writesNothingBetween(block, index + 1, user, callee))
+                return std::nullopt;
+            return BodyRead { operand, block, m_function.at(operand).child(0), index + 1 };
+        }
+        auto parameters = m_function.at(block).parameters.span();
+        size_t position = std::ranges::find(parameters, operand) - parameters.begin();
+        if (m_function.at(operand).opcode != Opcode::Parameter || position == parameters.size() || useCountInRemainingValues(operand) != 1 || !writesNothingBetween(block, first, user, callee))
+            return std::nullopt;
+        std::optional<BodyRead> read;
+        ValueID cached;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& predecessor = m_function.blocks[b];
+            for (auto& target : predecessor.terminator.targets) {
+                if (target.block != block)
+                    continue;
+                ValueID incoming = target.arguments[position];
+                if (predecessor.terminator.kind != TerminatorKind::Jump)
+                    return std::nullopt;
+                if (isBodyRead(incoming)) {
+                    if (read || predecessor.values.isEmpty() || predecessor.values.last() != incoming || predecessor.values.size() <= m_remainingValueCounts[b])
+                        return std::nullopt;
+                    read = BodyRead { incoming, BlockID(b), m_function.at(incoming).child(0), first };
+                    continue;
+                }
+                auto& other = m_function.at(incoming);
+                bool readsCache = (other.opcode == Opcode::Operation || other.opcode == Opcode::CallBuiltin) && m_program.operationOf(other) == Operations::HostObjectCachedValue;
+                if (cached || !readsCache)
+                    return std::nullopt;
+                cached = incoming;
+            }
+        }
+        if (!read || !cached || m_function.at(cached).arguments[0] != read->receiver)
+            return std::nullopt;
+        return read;
+    }
+
+    ValueID appendTestWithNumber(BuiltinID operation, ValueID subject, uint32_t number)
+    {
+        Value constant = make(Opcode::Integer, m_program.types.int32);
+        constant.setBits(number);
+        Value test = make(Opcode::CallBuiltin, m_program.types.boolean);
+        test.immediates[0] = operation.index();
+        if (subject)
+            test.arguments.append(subject);
+        test.arguments.append(append(WTF::move(constant)));
+        return append(WTF::move(test));
+    }
+
+    void branchOrElse(ValueID condition, BlockID otherwise)
+    {
+        endBlockAfterThrowingValue();
+        BlockID then = addBlock();
+        auto& branch = m_function.at(m_block).terminator;
+        branch.kind = TerminatorKind::Branch;
+        branch.value = condition;
+        branch.targets.append(Target { then, { } });
+        branch.targets.append(Target { otherwise, { } });
+        moveTo(then);
+    }
+
+    bool specializeResponseFromResponse(BlockID block, unsigned index, BuiltinName global)
+    {
+        Value original = m_function.at(m_function.at(block).values[index]);
+        ValueID callee = original.child(0);
+        if (m_function.at(block).terminator.kind == TerminatorKind::Invoke)
+            return false;
+        auto read = bodyReadUsedOnlyBy(original.arguments[0], block, index, callee);
+        if (!read || !areUsedOnlyUpTo(block, read->firstValueBehind, index))
+            return false;
+        ValueID receiver = read->receiver;
+        Value bodyRead = m_function.at(read->id);
+        std::optional<Value> cast;
+        if (m_function.at(original.arguments[0]).opcode == Opcode::Cast)
+            cast = m_function.at(original.arguments[0]);
+        Vector<ValueID, 8> repeated;
+        for (size_t i = read->firstValueBehind; i < index; ++i) {
+            if (ValueID id = m_function.at(block).values[i]; id != original.arguments[0])
+                repeated.append(id);
+        }
+        bool calleeIsReadBehind = repeated.contains(callee);
+
+        open(block, index);
+        BlockID afterConstruction = m_after;
+        uint32_t position = m_position;
+        uint32_t inlineFrame = m_inlineFrame;
+        uint32_t inliningDepth = m_inliningDepth;
+        bool isInTailPosition = m_isInTailPosition;
+        BlockID asWritten = addBlock();
+        m_calleesThatFailedGuard[asWritten.index()] = callee;
+        m_function.at(m_block).terminator.kind = TerminatorKind::Jump;
+        m_function.at(m_block).terminator.targets.append(Target { asWritten, { } });
+        moveTo(asWritten);
+        finish(appendThrowing(Value(original)));
+
+        open(read->block, static_cast<unsigned>(m_function.at(read->block).values.reverseFind(read->id)));
+        BlockID afterRead = m_after;
+        BlockID readsNow = addBlock();
+        branchOrElse(appendTestWithNumber(Operations::HasHostClassStructure, receiver, responseHostClass), readsNow);
+        if (calleeIsReadBehind)
+            branchOrElse(appendTestWithNumber(Operations::IsGlobalCachedAsBuiltin, { }, global.index()), readsNow);
+        else {
+            Value guard = make(Opcode::IsBuiltinFunction, m_program.types.boolean);
+            guard.children[0] = callee;
+            guard.immediates[1] = global.index();
+            branchOrElse(append(WTF::move(guard)), readsNow);
+        }
+
+        Vector<std::pair<ValueID, ValueID>, 8> copies;
+        auto copyOf = [&](ValueID id) {
+            for (auto& [from, to] : copies) {
+                if (from == id)
+                    return to;
+            }
+            return id;
+        };
+        for (ValueID id : repeated) {
+            Value copy = m_function.at(id);
+            copy.forEachChild([&](ValueID& child) {
+                child = copyOf(child);
+            });
+            copies.append({ id, append(WTF::move(copy)) });
+        }
+        m_after = afterConstruction;
+        m_position = position;
+        m_inlineFrame = inlineFrame;
+        m_inliningDepth = inliningDepth;
+        m_isInTailPosition = isInTailPosition;
+        Value claim = make(Opcode::Cast, m_program.types.object);
+        claim.children[0] = receiver;
+        claim.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+        ValueID response = append(WTF::move(claim));
+        Value isSame = make(Opcode::StrictEq, m_program.types.boolean);
+        isSame.children = { copyOf(original.arguments[1]), response };
+        BlockID readsLate = addBlock();
+        m_calleesThatFailedGuard[readsLate.index()] = copyOf(callee);
+        branchOrElse(append(WTF::move(isSame)), readsLate);
+        Value call = make(Opcode::CallBuiltin, original.type);
+        call.immediates[0] = Operations::NewResponseFromResponse.index();
+        call.arguments.append(response);
+        finish(appendThrowing(WTF::move(call)));
+
+        moveTo(readsLate);
+        ValueID body = appendThrowing(Value(bodyRead));
+        if (cast) {
+            cast->children[0] = body;
+            body = appendThrowing(WTF::move(*cast));
+        }
+        original.children[0] = copyOf(callee);
+        original.arguments[0] = body;
+        original.arguments[1] = copyOf(original.arguments[1]);
+        finish(appendThrowing(WTF::move(original)));
+
+        m_after = afterRead;
+        moveTo(readsNow);
+        finish(appendThrowing(WTF::move(bodyRead)));
+        return true;
+    }
+
     bool specializeResponseConstruction(BlockID block, unsigned index)
     {
         Value original = m_function.at(m_function.at(block).values[index]);
@@ -527,7 +760,7 @@ private:
         if (original.arguments.size() == 2)
             init = responseInitLiteral(original.arguments[1], block, index);
         if (!init)
-            return false;
+            return original.arguments.size() == 2 && specializeResponseFromResponse(block, index, global);
 
         removeFromBlocks(*init);
         index -= std::ranges::count_if(init->literalValues, [&](auto& moved) { return moved.block == block; });

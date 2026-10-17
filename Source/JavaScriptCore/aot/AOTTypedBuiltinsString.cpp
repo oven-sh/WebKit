@@ -643,7 +643,7 @@ std::optional<Writes> writesOfInlineString(InlineBuiltin which, std::span<const 
     case InlineBuiltin::StringSlice:
     case InlineBuiltin::StringSubstring:
     case InlineBuiltin::StringSubstr:
-        return writesIf(!arguments.empty() && arguments[0].isNumber() && std::ranges::all_of(arguments.subspan(1), isNumberOrUndefined), Writes::RuntimeState);
+        return writesIf(!arguments.empty() && std::ranges::all_of(arguments, isNumberOrUndefined), Writes::RuntimeState);
     case InlineBuiltin::StringRepeat:
         return writesIf(arguments.size() == 1 && isNumberOrNullish(arguments[0]), Writes::RuntimeState);
     case InlineBuiltin::StringPadStart:
@@ -1129,6 +1129,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         auto isNeverValidPosition = [&](ValueID id) {
             return typeOf(id).isInteger() && typeOf(id).integers.maximum < 0;
         };
+        Operand givenStart = numberOrIfUndefined(arguments[0], number(0));
         std::optional<Operand> givenEnd;
         if (arguments.size() > 1)
             givenEnd = numberOrIfUndefined(arguments[1], toNumber(length));
@@ -1139,7 +1140,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             auto truncated = [&](Operand operand) {
                 return operand.rep == Rep::Int64 ? operand.as<Integer>() : truncateToInteger(operand.as<Number>());
             };
-            Integer start = truncated(get(arguments[0]));
+            Integer start = truncated(givenStart);
             Integer end = givenEnd ? truncated(*givenEnd) : length;
             arePositions = m_out.newBlock();
             LBasicBlock areNotPositions = newColdBlock();
@@ -1148,7 +1149,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             m_out.branch(logicalAnd(belowOrEqual(start, end), belowOrEqual(end, length)).value(), usually(arePositions), rarely(areNotPositions));
             m_out.appendTo(areNotPositions);
         }
-        Integer from = relativeStringIndex(arguments[0], length, which != InlineBuiltin::StringSubstring);
+        Integer from = relativeStringIndex(givenStart, typeOf(arguments[0]), length, which != InlineBuiltin::StringSubstring);
         Integer to = length;
         if (arguments.size() > 1) {
             to = relativeStringIndex(*givenEnd, typeOf(arguments[1]), length, which == InlineBuiltin::StringSlice);

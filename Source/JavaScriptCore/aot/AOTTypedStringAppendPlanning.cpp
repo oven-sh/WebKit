@@ -17,17 +17,13 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 constexpr unsigned noBlock = UINT_MAX;
-constexpr unsigned callerRegion = 0;
-constexpr unsigned entryState = 0;
-constexpr unsigned completeState = 1;
+constexpr unsigned noRegion = 0;
 constexpr unsigned firstFreeState = 2;
 constexpr unsigned maxPlanAttempts = 4;
 constexpr unsigned minStoredParts = 8;
 constexpr size_t maxStoredConstantLength = 256;
 constexpr unsigned maxPlacementDepth = 64;
 constexpr unsigned minPartsWithoutCalls = 8;
-
-enum class Mode : uint8_t { Plain, Worker };
 
 struct Point {
     unsigned block { noBlock };
@@ -43,7 +39,7 @@ struct Part {
 
 using Parts = Vector<Part, 16>;
 
-enum class Step : uint8_t { Begin, Append, Call, Rename, Complete, Finish, Other };
+enum class Step : uint8_t { Begin, Append, Rename, Finish, Other };
 
 struct Insertion {
     Point at;
@@ -87,11 +83,9 @@ struct Checkpoint {
     size_t dead;
     size_t bufferedValues;
     size_t accounted;
-    size_t calls;
     size_t conversions;
     size_t guardedSites;
     unsigned nextState;
-    unsigned callCount;
     unsigned loopCount;
 };
 
@@ -109,17 +103,6 @@ bool isStringPreservingCast(const Program& program, const Value& value)
     default:
         return false;
     }
-}
-
-bool isTailCall(const Function& function, const Value& value)
-{
-    if (!value.isInTailPosition)
-        return false;
-    for (uint32_t frame = value.inlineFrame; frame; frame = function.inlineFrames[frame].parent) {
-        if (!function.inlineFrames[frame].isTailCall)
-            return false;
-    }
-    return true;
 }
 
 BitVector reachableBlocks(const Function& function)
@@ -227,14 +210,12 @@ BitVector findEscapeHTMLAliases(const Program& program)
 
 class StringAppendPlanner {
 public:
-    StringAppendPlanner(const Program& program, FunctionID id, const Function& function, const BitVector& returnsStrings, const BitVector& mayAppend, const BitVector& escapeHTMLAliases, Mode mode)
+    StringAppendPlanner(const Program& program, FunctionID id, const Function& function, const BitVector& returnsStrings, const BitVector& escapeHTMLAliases)
         : m_program(program)
         , m_id(id)
         , m_function(function)
         , m_returnsStrings(returnsStrings)
-        , m_mayAppend(mayAppend)
         , m_escapeHTMLAliases(escapeHTMLAliases)
-        , m_mode(mode)
     {
     }
 
@@ -247,51 +228,20 @@ public:
         m_accounted.fill(0, m_originalValueCount);
         countContinuationUses();
         findAccumulators();
-        Checkpoint start = checkpoint();
-        auto planReturnsConservatively = [&] {
-            rollBack(start);
-            m_returns.shrink(0);
-            m_finishedRoots.shrink(0);
-            m_replacements.shrink(0);
-            m_isConservative = true;
-            RELEASE_ASSERT(planReturns());
-            m_isConservative = false;
-        };
-        if (m_mode == Mode::Worker && !planReturns())
-            planReturnsConservatively();
         planRegions();
         if (!usesOnlyLiveValues()) {
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: dropped the string append plan of function ", m_id.index(), ": it uses a value it removes");
-            if (m_mode == Mode::Plain)
-                return false;
-            planReturnsConservatively();
-            RELEASE_ASSERT(usesOnlyLiveValues());
+            return false;
         }
-        for (ValueID call : m_calls) {
-            unsigned callee = m_function.at(call).function().index();
-            if (!m_appendingCallees.contains(callee))
-                m_appendingCallees.append(callee);
-        }
-        return m_mode == Mode::Worker || !m_insertions.isEmpty();
+        return !m_insertions.isEmpty();
     }
 
-    const Vector<unsigned, 4>& appendingCallees() const { return m_appendingCallees; }
-    bool hasLoops() const { return !m_isLoopHeader.isEmpty(); }
-
-    Function commit(const Vector<uint32_t>& workerOf)
+    Function commit()
     {
         for (auto& value : m_newValues)
             m_function.values.append(WTF::move(value));
         m_newValues.clear();
         m_isCommitting = true;
-        for (ValueID call : m_calls) {
-            auto& value = m_function.at(call);
-            value.immediates[0] = workerOf[value.function().index()];
-            value.type = m_program.types.undefined;
-            value.rep = repOf(m_program.at(value.type));
-            value.copyPredictionFrom(Value { });
-            value.isInTailPosition = value.isInTailPosition && m_returns.containsIf([&](auto& entry) { return entry.second == call; });
-        }
         for (auto& [root, finish] : m_finishedRoots) {
             Value made(m_function.at(finish));
             auto& value = m_function.at(root);
@@ -330,22 +280,19 @@ public:
                 continue;
             BlockValues values;
             Vector<std::pair<BlockValues, unsigned>, 2> cutOff;
-            bool isSettled = false;
             auto insertUpTo = [&](unsigned index) {
                 for (; next < m_insertions.size() && m_insertions[next].at.block == b && m_insertions[next].at.index <= index; ++next) {
                     auto& insertion = m_insertions[next];
                     if (insertion.guardedSite != UINT_MAX) {
                         values.append(m_guardedSites[insertion.guardedSite].guard);
                         cutOff.append({ std::exchange(values, { }), insertion.guardedSite });
-                        isSettled = false;
                         continue;
                     }
-                    if (insertion.step == Step::Rename || insertion.step == Step::Complete || insertion.step == Step::Call || !insertion.value)
+                    if (insertion.step == Step::Rename || !insertion.value)
                         continue;
                     if (m_finishedRoots.containsIf([&](auto& entry) { return entry.second == insertion.value; }))
                         continue;
                     values.append(insertion.value);
-                    isSettled = insertion.step == Step::Append;
                 }
             };
             for (unsigned i = 0; i < block.values.size(); ++i) {
@@ -353,25 +300,7 @@ public:
                 ValueID id = block.values[i];
                 if (m_isDead.get(id.index()))
                     continue;
-                if (size_t call = m_calls.find(id); call != notFound && !isSettled) {
-                    const Value origin(m_function.at(id));
-                    if (unsigned region = m_callRegions[call]) {
-                        Value flags;
-                        flags.opcode = Opcode::Integer;
-                        flags.position = origin.position;
-                        flags.inlineFrame = origin.inlineFrame;
-                        flags.type = m_program.types.integer;
-                        flags.rep = repOf(m_program.at(flags.type));
-                        flags.setBits(region << stringAppendBeginRegionShift | stringAppendBeginIsEager);
-                        m_function.values.append(WTF::move(flags));
-                        ValueID flagsID(m_function.values.size() - 1);
-                        values.append(flagsID);
-                        values.append(addOperation(Operations::StringAppendBegin, origin, m_program.types.undefined, { flagsID }));
-                    } else
-                        values.append(addOperation(Operations::StringAppendSync, origin, m_program.types.undefined, { }));
-                }
                 values.append(id);
-                isSettled = false;
             }
             insertUpTo(UINT_MAX);
             if (cutOff.isEmpty()) {
@@ -401,14 +330,8 @@ public:
             }
             m_function.blocks[current].values = WTF::move(values);
             m_function.blocks[current].terminator = WTF::move(terminator);
-            for (auto& entry : m_returns) {
-                if (entry.first == b)
-                    entry.first = current;
-            }
         }
         removeBufferedPhis();
-        for (auto& [b, returned] : m_returns)
-            m_function.blocks[b].terminator.value = returned;
         return WTF::move(m_function);
     }
 
@@ -625,14 +548,6 @@ private:
         return !isHandledElsewhere(id);
     }
 
-    bool isAppendableCall(ValueID id) const
-    {
-        if (id.index() >= m_originalValueCount)
-            return false;
-        auto& value = m_function.at(id);
-        return value.opcode == Opcode::CallDirect && !value.isJumpToContinuation() && !value.constructs && m_mayAppend.get(value.function().index());
-    }
-
     bool isStringPhi(ValueID id) const
     {
         if (id.index() >= m_originalValueCount || !m_isString.get(id.index()))
@@ -643,7 +558,7 @@ private:
 
     Checkpoint checkpoint() const
     {
-        return { m_insertions.size(), m_newValues.size(), m_deadLog.size(), m_bufferedLog.size(), m_accountedLog.size(), m_calls.size(), m_conversions.size(), m_guardedSites.size(), m_nextState, m_callCount, m_loopCount };
+        return { m_insertions.size(), m_newValues.size(), m_deadLog.size(), m_bufferedLog.size(), m_accountedLog.size(), m_conversions.size(), m_guardedSites.size(), m_nextState, m_loopCount };
     }
 
     void rollBack(const Checkpoint& to)
@@ -656,12 +571,9 @@ private:
             m_bufferedValues.remove(m_bufferedLog.takeLast().index());
         while (m_accountedLog.size() > to.accounted)
             --m_accounted[m_accountedLog.takeLast().index()];
-        m_calls.shrink(to.calls);
-        m_callRegions.shrink(to.calls);
         m_conversions.shrink(to.conversions);
         m_guardedSites.shrink(to.guardedSites);
         m_nextState = to.nextState;
-        m_callCount = to.callCount;
         m_loopCount = to.loopCount;
     }
 
@@ -914,7 +826,7 @@ private:
 
     bool placeNumberToString(Context& context, ValueID id)
     {
-        if (id.index() >= m_originalValueCount || m_uses[id.index()] != 1 || m_isDead.get(id.index()) || m_mustMaterialize.get(id.index()) || m_isConservative)
+        if (id.index() >= m_originalValueCount || m_uses[id.index()] != 1 || m_isDead.get(id.index()) || m_mustMaterialize.get(id.index()))
             return false;
         auto& value = m_function.at(id);
         if (value.opcode != Opcode::CallBuiltin || !value.child(0) || value.arguments.size() > 1 || !typeOf(value.child(0)).isNumber())
@@ -958,7 +870,7 @@ private:
         if (value.opcode == Opcode::String)
             return true;
         if (id.index() < m_originalValueCount && m_uses[id.index()] == 1) {
-            if (countsShortEscapes && !m_isConservative && isEscapeHTMLCall(id))
+            if (countsShortEscapes && isEscapeHTMLCall(id))
                 return true;
             if (value.opcode == Opcode::ToString)
                 return isBounded(value.child(0), countsShortEscapes, depth + 1);
@@ -981,7 +893,7 @@ private:
     bool place(Context& context, ValueID operand, ValueID checkedUser = { })
     {
         ValueID id = skipConversions(operand);
-        if (id.index() < m_originalValueCount && !m_isConservative && m_function.at(id).opcode == Opcode::ToString && m_uses[id.index()] == 1 && isEscapeHTMLCall(m_function.at(id).child(0)) && hasOnlyConstantsBetween(m_function.at(id).child(0), id)) {
+        if (id.index() < m_originalValueCount && m_function.at(id).opcode == Opcode::ToString && m_uses[id.index()] == 1 && isEscapeHTMLCall(m_function.at(id).child(0)) && hasOnlyConstantsBetween(m_function.at(id).child(0), id)) {
             Checkpoint before = checkpoint();
             Context saved = context;
             markDead(id);
@@ -1007,7 +919,7 @@ private:
             }
             if (m_isDead.get(id.index()))
                 return false;
-            if (!m_mustMaterialize.get(id.index()) && !m_isConservative && m_placementDepth < maxPlacementDepth) {
+            if (!m_mustMaterialize.get(id.index()) && m_placementDepth < maxPlacementDepth) {
                 Checkpoint before = checkpoint();
                 Context saved = context;
                 bool isUsedOnce = m_uses[id.index()] == 1;
@@ -1024,8 +936,6 @@ private:
                     }
                 } else if (canBeBuffered && isStringPhi(id) && (!isUsedOnce || hasConcatenationOperand(id)))
                     succeeded = placePhi(context, id, false);
-                else if (isAppendableCall(id) && isUsedOnce)
-                    succeeded = placeCall(context, id);
                 else
                     attempted = false;
                 --m_placementDepth;
@@ -1040,21 +950,6 @@ private:
         if (!isString(id) && !isPlainPrimitive(typeOf(id)))
             return false;
         appendLeaf(context, id);
-        return true;
-    }
-
-    bool placeCall(Context& context, ValueID id)
-    {
-        auto& value = m_function.at(id);
-        if (!flush(context, pointBefore(id), value))
-            return false;
-        unsigned stateAfter = m_nextState++;
-        insert(pointBefore(id), Step::Call, id, context.region, context.state, stateAfter);
-        context.state = stateAfter;
-        context.knownStart = KnownStart::None;
-        m_calls.append(id);
-        m_callRegions.append(context.region);
-        ++m_callCount;
         return true;
     }
 
@@ -1120,7 +1015,7 @@ private:
                 conversion.copyPredictionFrom(Value { });
                 conversion.children = { operand, emptyID, ValueID() };
                 ValueID conversionID = addValue(WTF::move(conversion));
-                if (!m_isConservative && isEscapeHTMLCall(operand) && hasOnlyConstantsBetween(operand, id)) {
+                if (isEscapeHTMLCall(operand) && hasOnlyConstantsBetween(operand, id)) {
                     if (!placeEscapeHTMLCall(context, operand, { emptyID, conversionID }))
                         return false;
                     continue;
@@ -1143,7 +1038,7 @@ private:
                 else if (context.pending[k].kind != StringAppendPart::Value || !isBounded(context.pending[k].value))
                     return false;
             }
-            auto [kinds, append] = makeAppend(context.pending.span().subspan(firstMeasuredPart), value, callerRegion);
+            auto [kinds, append] = makeAppend(context.pending.span().subspan(firstMeasuredPart), value, noRegion);
             m_newValues[append.index() - m_function.values.size()].immediates[0] = Operations::StringAppendMeasure.index();
             insert(pointBefore(id), Step::Other, kinds, context.region, 0, 0);
             insert(pointBefore(id), Step::Other, append, context.region, 0, 0);
@@ -1179,7 +1074,7 @@ private:
             ValueID argument = target.arguments[position];
             while (m_uses[argument.index()] == 1 && (m_function.at(argument).opcode == Opcode::ToString || isStringPreservingCast(m_program, m_function.at(argument))) && isString(m_function.at(argument).child(0)))
                 argument = m_function.at(argument).child(0);
-            if (m_uses[argument.index()] == 1 && (isConcatenation(argument) || isAppendableCall(argument) || (isStringPhi(argument) && hasConcatenationOperand(argument, depth + 1))))
+            if (m_uses[argument.index()] == 1 && (isConcatenation(argument) || (isStringPhi(argument) && hasConcatenationOperand(argument, depth + 1))))
                 return true;
         }
         return false;
@@ -1261,8 +1156,6 @@ private:
                 else if (value.opcode == Opcode::Strcat && !value.arguments.isEmpty())
                     ++m_continuationUses[value.arguments[0].index()];
             }
-            if (m_mode == Mode::Worker && block.terminator.kind == TerminatorKind::Return && block.terminator.value)
-                ++m_continuationUses[block.terminator.value.index()];
             for (auto& target : block.terminator.targets) {
                 auto& parameters = m_function.at(target.block).parameters;
                 for (unsigned i = 0; i < std::min(parameters.size(), target.arguments.size()); ++i) {
@@ -1271,65 +1164,6 @@ private:
                 }
             }
         }
-    }
-
-    bool planReturns()
-    {
-        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
-            if (m_isReachable.get(b) && m_function.blocks[b].terminator.kind == TerminatorKind::Return && !planReturn(b))
-                return false;
-        }
-        return verifyPlan();
-    }
-
-    bool placeReturnValue(Context& context, ValueID returned)
-    {
-        if (!m_isConservative)
-            return place(context, returned);
-        ValueID id = skipConversions(returned);
-        if (isAppendableCall(id) && m_uses[id.index()] == 1 && isTailCall(m_function, m_function.at(id)))
-            return placeCall(context, id);
-        appendLeaf(context, id);
-        return true;
-    }
-
-    bool planReturn(unsigned b)
-    {
-        auto& block = m_function.blocks[b];
-        ValueID returned = block.terminator.value;
-        if (!returned || !isString(returned))
-            return false;
-        const Value origin(m_function.at(returned));
-        for (unsigned attempt = 0; attempt < maxPlanAttempts; ++attempt) {
-            Checkpoint before = checkpoint();
-            size_t firstBuffered = m_bufferedLog.size();
-            Context context { callerRegion, entryState, false, KnownStart::None, { } };
-            bool planned = placeReturnValue(context, returned) && flush(context, endOf(b), origin);
-            if (planned && allBufferedUsesAccounted(firstBuffered, { })) {
-                insert(endOf(b), Step::Complete, ValueID(), callerRegion, context.state, completeState);
-                ValueID last = block.values.isEmpty() ? ValueID() : block.values.last();
-                if (last && m_calls.contains(last) && isTailCall(m_function, m_function.at(last)) && m_insertions.findIf([&](auto& insertion) { return insertion.at.block == b && insertion.at.index == block.values.size() && insertion.value; }) == notFound) {
-                    m_returns.append({ b, last });
-                    return true;
-                }
-                Value nothing;
-                nothing.opcode = Opcode::Undefined;
-                nothing.position = origin.position;
-                nothing.inlineFrame = origin.inlineFrame;
-                nothing.type = m_program.types.undefined;
-                nothing.rep = repOf(m_program.at(nothing.type));
-                ValueID nothingID = addValue(WTF::move(nothing));
-                insert(endOf(b), Step::Other, nothingID, callerRegion, 0, 0);
-                m_returns.append({ b, nothingID });
-                return true;
-            }
-            ValueID culprit = planned ? findBufferedValueWithOtherUse(firstBuffered, { }) : std::exchange(m_conflict, { });
-            rollBack(before);
-            if (!culprit)
-                return false;
-            m_mustMaterialize.set(culprit.index());
-        }
-        return false;
     }
 
     void findAccumulators()
@@ -1395,7 +1229,7 @@ private:
 
     bool isProfitable() const
     {
-        return m_callCount || m_loopCount;
+        return m_loopCount;
     }
 
     void measureParts(ValueID id, unsigned depth, unsigned& parts, size_t& constantLength)
@@ -1515,7 +1349,6 @@ private:
             size_t firstBuffered = m_bufferedLog.size();
             unsigned region = m_nextRegion;
             Context context { region, m_nextState++, true, KnownStart::RegionStart, { } };
-            m_callCount = 0;
             m_loopCount = 0;
             bool planned = placePhi(context, root, true);
             bool isProfitable = this->isProfitable();
@@ -1554,7 +1387,6 @@ private:
             size_t firstBuffered = m_bufferedLog.size();
             unsigned region = m_nextRegion;
             Context context { region, m_nextState++, true, KnownStart::RegionStart, { } };
-            m_callCount = 0;
             m_loopCount = 0;
             bool planned = placeConcatenation(context, root, true) && flush(context, pointBefore(root), origin);
             bool isProfitable = this->isProfitable() || isStoredInArray(root);
@@ -1591,11 +1423,8 @@ private:
                 insertionsByBlock[m_insertions[k].at.block].append(k);
         }
         for (auto& list : insertionsByBlock) {
-            auto place = [&](unsigned k) {
-                return static_cast<uint64_t>(m_insertions[k].at.index) * 2 + (m_insertions[k].step == Step::Call);
-            };
             std::ranges::stable_sort(list, [&](unsigned a, unsigned b) {
-                return place(a) < place(b);
+                return m_insertions[a].at.index < m_insertions[b].at.index;
             });
         }
         BitVector suspends;
@@ -1611,8 +1440,6 @@ private:
         }
         Vector<std::optional<Stack>> stateAtHead(numberOfBlocks);
         stateAtHead[0] = Stack { };
-        if (m_mode == Mode::Worker)
-            stateAtHead[0]->append({ callerRegion, entryState });
         Vector<unsigned, 32> worklist { 0u };
         while (!worklist.isEmpty()) {
             unsigned b = worklist.takeLast();
@@ -1633,7 +1460,7 @@ private:
                 if (suspendsBefore(insertion.at.index))
                     return false;
                 if (insertion.step == Step::Begin) {
-                    if (stack.containsIf([](auto& entry) { return entry.first != callerRegion; }))
+                    if (!stack.isEmpty())
                         return false;
                     ValueID flag = at(insertion.value).arguments[0];
                     m_newValues[flag.index() - m_function.values.size()].setBits(insertion.region << stringAppendBeginRegionShift);
@@ -1653,10 +1480,8 @@ private:
             bool hasHandler = terminator.kind == TerminatorKind::Invoke || (terminator.kind == TerminatorKind::Throw && !terminator.targets.isEmpty());
             if (hasHandler && (!stack.isEmpty() || !insertionsByBlock[b].isEmpty() || m_function.blocks[b].values.containsIf([&](ValueID id) { return m_isDead.get(id.index()); })))
                 return false;
-            if (terminator.kind == TerminatorKind::Return) {
-                if (m_mode == Mode::Worker ? stack.size() != 1 || stack[0] != std::pair { callerRegion, completeState } : !stack.isEmpty())
-                    return false;
-            }
+            if (terminator.kind == TerminatorKind::Return && !stack.isEmpty())
+                return false;
             for (auto& target : terminator.targets) {
                 auto& head = stateAtHead[target.block.index()];
                 if (!head) {
@@ -1690,7 +1515,7 @@ private:
                 if (!m_isDead.get(id.index()) && !m_finishedRoots.containsIf([&](auto& entry) { return entry.first == id; }))
                     m_function.at(id).forEachChild(check);
             }
-            if (block.terminator.value && !m_returns.containsIf([&](auto& entry) { return entry.first == b; }))
+            if (block.terminator.value)
                 check(block.terminator.value);
             for (auto& target : block.terminator.targets) {
                 auto& parameters = m_function.at(target.block).parameters;
@@ -1754,9 +1579,7 @@ private:
     FunctionID m_id;
     Function m_function;
     const BitVector& m_returnsStrings;
-    const BitVector& m_mayAppend;
     const BitVector& m_escapeHTMLAliases;
-    Mode m_mode;
     unsigned m_originalValueCount { 0 };
     bool m_isCommitting { false };
     Vector<uint32_t> m_uses;
@@ -1782,21 +1605,15 @@ private:
     Vector<ValueID> m_bufferedLog;
     Vector<uint32_t> m_accounted;
     Vector<ValueID> m_accountedLog;
-    Vector<ValueID> m_calls;
-    Vector<unsigned> m_callRegions;
     Vector<std::pair<ValueID, Point>> m_conversions;
     Vector<GuardedSite> m_guardedSites;
     Vector<std::pair<ValueID, ValueID>> m_finishedRoots;
-    Vector<std::pair<unsigned, ValueID>> m_returns;
     Vector<std::pair<ValueID, ValueID>> m_replacements;
     Vector<unsigned> m_postOrder;
     Vector<uint32_t> m_continuationUses;
-    bool m_isConservative { false };
     ValueID m_conflict;
-    Vector<unsigned, 4> m_appendingCallees;
     unsigned m_nextState { firstFreeState };
-    unsigned m_nextRegion { callerRegion + 1 };
-    unsigned m_callCount { 0 };
+    unsigned m_nextRegion { noRegion + 1 };
     unsigned m_loopCount { 0 };
     unsigned m_placementDepth { 0 };
 };
@@ -1859,7 +1676,7 @@ bool returnsOnlyStrings(const Program& program, const Function& function, const 
     return returns;
 }
 
-bool mayBenefit(const Program& program, const Function& function, const BitVector& mayAppend, const BitVector& escapeHTMLAliases)
+bool mayBenefit(const Program& program, const Function& function, const BitVector& escapeHTMLAliases)
 {
     unsigned operandCount = 0;
     bool hasConcatenation = false;
@@ -1875,9 +1692,6 @@ bool mayBenefit(const Program& program, const Function& function, const BitVecto
                 hasConcatenation = true;
                 ++operandCount;
             }
-            break;
-        case Opcode::CallDirect:
-            hasOtherReason |= !value.isJumpToContinuation() && mayAppend.get(value.function().index());
             break;
         case Opcode::GetModuleVariable:
             hasOtherReason |= escapeHTMLAliases.get(value.variable().index());
@@ -1938,25 +1752,23 @@ void planStringAppends(Program& program, Vector<String>&)
     }
 
     BitVector escapeHTMLAliases = findEscapeHTMLAliases(program);
-    BitVector mayAppend(count);
     Vector<std::unique_ptr<StringAppendPlanner>> plans(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         static constexpr OpcodeSet concatenations { Opcode::Strcat, Opcode::Add };
         if (!functions.mayContain(i, concatenations))
             return;
         auto& function = functions[i];
-        if (function.blocks.isEmpty() || !program.hasCode(FunctionID(i)) || !mayBenefit(program, function, mayAppend, escapeHTMLAliases) || maySuspend(program, function))
+        if (function.blocks.isEmpty() || !program.hasCode(FunctionID(i)) || !mayBenefit(program, function, escapeHTMLAliases) || maySuspend(program, function))
             return;
-        auto planner = makeUniqueWithoutFastMallocCheck<StringAppendPlanner>(program, FunctionID(i), function, returnsStrings, mayAppend, escapeHTMLAliases, Mode::Plain);
+        auto planner = makeUniqueWithoutFastMallocCheck<StringAppendPlanner>(program, FunctionID(i), function, returnsStrings, escapeHTMLAliases);
         if (planner->run())
             plans[i] = WTF::move(planner);
     });
-    Vector<uint32_t> workerOf;
     Vector<std::unique_ptr<Function>> planned(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         if (!plans[i])
             return;
-        auto function = makeUniqueWithoutFastMallocCheck<Function>(std::exchange(plans[i], nullptr)->commit(workerOf));
+        auto function = makeUniqueWithoutFastMallocCheck<Function>(std::exchange(plans[i], nullptr)->commit());
         Vector<String> findings;
         verify(program, FunctionID(i), *function, findings);
         if (findings.isEmpty())

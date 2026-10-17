@@ -115,11 +115,17 @@ static std::span<const uint8_t> withoutByteOrderMark(std::span<const uint8_t> by
     return bytes.subspan(hasMark ? 3 : 0);
 }
 
+static uint8_t* openUTF8JSONSource(Instance*, std::span<const uint8_t>, uint64_t frame);
+
 static NEVER_INLINE uint8_t* openJSONBytes(Instance* instance, JSValue value, uint64_t frame)
 {
     if (!value.isCell() || value.asCell()->type() != Uint8ArrayType || frame < instance->jsonParserFrame)
         return nullptr;
-    auto bytes = withoutByteOrderMark(uncheckedDowncast<JSArrayBufferView>(value.asCell())->span());
+    return openUTF8JSONSource(instance, withoutByteOrderMark(uncheckedDowncast<JSArrayBufferView>(value.asCell())->span()), frame);
+}
+
+static uint8_t* openUTF8JSONSource(Instance* instance, std::span<const uint8_t> bytes, uint64_t frame)
+{
     uint8_t* start = reserveJSONSource(instance, bytes.size() + jsonSourcePadding);
     if (!start)
         return nullptr;
@@ -677,6 +683,14 @@ static constexpr unsigned maxAlternativesPerShape = 16;
 static constexpr size_t maxLengthParsedWithShapes = 1 * MB;
 static constexpr unsigned maxRefusalsBeforeForgetting = 256;
 static constexpr unsigned numberOfRememberedBeginnings = 1024;
+static constexpr uint8_t creditOfNewBeginning = 8;
+static constexpr uint8_t creditOnTrial = 4;
+static constexpr uint8_t maxCreditOfBeginning = 32;
+static constexpr uint8_t creditLostByPoorParse = 2;
+static constexpr unsigned textsSkippedAtFirst = 64;
+static constexpr unsigned maxDoublingsOfTextsSkipped = 9;
+static constexpr size_t bytesThatPayForCostlyStep = 64;
+static constexpr size_t minLengthOfLongString = 64;
 
 struct JSONShapeMember {
     JSONShapeMember(VM& vm, std::span<const uint8_t> quotedName, unsigned shape)
@@ -731,12 +745,19 @@ struct JSONShapeTable {
     unsigned refusals { 0 };
 };
 
+struct JSONBeginning {
+    uint8_t credit { 0 };
+    uint8_t timesSetAside { 0 };
+    uint16_t textsToSkip { 0 };
+};
+
 struct JSONShapeTables {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONShapeTables);
     const StringImpl* lastText { nullptr };
     JSONShapeTable* lastTable { nullptr };
     std::unique_ptr<JSONShapeTable> learned;
-    WTF::BitSet<numberOfRememberedBeginnings> beginningsSeen;
+    std::array<JSONBeginning, numberOfRememberedBeginnings> beginnings { };
+    bool nextTextWasRefusedAsBytes { false };
     UncheckedKeyHashMap<const StringImpl*, std::unique_ptr<JSONShapeTable>> tables;
 };
 
@@ -856,6 +877,11 @@ public:
     {
     }
 
+    bool wasWorthwhile(size_t length) const
+    {
+        return m_costlySteps * bytesThatPayForCostlyStep <= length && m_bytesOfLongStrings * 2 <= length;
+    }
+
     JSValue parse(const uint8_t* start)
     {
         Parsed parsed = parseValue(start, m_table.root);
@@ -925,7 +951,10 @@ private:
         JSCell* string = makeUncachedString(m_instance, m_vm, quote + 1);
         if (!m_instance->jsonCursor) [[unlikely]]
             return noAnswer;
-        return { JSValue::encode(string), std::bit_cast<Cursor>(m_instance->jsonCursor) };
+        Cursor end = std::bit_cast<Cursor>(m_instance->jsonCursor);
+        if (static_cast<size_t>(end - quote) >= minLengthOfLongString)
+            m_bytesOfLongStrings += end - quote;
+        return { JSValue::encode(string), end };
     }
 
     ALWAYS_INLINE JSONShape& shapeAt(unsigned index) { return *m_table.shapes[index]; }
@@ -972,6 +1001,7 @@ private:
     NEVER_INLINE Parsed parseWithoutShape(Cursor start)
     {
         countOperationNamed(m_instance, "jsonValueParsedWithoutShape");
+        ++m_costlySteps;
         EncodedJSValue value = parseJSONValueAt(m_instance, m_vm, m_globalObject, start);
         if (!m_instance->jsonCursor)
             return noAnswer;
@@ -980,6 +1010,7 @@ private:
 
     unsigned learnShape(JSONShape::Kind kind)
     {
+        ++m_costlySteps;
         auto shape = makeUnique<JSONShape>();
         shape->kind = kind;
         shape->isLearned = true;
@@ -1031,6 +1062,7 @@ private:
             if (candidate.kind == JSONShape::Kind::Object && !candidate.members.isEmpty() && isAtNameAndColon(firstName, candidate.members[0]))
                 return &candidate;
         }
+        ++m_costlySteps;
         for (unsigned alternative : current.alternatives) {
             JSONShape& candidate = shapeAt(alternative);
             if (!holdsMembers(candidate))
@@ -1101,6 +1133,7 @@ private:
         if (parseIndex(member.name) || member.name == m_vm.propertyNames->underscoreProto)
             return false;
         shape.members.append(WTF::move(member));
+        ++m_costlySteps;
         return true;
     }
 
@@ -1172,6 +1205,8 @@ private:
             ++cursor;
             break;
         }
+        if (next > 4 * count + 8) [[unlikely]]
+            ++m_costlySteps;
         Structure* structure = shape->lastStructure;
         if (!isInDeclaredOrder || present != shape->membersOfLastStructure) [[unlikely]] {
             structure = structureFor(*shape, order, count, isInDeclaredOrder ? present : 0);
@@ -1195,6 +1230,7 @@ private:
             }
         }
         if (!structure) {
+            ++m_costlySteps;
             structure = makeStructure(shape, order, count);
             if (!structure || shape.structures.size() >= maxStructuresPerShape)
                 return structure;
@@ -1274,6 +1310,7 @@ private:
         for (;;) {
             if (*cursor != '"') [[unlikely]]
                 return noAnswer;
+            ++m_costlySteps;
             Identifier name;
             cursor = parseName(cursor, name);
             if (!cursor) [[unlikely]]
@@ -1398,6 +1435,8 @@ private:
     VM& m_vm;
     JSGlobalObject* m_globalObject;
     JSONShapeTable& m_table;
+    size_t m_costlySteps { 0 };
+    size_t m_bytesOfLongStrings { 0 };
     MarkedArgumentBufferWithSize<inlineElementCapacity> m_elements;
 };
 
@@ -1432,26 +1471,68 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONParseWithShape, EncodedJS
     return JSValue::encode(parsed ? parsed : jsUndefined());
 }
 
-JSValue tryParseJSONWithLearnedShapes(JSGlobalObject* globalObject, StringView text)
+template<bool isGivenAsBytes, typename Open>
+static ALWAYS_INLINE JSValue tryParseWithLearnedShapes(JSGlobalObject* globalObject, StringView beginning, size_t length, const Open& open)
 {
     Instance* instance = globalObject->aotInstance();
     uint64_t frame = std::bit_cast<uint64_t>(currentStackPointer());
-    if (!instance || frame < instance->jsonParserFrame || text.isEmpty() || text.length() > maxLengthParsedWithShapes)
+    if (!instance || frame < instance->jsonParserFrame || !length || length > maxLengthParsedWithShapes)
         return { };
     JSONShapeTables* tables = instance->jsonShapeTables;
     if (!tables) [[unlikely]]
         tables = makeJSONShapeTables(instance);
-    if (!tables->beginningsSeen.testAndSet((beginningOf(text) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfRememberedBeginnings)))) [[unlikely]]
+    if (std::exchange(tables->nextTextWasRefusedAsBytes, false) && !isGivenAsBytes) [[unlikely]]
         return { };
+    JSONBeginning& record = tables->beginnings[(beginningOf(beginning) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfRememberedBeginnings))];
+    if (!record.credit) [[unlikely]] {
+        bool isSeenForTheFirstTime = !record.timesSetAside;
+        if (record.textsToSkip || isSeenForTheFirstTime) {
+            if (record.textsToSkip)
+                --record.textsToSkip;
+            else
+                record.credit = creditOfNewBeginning;
+            tables->nextTextWasRefusedAsBytes = isGivenAsBytes;
+            return { };
+        }
+        record.credit = creditOnTrial;
+    }
     countOperationNamed(instance, "jsonParsedWithLearnedShapes");
     VM& vm = globalObject->vm();
     JSONShapeTable& table = tables->learned ? *tables->learned : makeLearnedJSONShapeTable(*tables);
-    const uint8_t* start = openJSONString(instance, text, frame);
-    JSValue parsed = start ? ShapedJSONParser(instance, vm, globalObject, table).parse(start) : JSValue();
+    const uint8_t* start = open(instance, frame);
+    ShapedJSONParser parser(instance, vm, globalObject, table);
+    JSValue parsed = start ? parser.parse(start) : JSValue();
     instance->jsonParserFrame = 0;
+    if (parsed && parser.wasWorthwhile(length)) [[likely]]
+        record.credit = std::min<uint8_t>(record.credit + 1, maxCreditOfBeginning);
+    else if (record.credit > creditLostByPoorParse)
+        record.credit -= creditLostByPoorParse;
+    else {
+        countOperationNamed(instance, "jsonBeginningSetAside");
+        record.credit = 0;
+        record.textsToSkip = textsSkippedAtFirst << std::min<unsigned>(record.timesSetAside, maxDoublingsOfTextsSkipped);
+        if (record.timesSetAside < std::numeric_limits<uint8_t>::max())
+            ++record.timesSetAside;
+        table.refusals = maxRefusalsBeforeForgetting;
+    }
     if (table.refusals >= maxRefusalsBeforeForgetting) [[unlikely]]
         tables->learned = nullptr;
+    tables->nextTextWasRefusedAsBytes = isGivenAsBytes && !parsed;
     return parsed;
+}
+
+JSValue tryParseJSONWithLearnedShapes(JSGlobalObject* globalObject, StringView text)
+{
+    return tryParseWithLearnedShapes<false>(globalObject, text, text.length(), [&](Instance* instance, uint64_t frame) {
+        return openJSONString(instance, text, frame);
+    });
+}
+
+JSValue tryParseUTF8JSONWithLearnedShapes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
+{
+    return tryParseWithLearnedShapes<true>(globalObject, StringView { byteCast<Latin1Character>(bytes) }, bytes.size(), [&](Instance* instance, uint64_t frame) {
+        return openUTF8JSONSource(instance, bytes, frame);
+    });
 }
 
 void destroyJSONSource(Instance& instance)

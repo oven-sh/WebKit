@@ -1022,7 +1022,24 @@ Operand Lowering::readField(CellPointer cell, const Field& field, const Type& ty
     Operand raw = loadSlot(cell, field, safeIfAllSubtypesHave(cell, field));
     if (field.store == Store::Uint8 || field.store == Store::Uint16)
         raw = zeroExtended(raw.as<Word32>());
-    auto& stored = m_program.at(field.stored);
+    Type believed;
+    auto& stored = [&]() -> const Type& {
+        auto& inSlot = m_program.at(field.stored);
+        if (inSlot.isSubsetOf(type, m_program) || !m_currentBlock || m_currentIndexInBlock >= m_currentBlock->values.size())
+            return inSlot;
+        auto& read = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+        if (read.opcode != Opcode::GetById || read.string() != field.name)
+            return inSlot;
+        LayoutID supertype = typeOf(read.child(0)).singleLayout();
+        if (!supertype || fieldFor(typeOf(read.child(0)), field.name) != &field)
+            return inSlot;
+        TypeID inMembers = widestStoredFieldType(m_program, supertype, field.name);
+        if (!inMembers || !m_program.at(inMembers).isSubsetOf(inSlot, m_program))
+            return inSlot;
+        believed = m_program.at(inMembers);
+        believed.primitives |= inSlot.primitives & Primitive::Absent;
+        return believed;
+    }();
     if (field.flags & fieldHoldsLazyClosure && !m_readsRawField) {
         ValueID read = m_currentIndexInBlock < m_currentBlock->values.size() ? m_currentBlock->values[m_currentIndexInBlock] : ValueID();
         if (read && (m_function.at(read).opcode != Opcode::GetById || m_function.at(read).string() != field.name))
@@ -1095,6 +1112,43 @@ Word32 Lowering::hasOtherPrototype(CellPointer cell)
     LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
     LValue flags = m_out.load8ZeroExt32(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(JSCell::indexingTypeAndMiscOffset()))));
     return Word32(m_out.testNonZero32(flags, m_out.constInt32(Structure::hasOtherPrototype)));
+}
+
+bool Lowering::isPrivateNameOfOneInstance(StringID name) const
+{
+    if (!m_program.mayRunInMultipleInstances || !isPrivateName(m_program.string(name)))
+        return false;
+    auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+    auto& sourceFunction = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+    return !sourceFunction.has(Format::FunctionIsInBuiltinModule);
+}
+
+LValue Lowering::instanceOwning(CellPointer cell)
+{
+    LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
+    return m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(Structure::offsetOfAOTInstance()))));
+}
+
+Word32 Lowering::belongsToThisInstance(CellPointer cell)
+{
+    return Word32(m_out.equal(instanceOwning(cell), m_instance));
+}
+
+void Lowering::throwIfOfAnotherInstance(CellPointer cell, StringID privateName)
+{
+    LBasicBlock isNotOfThisInstance = newColdBlock();
+    LBasicBlock throws = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue owner = instanceOwning(cell);
+    m_out.branch(m_out.equal(owner, m_instance), usually(continuation), rarely(isNotOfThisInstance));
+    m_out.appendTo(isNotOfThisInstance);
+    m_out.branch(m_out.notZero64(owner), unsure(throws), unsure(continuation));
+    m_out.appendTo(throws);
+    OperationEffects onlyThrows { Writes::Nothing, true };
+    AOT_TYPED_OPERATION_WITH_EFFECTS(GetByName, onlyThrows, box(cell), word32(privateName.index()));
+    AOT_TYPED_OPERATION(ThrowReachedUnreachable);
+    m_out.unreachable();
+    m_out.appendTo(continuation);
 }
 
 void Lowering::branchIfOwnFieldRequested(CellPointer cell, LBasicBlock isNotRequested, LBasicBlock asks)
@@ -1933,16 +1987,20 @@ Word32 Lowering::isPinnedTo(const PinnedRead& read, ValueID constant)
     });
 }
 
-void Lowering::guardPinnedFields(LayoutID holder, const Field& field, ValueID stored)
+void Lowering::guardPinnedFields(LayoutID holder, ValueID object, const Field& field, ValueID stored)
 {
     if (!field.slot || !m_program.at(field.slot).hasPinnedFields)
         return;
     if (field.isPinnedToFunction) {
-        ValueID closure = stored;
-        while (m_function.at(closure).opcode == Opcode::Cast)
-            closure = m_function.at(closure).child(0);
-        Opcode opcode = m_function.at(closure).opcode;
-        if ((opcode == Opcode::NewClosure || opcode == Opcode::NewClosureOnce || opcode == Opcode::FunctionReference) && m_function.at(closure).function() == field.singleFunction)
+        auto withoutCasts = [&](ValueID id) {
+            while (m_function.at(id).opcode == Opcode::Cast)
+                id = m_function.at(id).child(0);
+            return id;
+        };
+        auto& closure = m_function.at(withoutCasts(stored));
+        bool isFreshClosure = (closure.opcode == Opcode::NewClosure || closure.opcode == Opcode::NewClosureOnce || closure.opcode == Opcode::FunctionReference) && closure.function() == field.singleFunction;
+        bool mustCaptureHolder = isFreshClosure && m_program.at(field.singleFunction).closuresCaptureOnlyTheirHolder;
+        if (isFreshClosure && (!mustCaptureHolder || (closure.arguments.size() == 1 && withoutCasts(closure.arguments[0]) == withoutCasts(object))))
             return;
     }
     if (ValueID constant = m_program.constantOf(m_function, stored))
@@ -1998,7 +2056,7 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
         didLowerInitializingStore();
         return;
     }
-    guardPinnedFields(isLoweringInitializingStore() ? m_function.at(object).layout() : typeOf(object).singleLayout(), field, stored);
+    guardPinnedFields(isLoweringInitializingStore() ? m_function.at(object).layout() : typeOf(object).singleLayout(), object, field, stored);
     auto put = [&] {
         if (field.store == Store::Int32OrNumberBox)
             storeInt32OrNumberBox(cell, field, stored, isLoweringInitializingStore());
@@ -2182,6 +2240,8 @@ CellPointer Lowering::withFieldOrElse(ValueID object, LayoutID supertype, const 
         orElse(passes(shapeWordOf(cell), m_program.at(supertype).test, otherwise), otherwise);
     if (!mayBeAbsent && m_program.at(field.stored).primitives & Primitive::Absent)
         orElse(hasField(cell, field), otherwise);
+    if (isPrivateNameOfOneInstance(field.name))
+        orElse(belongsToThisInstance(cell), otherwise);
     return cell;
 }
 
@@ -2441,6 +2501,8 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         return genericPath();
     }
     CellPointer cell = nonNullish(object, name);
+    if (isPrivateNameOfOneInstance(name) && !isAllocatedAsSubtypeOf(object, supertype))
+        throwIfOfAnotherInstance(cell, name);
     if (value.isOnSlowPath && m_program.at(supertype).acceptsUntypedObjects && !sunkCoercionAt(m_currentIndexInBlock)) {
         if (&m_program.at(value.type) == &type) {
             if (auto held = getByIdWithTypeCheck(box(cell), name, value.type))
@@ -2662,7 +2724,7 @@ void Lowering::lowerInitialStores(const InitialStores& stores)
             const Field* field = fieldFor(*stores.thisType, value.string());
             RELEASE_ASSERT(field && !field->isMissingInSomeSubtype);
             bool needsNoStorage = storeNeedsNoStorage(*field, value.child(1));
-            guardPinnedFields(stores.thisType->singleLayout(), *field, value.child(1));
+            guardPinnedFields(stores.thisType->singleLayout(), value.child(0), *field, value.child(1));
             if (Options::countAOTTypedAllocations()) [[unlikely]] {
                 OperationEffects effects { Writes::Fields, false, false, true };
                 AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(value.string().index() | (needsNoStorage ? nameIsFieldCreatedWithoutStorage : 0)));
@@ -6276,7 +6338,7 @@ void Lowering::lowerPutById(ValueID, const Value& value)
             if (mayHaveIntegrity)
                 orElse(hasNoBits(orderWordOf(cell), orderWordIsFrozen), otherwise);
             didEmitWrite(Writes::Fields);
-            guardPinnedFields(supertype, *expectedField, stored);
+            guardPinnedFields(supertype, object, *expectedField, stored);
             if (createsInline) {
                 LBasicBlock creates = m_out.newBlock();
                 LBasicBlock continuation = m_out.newBlock();
@@ -6318,6 +6380,8 @@ void Lowering::lowerPutById(ValueID, const Value& value)
     }
     LayoutID supertype = receiver.singleLayout();
     CellPointer cell = nonNullish(object, name);
+    if (isPrivateNameOfOneInstance(name) && !isAllocatedAsSubtypeOf(object, supertype))
+        throwIfOfAnotherInstance(cell, name);
     if (value.isOnSlowPath && m_program.at(supertype).acceptsUntypedObjects) {
         emitPutById(box(cell), name, in<Boxed>(stored));
         return;
@@ -6426,6 +6490,15 @@ Word32 Lowering::lowerInById(const Value& value)
         operand = asCell(boxed);
     }
     CellPointer cell = operand.as<CellPointer>();
+    if (isPrivateNameOfOneInstance(name) && !m_receiverIsNotOfAnotherInstance && !isAllocatedAsSubtypeOf(object, supertype)) {
+        LValue owner = instanceOwning(cell);
+        return either<Word32>(Word32(m_out.bitOr(m_out.equal(owner, m_instance), m_out.isZero64(owner))), [&] {
+            SetForScope receiverIsNotOfAnotherInstance(m_receiverIsNotOfAnotherInstance, true);
+            return lowerInById(value);
+        }, [&] {
+            return boolean(false);
+        });
+    }
     return accessThroughSupertype(cell, object, supertype, *field, Rep::Int32, [&]() -> Operand {
         if (!(m_program.at(field->stored).primitives & Primitive::Absent) || !mayInherit(m_program, supertype, name))
             return hasOwnField(cell, *field);
@@ -6605,12 +6678,14 @@ Operand Lowering::lowerNewObject(ValueID id, const Value& value)
             initializedFields.set(field);
     }
     BitVector storedNext;
+    BitVector namedNext;
     auto& values = m_currentBlock->values;
     size_t next = m_currentIndexInBlock + 1;
     bool mayHaveCollected = false;
     for (; next < values.size() && isInitializingStore(m_program, m_function, *m_currentBlock, next); ++next) {
         auto& following = m_function.at(values[next]);
         uint32_t field = *fieldInitializedBy(allocation.layout, following);
+        namedNext.set(field);
         if (!mayHaveCollected && (initializedFields.get(field) || !isObjectLayout(layout.kind)))
             storedNext.set(field);
         mayHaveCollected |= !isStoredInline(layout.fields[field], following.child(1)) || (isObjectLayout(layout.kind) && !initializedFields.get(field));
@@ -6662,7 +6737,7 @@ Operand Lowering::lowerNewObject(ValueID id, const Value& value)
             if (field.isOutOfLine || field.flags & fieldIsNeverStored)
                 continue;
             end = std::max(end, field.offset + sizeOf(field.store));
-            if (storedNext.get(i))
+            if (namedNext.get(i))
                 continue;
             LValue initial = initialFieldValue(field, initializedFields.get(i)).value;
             bool startsAsZero = (initial->hasInt() && !initial->asInt()) || (initial->hasDouble() && !std::bit_cast<uint64_t>(initial->asDouble()));

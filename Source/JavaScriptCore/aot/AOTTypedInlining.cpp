@@ -91,6 +91,12 @@ public:
                 if (m_caller.at(call).opcode != Opcode::CallDirect || m_caller.at(call).immediates[1] == afterHead || m_caller.at(call).isCallWithDeclinedInlining())
                     continue;
                 FunctionID callee = m_caller.at(call).function();
+                if (FunctionID sort = sortThatCallsComparator(callee); sort && (m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id))) {
+                    Value& byKey = m_caller.at(call);
+                    byKey.immediates[0] = sort.index();
+                    byKey.arguments.shrink(byKey.arguments.size() - 2);
+                    callee = sort;
+                }
                 uint32_t maxInliningDepth = maxDepth + (isPassedCalledFunction(callee, m_caller.at(call)) || isPassedIteratedGenerator(m_program.at(callee), m_caller.at(call)));
                 bool isTooDeep = depthOf(m_caller.at(call)) >= maxInliningDepth;
                 bool isShallowerByNesting = isTooDeep && depthOf(m_caller.at(call), Copies::OnlyNestingLevels) < maxInliningDepth;
@@ -1334,7 +1340,7 @@ private:
         bool isInInnermostBuiltins = counted == Copies::OnlyNestingLevels;
         for (uint32_t frame = innermostFrame; frame; frame = m_caller.inlineFrames[frame].parent) {
             isInInnermostBuiltins = isInInnermostBuiltins && m_program.at(m_caller.inlineFrames[frame].callee).has(Format::FunctionIsBuiltin);
-            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !isInInnermostBuiltins;
+            frames += !m_program.at(m_caller.inlineFrames[frame].callee).worker && !m_program.at(m_caller.inlineFrames[frame].callee).testsPinnedFunction && !isInInnermostBuiltins;
         }
         if (frames && m_caller.isGenericEntrypoint())
             --frames;
@@ -1817,6 +1823,18 @@ private:
     }
     mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_containsCallNoInline;
 
+    FunctionID sortThatCallsComparator(FunctionID callee) const
+    {
+        auto prelude = [&](PreludeFunction which) { return m_program.preludeFunctions[static_cast<unsigned>(which)]; };
+        if (!callee)
+            return { };
+        if (callee == prelude(PreludeFunction::ArraySortByKey))
+            return prelude(PreludeFunction::ArraySort);
+        if (callee == prelude(PreludeFunction::ArrayToSortedByKey))
+            return prelude(PreludeFunction::ArrayToSorted);
+        return { };
+    }
+
     bool canInline(const Function& callee, const Value& call) const
     {
         if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | FunctionLogsTypeMismatches))
@@ -1872,7 +1890,7 @@ private:
         Value restCall(m_caller.at(call));
         Arguments arguments = m_caller.at(call).arguments;
         uint32_t position = m_caller.at(call).position;
-        uint32_t depth = m_isInliningOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::OnlyNestingLevels) + !callee.has(Format::FunctionIsBuiltin);
+        uint32_t depth = m_isInliningOwnBody ? 0 : callee.worker ? (m_caller.at(call).immediates[1] == Format::none ? 0 : m_caller.at(call).immediates[1]) : depthOf(m_caller.at(call), Copies::OnlyNestingLevels) + (!callee.has(Format::FunctionIsBuiltin) && !callee.testsPinnedFunction);
         uint32_t outerFrame = m_caller.at(call).inlineFrame;
         if (m_caller.inlineFrames.isEmpty())
             m_caller.inlineFrames.append(InlineFrame { });

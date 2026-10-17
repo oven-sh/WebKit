@@ -6165,6 +6165,7 @@ public:
         header.givenNamesOffset = append(assignedNames);
         RELEASE_ASSERT(m_program.entryModules.size() == m_program.entries.size());
         Vector<uint32_t> entryPoints(m_program.entryModules.span());
+        header.entryPointsInOrderOffset = append(entryPoints);
         std::ranges::sort(entryPoints);
         header.numberOfEntryPoints = entryPoints.size();
         header.entryPointsOffset = append(entryPoints);
