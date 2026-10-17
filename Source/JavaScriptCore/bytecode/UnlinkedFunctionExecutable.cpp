@@ -83,7 +83,6 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
-    vm.codeCache()->updateCache(executable, source, kind, result);
     return result;
 }
 
@@ -276,19 +275,12 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     // The mode code is generated with decides what that code is: for a debugger every variable is captured in the
     // scope and the debug hooks are emitted, and each profiler adds its own (BytecodeGenerator::shouldEmitDebugHooks
     // and the two beside it). One unlinked executable is shared by every global object that links it, and a debugger
-    // is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode), so the code kept here
-    // is the code of whoever asked for it first. Give it out only to the ones that ask for the mode it was generated
-    // with; code for another mode is generated and takes its place.
-    switch (specializationKind) {
-    case CodeSpecializationKind::CodeForCall:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get(); codeBlock && codeBlock->codeGenerationMode() == codeGenerationMode)
-            return codeBlock;
-        break;
-    case CodeSpecializationKind::CodeForConstruct:
-        if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForConstruct.get(); codeBlock && codeBlock->codeGenerationMode() == codeGenerationMode)
-            return codeBlock;
-        break;
-    }
+    // is attached to one global object at a time (JSGlobalObject::defaultCodeGenerationMode), so the code held here
+    // is the code of whoever asked for it first: it is only given to the ones that ask for the mode it has.
+    WriteBarrier<UnlinkedFunctionCodeBlock>& slot = specializationKind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct;
+    UnlinkedFunctionCodeBlock* held = slot.get();
+    if (held && held->codeGenerationMode() == codeGenerationMode)
+        return held;
 
     UnlinkedFunctionCodeBlock* result = generateUnlinkedFunctionCodeBlock(
         vm, this, source, specializationKind, codeGenerationMode, 
@@ -298,14 +290,16 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (error.isValid())
         return nullptr;
 
-    switch (specializationKind) {
-    case CodeSpecializationKind::CodeForCall:
-        m_unlinkedCodeBlockForCall.set(vm, this, result);
-        break;
-    case CodeSpecializationKind::CodeForConstruct:
-        m_unlinkedCodeBlockForConstruct.set(vm, this, result);
-        break;
-    }
+    // Code for another mode than the code held. What was generated here gives way to it, and is generated again, the
+    // same, for whoever asks for its mode next. What was decoded from a bytecode cache stays, as it does for as long as
+    // the executable lives (codeBlockEdgeMayBeWeak): it cannot be generated again the same, the payload's code being
+    // the bytecode optimizer's, and the body of a generator or an async function that is suspended in it only finds
+    // its registers again in that very code. The caller's CodeBlock is then all that keeps the new code.
+    if (held && m_isGeneratedFromCache)
+        return result;
+
+    slot.set(vm, this, result);
+    vm.codeCache()->updateCache(this, source, specializationKind, result);
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
