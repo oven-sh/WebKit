@@ -58,6 +58,7 @@ JS_EXPORT_PRIVATE void setFunctionSourceProvider(FunctionSourceProvider);
 
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
+    JS_EXPORT_PRIVATE static std::optional<FunctionRef> tryAt(Instance*, const void* address);
     struct Location;
     JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame, InlineFrameReader* = nullptr) const;
     JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress, const void* frame) const;

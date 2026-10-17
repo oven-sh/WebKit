@@ -1076,6 +1076,8 @@ struct Instance {
     uint64_t iteratorResultHeader;
     uint32_t generatorStepStatus;
     void* generatorTemplates;
+    JSCell* iteratorSymbol;
+    static constexpr ptrdiff_t offsetOfIteratorSymbol() { return OBJECT_OFFSETOF(Instance, iteratorSymbol); }
     static constexpr ptrdiff_t offsetOfGeneratorTemplates() { return OBJECT_OFFSETOF(Instance, generatorTemplates); }
     static constexpr ptrdiff_t offsetOfGeneratorStepStatus() { return OBJECT_OFFSETOF(Instance, generatorStepStatus); }
     static constexpr ptrdiff_t offsetOfIteratorResultHeader() { return OBJECT_OFFSETOF(Instance, iteratorResultHeader); }

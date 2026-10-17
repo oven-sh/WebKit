@@ -3593,6 +3593,15 @@ void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind
     });
 }
 
+void JSGlobalObject::lockHostClassPrototype(JSObject* prototype)
+{
+    if (!locksOrAuditsIntrinsics())
+        return;
+    VM& vm = this->vm();
+    prototype->putDirect(vm, vm.propertyNames->builtinNames().hostClassPrototypePrivateName(), jsBoolean(true), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    prototype->lockProperties(vm, JSObject::LockedObjectExtensibility::BecomesNonExtensible, JSObject::LockedObjectHistory::NewlyCreated);
+}
+
 void JSGlobalObject::makeIntrinsicsImmutable()
 {
     VM& vm = this->vm();

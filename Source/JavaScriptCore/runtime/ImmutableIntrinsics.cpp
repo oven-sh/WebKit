@@ -289,6 +289,8 @@ static String describeIntrinsic(VM& vm, JSObject* object, unsigned depth = 0)
     JSObject* constructorObject = constructor ? constructor.getObject() : nullptr;
     if (constructorObject && constructorObject != object && depth < 2 && constructorObject->getDirect(vm, vm.propertyNames->prototype) == JSValue(object))
         return makeString(describeIntrinsic(vm, constructorObject, depth + 1), ".prototype"_s);
+    if (object->getDirect(vm, vm.propertyNames->builtinNames().hostClassPrototypePrivateName()))
+        return makeString(object->classInfo()->className, ".prototype"_s);
     if (is<JSFunction>(object) || is<InternalFunction>(object))
         return nameOfFunction(vm, object);
     bool isPrototype = object->structure()->typeInfo().wouldHaveImmutableProperties();

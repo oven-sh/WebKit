@@ -5887,13 +5887,13 @@ static ALWAYS_INLINE bool isBuiltinIterator(JSObject* iterator)
 }
 
 template<typename Functor, typename OpenFunctor>
-static ALWAYS_INLINE void openGenericIteration(JSGlobalObject* globalObject, JSValue iterable, const Functor& makeRecord, const OpenFunctor& tryOpenCollectionIteration, ASCIILiteral notIterableMessage = { })
+static ALWAYS_INLINE void openGenericIteration(JSGlobalObject* globalObject, JSValue iterable, const Functor& makeRecord, const OpenFunctor& tryOpenCollectionIteration, ASCIILiteral notIterableMessage = { }, JSValue knownMethod = { }, JSValue knownIterator = { })
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
+    JSValue method = knownMethod || knownIterator ? knownMethod : iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
     RETURN_IF_EXCEPTION(scope, void());
-    if (auto validation = validateIterable(vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
+    if (auto validation = knownIterator ? IterableValidationResult::Valid : validateIterable(vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
         if (notIterableMessage.isNull())
             throwTypeError(globalObject, scope, getIteratorErrorMessage(validation, iterable));
         else
@@ -5901,7 +5901,9 @@ static ALWAYS_INLINE void openGenericIteration(JSGlobalObject* globalObject, JSV
         return;
     }
     JSValue iterator;
-    if (iterable.isObject() && method == JSValue(globalObject->arrayProtoValuesFunction()))
+    if (knownIterator)
+        iterator = knownIterator;
+    else if (iterable.isObject() && method == JSValue(globalObject->arrayProtoValuesFunction()))
         iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asObject(iterable), IterationKind::Values);
     else {
         iterator = call(globalObject, method, JSC::getCallData(method), iterable, ArgList());
@@ -5948,11 +5950,44 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterOpenInFrame, EncodedJSValue, (Inst
         OPERATION_RETURN(scope, JSValue::encode(globalObject));
     state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, jsNull());
     state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(0));
+    if (!instance->iteratorSymbol) [[unlikely]] {
+        instance->iteratorSymbol = Symbol::create(vm, static_cast<SymbolImpl&>(*vm.propertyNames->iteratorSymbol.impl()));
+        gcProtect(instance->iteratorSymbol);
+    }
     openGenericIteration(globalObject, JSValue::decode(iterable), [&] {
         return state;
     }, [&](JSValue iterator) {
         return Typed::CollectionIteration::tryOpen(globalObject, iterator, state);
     });
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(globalObject));
+}
+
+static ALWAYS_INLINE void continueOpeningInFrame(JSGlobalObject* globalObject, JSValue iterable, EncodedJSValue* words, JSValue method, JSValue iterator)
+{
+    VM& vm = globalObject->vm();
+    auto* state = Typed::CollectionIteration::InFrame::at(words);
+    state->setIndex(vm, Typed::CollectionIteration::structureOfResultsWord, jsNull());
+    state->setIndex(vm, Typed::CollectionIteration::offsetsInResultsWord, jsNumber(0));
+    openGenericIteration(globalObject, iterable, [&] {
+        return state;
+    }, [&](JSValue opened) {
+        return Typed::CollectionIteration::tryOpen(globalObject, opened, state);
+    }, { }, method, iterator);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedFinishIterOpenInFrame, EncodedJSValue, (Instance* instance, EncodedJSValue iterator, EncodedJSValue* words))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    continueOpeningInFrame(globalObject, jsUndefined(), words, { }, JSValue::decode(iterator));
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(globalObject));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterOpenInFrameWithMethod, EncodedJSValue, (Instance* instance, EncodedJSValue iterable, EncodedJSValue* words, EncodedJSValue method))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    continueOpeningInFrame(globalObject, JSValue::decode(iterable), words, JSValue::decode(method), { });
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(globalObject));
 }

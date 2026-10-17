@@ -6456,6 +6456,7 @@ public:
 
     void convertDoubleToInt32UsingJavaScriptSemantics(FPRegisterID src, RegisterID dest)
     {
+        RELEASE_ASSERT(supportsDoubleToInt32ConversionUsingJavaScriptSemantics());
         m_assembler.fjcvtzs(dest, src); // This zero extends.
     }
     

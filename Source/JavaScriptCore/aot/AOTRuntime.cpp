@@ -1448,6 +1448,18 @@ Data* Instance::ensureData(uint32_t index)
     return Data::create(*this, *info.function());
 }
 
+std::optional<FunctionRef> FunctionRef::tryAt(Instance* instance, const void* address)
+{
+    auto& asked = instance->cachedAddressInfo(address);
+    if (asked.address == address) [[likely]]
+        return FunctionRef { instance, asked.function };
+    ImageAddressInfo what = classifyAddress(address);
+    if (what.kind != ImageAddressInfo::Function)
+        return std::nullopt;
+    asked = { address, what.index, Instance::CachedAddressInfo::siteNotResolved };
+    return FunctionRef { instance, what.index };
+}
+
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
     auto& asked = instance->cachedAddressInfo(address);

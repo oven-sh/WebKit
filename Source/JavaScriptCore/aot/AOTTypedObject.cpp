@@ -9049,7 +9049,7 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
             JSObject* next = newTarget;
             while (next && next != constructor) {
                 auto* heir = dynamicDowncast<Closure>(next);
-                if (const LayoutData* descendantLayout = heir && heir->structure()->aotInstance() == &instance ? heir->classData() : nullptr; descendantLayout && ofHeir->hasFixedLayout)
+                if (const LayoutData* descendantLayout = heir && heir->structure()->aotInstance() == &instance ? heir->classData() : nullptr; descendantLayout && descendantLayout->hasFixedLayout)
                     descendants.append(descendantLayout);
                 JSValue parentClass = next->getPrototypeDirect();
                 next = parentClass.isObject() ? asObject(parentClass) : nullptr;
@@ -13955,6 +13955,11 @@ static JSObject* lockedPrototypeConstructor(VM& vm, JSObject* object)
     return constructor && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && constructor.isCallable() ? asObject(constructor) : nullptr;
 }
 
+static bool isHostClassPrototype(VM& vm, JSObject* object)
+{
+    return object->mayBePrototype() && object->getDirect(vm, vm.propertyNames->builtinNames().hostClassPrototypePrivateName());
+}
+
 static String nameOfLockedObject(VM& vm, JSObject* object)
 {
     if (object->isGlobalObject())
@@ -13965,6 +13970,8 @@ static String nameOfLockedObject(VM& vm, JSObject* object)
         return functionName(object);
     if (JSObject* constructor = lockedPrototypeConstructor(vm, object))
         return makeString(functionName(constructor), ".prototype"_s);
+    if (isHostClassPrototype(vm, object))
+        return makeString(object->classInfo()->className, ".prototype"_s);
     return object->classInfo()->className;
 }
 
@@ -16826,7 +16833,9 @@ String AOT::lockedOperationErrorMessage(VM& vm, JSObject* object, LockedOperatio
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(object))
         object = proxy->target();
     JSObject* constructor = object->isCallable() || object->isGlobalObject() ? nullptr : Typed::lockedPrototypeConstructor(vm, object);
-    ASCIILiteral why = isProgramClass(constructor ? constructor : object) ? "classes are fixed in a program compiled with --aot"_s : "built-ins are locked in a program compiled with --aot"_s;
+    String why = isProgramClass(constructor ? constructor : object) ? "classes are fixed in a program compiled with --aot"_s : "built-ins are locked in a program compiled with --aot"_s;
+    if (Typed::isHostClassPrototype(vm, object))
+        why = makeString(why, ". Use a subclass of "_s, object->classInfo()->className, " or a wrapper function instead"_s);
     String holder = Typed::nameOfLockedObject(vm, object);
     if (refused == LockedOperation::ChangePrototype)
         return withAOTErrorNote(makeString("Cannot change the prototype of "_s, holder, ": "_s, why));

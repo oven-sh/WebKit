@@ -610,11 +610,31 @@ Integer Lowering::positionOf(ValueID id)
 #endif
 }
 
+Operand Lowering::numberOrIfUndefined(ValueID id, Number otherwise)
+{
+    Operand operand = get(id);
+    switch (operand.rep) {
+    case Rep::Int64:
+    case Rep::Double:
+        return operand;
+    case Rep::OptionalInt64:
+        return Operand(Rep::Double, select(isMarker(operand), otherwise, toNumber(assumedInteger(operand.as<OptionalInteger>()))).value());
+    case Rep::OptionalDouble:
+        return Operand(Rep::Double, select(isMarker(operand), otherwise, assumedNumber(operand.as<OptionalNumber>())).value());
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 Integer Lowering::relativeStringIndex(ValueID id, Integer length, bool isRelativeToEnd)
 {
-    auto& type = typeOf(id);
+    return relativeStringIndex(get(id), typeOf(id), length, isRelativeToEnd);
+}
+
+Integer Lowering::relativeStringIndex(Operand operand, const Type& type, Integer length, bool isRelativeToEnd)
+{
     Integer x;
-    if (Operand operand = get(id); operand.rep == Rep::Int64)
+    if (operand.rep == Rep::Int64)
         x = operand.as<Integer>();
     else {
 #if CPU(ARM64)

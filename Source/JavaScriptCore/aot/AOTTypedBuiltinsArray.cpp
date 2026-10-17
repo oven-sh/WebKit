@@ -1549,7 +1549,17 @@ Operand Lowering::lowerArraySlice(const Value& value, const Type& type)
         byStub = m_out.anchor(callAllocationStub(Stub::ArrayCopy, { { array.value(), GPRInfo::toArgumentRegister(1) } }, effectsForOperation<operationAOTTypedArrayCopy>(), true));
     else {
         Integer first = indexOrElse(arguments[0], slowPath);
-        Integer afterLast = arguments.size() > 1 ? indexOrElse(arguments[1], slowPath) : integer(static_cast<int64_t>(1) << 32);
+        Integer toTheEnd = integer(static_cast<int64_t>(1) << 32);
+        Integer afterLast = toTheEnd;
+        if (arguments.size() > 1 && typeOf(arguments[1]).isNumber())
+            afterLast = indexOrElse(arguments[1], slowPath);
+        else if (arguments.size() > 1) {
+            afterLast = either<Integer>(isMarker(get(arguments[1])), [&] {
+                return toTheEnd;
+            }, [&] {
+                return indexOrElse(arguments[1], slowPath);
+            });
+        }
         byStub = m_out.anchor(callAllocationStub(Stub::ArraySlice, { { array.value(), GPRInfo::toArgumentRegister(1) }, { first.value(), GPRInfo::toArgumentRegister(2) }, { afterLast.value(), GPRInfo::toArgumentRegister(3) } }, effectsForOperation<operationAOTTypedArraySlice>(), true));
     }
     Vector<ValueFromBlock, 2> made { byStub };
@@ -1804,15 +1814,10 @@ std::optional<Writes> writesOfInlineArray(InlineBuiltin which, std::span<const T
     case InlineBuiltin::ArrayUnshift:
         return writesIf(arguments.size() == 1, Writes::Heap);
     case InlineBuiltin::ArrayIndexOf:
-        if (arguments.size() == 2 && !arguments[0].isNumber() && arguments[1].isInteger() && arguments[1].integers.minimum >= 0 && arguments[1].integers.maximum <= INT32_MAX)
-            return Writes::RuntimeState;
-        [[fallthrough]];
     case InlineBuiltin::ArrayIncludes:
-        return writesIf(arguments.size() == 1, Writes::RuntimeState);
+        return writesIf(arguments.size() == 1 || (arguments.size() == 2 && !arguments[0].isNumber() && isNumberOrUndefined(arguments[1])), Writes::RuntimeState);
     case InlineBuiltin::ArraySlice:
-        return writesIf(std::ranges::all_of(arguments, [](auto& argument) {
-            return argument.isNumber();
-        }), Writes::RuntimeState);
+        return writesIf(arguments.empty() || (arguments[0].isNumber() && std::ranges::all_of(arguments.subspan(1), isNumberOrUndefined)), Writes::RuntimeState);
     case InlineBuiltin::ArraySplice:
         return writesIf(!arguments.empty() && arguments[0].isNumber() && (arguments.size() == 1 || isInt32Type(arguments[1])), Writes::Heap);
     case InlineBuiltin::ArrayWithLength:
@@ -1952,11 +1957,17 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
             m_out.appendTo(others);
         }
         orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), slowPath);
-        Vector<std::pair<LValue, GPRReg>, 4> operands { { butterflyOf(array).value(), GPRInfo::argumentGPR1 }, { mapKey(arguments[0]).value(), GPRInfo::argumentGPR2 } };
+        Pointer butterfly = butterflyOf(array);
+        Vector<std::pair<LValue, GPRReg>, 4> operands { { butterfly.value(), GPRInfo::argumentGPR1 }, { mapKey(arguments[0]).value(), GPRInfo::argumentGPR2 } };
         bool hasStart = arguments.size() == 2;
-        if (hasStart)
-            operands.append({ in<Integer>(arguments[1]).value(), GPRInfo::argumentGPR4 });
-        Word32 found(m_out.castToInt32(callICStub(hasStart ? Stub::ArrayIndexOfFrom : isIndexOf ? Stub::ArrayIndexOf : Stub::ArrayIncludes, Int64, operands, std::nullopt, OperationEffects { Writes::RuntimeState, true })));
+        if (hasStart) {
+            auto& startType = typeOf(arguments[1]);
+            bool isPlainIndex = startType.isInteger() && startType.integers.minimum >= 0 && startType.integers.maximum <= INT32_MAX;
+            Integer start = isPlainIndex ? in<Integer>(arguments[1]) : relativeStringIndex(numberOrIfUndefined(arguments[1], number(0)), startType, publicLength(butterfly), true);
+            operands.append({ start.value(), GPRInfo::argumentGPR4 });
+        }
+        Stub withStart = isIndexOf ? Stub::ArrayIndexOfFrom : Stub::ArrayIncludesFrom;
+        Word32 found(m_out.castToInt32(callICStub(hasStart ? withStart : isIndexOf ? Stub::ArrayIndexOf : Stub::ArrayIncludes, Int64, operands, std::nullopt, OperationEffects { Writes::RuntimeState, true })));
         ensureStillAliveHere(array);
         if (isIndexOf)
             join.add(ensure(signExtended(found), Type::integer({ -1, INT32_MAX }), type));

@@ -3577,17 +3577,25 @@ static bool reservesInaccessibleFirstPages()
     static bool s_reservesThem;
     if (lowestAccessibleAddress() >= FaultingAccessInImage::reach || s_reservesThem)
         return true;
-#if OS(LINUX) && defined(MAP_FIXED_NOREPLACE)
+#if OS(FREEBSD) || (OS(LINUX) && defined(MAP_FIXED_NOREPLACE))
+#if OS(FREEBSD)
+    constexpr int fixedWithoutReplacing = MAP_FIXED | MAP_EXCL;
+    constexpr int outOfRangeError = EINVAL;
+    char isResident;
+#else
+    constexpr int fixedWithoutReplacing = MAP_FIXED_NOREPLACE;
+    constexpr int outOfRangeError = EPERM;
+    unsigned char isResident;
+#endif
     size_t pageBytes = pageSize();
     for (uintptr_t page = 0; page < FaultingAccessInImage::reach; page += pageBytes) {
-        void* mapped = mmap(std::bit_cast<void*>(page), pageBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        void* mapped = mmap(std::bit_cast<void*>(page), pageBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | fixedWithoutReplacing, -1, 0);
         bool zeroPageWasRelocated = !page && mapped != MAP_FAILED && mapped;
         if (zeroPageWasRelocated)
             munmap(mapped, pageBytes);
         if (mapped == MAP_FAILED || zeroPageWasRelocated) {
-            if (!zeroPageWasRelocated && errno != EPERM && errno != EACCES)
+            if (!zeroPageWasRelocated && errno != outOfRangeError && errno != EPERM && errno != EACCES && errno != ENOMEM)
                 return false;
-            unsigned char isResident;
             if (mincore(std::bit_cast<void*>(page), pageBytes, &isResident) != -1 || errno != ENOMEM)
                 return false;
             continue;

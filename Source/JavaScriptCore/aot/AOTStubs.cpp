@@ -5590,6 +5590,21 @@ static void branchIfNotExactInt32(CCallHelpers& jit, FPRReg number, GPRReg integ
     jit.branchConvertDoubleToInt32(number, integer, isNone, scratch);
 }
 
+#if CPU(ARM64)
+static void setEqualIfExactInt32(CCallHelpers& jit, FPRReg number, GPRReg integer, GPRReg boxedDouble, GPRReg scratch, FPRReg scratchFPR)
+{
+    if (CCallHelpers::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        jit.convertDoubleToInt32UsingJavaScriptSemantics(number, integer);
+        return;
+    }
+    jit.truncateDoubleToInt32(number, integer);
+    jit.convertInt32ToDouble(integer, scratchFPR);
+    jit.moveDoubleTo64(scratchFPR, scratch);
+    jit.sub64(GPRInfo::numberTagRegister, scratch);
+    jit.m_assembler.cmp<64>(scratch, boxedDouble);
+}
+#endif
+
 static void generateBoxNumber(CCallHelpers& jit, bool mayBeNullish)
 {
     constexpr FPRReg number = FPRInfo::returnValueFPR;
@@ -9972,8 +9987,7 @@ static void storeByTransition(CCallHelpers& jit, CCallHelpers::JumpList& miss, b
         jit.load32(Address(R0, Typed::offsetOfExtension), storage);
         Jump hasNoExtension = jit.branchTest32(CCallHelpers::Zero, storage);
         decodeCell32(jit, storage, storage);
-        miss.append(jit.branch32(CCallHelpers::Above, size, Address(storage, Typed::offsetOfExtensionSize)));
-        Jump hasExtension = jit.jump();
+        Jump hasExtension = jit.branch32(CCallHelpers::BelowOrEqual, size, Address(storage, Typed::offsetOfExtensionSize));
 
         hasNoExtension.link(&jit);
         jit.load8(Address(R0, JSCell::cellStateOffset()), T11);
@@ -9995,6 +10009,18 @@ static void storeByTransition(CCallHelpers& jit, CCallHelpers::JumpList& miss, b
         jit.store64(zero, CCallHelpers::BaseIndex(storage, T11, CCallHelpers::TimesOne));
         jit.add32(TrustedImm32(sizeof(uint64_t)), T11);
         jit.branch32(CCallHelpers::Below, T11, size).linkTo(clearNext, &jit);
+        constexpr GPRReg previous = A2;
+        jit.load32(Address(R0, Typed::offsetOfExtension), previous);
+        Jump hasNothingToCopy = jit.branchTest32(CCallHelpers::Zero, previous);
+        decodeCell32(jit, previous, previous);
+        jit.load32(Address(previous, Typed::offsetOfExtensionSize), size);
+        jit.move(TrustedImm32(sizeof(uint64_t)), T11);
+        CCallHelpers::Label copyNext = jit.label();
+        jit.load64(CCallHelpers::BaseIndex(previous, T11, CCallHelpers::TimesOne), zero);
+        jit.store64(zero, CCallHelpers::BaseIndex(storage, T11, CCallHelpers::TimesOne));
+        jit.add32(TrustedImm32(sizeof(uint64_t)), T11);
+        jit.branch32(CCallHelpers::Below, T11, size).linkTo(copyNext, &jit);
+        hasNothingToCopy.link(&jit);
 #if CPU(ARM64)
         Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, Instance::offsetOfMutatorShouldBeFenced()));
         jit.storeFence();
@@ -10488,7 +10514,7 @@ static void generateFrontEndTypedCloneObjectAndExtendWithNumber(CCallHelpers& ji
     jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), first);
     jit.compareOnFlagsDouble(value, value);
     jit.m_assembler.csel<64>(boxedDouble, boxedDouble, first, ARM64Assembler::ConditionEQ);
-    jit.convertDoubleToInt32UsingJavaScriptSemantics(value, first);
+    setEqualIfExactInt32(jit, value, first, boxedDouble, second, FPRInfo::fpRegT1);
     jit.addZeroExtend64(GPRInfo::numberTagRegister, first, first);
     jit.m_assembler.csel<64>(first, first, boxedDouble, ARM64Assembler::ConditionEQ);
 #else
@@ -17997,6 +18023,7 @@ static void generateArraySearch(CCallHelpers& jit, ArraySearch search, SearchedI
 static void generateArrayIncludes(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::Includes); }
 static void generateArrayIndexOf(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::IndexOf); }
 static void generateArrayIndexOfFrom(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::IndexOf, SearchedIn::Storage, SearchStart::Given); }
+static void generateArrayIncludesFrom(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::Includes, SearchedIn::Storage, SearchStart::Given); }
 static void generateArrayIncludesOrCall(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::Includes, SearchedIn::Array); }
 static void generateArrayIndexOfOrCall(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::IndexOf, SearchedIn::Array); }
 static void generateArrayIncludesOrCallMethodRead(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::Includes, SearchedIn::ArrayWithMethodRead); }
@@ -19138,33 +19165,93 @@ static void generateStepGenerator(CCallHelpers& jit, Typed::Generator::StepCheck
 static void generateIterOpenInFrame(CCallHelpers& jit)
 {
     using Typed::Generator;
+    constexpr GPRReg fp = GPRInfo::callFrameRegister;
+    constexpr GPRReg result = GPRInfo::returnValueGPR;
     constexpr GPRReg iterable = A1;
     constexpr GPRReg words = A2;
     constexpr GPRReg structure = T9;
-    constexpr GPRReg scratch = T10;
-    static_assert(noOverlap(iterable, words, structure, scratch, instanceGPR));
+    constexpr GPRReg scratch = T11;
+    constexpr GPRReg method = calleeGPR;
+    constexpr int32_t offsetOfWords = -2 * static_cast<int32_t>(sizeof(void*));
+    constexpr int32_t offsetOfIterable = -3 * static_cast<int32_t>(sizeof(void*));
+    constexpr int32_t sizeOfFrame = 4 * sizeof(void*);
+    static_assert(noOverlap(iterable, words, structure, scratch, method, instanceGPR) && noOverlap(result, words, structure, scratch) && !(sizeOfFrame % stackAlignmentBytes()));
+    static_assert(ObjectType + 1 == FinalObjectType && R0 == result && ClosureWord::isNotCallableBit == 63);
     auto word = [&](unsigned index) {
         return Address(words, static_cast<int32_t>(index * sizeof(EncodedJSValue)));
     };
+    auto fillRecordOfGenerator = [&](GPRReg generator, CCallHelpers::JumpList& isNotGenerator, CCallHelpers::JumpList& isChanged) {
+        jit.load32(Address(generator, JSCell::structureIDOffset()), structure);
+        structureWithID(jit, structure);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
+        jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*)), scratch);
+        isNotGenerator.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::classInfoOffset())));
+        isChanged.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfHasOtherPrototype())));
+        isChanged.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(generator, JSObject::butterflyOffset())));
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfGlobalObject()), scratch);
+        isChanged.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::realmOffset())));
+        jit.storePtr(generator, word(0));
+        jit.store64(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(Typed::CollectionIteration::iteratesGenerator))), word(1));
+        jit.store64(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), word(2));
+        jit.store64(CCallHelpers::TrustedImm64(JSValue::ValueNull), word(3));
+        jit.store64(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(0))), word(4));
+        static_assert(Typed::CollectionIteration::numberOfWords == 5);
+        jit.move(scratch, result);
+        jit.ret();
+    };
     CCallHelpers::JumpList slowCases;
+    CCallHelpers::JumpList looksUpMethod;
     slowCases.append(jit.branchIfNotCell(iterable));
-    slowCases.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
-    jit.load32(Address(iterable, JSCell::structureIDOffset()), structure);
-    structureWithID(jit, structure);
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), scratch);
-    jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::GeneratorClassInfo) * sizeof(void*)), scratch);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::classInfoOffset())));
-    slowCases.append(jit.branchTest8(CCallHelpers::NonZero, Address(iterable, Generator::offsetOfHasOtherPrototype())));
-    slowCases.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(iterable, JSObject::butterflyOffset())));
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfGlobalObject()), GPRInfo::returnValueGPR);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, GPRInfo::returnValueGPR, Address(structure, Structure::realmOffset())));
-    jit.storePtr(iterable, word(0));
-    jit.store64(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(Typed::CollectionIteration::iteratesGenerator))), word(1));
-    jit.store64(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), word(2));
-    jit.store64(CCallHelpers::TrustedImm64(JSValue::ValueNull), word(3));
-    jit.store64(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(0))), word(4));
-    static_assert(Typed::CollectionIteration::numberOfWords == 5);
-    jit.ret();
+    jit.load8(Address(iterable, JSCell::typeInfoTypeOffset()), scratch);
+    looksUpMethod.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(FinalObjectType)));
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ObjectType)));
+    fillRecordOfGenerator(iterable, looksUpMethod, looksUpMethod);
+
+    looksUpMethod.link(&jit);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfIteratorSymbol()), scratch);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(sizeOfFrame), CCallHelpers::stackPointerRegister);
+    jit.storePtr(words, Address(fp, offsetOfWords));
+    jit.storePtr(iterable, Address(fp, offsetOfIterable));
+    jit.move(iterable, R0);
+    jit.move(scratch, A1);
+    callStubFromStub(jit, Stub::GetByValCachedOfCells);
+    jit.move(R0, method);
+    CCallHelpers::JumpList callsInOperation;
+    callsInOperation.append(jit.branchIfNotCell(method));
+    jit.load32(Address(method, JSCell::structureIDOffset()), scratch);
+    Jump isSlim = jit.branch32(CCallHelpers::Equal, scratch, Address(instanceGPR, Instance::offsetOfTypedClosureStructureIDPair()));
+    callsInOperation.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfTypedClosureStructureIDPair() + sizeof(uint32_t))));
+    callsInOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(method, Typed::Closure::offsetOfEntry() + 7), TrustedImm32(0x80)));
+    Jump isCallable = jit.jump();
+    isSlim.link(&jit);
+    callsInOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(method, Typed::SlimClosure::offsetOfWord() + 7), TrustedImm32(0x80)));
+    isCallable.link(&jit);
+    jit.loadPtr(Address(fp, offsetOfIterable), thisGPR);
+    callStubFromStub(jit, Stub::CallValueWithoutArguments);
+    jit.loadPtr(Address(fp, offsetOfWords), words);
+    jit.emitFunctionEpilogue();
+    CCallHelpers::JumpList finishesInOperation;
+    finishesInOperation.append(jit.branchIfNotCell(result));
+    finishesInOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(result, JSCell::typeInfoTypeOffset()), TrustedImm32(ObjectType)));
+    jit.move(result, A1);
+    CCallHelpers::JumpList finishesWithIteratorMoved;
+    fillRecordOfGenerator(A1, finishesWithIteratorMoved, finishesWithIteratorMoved);
+
+    finishesInOperation.link(&jit);
+    jit.move(result, A1);
+    finishesWithIteratorMoved.link(&jit);
+    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedFinishIterOpenInFrame) * sizeof(void*)), T9);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
+
+    callsInOperation.link(&jit);
+    jit.move(method, A3);
+    jit.loadPtr(Address(fp, offsetOfIterable), A1);
+    jit.loadPtr(Address(fp, offsetOfWords), A2);
+    jit.emitFunctionEpilogue();
+    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIterOpenInFrameWithMethod) * sizeof(void*)), T9);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithInstance)], &jit);
 
     slowCases.link(&jit);
     jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedIterOpenInFrame) * sizeof(void*)), T9);
@@ -21200,7 +21287,7 @@ static void generatePutByIdDouble(CCallHelpers& jit)
     jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), result);
     jit.compareOnFlagsDouble(value, value);
     jit.m_assembler.csel<64>(boxedDouble, boxedDouble, result, ARM64Assembler::ConditionEQ);
-    jit.convertDoubleToInt32UsingJavaScriptSemantics(value, result);
+    setEqualIfExactInt32(jit, value, result, boxedDouble, T12, FPRInfo::fpRegT1);
     jit.addZeroExtend64(GPRInfo::numberTagRegister, result, result);
     jit.m_assembler.csel<64>(result, result, boxedDouble, ARM64Assembler::ConditionEQ);
 #else

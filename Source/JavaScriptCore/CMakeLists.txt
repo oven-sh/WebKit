@@ -669,6 +669,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     aot/AOTAirPasses.h
     aot/AOTFunction.h
     aot/AOTProgramData.h
+    aot/AOTTypedBuiltinLists.h
     aot/AOTTypedBuiltins.h
 
     bytecode/BytecodeIndex.h

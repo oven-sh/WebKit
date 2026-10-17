@@ -181,11 +181,11 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
         return;
     if (Options::validateAOTTypedFacts()) [[unlikely]]
         instance->validateKeyedTables();
-    FunctionRef function = caller(instance, callFrame);
-    if (!function.instance->infos[function.index].stateNumber)
+    auto function = FunctionRef::tryAt(instance, removeCodePtrTag(callFrame->rawReturnPC()));
+    if (!function || !function->instance->infos[function->index].stateNumber)
         return;
-    if (!function.instance->dataIfExists(function.index)) [[unlikely]]
-        function.instance->countMisses(function.index, samplingInterval);
+    if (!function->instance->dataIfExists(function->index)) [[unlikely]]
+        function->instance->countMisses(function->index, samplingInterval);
 }
 
 ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const Slot* cache)

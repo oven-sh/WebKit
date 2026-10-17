@@ -305,6 +305,11 @@ std::optional<Writes> writesOfInlineBuiltin(InlineBuiltin, std::span<const Type>
 FOR_EACH_AOT_TYPED_BUILTIN_FAMILY(AOT_TYPED_DECLARE_WRITES_OF_FAMILY)
 #undef AOT_TYPED_DECLARE_WRITES_OF_FAMILY
 inline std::optional<Writes> writesIf(bool hasCode, Writes writes) { return hasCode ? std::optional<Writes>(writes) : std::nullopt; }
+inline bool isNumberOrUndefined(const Type& type)
+{
+    Rep rep = repOf(type);
+    return type.isNumber() || (!(type.primitives & Primitive::Null) && (rep == Rep::OptionalDouble || rep == Rep::OptionalInt64));
+}
 inline bool areNumbers(std::span<const Type> types)
 {
     for (auto& type : types) {

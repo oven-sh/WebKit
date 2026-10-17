@@ -1646,6 +1646,8 @@ private:
     Operand getStringElement(const StringReceiver&, ValueID key, const Type&, LBasicBlock otherwise = nullptr, B3::Variable* codeUnitVariable = nullptr);
     Integer positionOf(ValueID);
     Integer relativeStringIndex(ValueID, Integer length, bool isRelativeToEnd);
+    Integer relativeStringIndex(Operand, const Type&, Integer length, bool isRelativeToEnd);
+    Operand numberOrIfUndefined(ValueID, Number otherwise);
     CellPointer allocateRope(LBasicBlock slowPath);
     CellPointer makeSubstring(const StringReceiver&, Integer length, Integer from, Integer to);
     std::optional<std::span<const uint8_t>> constantASCIIString(ValueID) const;

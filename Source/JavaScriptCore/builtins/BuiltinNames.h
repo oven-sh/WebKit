@@ -74,6 +74,7 @@ namespace JSC {
     macro(BuiltinLog) \
     macro(BuiltinDescribe) \
     macro(homeObject) \
+    macro(hostClassPrototype) \
     macro(resolvePromise) \
     macro(rejectPromise) \
     macro(fulfillPromise) \
