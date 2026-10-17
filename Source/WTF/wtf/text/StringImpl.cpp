@@ -248,6 +248,42 @@ std::expected<Ref<StringImpl>, UTF8ConversionError> StringImpl::tryReallocate(Re
     return reallocateInternal(WTF::move(originalString), length, data);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<typename CharacterType> inline std::expected<Ref<StringImpl>, Ref<StringImpl>> StringImpl::reallocateOrKeepInternal(Ref<StringImpl>&& originalString, unsigned length, std::span<CharacterType>& data)
+{
+    ASSERT(originalString->hasOneRef());
+    ASSERT(originalString->bufferOwnership() == BufferInternal);
+    ASSERT(length);
+
+    if (!isValidLength<CharacterType>(length))
+        return makeUnexpected(WTF::move(originalString));
+
+    unsigned originalLength = originalString->length();
+    originalString->~StringImpl();
+    SUPPRESS_UNCOUNTED_LOCAL auto* rawPointer = &originalString.leakRef();
+    SUPPRESS_UNCOUNTED_LOCAL auto* string = static_cast<StringImpl*>(StringImplMalloc::tryRealloc(rawPointer, allocationSize<CharacterType>(length)));
+    if (!string) {
+        // The block is where it was, and its characters follow the header. A new header makes it the string it was.
+        return makeUnexpected(constructInternal<CharacterType>(*rawPointer, originalLength));
+    }
+
+    data = unsafeMakeSpan(string->tailPointer<CharacterType>(), length);
+    return constructInternal<CharacterType>(*string, length);
+}
+
+std::expected<Ref<StringImpl>, Ref<StringImpl>> StringImpl::tryReallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length, std::span<Latin1Character>& data)
+{
+    ASSERT(originalString->is8Bit());
+    return reallocateOrKeepInternal(WTF::move(originalString), length, data);
+}
+
+std::expected<Ref<StringImpl>, Ref<StringImpl>> StringImpl::tryReallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length, std::span<char16_t>& data)
+{
+    ASSERT(!originalString->is8Bit());
+    return reallocateOrKeepInternal(WTF::move(originalString), length, data);
+}
+#endif
+
 template<typename CharacterType> inline Ref<StringImpl> StringImpl::createInternal(std::span<const CharacterType> characters)
 {
     if (characters.empty())

@@ -209,6 +209,8 @@ public:
 
     // Prefer using isValidLength over MaxLength when the character type is known.
     template<typename> static constexpr bool isValidLength(size_t);
+    // The longest length isValidLength accepts. For char16_t it is less than MaxLength.
+    template<typename> static constexpr unsigned maxValidLength();
 
     static constexpr unsigned MaxLength = StringImplShape::MaxLength;
 
@@ -301,6 +303,11 @@ public:
     static Ref<StringImpl> reallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
     static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data);
     static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
+#if USE(BUN_JSC_ADDITIONS)
+    // As tryReallocate, for a length that is not 0. A failure gives the original string back: the same characters, the same length and one owner.
+    static std::expected<Ref<StringImpl>, Ref<StringImpl>> tryReallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length, std::span<Latin1Character>& data);
+    static std::expected<Ref<StringImpl>, Ref<StringImpl>> tryReallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length, std::span<char16_t>& data);
+#endif
 
     static constexpr unsigned flagsOffset() { return OBJECT_OFFSETOF(StringImpl, m_hashAndFlags); }
     static constexpr unsigned flagIs8Bit() { return s_hashFlag8BitBuffer; }
@@ -589,6 +596,9 @@ private:
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternal(size_t, std::span<CharacterType>&);
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternalNonEmpty(size_t, std::span<CharacterType>&);
     template<typename CharacterType> static std::expected<Ref<StringImpl>, UTF8ConversionError> reallocateInternal(Ref<StringImpl>&&, unsigned, CharacterType*&);
+#if USE(BUN_JSC_ADDITIONS)
+    template<typename CharacterType> static std::expected<Ref<StringImpl>, Ref<StringImpl>> reallocateOrKeepInternal(Ref<StringImpl>&&, unsigned, std::span<CharacterType>&);
+#endif
     template<typename CharacterType> static Ref<StringImpl> createInternal(std::span<const CharacterType>);
     WTF_EXPORT_PRIVATE NEVER_INLINE unsigned hashSlowCase() const;
     Ref<StringImpl> convertToUppercaseWithoutLocaleUpconvert();
@@ -1263,10 +1273,16 @@ template<typename T> inline size_t StringImpl::allocationSize(Checked<size_t> ta
 }
 
 template<typename CharacterType>
-inline constexpr bool StringImpl::isValidLength(size_t length)
+inline constexpr unsigned StringImpl::maxValidLength()
 {
     // In order to not overflow the unsigned length, the check for (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) is needed when sizeof(CharacterType) == 2.
-    constexpr size_t max = std::min(static_cast<size_t>(MaxLength), (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) / sizeof(CharacterType));
+    return static_cast<unsigned>(std::min(static_cast<size_t>(MaxLength), (std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) / sizeof(CharacterType)));
+}
+
+template<typename CharacterType>
+inline constexpr bool StringImpl::isValidLength(size_t length)
+{
+    constexpr size_t max = maxValidLength<CharacterType>();
     return length <= max;
 }
 
