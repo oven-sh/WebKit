@@ -528,12 +528,12 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 // We allow detaching wasm memory ArrayBuffers even though they are locked.
 void ArrayBuffer::detach(VM& vm)
 {
-    keepWhilePinned(m_contents.detach());
+    auto contents = m_contents.detach();
     notifyDetaching(vm);
+    keepWhilePinned(WTF::move(contents));
 }
 
-// Whoever pinned us holds a pointer into our bytes. transferTo() leaves those bytes alone and hands out a copy.
-// A detach cannot do that, so the bytes stop being ours but stay allocated until the last unpin().
+// Whoever pinned us holds a pointer into these bytes, so they stay allocated until the last unpin().
 void ArrayBuffer::keepWhilePinned(ArrayBufferContents&& contents)
 {
     if (isPinned())
