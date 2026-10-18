@@ -4010,7 +4010,8 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         auto bytecode = bytecodeAt(i);
         int basicBlockStartOffset = bytecode.m_textOffset;
         int basicBlockEndOffset = bytecode.m_textEndOffset ? bytecode.m_textEndOffset - 1 : sourceOffset() + ownerExecutable()->source().length() - 1;
-        return BasicBlockLocation::Gap { basicBlockStartOffset, basicBlockEndOffset };
+        // A program with no token starts after its end.
+        return BasicBlockLocation::Gap { std::min(basicBlockStartOffset, basicBlockEndOffset), basicBlockEndOffset };
     });
 
     struct Range {
