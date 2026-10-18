@@ -227,12 +227,14 @@ const HostClassEntryPoints& hostClassEntryPoints();
 } // namespace Typed
 
 void destroyJSONBuffers(Instance&);
+void forgetDeadJSONPlans(Instance&);
 void destroyJSONSource(Instance&);
 void destroyStringAppender(Instance&);
 void destroyFormatPatternState(Instance&);
 void releaseLargeJSONSource(Instance&);
 void forgetUnusedJSONKeyOrders(Instance&, bool isYoungCollection);
 JSValue tryParseJSONWithLearnedShapes(JSGlobalObject*, StringView);
+JSString* tryStringifyObjectWithExtraProperties(JSGlobalObject*, JSValue);
 JS_EXPORT_PRIVATE JSValue tryParseUTF8JSONWithLearnedShapes(JSGlobalObject*, std::span<const uint8_t>);
 String takePreparedJSON(Instance&, JSValue);
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);

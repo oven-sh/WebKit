@@ -791,7 +791,7 @@ struct JSONKnownExtraMember {
 struct JSONKnownKeyOrder {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONKnownKeyOrder);
     JSCell* declaredNames { nullptr };
-    StructureID object;
+    uint32_t shape { 0 };
     StructureID extraProperties;
     uint32_t orderAndCount { 0 };
     bool isUsedSinceFullCollection { true };
@@ -800,13 +800,18 @@ struct JSONKnownKeyOrder {
     Vector<uint16_t, 16> recorded;
 };
 
+struct JSONDeclaredNames {
+    Strong<JSCell> cell;
+    Strong<Structure> emptyStructureOfExtraProperties;
+};
+
 struct JSONKeyOrders {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONKeyOrders);
     std::array<uint16_t, jsonKeyOrderCapacity> recorded;
     UncheckedKeyHashMap<uint64_t, std::unique_ptr<JSONKnownKeyOrder>> known;
     JSCell* lastDeclaredNames { nullptr };
     Structure* lastEmptyStructure { nullptr };
-    UncheckedKeyHashMap<JSCell*, Strong<Structure>> emptyStructures;
+    UncheckedKeyHashMap<JSCell*, JSONDeclaredNames> declaredNames;
     Vector<JSONKnownExtraMember> members = Vector<JSONKnownExtraMember>(minNumberOfKnownExtraMembers);
     unsigned shiftForMembers { 32 - WTF::fastLog2(minNumberOfKnownExtraMembers) };
     unsigned numberOfReplacedMembers { 0 };
@@ -843,12 +848,19 @@ static ALWAYS_INLINE void recordExtraProperty(Instance* instance, const uint16_t
     instance->jsonKeyOrderTop = top + 1;
 }
 
+static JSONDeclaredNames& keepDeclaredNames(Instance* instance, VM& vm, JSCell* declaredNames)
+{
+    return instance->jsonKeyOrders->declaredNames.ensure(declaredNames, [&] {
+        return JSONDeclaredNames { Strong<JSCell>(vm, declaredNames), { } };
+    }).iterator->value;
+}
+
 static NEVER_INLINE Structure* findEmptyStructureOfExtraProperties(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSCell* declaredNames)
 {
     auto& orders = *instance->jsonKeyOrders;
-    auto& structure = orders.emptyStructures.ensure(declaredNames, [&] {
-        return Strong<Structure>(vm, JSFinalObject::createStructure(vm, globalObject, jsNull(), minInlineCapacityOfExtraProperties));
-    }).iterator->value;
+    auto& structure = keepDeclaredNames(instance, vm, declaredNames).emptyStructureOfExtraProperties;
+    if (!structure)
+        structure.set(vm, JSFinalObject::createStructure(vm, globalObject, jsNull(), minInlineCapacityOfExtraProperties));
     orders.lastDeclaredNames = declaredNames;
     orders.lastEmptyStructure = structure.get();
     return structure.get();
@@ -864,11 +876,11 @@ static ALWAYS_INLINE JSObject* createExtraProperties(Instance* instance, VM& vm,
 static void widenExtraProperties(Instance* instance, VM& vm, JSCell* declaredNames, unsigned numberOfProperties)
 {
     auto& orders = *instance->jsonKeyOrders;
-    auto found = orders.emptyStructures.find(declaredNames);
+    auto found = orders.declaredNames.find(declaredNames);
     unsigned inlineCapacity = std::min<unsigned>(WTF::roundUpToMultipleOf<2>(numberOfProperties), JSFinalObject::maxInlineCapacity);
-    if (found == orders.emptyStructures.end() || found->value->inlineCapacity() >= inlineCapacity)
+    if (found == orders.declaredNames.end() || !found->value.emptyStructureOfExtraProperties || found->value.emptyStructureOfExtraProperties->inlineCapacity() >= inlineCapacity)
         return;
-    found->value.set(vm, JSFinalObject::createStructure(vm, instance->globalObject, jsNull(), inlineCapacity));
+    found->value.emptyStructureOfExtraProperties.set(vm, JSFinalObject::createStructure(vm, instance->globalObject, jsNull(), inlineCapacity));
     orders.lastDeclaredNames = nullptr;
 }
 
@@ -899,8 +911,9 @@ static void addExtraProperty(Instance* instance, VM& vm, JSGlobalObject* globalO
         extra->putDirectOffset(vm, offset, value);
         return;
     }
+    unsigned ordinal = numberOfPropertiesOf(from);
     extra->putDirect(vm, name, value);
-    recordExtraProperty(instance, mark, numberOfPropertiesOf(from));
+    recordExtraProperty(instance, mark, ordinal);
 }
 
 static ALWAYS_INLINE JSONKnownExtraMember* pairOfKnownExtraMembersFor(JSONKeyOrders& orders, StructureID before, const uint8_t* name)
@@ -1146,16 +1159,16 @@ static NEVER_INLINE void learnKeyOrder(Instance* instance, CallFrame* callFrame,
     instance->jsonParserGaveUp = 0;
     if (extra && extra->structure()->outOfLineCapacity())
         widenExtraProperties(instance, vm, declaredNames, numberOfPropertiesOf(extra->structure()));
-    StructureID before = object->structureID();
     object->setKeyOrderAtBirth(vm, *order, extra);
     if (state.isCounting() || (extra && extra->structure()->isDictionary()))
         return;
     auto& orders = instance->jsonKeyOrders->known;
     if (orders.size() >= maxNumberOfKnownKeyOrders)
         orders.clear();
+    keepDeclaredNames(instance, vm, declaredNames);
     auto& known = *orders.ensure(hash, [] { return makeUnique<JSONKnownKeyOrder>(); }).iterator->value;
     known.declaredNames = declaredNames;
-    known.object = before;
+    known.shape = object->shape();
     known.extraProperties = extra ? extra->structureID() : StructureID();
     known.orderAndCount = order->orderAndCount;
     known.isUsedSinceFullCollection = true;
@@ -1188,7 +1201,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONApplyKeyOrder, void, (Ins
     auto& orders = instance->jsonKeyOrders->known;
     if (auto found = orders.find(hash); found != orders.end()) [[likely]] {
         auto& known = *found->value;
-        if (known.declaredNames == declaredNames && known.object == object->structureID() && known.extraProperties == ofExtraProperties && equalSpans(known.recorded.span(), recorded) && !object->hasFlagsInOrderWord()) [[likely]] {
+        if (known.declaredNames == declaredNames && known.shape == object->shape() && known.extraProperties == ofExtraProperties && equalSpans(known.recorded.span(), recorded) && !object->hasFlagsInOrderWord()) [[likely]] {
             known.isUsedSinceFullCollection = true;
             object->setKeyOrderAtBirth(*instance->vm, { known.orderAndCount, known.withExtraProperties.get() }, extra);
             return;
@@ -2270,7 +2283,7 @@ void forgetUnusedJSONKeyOrders(Instance& instance, bool isYoungCollection)
     if (isYoungCollection)
         return;
     orders->known.removeIf([&](auto& entry) {
-        return !std::exchange(entry.value->isUsedSinceFullCollection, false) || !instance.vm->heap.isMarked(entry.value->object.decode());
+        return !std::exchange(entry.value->isUsedSinceFullCollection, false);
     });
 }
 

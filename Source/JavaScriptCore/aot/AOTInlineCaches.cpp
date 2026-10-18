@@ -3142,6 +3142,16 @@ bool PropertyLookupTable::releaseSlotsUnlessUsedByStores(uint32_t index)
     return true;
 }
 
+GetterSetter* PropertyLookupTable::accessorWithCompiledGetter(JSCell* holder, PropertyOffset offset) const
+{
+    Instance* instance = m_data->instance;
+    auto* accessor = m_isSharedByInstances || !instance ? nullptr : dynamicDowncast<GetterSetter>(asObject(holder)->getDirect(offset));
+    if (!accessor || !(accessor->getterShortcut() & GetterSetter::getterShortcutIsCode) || !MarkedBlockCage::contains(accessor))
+        return nullptr;
+    Structure* ofGetter = accessor->getter()->structure();
+    return ofGetter->aotInstance() == instance || (!ofGetter->aotInstance() && ofGetter->realm() == instance->globalObject) ? accessor : nullptr;
+}
+
 bool PropertyLookupTable::setAccessor(Structure* structure, uint32_t name, JSCell* holder, PropertyOffset offset, UniquedStringImpl* uid, bool storesCallSetter)
 {
     static_assert(minHolderWord == MarkedBlockCage::minIndex);
@@ -3151,6 +3161,8 @@ bool PropertyLookupTable::setAccessor(Structure* structure, uint32_t name, JSCel
     auto code = codeForInlineOrOutOfLineOffset(offset);
     if (!code || (holder && !MarkedBlockCage::contains(holder)))
         return false;
+    if (auto* accessor = holder && !storesCallSetter ? accessorWithCompiledGetter(holder, offset) : nullptr)
+        return setEntryWithKind(structure, name, kind, payloadIsAccessorCode, MarkedBlockCage::encode(accessor), uid);
     if (holder)
         return setEntryWithKind(structure, name, kind, *code, MarkedBlockCage::encode(holder), uid);
     if (storesCallSetter)
@@ -3320,7 +3332,11 @@ auto PropertyLookupTable::entriesReferencing(UniquedStringImpl* uid, JSCell* hol
         uint32_t entry = entryAt(index);
         if (!isKindEntryFor(entry, result.name) || !m_dependsOnPrototypes.get(bitOf(index)) || (kindOf(entry) != Kind::InheritedInline && kindOf(entry) != Kind::Accessor))
             return;
-        if (codeOf(entry) != place || payload(index) != MarkedBlockCage::encode(holder))
+        if (kindOf(entry) == Kind::Accessor && codeOf(entry) == payloadIsAccessorCode) {
+            JSValue member = asObject(holder)->getDirect(offset);
+            if (!member.isCell() || !MarkedBlockCage::contains(member.asCell()) || payload(index) != MarkedBlockCage::encode(member.asCell()))
+                return;
+        } else if (codeOf(entry) != place || payload(index) != MarkedBlockCage::encode(holder))
             return;
         result.owners.append(m_rows[entryRow(index, result.name)].owner);
     });

@@ -9264,6 +9264,7 @@ static void getThroughAccessor(CCallHelpers& jit, CCallHelpers::JumpList& cannot
     jit.load32(Address(readEntryGPR, PropertyLookupTable::offsetOfPayloads), T13);
     Jump isOwn = jit.branch32(CCallHelpers::Below, T13, TrustedImm32(PropertyLookupTable::minHolderWord));
     jit.load8(Address(readEntryGPR, PropertyLookupTable::offsetOfCodeInEntry), T11);
+    Jump payloadIsAccessor = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(PropertyLookupTable::payloadIsAccessorCode));
     decodeCell32(jit, T13, T13);
     Jump isOutOfLine = jit.branch32(CCallHelpers::AboveOrEqual, T11, TrustedImm32(PropertyLookupTable::firstCodeOutOfLine));
     jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesEight), T12);
@@ -9275,6 +9276,17 @@ static void getThroughAccessor(CCallHelpers& jit, CCallHelpers::JumpList& cannot
     loadOwnAccessor(jit, R0, T13, T12);
     isLoaded.link(&jit);
     callGetter(jit, cannot);
+
+    payloadIsAccessor.link(&jit);
+    decodeCell32(jit, T13, T12);
+    jit.loadPtr(Address(T12, GetterSetter::offsetOfGetterShortcut()), T13);
+    jit.loadPtr(Address(T12, GetterSetter::offsetOfGetter()), calleeGPR);
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, Address(instanceGPR, Instance::offsetOfSoftStackLimit()));
+    jit.move(R0, thisGPR);
+    jit.subPtr(TrustedImm32(GetterSetter::getterShortcutIsCode), T13);
+    jit.farJump(T13, JSEntryPtrTag);
+    doesNotFit.link(&jit);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ThrowStackOverflow });
 }
 
 static void loadExtraProperties(CCallHelpers& jit, GPRReg object, GPRReg payloadAndResult, GPRReg scratch, CCallHelpers::JumpList& hasNoNumber)

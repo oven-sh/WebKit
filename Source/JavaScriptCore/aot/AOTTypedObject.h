@@ -193,6 +193,7 @@ public:
     enum class SymbolKeys : bool { Skip, Include };
     bool forEachFieldAsProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&, SymbolKeys = SymbolKeys::Skip) const;
     bool forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&) const;
+    const Vector<PropertyListEntry>* fieldsAndExtraPropertiesInKeyOrder(VM&) const;
     JSCellButterfly* keys(VM&) const;
     JSCellButterfly* keysWithExtraProperties(VM&) const;
     JSArray* tryCreateKeysArrayWithExtraProperties(JSGlobalObject*) const;
@@ -2365,9 +2366,10 @@ private:
         JSObject* newTarget { nullptr };
         Structure* structure { nullptr };
         uint32_t epoch { 0 };
+        Vector<uint8_t> body;
     };
     std::array<InitialPlainObjectState, 16> m_initialPlainObjectStatesByNewTarget;
-    void shareWithStub(VM&, const InitialObjectState&);
+    void shareWithStub(VM&, Closure* constructor, JSObject* newTarget, Structure*, uint32_t epoch, std::span<const uint8_t> body);
     void forgetInitialObjectStates();
     HeapVersion m_initialObjectStatesVersion { 0 };
     JSFunction* m_liveBindingGetter { nullptr };

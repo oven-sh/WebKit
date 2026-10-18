@@ -2768,6 +2768,12 @@ JSArray* Object::tryCreateKeysArrayWithExtraProperties(JSGlobalObject* globalObj
     return list;
 }
 
+const Vector<PropertyListEntry>* Object::fieldsAndExtraPropertiesInKeyOrder(VM& vm) const
+{
+    auto* listing = cachedPropertyList(vm);
+    return listing ? &listing->properties : nullptr;
+}
+
 bool Object::forEachFieldAndExtraProperty(const ScopedLambda<bool(UniquedStringImpl&, JSValue)>& functor) const
 {
     bool mayHideFields = orderWord() & orderWordIsFrozen;
@@ -9818,24 +9824,25 @@ void State::forgetInitialObjectStates()
     m_initialPlainObjectStatesByNewTarget.fill({ });
 }
 
-void State::shareWithStub(VM& vm, const InitialObjectState& known)
+void State::shareWithStub(VM& vm, Closure* constructor, JSObject* newTarget, Structure* structure, uint32_t epoch, std::span<const uint8_t> body)
 {
     static_assert(std::tuple_size_v<decltype(m_initialObjectStatesByNewTarget)> == Instance::numberOfTypedThisAllocations);
-    auto& shared = instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(known.newTarget) >> 4) % Instance::numberOfTypedThisAllocations];
+    static_assert(std::tuple_size_v<decltype(m_initialPlainObjectStatesByNewTarget)> == Instance::numberOfTypedThisAllocations);
+    auto& shared = instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(newTarget) >> 4) % Instance::numberOfTypedThisAllocations];
     shared = { };
-    size_t bodySize = known.body.size();
-    if (!bodySize || bodySize % sizeof(uint64_t) || known.constructor->isDeclaredAs(functionReadsNewTarget))
+    size_t bodySize = body.size();
+    if (!bodySize || bodySize % sizeof(uint64_t) || constructor->isDeclaredAs(functionReadsNewTarget))
         return;
     LocalAllocator* allocator = vm.cellSpace().allocatorFor(bodySize + sizeof(JSCell), AllocatorForMode::EnsureAllocator).localAllocator();
     if (!allocator)
         return;
-    shared.constructor = known.constructor;
+    shared.constructor = constructor;
     shared.allocator = allocator;
-    shared.body = known.body.span().data();
-    shared.header = static_cast<uint64_t>(known.structure->typeInfoBlob()) << 32 | known.structure->id().bits();
-    shared.epoch = known.epoch;
+    shared.body = body.data();
+    shared.header = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
+    shared.epoch = epoch;
     shared.bodySize = bodySize;
-    shared.newTarget = known.newTarget;
+    shared.newTarget = newTarget;
     instance.hasTypedThisAllocations = true;
 }
 
@@ -9849,12 +9856,13 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
     }
     InitialObjectState& known = m_initialObjectStatesByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_initialObjectStatesByNewTarget.size()];
     if (known.newTarget == newTarget && known.constructor == constructor && known.epoch == instance.negativeOffsetFields().typedPrototypeEpoch) {
-        shareWithStub(vm, known);
+        shareWithStub(vm, known.constructor, known.newTarget, known.structure, known.epoch, known.body.span());
         return Object::createWithBody(vm, known.structure, known.body.span());
     }
     InitialPlainObjectState& knownPlain = m_initialPlainObjectStatesByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_initialPlainObjectStatesByNewTarget.size()];
     if (knownPlain.newTarget == newTarget && knownPlain.constructor == constructor && knownPlain.epoch == instance.negativeOffsetFields().typedPrototypeEpoch) {
         Structure* structure = knownPlain.structure;
+        shareWithStub(vm, knownPlain.constructor, knownPlain.newTarget, structure, knownPlain.epoch, knownPlain.body.span());
         Butterfly* butterfly = nullptr;
         if (unsigned outOfLineCapacity = structure->outOfLineCapacity())
             butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
@@ -9928,8 +9936,10 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
             }
             Structure* withFields = object->structure();
             auto remember = makeScopeExit([&] {
-                if (newTargetIsClassOfProgram && object->structure() == withFields && !withFields->isDictionary() && !isCounting() && !data.isCompiledForAudit)
-                    knownPlain = { constructor, newTarget, withFields, instance.negativeOffsetFields().typedPrototypeEpoch };
+                if (newTargetIsClassOfProgram && object->structure() == withFields && !withFields->isDictionary() && !isCounting() && !data.isCompiledForAudit) {
+                    instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(newTarget) >> 4) % Instance::numberOfTypedThisAllocations] = { };
+                    knownPlain = { constructor, newTarget, withFields, instance.negativeOffsetFields().typedPrototypeEpoch, withFields->outOfLineCapacity() || object->butterfly() ? Vector<uint8_t>() : Vector<uint8_t>(std::span { std::bit_cast<const uint8_t*>(object) + sizeof(JSCell), JSFinalObject::allocationSize(withFields->inlineCapacity()) - sizeof(JSCell) }) };
+                }
             });
             for (const LayoutData* declaring = ofClass; declaring; declaring = baseOf(*declaring))
                 addPrivateMethods(globalObject, object, *declaring);
@@ -9963,7 +9973,7 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
     if (target && target->structure()->aotInstance() == &instance && prototypeIsAllowedByClass && !isCounting() && !data.isCompiledForAudit && !hasWatchedField && !(made->hasExtension && object->extension())) {
         instance.typedThisAllocations.get()[(std::bit_cast<uintptr_t>(newTarget) >> 4) % Instance::numberOfTypedThisAllocations] = { };
         known = { constructor, newTarget, object->structure(), instance.negativeOffsetFields().typedPrototypeEpoch, Vector<uint8_t>(std::span { std::bit_cast<const uint8_t*>(object) + sizeof(JSCell), sizeWithSpecializationCapacity(made->shape) - sizeof(JSCell) }) };
-        shareWithStub(vm, known);
+        shareWithStub(vm, known.constructor, known.newTarget, known.structure, known.epoch, known.body.span());
     }
     return object;
 }

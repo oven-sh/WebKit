@@ -42,6 +42,7 @@ class CodeBlock;
 class JSGlobalObject;
 class CallFrame;
 class FunctionExecutable;
+class GetterSetter;
 class MicrotaskQueue;
 class ScriptExecutable;
 class UnlinkedCodeBlock;
@@ -2129,6 +2130,8 @@ public:
     static constexpr uint32_t ownAccessorIsInline = 2;
     static constexpr uint32_t wordForOwnInlineAccessor(uint32_t place) { return place * static_cast<uint32_t>(sizeof(uint64_t)) | ownAccessorIsInline; }
     static constexpr uint32_t minHolderWord = 1u << 21;
+    static constexpr uint32_t payloadIsAccessorCode = 1;
+    static_assert(payloadIsAccessorCode < JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
     static constexpr uint8_t farInheritedCode = 1;
     static constexpr uint32_t farInheritedCodeAndKind = farInheritedCode | static_cast<uint32_t>(Kind::Unknown) << 8;
     static constexpr uint8_t delegatesToPrototypeCode = 2;
@@ -2353,6 +2356,7 @@ private:
     uint32_t allocateRowIndexFor(Structure*);
     void releaseSlotsAt(uint32_t index);
     bool releaseSlotsUnlessUsedByStores(uint32_t index);
+    GetterSetter* accessorWithCompiledGetter(JSCell* holder, PropertyOffset) const;
     static uint32_t entryForOwnOffset(uint32_t name, PropertyOffset);
     bool setEntryWithKind(Structure*, uint32_t name, Kind, uint32_t code, uint32_t payload, UniquedStringImpl* prototypeDependentUID);
     bool setInheritedFarOutOfLine(Structure*, uint32_t name, JSCell* holder, uint32_t place, UniquedStringImpl* prototypeDependentUID);

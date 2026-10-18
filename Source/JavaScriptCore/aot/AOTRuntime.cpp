@@ -3585,6 +3585,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
     releaseLargeJSONSource(*this);
     forgetUnusedJSONKeyOrders(*this, newOnly);
+    forgetDeadJSONPlans(*this);
     zeroBytes(structuresOfThis);
     if (typed) {
         typed->removeDeadCoercionPlans(*vm, newOnly);

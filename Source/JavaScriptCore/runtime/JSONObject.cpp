@@ -2802,6 +2802,12 @@ JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, Call
 // ECMA-262 v5 15.12.3
 JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncStringify, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+#if ENABLE(AOT)
+    if (callFrame->argument(1).isUndefined() && callFrame->argument(2).isUndefined()) {
+        if (JSString* written = AOT::tryStringifyObjectWithExtraProperties(globalObject, callFrame->argument(0)))
+            return JSValue::encode(written);
+    }
+#endif
     String result = stringify(*globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2));
     return result.isNull() ? encodedJSUndefined() : JSValue::encode(jsString(globalObject->vm(), WTF::move(result)));
 }

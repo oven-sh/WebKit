@@ -295,6 +295,16 @@ struct JSONPlanCache {
     };
     static constexpr unsigned size = 64;
     std::array<Entry, size> entries;
+    struct WithExtraProperties {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(WithExtraProperties);
+        StructureID ofExtraProperties;
+        uint32_t shapeWord { 0 };
+        uint32_t orderAndCount { 0 };
+        Typed::State::KeysAsJSON keys;
+    };
+    static constexpr unsigned maxNumberWithExtraProperties = 1 << 14;
+    UncheckedKeyHashMap<uint64_t, std::unique_ptr<WithExtraProperties>> withExtraProperties;
+    std::array<WithExtraProperties*, size> recentWithExtraProperties { };
 };
 
 static constexpr unsigned maxJSONWalkDepth = 48;
@@ -377,7 +387,9 @@ static ALWAYS_INLINE JSONPlan jsonPlanOf(const Typed::State::KeysAsJSON& keys)
     return { span.data(), span.data() + span.size(), keys.text.span().data(), keys.text.size() + span.size() * maxJSONNumberLength + 2 * jsonBufferSpareCapacity };
 }
 
-static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const JSONPlan& plan, unsigned depth)
+static constexpr uint32_t readsExtraProperty = (static_cast<uint32_t>(Typed::Object::ReadKind::General) + 1) << Typed::Object::readKindShift;
+
+static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const JSONPlan& plan, unsigned depth, JSObject* extraProperties = nullptr)
 {
     using ReadKind = Typed::Object::ReadKind;
     constexpr unsigned copyStride = Typed::State::KeysAsJSON::copyStride;
@@ -434,8 +446,10 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
             appendKey(key);
             cursor = appendInteger(cursor, WTF::unalignedLoad<int32_t>(body + offset));
             continue;
-        } else
+        } else if (key.readKindAndOffset < readsExtraProperty)
             value = object.read(field());
+        else
+            value = extraProperties->getDirect(static_cast<PropertyOffset>(offset));
         if (!value || value.isUndefined())
             continue;
         appendKey(key);
@@ -468,6 +482,87 @@ static ALWAYS_INLINE Latin1Character* writeTypedObject(Instance* instance, JSGlo
 static NEVER_INLINE Latin1Character* appendTypedObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, Typed::Object& object, const Typed::State::KeysAsJSON& keys, unsigned depth)
 {
     return writeTypedObject(instance, globalObject, vm, cursor, object, jsonPlanOf(keys), depth);
+}
+
+static NEVER_INLINE JSONPlanCache::WithExtraProperties* makeJSONPlanWithExtraProperties(Instance* instance, VM& vm, Typed::Object& object, JSObject* extra, uint64_t hash)
+{
+    auto* properties = hasIndexedProperties(extra->indexingType()) ? nullptr : object.fieldsAndExtraPropertiesInKeyOrder(vm);
+    if (!properties)
+        return nullptr;
+    auto made = makeUnique<JSONPlanCache::WithExtraProperties>();
+    auto& keys = made->keys;
+    const Typed::FieldData* fields = object.layout().fields();
+    for (auto& property : *properties) {
+        if (property.name->isSymbol())
+            continue;
+        if (!property.name->is8Bit() || property.name == vm.propertyNames->toJSON.impl())
+            return nullptr;
+        auto name = property.name->span8();
+        for (Latin1Character character : name) {
+            if (character < 0x20 || character == '"' || character == '\\')
+                return nullptr;
+        }
+        uint32_t start = keys.text.size();
+        keys.text.append(',');
+        keys.text.append('"');
+        keys.text.append(name);
+        keys.text.append('"');
+        keys.text.append(':');
+        uint32_t length = keys.text.size() - start;
+        if (property.field)
+            keys.keys.append({ Typed::Object::readKindAndOffset(*property.field), static_cast<uint32_t>(property.field - fields), start, length });
+        else
+            keys.keys.append({ readsExtraProperty | static_cast<uint32_t>(property.offsetInExtraProperties), 0, start, length });
+    }
+    for (unsigned i = 0; i < Typed::State::KeysAsJSON::copyStride; ++i)
+        keys.text.append(0);
+    made->ofExtraProperties = extra->structureID();
+    made->shapeWord = Typed::shapeWordOf(object.shape());
+    made->orderAndCount = object.orderWord() & Typed::orderAndCountMask;
+    auto& plans = instance->jsonPlanCache->withExtraProperties;
+    if (plans.size() >= JSONPlanCache::maxNumberWithExtraProperties) {
+        plans.clear();
+        instance->jsonPlanCache->recentWithExtraProperties.fill(nullptr);
+    }
+    return plans.set(hash, WTF::move(made)).iterator->value.get();
+}
+
+static NEVER_INLINE Latin1Character* appendTypedObjectWithExtraProperties(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, JSObject* cell, unsigned depth)
+{
+    Structure* structure = cell->structure();
+    if (structure->classInfoForCells() != Typed::Object::info() || structure->hasPolyProto())
+        return nullptr;
+    auto& object = *uncheckedDowncast<Typed::Object>(cell);
+    JSObject* extra = object.extraProperties();
+    if (!extra)
+        return nullptr;
+    JSValue prototype = structure->storedPrototype();
+    if (prototype != globalObject->objectPrototype() && prototype.isObject() && mayHaveToJSON(globalObject, vm, asObject(prototype))) [[unlikely]]
+        return nullptr;
+    uint32_t orderWord = object.orderWord();
+    if (orderWord & ~(Typed::orderAndCountMask | Typed::orderWordHasExtraProperties)) [[unlikely]]
+        return nullptr;
+    if (!instance->jsonPlanCache) [[unlikely]]
+        instance->jsonPlanCache = new JSONPlanCache();
+    uint32_t orderAndCount = orderWord & Typed::orderAndCountMask;
+    uint32_t shapeWord = Typed::shapeWordOf(object.shape());
+    StructureID ofExtraProperties = extra->structureID();
+    uint64_t hash = (static_cast<uint64_t>(ofExtraProperties.bits()) << 32 | orderAndCount) * 0x9E3779B97F4A7C15ULL ^ shapeWord;
+    hash = std::max<uint64_t>(hash, 1) - (hash == std::numeric_limits<uint64_t>::max());
+    auto describes = [&](JSONPlanCache::WithExtraProperties* plan) ALWAYS_INLINE_LAMBDA {
+        return plan && plan->ofExtraProperties == ofExtraProperties && plan->shapeWord == shapeWord && plan->orderAndCount == orderAndCount;
+    };
+    auto& recent = instance->jsonPlanCache->recentWithExtraProperties[(hash >> 32) % JSONPlanCache::size];
+    if (!describes(recent)) [[unlikely]] {
+        auto found = instance->jsonPlanCache->withExtraProperties.find(hash);
+        auto* plan = found == instance->jsonPlanCache->withExtraProperties.end() ? nullptr : found->value.get();
+        if (!describes(plan))
+            plan = makeJSONPlanWithExtraProperties(instance, vm, object, extra, hash);
+        if (!plan)
+            return nullptr;
+        recent = plan;
+    }
+    return writeTypedObject(instance, globalObject, vm, cursor, object, jsonPlanOf(recent->keys), depth, extra);
 }
 
 static ALWAYS_INLINE bool isArrayOrInstanceOfSubclass(JSCell* cell, JSType type)
@@ -640,6 +735,12 @@ static Latin1Character* appendObject(Instance* instance, JSGlobalObject* globalO
     if (type == ObjectType) {
         if (auto* keys = jsonPlanFor(instance, globalObject, vm, object)) [[likely]]
             return appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), *keys, depth);
+        size_t offset = cursor - instance->jsonBufferStart;
+        uint32_t wideSegmentCount = instance->jsonWideSegmentCount;
+        if (Latin1Character* end = appendTypedObjectWithExtraProperties(instance, globalObject, vm, cursor, object, depth))
+            return end;
+        cursor = instance->jsonBufferStart + offset;
+        instance->jsonWideSegmentCount = wideSegmentCount;
     } else if (isArrayOrInstanceOfSubclass(object, type)) {
         auto& array = *uncheckedDowncast<JSArray>(object);
         size_t offset = cursor - instance->jsonBufferStart;
@@ -671,8 +772,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendValue, void*, (Inst
         JSType type = value.asCell()->type();
         if (type >= ObjectType && isElement == jsonValueIsWholeOutput) {
             if (type == ObjectType) {
-                auto* keys = jsonPlanFor(instance, globalObject, vm, asObject(value));
-                return keys ? appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(value.asCell()), *keys, 0) : std::bit_cast<Latin1Character*>(jsonWroteNothing);
+                if (auto* keys = jsonPlanFor(instance, globalObject, vm, asObject(value)))
+                    return appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(value.asCell()), *keys, 0);
+                Latin1Character* start = instance->jsonBufferStart;
+                Latin1Character* limit = instance->jsonBufferEnd;
+                if (Latin1Character* end = appendTypedObjectWithExtraProperties(instance, globalObject, vm, cursor, asObject(value), 0))
+                    return end;
+                return instance->jsonBufferStart == start && instance->jsonBufferEnd == limit && !instance->jsonWideSegmentCount && !(instance->jsonWideSegments && instance->jsonWideSegments->size()) ? std::bit_cast<void*>(jsonWroteNothing) : nullptr;
             }
             if (!isArrayOrInstanceOfSubclass(value.asCell(), type))
                 return std::bit_cast<void*>(jsonWroteNothing);
@@ -844,9 +950,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONKeyOrdersOf, void*, (Inst
     return nullptr;
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instance* instance, uint64_t cursor))
+static ALWAYS_INLINE JSCell* finishJSON(Instance* instance, JSGlobalObject* globalObject, VM& vm, uint64_t cursor)
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     if (instance->jsonWideSegmentCount) [[unlikely]]
         return finishWithWideSegments(instance, globalObject, vm, cursor);
     std::span<const Latin1Character> characters { instance->jsonBufferStart, std::bit_cast<Latin1Character*>(cursor) };
@@ -862,6 +967,40 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instanc
     return result;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFinish, JSCell*, (Instance* instance, uint64_t cursor))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    return finishJSON(instance, globalObject, vm, cursor);
+}
+
+static void discardJSON(Instance* instance)
+{
+    clearJSONWideSegments(instance);
+    size_t capacity = instance->jsonBufferEnd - instance->jsonBufferStart;
+    if (capacity > maxRetainedJSONBufferCapacity)
+        replaceLargeJSONBuffer(instance, capacity);
+}
+
+JSString* tryStringifyObjectWithExtraProperties(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != ObjectType)
+        return nullptr;
+    JSObject* object = asObject(value);
+    Structure* structure = object->structure();
+    if (structure->classInfoForCells() != Typed::Object::info() || !uncheckedDowncast<Typed::Object>(object)->hasExtraProperties())
+        return nullptr;
+    Instance* instance = structure->aotInstance();
+    VM& vm = globalObject->vm();
+    Latin1Character* end = appendTypedObjectWithExtraProperties(instance, globalObject, vm, instance->jsonBufferStart, object, 0);
+    JSCell* written = end ? finishJSON(instance, globalObject, vm, std::bit_cast<uint64_t>(end)) : nullptr;
+    if (!written) {
+        discardJSON(instance);
+        return nullptr;
+    }
+    countOperationNamed(instance, "objectWithExtraPropertiesWrittenByTypedWriter");
+    return uncheckedDowncast<JSString>(written);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewJSONResponse, EncodedJSValue, (Instance* instance, EncodedJSValue value, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, uint32_t headerCount, const EncodedJSValue* headerNamesAndValues))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -873,10 +1012,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewJSONResponse, EncodedJSValue, (Inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONDiscard, void, (Instance* instance))
 {
     countOperationNamed(instance, __func__);
-    clearJSONWideSegments(instance);
-    size_t capacity = instance->jsonBufferEnd - instance->jsonBufferStart;
-    if (capacity > maxRetainedJSONBufferCapacity)
-        replaceLargeJSONBuffer(instance, capacity);
+    discardJSON(instance);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONPrepare, void, (Instance* instance, uint64_t cursor, EncodedJSValue value))
@@ -909,6 +1045,17 @@ String takePreparedJSON(Instance& instance, JSValue value)
     RefPtr<StringImpl> text = adoptRef(std::exchange(instance.preparedJSONString, nullptr));
     EncodedJSValue prepared = std::exchange(instance.preparedJSONValue, 0);
     return value && prepared == JSValue::encode(value) ? String { WTF::move(text) } : String();
+}
+
+void forgetDeadJSONPlans(Instance& instance)
+{
+    auto* cache = instance.jsonPlanCache;
+    if (!cache || cache->withExtraProperties.isEmpty())
+        return;
+    cache->recentWithExtraProperties.fill(nullptr);
+    cache->withExtraProperties.removeIf([&](auto& entry) {
+        return !instance.vm->heap.isMarked(entry.value->ofExtraProperties.decode());
+    });
 }
 
 void destroyJSONBuffers(Instance& instance)
