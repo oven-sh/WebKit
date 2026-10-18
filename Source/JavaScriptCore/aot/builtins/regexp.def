@@ -33,6 +33,7 @@ runtime StringReplaceAllString : RuntimeState JSCell* (JSCell* string, JSCell* s
 runtime StringReplaceAllRegExp : Heap JSCell* (JSCell* string, JSCell* regExp, EncodedJSValue replacement)
 runtime StringSplitString : RuntimeState JSCell* (JSCell* string, JSCell* separator, uint32_t limit)
 runtime StringSplitRegExp : RuntimeState JSCell* (JSCell* string, JSCell* regExp, uint32_t limit)
+runtime StringSplitAtCharacterClass : RuntimeState JSCell* (JSCell* string, JSCell* regExp, uint32_t kind, const EncodedJSValue* latin1Members)
 runtime StringMatchRegExp : RuntimeState EncodedJSValue (JSCell* string, JSCell* regExp)
 runtime StringSearchRegExp : RuntimeState EncodedJSValue (JSCell* string, JSCell* regExp)
 

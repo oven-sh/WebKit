@@ -288,6 +288,7 @@
     v(StringSearch, RegExp, false) \
     v(SetExpectedRowType, RowDecoder, false) \
     v(StringAppend, StringAppend, false) \
+    v(EscapeHTML, StringAppend, false) \
     v(StringLength, String, false) \
     v(StringAt, String, false) \
     v(StringCharAt, String, false) \
@@ -497,6 +498,7 @@
     v(operationAOTTypedStringReplaceAllRegExp) \
     v(operationAOTTypedStringSplitString) \
     v(operationAOTTypedStringSplitRegExp) \
+    v(operationAOTTypedStringSplitAtCharacterClass) \
     v(operationAOTTypedStringMatchRegExp) \
     v(operationAOTTypedStringSearchRegExp) \
     v(operationAOTTypedSetExpectedRowType) \
@@ -507,6 +509,7 @@
     v(operationAOTTypedStringAppendMeasure) \
     v(operationAOTTypedStringAppendSync) \
     v(operationAOTTypedStringAppendFinish) \
+    v(operationAOTTypedEscapeHTML) \
     v(operationAOTTypedStringFindCharacter8) \
     v(operationAOTTypedFindSeparators8) \
     v(operationAOTTypedFindSeparators16) \

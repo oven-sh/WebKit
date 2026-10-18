@@ -25,7 +25,8 @@ public:
 
     unsigned run(CleanUpTiming timing)
     {
-        unsigned changed = narrowBlockParameters();
+        unsigned changed = checkBlockParametersOnEdges();
+        changed += narrowBlockParameters();
         for (;;) {
             unsigned changedInRound = removeCasts();
             changedInRound += removeRepeatedCasts();
@@ -428,6 +429,78 @@ private:
             }
         }
         return { };
+    }
+
+    unsigned checkBlockParametersOnEdges()
+    {
+        auto checkedParameter = [&](const Block& block) -> size_t {
+            if (block.parameters.isEmpty() || block.values.isEmpty() || (block.values.size() == 1 && block.terminator.kind == TerminatorKind::Invoke))
+                return notFound;
+            auto& cast = m_function.at(block.values[0]);
+            if (cast.opcode != Opcode::Cast || cast.castReason() != CastReason::Claim || cast.string())
+                return notFound;
+            return block.parameters.find(cast.child(0));
+        };
+        unsigned numberOfBlocks = m_function.blocks.size();
+        Vector<unsigned, 4> candidates;
+        for (unsigned b = 1; b < numberOfBlocks; ++b) {
+            if (checkedParameter(m_function.blocks[b]) != notFound)
+                candidates.append(b);
+        }
+        if (candidates.isEmpty())
+            return 0;
+        Vector<unsigned> numberOfUses(FillWith { }, m_function.values.size(), 0u);
+        auto use = [&](ValueID child) {
+            ++numberOfUses[child.index()];
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values)
+                m_function.at(id).forEachChild(use);
+            block.terminator.forEachChild(use);
+        }
+        unsigned changed = 0;
+        for (unsigned b : candidates) {
+            size_t index = checkedParameter(m_function.blocks[b]);
+            ValueID parameter = m_function.blocks[b].parameters[index];
+            ValueID castID = m_function.blocks[b].values[0];
+            if (numberOfUses[parameter.index()] != 1)
+                continue;
+            Value cast(m_function.at(castID));
+            auto& to = m_program.at(cast.type);
+            Vector<unsigned, 4> jumps;
+            unsigned numberChecked = 0;
+            bool fits = true;
+            for (unsigned from = 0; from < numberOfBlocks && fits; ++from) {
+                auto& terminator = m_function.blocks[from].terminator;
+                if (!terminator.targets.containsIf([&](auto& target) { return target.block.index() == b; }))
+                    continue;
+                fits = from != b && terminator.kind == TerminatorKind::Jump && terminator.targets[0].arguments.size() == m_function.blocks[b].parameters.size();
+                if (!fits)
+                    break;
+                jumps.append(from);
+                numberChecked += !m_program.castIsRedundant(typeOf(withoutUpcasts(terminator.targets[0].arguments[index])), to, cast);
+            }
+            if (!fits || numberChecked > 1 || numberChecked == jumps.size())
+                continue;
+            for (unsigned from : jumps) {
+                ValueID given = m_function.blocks[from].terminator.targets[0].arguments[index];
+                if (m_program.castIsRedundant(typeOf(withoutUpcasts(given)), to, cast))
+                    given = withoutUpcasts(given);
+                else {
+                    Value onEdge(cast);
+                    onEdge.children[0] = given;
+                    given = ValueID(m_function.values.size());
+                    m_function.values.append(WTF::move(onEdge));
+                    m_function.blocks[from].values.append(given);
+                }
+                m_function.blocks[from].terminator.targets[0].arguments[index] = given;
+            }
+            m_function.at(parameter).type = cast.type;
+            m_function.at(parameter).rep = cast.rep;
+            m_function.at(castID).setCastReason(CastReason::Upcast);
+            ++changed;
+        }
+        return changed;
     }
 
     unsigned narrowBlockParameters()

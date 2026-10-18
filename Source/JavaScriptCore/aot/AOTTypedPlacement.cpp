@@ -7126,7 +7126,8 @@ private:
             if (!isDescribed(i))
                 continue;
             uint32_t pinned = field.isPinned || (field.isPinnedToFunction && field.slot) ? fieldIsPinned | field.slot.index() % numberOfPinnedFieldGuards << pinnedFieldGuardShift : 0;
-            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.storedInSlot);
+            RELEASE_ASSERT(!pinned || !field.isUndeclared);
+            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned | (field.isUndeclared ? unpinnedFieldIsUndeclared : 0), field.storedInSlot);
         }
         memcpySpan(m_result.mutableSpan().subspan(next), asBytes(methods.span()));
         next += methods.sizeInBytes();
@@ -7207,6 +7208,8 @@ static void findLayoutsFrozenByUntypedCode(Program& program)
             return;
         ImmutableFunctionScope immutableFunctionScope;
         auto& function = std::as_const(program).functions[number];
+        if (function.has(Format::FunctionIsBuiltin | Format::FunctionIsInBuiltinModule) || (function.module && program.modules[function.module.index()].isBuiltin))
+            return;
         std::as_const(program).functions.forEachIndexedValue(number, uses, [&](ValueID id) {
             auto& value = function.at(id);
             if (!changesIntegrityLevel(value.builtin()))

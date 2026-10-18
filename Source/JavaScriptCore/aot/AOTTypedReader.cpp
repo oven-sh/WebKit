@@ -176,6 +176,11 @@ public:
                             return "a field that is absent at allocation is not an optional field of a class"_s;
                         field.flags |= fieldIsAbsentAtCreation;
                     }
+                    if (from.flags & Format::FieldIsUndeclared) {
+                        if (!(from.flags & Format::FieldIsAbsentAtCreation))
+                            return "a field that the class does not declare is not absent at allocation"_s;
+                        field.isUndeclared = true;
+                    }
                     if (from.flags & Format::FieldIsNeverObservedAbsent) {
                         if (!isObjectLayout(layout.kind) || from.flags & (Format::FieldIsOptional | Format::FieldIsNeverStored))
                             return "a field that is never observed absent is not a required field of an object"_s;
@@ -385,6 +390,11 @@ public:
             if (string >= m_program.strings.size())
                 return "a name defined on a prototype is not a string of the program"_s;
             m_program.prototypePropertyNames.set(string);
+        }
+        for (uint32_t string : slice(m_words, m_header->hostAccessorNames)) {
+            if (string >= m_program.strings.size())
+                return "the name of an accessor of a host prototype is not a string of the program"_s;
+            m_program.hostAccessorNames.set(string);
         }
         auto regExpLiterals = slice(m_words, m_header->regExpLiterals);
         if (regExpLiterals.size() % 2)

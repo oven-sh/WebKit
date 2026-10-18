@@ -680,7 +680,7 @@ void cacheNamedFieldRead(Instance* instance, JSCell* cell, const Identifier& ide
 {
     auto* object = uncheckedDowncast<Typed::Object>(cell);
     const Typed::FieldData* field = object->fieldNamed(object->state(), ident);
-    if (auto read = field ? fieldReadFor(field->store()) : std::nullopt)
+    if (auto read = field && !Typed::isUndeclaredField(field->flags) ? fieldReadFor(field->store()) : std::nullopt)
         Instance::cacheNamedField(instance->namedFieldReads, Typed::shapeWordOf(object->shape()), name, (field->flags & Typed::fieldIsOutOfLine ? Slot::fieldIsInExtension : 0) | static_cast<uint64_t>(*read) << Slot::fieldReadShift | field->offset);
 }
 
@@ -1639,6 +1639,8 @@ static void cacheStoreToCompiledField(VM& vm, Data* data, Slot* cache, JSCell* c
 void cacheNamedFieldWrite(Instance* instance, JSCell* cell, const Identifier& ident, uint32_t name)
 {
     auto* object = uncheckedDowncast<Typed::Object>(cell);
+    if (const Typed::FieldData* field = object->fieldNamed(object->state(), ident); field && Typed::isUndeclaredField(field->flags))
+        return;
     if (uint64_t fieldWrite = fieldWriteFor(*instance->vm, object, ident))
         Instance::cacheNamedField(instance->namedFieldWrites, Typed::shapeWordOf(object->shape()), name, fieldWrite);
 }

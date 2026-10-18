@@ -286,6 +286,7 @@ private:
     std::optional<uint16_t> extraKeyOrdinal(PropertyName) const;
     bool hasPositionAmongKeys(UniquedStringImpl*) const;
     void didRemoveExtraKey(State&, uint16_t ordinal, const FieldData* replacementField = nullptr);
+    bool defineInExtraProperties(JSGlobalObject*, const FieldData&, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     JSObject* ensureExtraProperties(VM&);
     JSFinalObject* tryCopyExtraPropertiesForClone(VM&) const;
     void willAddExtraProperty(VM&, PropertyName);

@@ -349,6 +349,8 @@ struct Value {
     bool isAwaitedWithoutPromise : 1 { false };
     bool takesElementsOfArrayLiteral : 1 { false };
     bool mayConvertPlainRecord : 1 { false };
+    bool takesUnsharedString : 1 { false };
+    bool callsPredictedStatic : 1 { false };
     SpeculatedMethod speculatedMethod : 4 { SpeculatedMethod::None };
     uint8_t predictedReceiverClassPlusOne : 6 { 0 };
     uint32_t position { 0 };
@@ -672,6 +674,7 @@ struct Function {
     bool isRampForClosures { false };
     bool isUsedAsObject { false };
     bool isSharedOutlinedBody { false };
+    StringID sourceOfSeparatorPassed;
     bool isSharedCallBody { false };
     bool testsPinnedFunction { false };
     bool closuresCaptureOnlyTheirHolder { false };
@@ -810,6 +813,7 @@ struct Field {
     Store store { Store::JSValue };
     uint32_t offset { 0 };
     bool isOutOfLine { false };
+    bool isUndeclared { false };
     bool isMissingInSomeSubtype { false };
     bool isAnyObjectInSomeSubtype { false };
     bool hasDifferentTypeInSomeSupertype { false };
@@ -942,6 +946,7 @@ struct Variable {
     bool singleFunctionOrNullish { false };
     Vector<FunctionID, 2> functionsCapturedBySingleFunction;
     PredictedBuiltins predictedBuiltins;
+    BuiltinID predictedStaticOfReplaceableGlobal;
     Store store { Store::JSValue };
     uint32_t offset { 0 };
 };
@@ -1216,6 +1221,7 @@ public:
     ValueID constantOf(const Function&, ValueID) const;
     ValueID originOf(const Function&, ValueID) const;
     PredictedBuiltins predictedBuiltins(const Function&, ValueID) const;
+    BuiltinID predictedStaticCalledBy(const Function&, const Value& call) const;
     bool castIsRedundant(const Type& from, const Type& to, CastReason reason) const
     {
         return from.isSubsetOf(to, *this, !isRelaxedForLogging(to) && (reason != CastReason::As || !annotationCoercesUntypedObjects(to)));
@@ -1255,6 +1261,7 @@ public:
     LineColumn lineColumnFor(ModuleID, uint32_t position) const;
     BitVector extendedGlobals;
     BitVector prototypePropertyNames;
+    BitVector hostAccessorNames;
     bool hasPrototypeThatMayGainMembers { false };
     BitVector methodFieldNames;
     BitVector lazyClosureNames;
@@ -1503,6 +1510,7 @@ public:
     mutable std::array<LayoutAndNameTypeCache, 64> widestTypeStoredThroughSupertypesCache;
     bool isStaticallyHot(FunctionID id) const { return staticallyHotFunctions.get(id.index()); }
     BitVector modulesRunPerRequest;
+    BitVector functionsWithSiteCaches;
     BitVector staticallyWarmFunctions;
     bool isStaticallyWarm(FunctionID id) const { return staticallyWarmFunctions.get(id.index()); }
     BitVector staticallyRareFunctions;

@@ -3830,6 +3830,8 @@ static void outlineBuiltinCalls(Program& program)
                 signature.append('m');
             if (value.child(1))
                 signature.append('r');
+            if (StringID source = sourceOfCharacterClassSeparator(program, function, value))
+                signature.append('s', source.index());
             bool usesPredictions = false;
             bool takesObject = false;
             forEachOperand(value, [&](ValueID operandID) {
@@ -3944,6 +3946,7 @@ static void outlineBuiltinCalls(Program& program)
         created.position = function.position;
         created.flags = Format::FunctionIsTyped | Format::FunctionIsHiddenInStackTraces;
         created.isSharedOutlinedBody = true;
+        created.sourceOfSeparatorPassed = sourceOfCharacterClassSeparator(program, function, value);
         created.resultType = value.type;
         created.blocks.append(Block { });
         Value call(value);
@@ -5707,6 +5710,8 @@ static void outlineDestructuredParameterReads(Program& program)
             program.functionsWithInliningDisabled.set(bodyID.index());
         if (program.callGraphColdFunctions.get(i))
             program.callGraphColdFunctions.set(bodyID.index());
+        if (program.functionsWithSiteCaches.get(i))
+            program.functionsWithSiteCaches.set(bodyID.index());
         program.functions[i] = WTF::move(wrapper);
         bodies.append(WTF::move(body));
     }
@@ -6106,6 +6111,8 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
             program.functionsWithInliningDisabled.set(workerID.index());
         if (program.callGraphColdFunctions.get(i))
             program.callGraphColdFunctions.set(workerID.index());
+        if (program.functionsWithSiteCaches.get(i))
+            program.functionsWithSiteCaches.set(workerID.index());
     }
     program.types.freeze();
 }
@@ -6526,6 +6533,8 @@ static void shareCallsOfFunctionFields(Program& program)
         if (!functionPinnedToField(program, program.at(body.receiver), site.string()))
             continue;
         auto access = fieldOf(program, program.at(body.receiver), site.string());
+        if (std::as_const(program).at(access->layout).fields[access->field].isUndeclared)
+            continue;
         program.layouts[access->layout.index()].fields[access->field].isPinnedToFunction = true;
         program.layouts[access->layout.index()].hasFieldPinnedToFunction = true;
         for (LayoutID subtype : std::as_const(program).at(access->layout).subtypes) {
@@ -9335,6 +9344,77 @@ static unsigned findFunctionsInModuleVariables(Program& program)
     return singleCount;
 }
 
+static void findStaticsOfReplaceableGlobalsInVariables(Program& program)
+{
+    auto& builtins = Builtins::singleton();
+    unsigned count = program.functions.size();
+    Vector<Vector<std::pair<uint32_t, BuiltinID>>> storesIn(count);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = std::as_const(program).functions[i];
+        static constexpr OpcodeSet stores { Opcode::PutModuleVariable };
+        std::as_const(program).functions.forEachIndexedValue(i, stores, [&](ValueID id) {
+            auto& store = function.at(id);
+            BuiltinID stored;
+            if (auto& read = function.at(program.originOf(function, store.child(0))); read.opcode == Opcode::GetById) {
+                auto& holder = function.at(program.originOf(function, read.child(0)));
+                if (holder.opcode == Opcode::GetGlobal && builtins.isReplaceable(program.builtinName(holder.string())))
+                    stored = builtins.find(BuiltinKind::StaticFunction, program.builtinName(holder.string()), program.builtinName(read.string()));
+            }
+            storesIn[i].append({ store.variable().index(), stored });
+        });
+    });
+    BitVector holdsSomethingElse(program.variables.size());
+    for (auto& stores : storesIn) {
+        for (auto [variable, stored] : stores) {
+            auto& predicted = program.variables[variable].predictedStaticOfReplaceableGlobal;
+            if (!stored || (predicted && predicted != stored))
+                holdsSomethingElse.set(variable);
+            else
+                predicted = stored;
+        }
+    }
+    for (size_t variable : holdsSomethingElse)
+        program.variables[variable].predictedStaticOfReplaceableGlobal = { };
+}
+
+BuiltinID Program::predictedStaticCalledBy(const Function& function, const Value& call) const
+{
+    if (call.opcode != Opcode::Call || call.isInTailPosition || (call.child(1) && !typeOf(function, call.child(1)).hasOnlyPrimitives(Primitive::Undefined)))
+        return { };
+    auto& callee = function.at(originOf(function, call.child(0)));
+    if (callee.opcode != Opcode::GetModuleVariable)
+        return { };
+    Vector<Type, 4> argumentTypes;
+    for (ValueID argument : call.arguments)
+        argumentTypes.append(typeOf(function, argument));
+    BuiltinID entry = applicableEntry(variables[callee.variable().index()].predictedStaticOfReplaceableGlobal, argumentTypes.span());
+    if (!entry)
+        return { };
+    auto& implementation = Builtins::singleton().at(entry).implementation;
+    return implementation.kind == BuiltinImplementation::Inline && writesOfInlineBuiltin(implementation.inlined, argumentTypes.span()) ? entry : BuiltinID();
+}
+
+static void markCallsOfPredictedStatics(Program& program)
+{
+    if (!program.variables.containsIf([](auto& variable) { return !!variable.predictedStaticOfReplaceableGlobal; }))
+        return;
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = std::as_const(program).functions[i];
+        Vector<ValueID, 8> calls;
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (function.at(id).opcode == Opcode::Call && std::as_const(program).predictedStaticCalledBy(function, function.at(id)))
+                    calls.append(id);
+            }
+        }
+        if (calls.isEmpty())
+            return;
+        auto& changed = program.functions.atKeepingValueIndex(i);
+        for (ValueID id : calls)
+            changed.at(id).callsPredictedStatic = true;
+    });
+}
+
 static void findBuiltinsInVariables(Program& program)
 {
     enum class Location : uint8_t { Field, Variable, EntryParameter };
@@ -10407,7 +10487,54 @@ static void refuteIteratorsWithMutableNext(Program& program)
 
 static constexpr uint8_t vigintileNearRoots = 25;
 
-static Vector<uint8_t> computeHeatVigintiles(const Program&);
+static Vector<uint8_t> computeHeatVigintiles(const Program&, Vector<uint32_t>& functionsFromColdest);
+
+static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* functionsFromColdest)
+{
+    static constexpr uint64_t maxAccessesByName = 32768;
+    static constexpr OpcodeSet accessesByName { Opcode::GetById, Opcode::PutById, Opcode::CallMethod };
+    unsigned forced = Options::aotHotByTextForTesting();
+    if (forced && forced != 2) [[unlikely]]
+        return;
+    unsigned count = program.functions.size();
+    BitVector isBuiltinModule(program.modules.size());
+    for (auto& [number, code] : program.builtinModules) {
+        if (ModuleID module = code ? std::as_const(program).at(code).module : ModuleID())
+            isBuiltinModule.set(module.index());
+    }
+    BitVector chosen(count);
+    uint64_t accesses = 0;
+    for (unsigned k = count; k--;) {
+        unsigned i = functionsFromColdest ? (*functionsFromColdest)[k] : k;
+        auto& function = std::as_const(program).functions[i];
+        if (!function.module || isBuiltinModule.get(function.module.index()))
+            continue;
+        uint64_t own = 0;
+        std::as_const(program).functions.forEachValue(i, accessesByName, [&](ValueID) {
+            ++own;
+        });
+        if (accesses + own > maxAccessesByName)
+            break;
+        accesses += own;
+        chosen.set(i);
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: the hottest functions: ", chosen.bitCount(), " of ", count, ", ", accesses, " accesses by name");
+    if (!forced) {
+        for (unsigned i : chosen) {
+            auto& function = std::as_const(program).functions[i];
+            if (function.kind == FunctionKind::Module || function.isGenericEntrypoint() || function.blocks.isEmpty() || function.savesFrameOnSuspend)
+                continue;
+            program.callGraphColdFunctions.clear(i);
+            auto entry = program.genericEntrypoints.find(i);
+            for (unsigned marked : { i, entry != program.genericEntrypoints.end() ? entry->value.index() : i }) {
+                program.staticallyHotFunctions.set(marked);
+                program.staticallyWarmFunctions.set(marked);
+                program.functionsHotOnlyInLoops.clear(marked);
+            }
+        }
+    }
+    program.functionsWithSiteCaches = WTF::move(chosen);
+}
 
 static void findCallGraphColdFunctions(Program& program, const Vector<uint8_t>& vigintiles)
 {
@@ -14339,6 +14466,8 @@ Vector<String> optimize(Program& program)
     didFinish("- findFunctionPairsInEnvironments"_s);
     findBuiltinsInVariables(program);
     didFinish("- findBuiltinsInVariables"_s);
+    findStaticsOfReplaceableGlobalsInVariables(program);
+    didFinish("- findStaticsOfReplaceableGlobalsInVariables"_s);
     removeUnreadExports(program);
     didFinish("- removeUnreadExports"_s);
     findInternalModuleExports(program);
@@ -14415,7 +14544,8 @@ Vector<String> optimize(Program& program)
     didFinish("- findStaticallyRareFunctions"_s);
     bool isAllCold = Options::aotHotByTextForTesting() == 3;
     if (isAllCold || !isTooSmallForColdCode(program)) {
-        auto vigintiles = computeHeatVigintiles(program);
+        Vector<uint32_t> functionsFromColdest;
+        auto vigintiles = computeHeatVigintiles(program, functionsFromColdest);
         if (isAllCold) [[unlikely]]
             vigintiles.fill(0);
         applyCallGraphHeat(program, vigintiles);
@@ -14424,7 +14554,10 @@ Vector<String> optimize(Program& program)
         didFinish("- findFunctionsWithInliningDisabled"_s);
         findCallGraphColdFunctions(program, vigintiles);
         didFinish("- findCallGraphColdFunctions"_s);
-    }
+        chooseHottestFunctions(program, &functionsFromColdest);
+    } else
+        chooseHottestFunctions(program, nullptr);
+    didFinish("- chooseHottestFunctions"_s);
     markCallsInTailPosition(program);
     didFinish("- markCallsInTailPosition"_s);
     if (!Options::auditAOTTypedAssertions()) {
@@ -14844,6 +14977,10 @@ Vector<String> optimize(Program& program)
     didFinish("effects"_s);
     computeFunctionsReturningMapKeys(program);
     didFinish("map keys"_s);
+    findUnsharedResponseBodies(program);
+    didFinish("- findUnsharedResponseBodies"_s);
+    markCallsOfPredictedStatics(program);
+    didFinish("- markCallsOfPredictedStatics"_s);
     removeModuleEvaluations(program);
     didFinish("- removeModuleEvaluations"_s);
     finalizeInitialStructures(program);
@@ -14869,7 +15006,7 @@ Vector<String> optimize(Program& program)
     return result;
 }
 
-static Vector<uint8_t> computeHeatVigintiles(const Program& program)
+static Vector<uint8_t> computeHeatVigintiles(const Program& program, Vector<uint32_t>& functionsFromColdest)
 {
     unsigned count = program.functions.size();
     struct Edge {
@@ -15651,6 +15788,11 @@ static Vector<uint8_t> computeHeatVigintiles(const Program& program)
             order[i] = std::pair { flow * mass / std::max(1u, sizes[i]), i };
         });
         sortOnPool(order.mutableSpan(), std::less { });
+        if (!which) {
+            functionsFromColdest = Vector<uint32_t>(count, [&](size_t k) {
+                return order[k].second;
+            });
+        }
         Vector<uint8_t> result(FillWith { }, count, static_cast<uint8_t>(0));
         uint64_t before = 0;
         for (auto [key, function] : order) {

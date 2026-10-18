@@ -78,7 +78,8 @@ bool mayInherit(const Program& program, LayoutID supertype, StringID name, bool 
         return true;
     return isObjectLayout(program.at(supertype).kind) && !isPrivateName(program.string(name)) && std::ranges::any_of(program.at(supertype).subtypes, [&](LayoutID subtype) {
         auto& layout = program.at(subtype);
-        return mayConsultPrototypeChain(layout) && mayConsultPrototypeFor(layout, layout.fieldNamed(name));
+        auto field = layout.fieldNamed(name);
+        return (field && layout.fields[*field].isUndeclared) || (mayConsultPrototypeChain(layout) && mayConsultPrototypeFor(layout, field));
     });
 }
 
@@ -167,7 +168,7 @@ static bool computePrototypeChainLacksProperty(const Program& program, LayoutID 
     for (LayoutID subtype : program.at(supertype).subtypes) {
         auto& layout = program.at(subtype);
         auto field = layout.fieldNamed(name);
-        if (asks && mayConsultPrototypeFor(layout, field))
+        if (asks && ((field && layout.fields[*field].isUndeclared) || mayConsultPrototypeFor(layout, field)))
             return false;
         if (field)
             continue;
@@ -1208,12 +1209,18 @@ Word32 Lowering::hasOwnField(CellPointer cell, const Field& field)
 {
     if (field.flags & fieldMayBeUnlisted)
         return AOT_TYPED_OPERATION(HasExtra, cell, word32(field.name.index() | nameMayBeOwnField));
-    if (!(field.flags & fieldMayExistWithoutStorage))
+    if (!(field.flags & fieldMayExistWithoutStorage) && !field.isUndeclared)
         return hasField(cell, field);
     return either<Word32>(hasField(cell, field), [&] {
         return boolean(true);
     }, [&] {
-        return AOT_TYPED_OPERATION(HasExtra, cell, word32(field.name.index() | nameMayBeOwnField));
+        if (field.flags & fieldMayExistWithoutStorage)
+            return AOT_TYPED_OPERATION(HasExtra, cell, word32(field.name.index() | nameMayBeOwnField));
+        return either<Word32>(hasNoBits(orderWordOf(cell), orderWordHasExtraProperties), [&] {
+            return boolean(false);
+        }, [&] {
+            return AOT_TYPED_OPERATION(HasExtra, cell, word32(field.name.index() | nameMayBeOwnField));
+        });
     });
 }
 
@@ -2187,6 +2194,15 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
                 }
                 m_out.appendTo(goesOn);
             };
+            if (field.isUndeclared && mayConsultPrototype) {
+                LBasicBlock hasExtraProperties = newColdBlock();
+                LBasicBlock hasNone = m_out.newBlock();
+                m_out.branch(hasNoBits(orderWordOf(cell), orderWordHasExtraProperties).value(), usually(hasNone), rarely(hasExtraProperties));
+                m_out.appendTo(hasExtraProperties);
+                setByName(box(cell), field.name, in<Boxed>(stored));
+                m_out.jump(done);
+                m_out.appendTo(hasNone);
+            }
             OperationEffects effects { Writes::Fields, false, false, true };
             if (Options::countAOTTypedAllocations()) {
                 onCacheMiss();
@@ -6371,6 +6387,8 @@ void Lowering::lowerPutById(ValueID, const Value& value)
                 m_out.branch(isFieldAbsent(cell, *expectedField, 0).value(), unsure(creates), unsure(continuation));
                 m_out.appendTo(creates);
                 Operand inlineNumber = isStored ? narrowOrElse(get(stored), typeOf(stored), inlineNumberType(), otherwise) : Operand { };
+                if (expectedField->isUndeclared)
+                    orElse(hasNoBits(orderWordOf(cell), orderWordHasExtraProperties), otherwise);
                 auto onCacheMiss = [&] {
                     if (uint32_t bits = (mayInherit(m_program, supertype, name) ? orderWordHasExtraProperties : 0) | (mayHaveIntegrity ? orderWordIsNotExtensible : 0))
                         orElse(hasNoBits(orderWordOf(cell), bits), otherwise);
@@ -6415,18 +6433,32 @@ void Lowering::lowerPutById(ValueID, const Value& value)
     if (mayBeFrozen(supertype) && !isPrivateName(m_program.string(name)) && !field->isMissingInSomeSubtype && m_program.at(supertype).acceptsUntypedObjects && !isAllocatedAsSubtypeOf(object, supertype) && !m_program.at(supertype).test.neverPasses()) {
         LBasicBlock genericPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        m_knownSubtype = { };
-        orElse(passes(shapeWordOf(cell), m_program.at(supertype).test), genericPath);
+        KnownSubtype known = std::exchange(m_knownSubtype, { });
+        bool isKnown = known.cell == cell.value() && known.supertype == supertype && known.block == m_out.m_block && !mayHaveCalledSince(known.block, known.index, m_proc.size());
+        orElse(isKnown ? Word32(known.isSubtype) : passes(shapeWordOf(cell), m_program.at(supertype).test), genericPath);
         orElse(hasNoBits(orderWordOf(cell), orderWordIsFrozen), genericPath);
+        LBasicBlock first = m_out.m_block;
+        unsigned index = static_cast<unsigned>(first->size());
+        unsigned numberOfBlocks = m_proc.size();
         {
             SetForScope isAfterStoreShapeTest(m_isAfterStoreShapeTest, true);
             writeField(cell, object, *field, stored);
         }
+        std::optional<ValueFromBlock> isSubtypeAfterStore;
+        std::optional<ValueFromBlock> isSubtypeAfterCall;
+        if (!mayHaveCalledSince(first, index, numberOfBlocks))
+            isSubtypeAfterStore = m_out.anchor(m_out.booleanTrue);
         m_out.jump(continuation);
         m_out.appendTo(genericPath);
         emitPutById(box(cell), name, in<Boxed>(stored));
+        if (isSubtypeAfterStore)
+            isSubtypeAfterCall = m_out.anchor(passes(shapeWordOf(cell), m_program.at(supertype).test).value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
+        if (isSubtypeAfterCall) {
+            LValue isSubtype = m_out.phi(B3::Int32, *isSubtypeAfterStore, *isSubtypeAfterCall);
+            m_knownSubtype = KnownSubtype { cell.value(), supertype, isSubtype, m_out.m_block, static_cast<unsigned>(m_out.m_block->size()) };
+        }
         return;
     }
     accessThroughSupertype(cell, object, supertype, *field, Rep::Void, [&]() -> Operand {

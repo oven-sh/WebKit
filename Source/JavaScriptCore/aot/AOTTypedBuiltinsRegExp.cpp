@@ -359,6 +359,85 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringSplitRegExp, JSCell*, (Instance*
     OPERATION_RETURN(scope, regExpSplitFast(globalObject, regExpObject, uncheckedDowncast<JSString>(string), limit));
 }
 
+struct CharacterClassSeparator {
+    static constexpr uint32_t repeats = 1;
+    static constexpr uint32_t holdsSpacesBeyondLatin1 = 2;
+    static constexpr uint32_t holdsOthersBeyondLatin1 = 4;
+
+    std::array<uint64_t, 4> latin1Members { };
+    uint32_t kind { 0 };
+};
+
+static ALWAYS_INLINE bool isSpaceBeyondLatin1(char16_t character)
+{
+    return character == 0x1680 || (character >= 0x2000 && character <= 0x200a) || character == 0x2028 || character == 0x2029 || character == 0x202f || character == 0x205f || character == 0x3000 || character == 0xfeff;
+}
+
+template<typename CharacterType>
+static MatchResult findPiecesBetweenSeparators(std::span<const CharacterType> characters, const uint64_t* latin1Members, uint32_t kind, Vector<unsigned>& pieces)
+{
+    auto isSeparator = [&](CharacterType character) ALWAYS_INLINE_LAMBDA {
+        if constexpr (sizeof(CharacterType) > 1) {
+            if (character > 0xff) [[unlikely]]
+                return !!(kind & (isSpaceBeyondLatin1(character) ? CharacterClassSeparator::holdsSpacesBeyondLatin1 : CharacterClassSeparator::holdsOthersBeyondLatin1));
+        }
+        return !!(latin1Members[character >> 6] >> (character & 63) & 1);
+    };
+    MatchResult last = MatchResult::failed();
+    unsigned size = characters.size();
+    unsigned start = 0;
+    unsigned position = 0;
+    while (position < size) {
+        if (!isSeparator(characters[position])) {
+            ++position;
+            continue;
+        }
+        unsigned end = position + 1;
+        if (kind & CharacterClassSeparator::repeats) {
+            while (end < size && isSeparator(characters[end]))
+                ++end;
+        }
+        pieces.append(start);
+        pieces.append(position - start);
+        last = MatchResult(position, end);
+        start = end;
+        position = end;
+    }
+    pieces.append(start);
+    pieces.append(size - start);
+    return last;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringSplitAtCharacterClass, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* regExp, uint32_t kind, const EncodedJSValue* latin1Members))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* regExpObject = uncheckedDowncast<RegExpObject>(regExp);
+    if (!regExpObject->isSymbolSplitFastAndNonObservable(globalObject)) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    auto* string = uncheckedDowncast<JSString>(stringCell);
+    constexpr unsigned maxLength = 1 << 20;
+    const StringImpl* impl = string->tryGetValueImpl();
+    if (!string->length() || string->length() > maxLength || (impl && impl->isAtom()) || globalObject->isHavingABadTime()) [[unlikely]]
+        OPERATION_RETURN(scope, regExpSplitFast(globalObject, regExpObject, string, UINT32_MAX));
+    auto input = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    auto& pieces = vm.stringSplitIndice;
+    pieces.shrink(0);
+    auto* members = std::bit_cast<const uint64_t*>(latin1Members);
+    MatchResult last = input->is8Bit() ? findPiecesBetweenSeparators(input->span8(), members, kind, pieces) : findPiecesBetweenSeparators(input->span16(), members, kind, pieces);
+    if (last)
+        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExpObject->regExp(), string, last, false);
+    unsigned count = pieces.size() / 2;
+    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    for (unsigned i = 0; i < count; ++i)
+        result->butterfly()->contiguous().at(result, i).set(vm, result, jsSubstringOfResolved(vm, string, pieces[i * 2], pieces[i * 2 + 1]));
+    OPERATION_RETURN(scope, result);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringMatchRegExp, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* regExp))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -412,6 +491,175 @@ std::optional<uint64_t> regExpLiteralKey(const Program& program, const Function&
     if (flags.contains(Yarr::Flags::Sticky))
         return std::nullopt;
     return static_cast<uint64_t>(source->string().index()) << 32 | flags.toRaw();
+}
+
+static std::optional<CharacterClassSeparator> parseCharacterClassSeparator(std::span<const uint8_t> pattern)
+{
+    struct Members {
+        std::array<uint64_t, 4> latin1 { };
+        bool spacesBeyondLatin1 { false };
+        bool othersBeyondLatin1 { false };
+
+        void add(unsigned first, unsigned last)
+        {
+            for (unsigned character = first; character <= last; ++character)
+                latin1[character / 64] |= 1ull << character % 64;
+        }
+        void add(const Members& other)
+        {
+            for (unsigned word = 0; word < latin1.size(); ++word)
+                latin1[word] |= other.latin1[word];
+            spacesBeyondLatin1 |= other.spacesBeyondLatin1;
+            othersBeyondLatin1 |= other.othersBeyondLatin1;
+        }
+        void invert()
+        {
+            for (auto& word : latin1)
+                word = ~word;
+            spacesBeyondLatin1 = !spacesBeyondLatin1;
+            othersBeyondLatin1 = !othersBeyondLatin1;
+        }
+    };
+    auto isSyntaxCharacter = [](uint8_t character) {
+        return character && strchr("^$\\.*+?()[]{}|/", character);
+    };
+    size_t position = 0;
+    auto parseEscape = [&](Members& members, bool isInClass) -> std::optional<bool> {
+        if (position == pattern.size())
+            return std::nullopt;
+        uint8_t escaped = pattern[position++];
+        Members named;
+        switch (escaped) {
+        case 'd':
+        case 'D':
+            named.add('0', '9');
+            break;
+        case 'w':
+        case 'W':
+            named.add('0', '9');
+            named.add('A', 'Z');
+            named.add('a', 'z');
+            named.add('_', '_');
+            break;
+        case 's':
+        case 'S':
+            named.add('\t', '\r');
+            named.add(' ', ' ');
+            named.add(0xa0, 0xa0);
+            named.spacesBeyondLatin1 = true;
+            break;
+        case 'n':
+            members.add('\n', '\n');
+            return true;
+        case 'r':
+            members.add('\r', '\r');
+            return true;
+        case 't':
+            members.add('\t', '\t');
+            return true;
+        case 'f':
+            members.add('\f', '\f');
+            return true;
+        case 'v':
+            members.add('\v', '\v');
+            return true;
+        default:
+            if (!isSyntaxCharacter(escaped) && !(isInClass && escaped == '-'))
+                return std::nullopt;
+            members.add(escaped, escaped);
+            return true;
+        }
+        if (isASCIIUpper(escaped))
+            named.invert();
+        members.add(named);
+        return false;
+    };
+
+    if (pattern.empty())
+        return std::nullopt;
+    for (uint8_t character : pattern) {
+        if (!isASCII(character))
+            return std::nullopt;
+    }
+    Members members;
+    uint8_t first = pattern[position++];
+    if (first == '\\') {
+        if (!parseEscape(members, false))
+            return std::nullopt;
+    } else if (first == '[') {
+        bool isInverted = position < pattern.size() && pattern[position] == '^';
+        position += isInverted;
+        bool isClosed = false;
+        while (position < pattern.size()) {
+            uint8_t character = pattern[position++];
+            if (character == ']') {
+                isClosed = true;
+                break;
+            }
+            bool isOneCharacter = true;
+            if (character == '\\') {
+                auto parsed = parseEscape(members, true);
+                if (!parsed)
+                    return std::nullopt;
+                isOneCharacter = *parsed;
+                character = pattern[position - 1];
+            } else if (character == '-' || character == '[')
+                return std::nullopt;
+            else
+                members.add(character, character);
+            if (position >= pattern.size() || pattern[position] != '-')
+                continue;
+            if (position + 1 >= pattern.size())
+                return std::nullopt;
+            uint8_t last = pattern[position + 1];
+            if (!isOneCharacter || !isASCIIAlphanumeric(character) || pattern[position - 2] == '\\' || !isASCIIAlphanumeric(last) || last < character)
+                return std::nullopt;
+            members.add(character, last);
+            position += 2;
+        }
+        if (!isClosed)
+            return std::nullopt;
+        if (isInverted)
+            members.invert();
+    } else if (isSyntaxCharacter(first))
+        return std::nullopt;
+    else
+        members.add(first, first);
+    CharacterClassSeparator separator { members.latin1, 0 };
+    if (position < pattern.size() && pattern[position] == '+') {
+        separator.kind |= CharacterClassSeparator::repeats;
+        ++position;
+    }
+    if (position != pattern.size())
+        return std::nullopt;
+    if (members.spacesBeyondLatin1)
+        separator.kind |= CharacterClassSeparator::holdsSpacesBeyondLatin1;
+    if (members.othersBeyondLatin1)
+        separator.kind |= CharacterClassSeparator::holdsOthersBeyondLatin1;
+    return separator;
+}
+
+static std::optional<CharacterClassSeparator> characterClassSeparatorOf(const Program& program, const Function& function, const Value& split)
+{
+    if (split.arguments.size() != 1)
+        return std::nullopt;
+    auto& separator = function.at(program.originOf(function, split.arguments[0]));
+    if (function.sourceOfSeparatorPassed && separator.opcode == Opcode::Parameter)
+        return parseCharacterClassSeparator(program.string(function.sourceOfSeparatorPassed));
+    auto key = regExpLiteralKey(program, function, separator);
+    if (!key || static_cast<uint32_t>(*key))
+        return std::nullopt;
+    return parseCharacterClassSeparator(program.string(StringID(static_cast<uint32_t>(*key >> 32))));
+}
+
+StringID sourceOfCharacterClassSeparator(const Program& program, const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return { };
+    auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::StringSplit || !characterClassSeparatorOf(program, function, value))
+        return { };
+    return StringID(static_cast<uint32_t>(*regExpLiteralKey(program, function, function.at(program.originOf(function, value.arguments[0]))) >> 32));
 }
 
 bool Lowering::isUnreferenced(ValueID literal, bool isGlobal)
@@ -715,8 +963,15 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
         return ensure(AOT_TYPED_OPERATION(StringReplaceAllString, receiver, in<CellPointer>(arguments[0]), in<CellPointer>(arguments[1])), stringType, type);
     case InlineBuiltin::StringSplit: {
         Type arrayClass = Type::engineClass(m_builtins.arrayClass());
-        if (isRegExp(typeOf(arguments[0])))
+        if (isRegExp(typeOf(arguments[0]))) {
+            if (auto separator = characterClassSeparatorOf(m_program, m_function, value)) {
+                LValue members = transientBuffer(separator->latin1Members.size() * sizeof(EncodedJSValue));
+                for (unsigned word = 0; word < separator->latin1Members.size(); ++word)
+                    m_out.store64(integer(static_cast<int64_t>(separator->latin1Members[word])).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, members, word * sizeof(EncodedJSValue)));
+                return orGeneric(AOT_TYPED_OPERATION(StringSplitAtCharacterClass, receiver, in<CellPointer>(arguments[0]), word32(separator->kind), Pointer(members)), arrayClass);
+            }
             return orGeneric(AOT_TYPED_OPERATION(StringSplitRegExp, receiver, in<CellPointer>(arguments[0]), limit()), arrayClass);
+        }
         if (auto takenApart = lowerSplitOnlyTakenApart(result, value, receiver))
             return takenApart;
         return ensure(AOT_TYPED_OPERATION(StringSplitString, receiver, in<CellPointer>(arguments[0]), limit()), arrayClass, type);

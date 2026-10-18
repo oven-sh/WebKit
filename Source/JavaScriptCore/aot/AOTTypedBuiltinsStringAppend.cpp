@@ -191,6 +191,33 @@ static ALWAYS_INLINE Appended appendCharacters(Instance* instance, std::span<con
     return Appended::Yes;
 }
 
+static ALWAYS_INLINE bool areAllLatin1(std::span<const char16_t> characters)
+{
+    unsigned bits = 0;
+    for (char16_t character : characters)
+        bits |= character;
+    return !(bits & 0xff00);
+}
+
+static ALWAYS_INLINE bool canBeViewedWithoutFlattening(JSString* string)
+{
+    return string->isSubstring() || !string->isRope();
+}
+
+static Appended appendNarrowed(Instance* instance, std::span<const char16_t> characters)
+{
+    auto write = [&](Latin1Character* to) ALWAYS_INLINE_LAMBDA {
+        for (char16_t character : characters)
+            *to++ = static_cast<Latin1Character>(character);
+    };
+    countOperationNamed(instance, "StringAppend: Latin-1 in 16 bits");
+    if (instance->stringAppenderLength + characters.size() > instance->stringAppenderLimit) [[unlikely]]
+        return appendSlow(instance, characters.size(), write);
+    write(instance->stringAppenderOrigin + instance->stringAppenderLength);
+    instance->stringAppenderLength += characters.size();
+    return Appended::Yes;
+}
+
 static NEVER_INLINE Appended appendStringSlow(Instance* instance, uint64_t frame, JSString* string)
 {
     auto& appender = *instance->stringAppender;
@@ -209,6 +236,11 @@ static NEVER_INLINE Appended appendStringSlow(Instance* instance, uint64_t frame
     if (string->isSubstring() && string->is8Bit() && size < minLengthAppendedByReference) {
         auto view = string->view(instance->globalObject);
         return appendCharacters(instance, view->span8());
+    }
+    if (!string->is8Bit() && size < minLengthAppendedByReference && canBeViewedWithoutFlattening(string)) {
+        auto view = string->view(instance->globalObject);
+        if (areAllLatin1(view->span16()))
+            return appendNarrowed(instance, view->span16());
     }
     if (string->is8Bit() && size < minLengthAppendedByReference) {
         if (instance->stringAppenderLength + size > instance->stringAppenderLimit) {
@@ -438,11 +470,40 @@ static ALWAYS_INLINE Appended appendHTMLEscapedCharacters(Instance* instance, st
     return Appended::Yes;
 }
 
+static Appended appendHTMLEscapedNarrowed(Instance* instance, std::span<const char16_t> characters)
+{
+    size_t size = lengthWithHTMLEntities(characters);
+    if (size == characters.size())
+        return appendNarrowed(instance, characters);
+    auto write = [&](Latin1Character* to) ALWAYS_INLINE_LAMBDA {
+        for (char16_t character : characters) {
+            auto entity = htmlEntityFor(character);
+            if (entity.isNull()) {
+                *to++ = static_cast<Latin1Character>(character);
+                continue;
+            }
+            for (char letter : entity.span())
+                *to++ = letter;
+        }
+    };
+    countOperationNamed(instance, "StringAppend: Latin-1 in 16 bits");
+    if (instance->stringAppenderLength + size > instance->stringAppenderLimit) [[unlikely]]
+        return appendSlow(instance, size, write);
+    write(instance->stringAppenderOrigin + instance->stringAppenderLength);
+    instance->stringAppenderLength += size;
+    return Appended::Yes;
+}
+
 static NEVER_INLINE Appended appendHTMLEscapedStringSlow(Instance* instance, uint64_t frame, JSString* string)
 {
     if (string->isSubstring() && string->is8Bit() && string->length() < minLengthAppendedByReference) {
         auto view = string->view(instance->globalObject);
         return appendHTMLEscapedCharacters(instance, view->span8());
+    }
+    if (!string->is8Bit() && string->length() < minLengthAppendedByReference && canBeViewedWithoutFlattening(string)) {
+        auto view = string->view(instance->globalObject);
+        if (areAllLatin1(view->span16()))
+            return appendHTMLEscapedNarrowed(instance, view->span16());
     }
     AOTOperationPrologueCallFrameTracer tracer(*instance->vm, std::bit_cast<CallFrame*>(frame));
     auto text = string->tryGetValue();
@@ -486,6 +547,11 @@ static NEVER_INLINE Appended appendHTMLEscapedSliceSlow(Instance* instance, uint
         auto view = string->view(globalObject);
         RELEASE_AND_RETURN(scope, appendHTMLEscapedCharacters(instance, view->span8().subspan(start, end - start)));
     }
+    if (!string->is8Bit() && end - start < minLengthAppendedByReference && canBeViewedWithoutFlattening(string)) {
+        auto view = string->view(globalObject);
+        if (auto characters = view->span16().subspan(start, end - start); areAllLatin1(characters))
+            RELEASE_AND_RETURN(scope, appendHTMLEscapedNarrowed(instance, characters));
+    }
     JSString* slice = jsSubstring(globalObject, string, start, end - start);
     RETURN_IF_EXCEPTION(scope, Appended::OutOfMemory);
     RELEASE_AND_RETURN(scope, appendHTMLEscapedStringSlow(instance, frame, slice));
@@ -507,6 +573,69 @@ static ALWAYS_INLINE Appended appendHTMLEscapedString(Instance* instance, uint64
     if (!impl || !impl->is8Bit() || impl->length() >= minLengthAppendedByReference) [[unlikely]]
         return appendHTMLEscapedStringSlow(instance, frame, string);
     return appendHTMLEscapedCharacters(instance, impl->span8());
+}
+
+static ALWAYS_INLINE size_t lengthAheadOfHTMLMetacharacters(std::span<const Latin1Character> characters)
+{
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    constexpr auto quote = SIMD::splat<uint8_t>('"');
+    constexpr auto ampersand = SIMD::splat<uint8_t>('&');
+    constexpr auto apostrophe = SIMD::splat<uint8_t>('\'');
+    constexpr auto less = SIMD::splat<uint8_t>('<');
+    constexpr auto greater = SIMD::splat<uint8_t>('>');
+    size_t position = 0;
+    for (; position + stride <= characters.size(); position += stride) {
+        auto input = SIMD::load(std::bit_cast<const uint8_t*>(characters.data() + position));
+        if (auto found = SIMD::findFirstNonZeroIndex(SIMD::bitOr(SIMD::equal(input, quote), SIMD::equal(input, ampersand), SIMD::equal(input, apostrophe), SIMD::equal(input, less), SIMD::equal(input, greater))))
+            return position + *found;
+    }
+    for (; position < characters.size(); ++position) {
+        if (isHTMLMetacharacter(characters[position]))
+            return position;
+    }
+    return position;
+}
+
+static ALWAYS_INLINE size_t lengthAheadOfHTMLMetacharacters(std::span<const char16_t> characters)
+{
+    size_t position = 0;
+    while (position < characters.size() && htmlEntityFor(characters[position]).isNull())
+        ++position;
+    return position;
+}
+
+template<typename CharacterType>
+static NEVER_INLINE JSString* createStringWithHTMLEntities(VM& vm, std::span<const CharacterType> characters, size_t lengthAhead)
+{
+    size_t size = lengthAhead + lengthWithHTMLEntities(characters.subspan(lengthAhead));
+    if (size > maxStringLength)
+        return nullptr;
+    std::span<CharacterType> escaped;
+    auto impl = StringImpl::tryCreateUninitialized(size, escaped);
+    if (!impl)
+        return nullptr;
+    memcpy(escaped.data(), characters.data(), lengthAhead * sizeof(CharacterType));
+    writeWithHTMLEntities(characters.subspan(lengthAhead), escaped.data() + lengthAhead);
+    return jsString(vm, String { impl.releaseNonNull() });
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedEscapeHTML, JSCell*, (Instance* instance, JSCell* cell))
+{
+    auto* string = uncheckedDowncast<JSString>(cell);
+    if (const StringImpl* impl = string->tryGetValueImpl(); impl && impl->is8Bit() && lengthAheadOfHTMLMetacharacters(impl->span8()) == impl->length()) [[likely]]
+        return { string, nullptr };
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto view = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    JSString* escaped = string;
+    if (view->is8Bit()) {
+        if (size_t lengthAhead = lengthAheadOfHTMLMetacharacters(view->span8()); lengthAhead != view->length())
+            escaped = createStringWithHTMLEntities(vm, view->span8(), lengthAhead);
+    } else if (size_t lengthAhead = lengthAheadOfHTMLMetacharacters(view->span16()); lengthAhead != view->length())
+        escaped = createStringWithHTMLEntities(vm, view->span16(), lengthAhead);
+    if (!escaped) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope);
+    OPERATION_RETURN(scope, escaped);
 }
 
 static constexpr uint64_t controlWord(Typed::StringAppendPart part)
@@ -799,14 +928,18 @@ namespace Typed {
 
 using namespace B3;
 
-std::optional<Writes> writesOfInlineStringAppend(InlineBuiltin, std::span<const Type>)
+std::optional<Writes> writesOfInlineStringAppend(InlineBuiltin which, std::span<const Type> arguments)
 {
+    if (which == InlineBuiltin::EscapeHTML)
+        return writesIf(arguments.size() == 1 && arguments[0].hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull), Writes::RuntimeState);
     return Writes::RuntimeState;
 }
 
-std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin, ValueID result, const Value& value, Writes writes)
+std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin which, ValueID result, const Value& value, Writes writes)
 {
     auto& type = typeOf(result);
+    if (which == InlineBuiltin::EscapeHTML)
+        return ensure(AOT_TYPED_OPERATION(EscapeHTML, toStringCell(value.arguments[0])), m_program.at(m_program.types.string), type);
     didEmitWrite(writes);
     auto nothing = [&] {
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);

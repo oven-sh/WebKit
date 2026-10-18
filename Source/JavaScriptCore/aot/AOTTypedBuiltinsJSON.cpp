@@ -470,9 +470,40 @@ static NEVER_INLINE Latin1Character* appendTypedObject(Instance* instance, JSGlo
     return writeTypedObject(instance, globalObject, vm, cursor, object, jsonPlanOf(keys), depth);
 }
 
+static ALWAYS_INLINE bool isArrayOrInstanceOfSubclass(JSCell* cell, JSType type)
+{
+    return type == ArrayType || (type == DerivedArrayType && cell->classInfo() == JSArray::info());
+}
+
+static ALWAYS_INLINE bool isInstanceOfSubclassWithoutToJSON(JSGlobalObject* globalObject, VM& vm, JSArray& array)
+{
+    Structure* structure = array.structure();
+    unsigned attributes;
+    if (array.type() != DerivedArrayType || structure->hasPolyProto() || isValidOffset(structure->get(vm, vm.propertyNames->toJSON, attributes)))
+        return false;
+    JSValue prototype = structure->storedPrototype();
+    return !prototype.isObject() || !mayHaveToJSON(globalObject, vm, asObject(prototype));
+}
+
+static NEVER_INLINE Latin1Character* appendElementsByEngine(Instance* instance, JSGlobalObject* globalObject, Latin1Character* cursor, JSArray& array)
+{
+    cursor = reserveInJSONBuffer(instance, cursor, 2 * jsonBufferSpareCapacity);
+    if (!cursor)
+        return nullptr;
+    *cursor++ = '[';
+    WideStringsInJSON wideStrings;
+    bool isWritten = tryStringifyElementsWithoutSideEffects(*globalObject, array, 0, wideStrings, [&](std::span<const Latin1Character> characters) {
+        cursor = appendStringified(instance, cursor, characters, wideStrings);
+    });
+    if (!isWritten || !cursor)
+        return nullptr;
+    *cursor++ = ']';
+    return cursor;
+}
+
 static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObject* globalObject, VM& vm, Latin1Character* cursor, JSArray& array, unsigned depth)
 {
-    if (!globalObject->isOriginalArrayStructure(array.structure())) [[unlikely]]
+    if (!globalObject->isOriginalArrayStructure(array.structure()) && !isInstanceOfSubclassWithoutToJSON(globalObject, vm, array)) [[unlikely]]
         return nullptr;
     unsigned length = array.length();
     IndexingType shape = array.indexingType() & IndexingShapeMask;
@@ -514,7 +545,7 @@ static NEVER_INLINE Latin1Character* appendArray(Instance* instance, JSGlobalObj
                         lastStructureID = structureID;
                     }
                     cursor = hasPlan ? writeTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), plan, depth + 1) : appendObject(instance, globalObject, vm, cursor, object, depth + 1);
-                } else if (type == ArrayType) {
+                } else if (isArrayOrInstanceOfSubclass(cell, type)) {
                     if (depth + 1 >= maxJSONWalkDepth) [[unlikely]]
                         return jsonWalkGaveUp;
                     cursor = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(cell), depth + 1);
@@ -609,16 +640,19 @@ static Latin1Character* appendObject(Instance* instance, JSGlobalObject* globalO
     if (type == ObjectType) {
         if (auto* keys = jsonPlanFor(instance, globalObject, vm, object)) [[likely]]
             return appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(object), *keys, depth);
-    } else if (type == ArrayType) {
+    } else if (isArrayOrInstanceOfSubclass(object, type)) {
+        auto& array = *uncheckedDowncast<JSArray>(object);
         size_t offset = cursor - instance->jsonBufferStart;
         uint32_t wideSegmentCount = instance->jsonWideSegmentCount;
-        Latin1Character* end = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(object), depth);
+        Latin1Character* end = appendArray(instance, globalObject, vm, cursor, array, depth);
         if (end == jsonWalkGaveUp) [[unlikely]]
             return nullptr;
         if (end) [[likely]]
             return end;
         cursor = instance->jsonBufferStart + offset;
         instance->jsonWideSegmentCount = wideSegmentCount;
+        if (isInstanceOfSubclassWithoutToJSON(globalObject, vm, array))
+            return appendElementsByEngine(instance, globalObject, cursor, array);
     }
     return appendObjectGeneric(instance, globalObject, cursor, object);
 }
@@ -640,15 +674,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAppendValue, void*, (Inst
                 auto* keys = jsonPlanFor(instance, globalObject, vm, asObject(value));
                 return keys ? appendTypedObject(instance, globalObject, vm, cursor, *uncheckedDowncast<Typed::Object>(value.asCell()), *keys, 0) : std::bit_cast<Latin1Character*>(jsonWroteNothing);
             }
-            if (type != ArrayType)
+            if (!isArrayOrInstanceOfSubclass(value.asCell(), type))
                 return std::bit_cast<void*>(jsonWroteNothing);
+            auto& array = *uncheckedDowncast<JSArray>(value.asCell());
             Latin1Character* start = instance->jsonBufferStart;
             Latin1Character* limit = instance->jsonBufferEnd;
-            Latin1Character* end = appendArray(instance, globalObject, vm, cursor, *uncheckedDowncast<JSArray>(value.asCell()), 0);
+            size_t offset = cursor - start;
+            Latin1Character* end = appendArray(instance, globalObject, vm, cursor, array, 0);
             if (end == jsonWalkGaveUp) [[unlikely]]
                 return nullptr;
             if (end) [[likely]]
                 return end;
+            if (isInstanceOfSubclassWithoutToJSON(globalObject, vm, array)) {
+                instance->jsonWideSegmentCount = 0;
+                return appendElementsByEngine(instance, globalObject, instance->jsonBufferStart + offset, array);
+            }
             return instance->jsonBufferStart == start && instance->jsonBufferEnd == limit && !instance->jsonWideSegmentCount && !(instance->jsonWideSegments && instance->jsonWideSegments->size()) ? std::bit_cast<void*>(jsonWroteNothing) : nullptr;
         }
         if (type >= ObjectType)
@@ -2186,7 +2226,8 @@ Operand Lowering::lowerAppendJSON(const Value& value)
         LBasicBlock hasNoLayout = m_out.newBlock();
         m_out.branch(equal(cellType, word32(ObjectType)).value(), unsure(walks), unsure(hasNoLayout));
         m_out.appendTo(hasNoLayout);
-        orElse(equal(cellType, word32(ArrayType)), writesNothing);
+        static_assert(DerivedArrayType == ArrayType + 1);
+        orElse(below(binary<Word32>(&Output::sub, cellType, word32(ArrayType)), word32(2)), writesNothing);
         orElse(equal(anyArrayIndexingMode(cell, IndexingShapeMask), word32(ContiguousShape)), walks);
         Pointer butterfly = butterflyOf(cell);
         orElse(Word32(m_out.notZero64(publicLength(butterfly).value())), walks);

@@ -173,6 +173,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringReplaceAllString, RuntimeStat
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringReplaceAllRegExp, Heap, JSCell*, (Instance*, JSCell* string, JSCell* regExp, EncodedJSValue replacement));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSplitString, RuntimeState, JSCell*, (Instance*, JSCell* string, JSCell* separator, uint32_t limit));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSplitRegExp, RuntimeState, JSCell*, (Instance*, JSCell* string, JSCell* regExp, uint32_t limit));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSplitAtCharacterClass, RuntimeState, JSCell*, (Instance*, JSCell* string, JSCell* regExp, uint32_t kind, const EncodedJSValue* latin1Members));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringMatchRegExp, RuntimeState, EncodedJSValue, (Instance*, JSCell* string, JSCell* regExp));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringSearchRegExp, RuntimeState, EncodedJSValue, (Instance*, JSCell* string, JSCell* regExp));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedSetExpectedRowType, Heap, void, (Instance*, EncodedJSValue query, uint32_t type));
@@ -183,6 +184,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppend, RuntimeState, void, (
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendMeasure, RuntimeState, void, (Instance*, uint64_t frame, uint64_t count, const EncodedJSValue* parts));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringAppendSync, RuntimeState, void, (Instance*, uint64_t frame));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStringAppendFinish, RuntimeState, JSCell*, (Instance*, uint64_t frame, uint32_t region, EncodedJSValue* firstPiece));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedEscapeHTML, RuntimeState, JSCell*, (Instance*, JSCell* string));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedStringFindCharacter8, Pure, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindSeparators8, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFindSeparators16, Nothing, size_t, (Instance*, uint64_t characters, uint32_t length, uint32_t separator, uint64_t positions, uint32_t wanted));

@@ -210,6 +210,8 @@ unsigned speculateOnReceivers(const Program&, FunctionID, Function&);
 unsigned eliminateGuardsOnUnescapedReceivers(const Program&, Function&);
 void eliminateGuardsOnFreshResults(Program&);
 void compareHeaderNamesWithPassedConstants(Program&);
+void findUnsharedResponseBodies(Program&);
+StringID sourceOfCharacterClassSeparator(const Program&, const Function&, const Value&);
 void eliminateGuardsOnUnescapedModuleVariables(Program&);
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);

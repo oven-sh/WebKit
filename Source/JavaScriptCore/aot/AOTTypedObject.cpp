@@ -2491,7 +2491,84 @@ std::optional<Object::FieldAccess> Object::fieldAccessFor(VM&, PropertyName name
 
 const FieldData* Object::fieldNamed(State& state, PropertyName name) const
 {
-    return state.field(*state.instance.vm, layout(), name.uid());
+    VM& vm = *state.instance.vm;
+    const FieldData* field = state.field(vm, layout(), name.uid());
+    if (!field || !isUndeclaredField(field->flags) || !hasExtraProperties()) [[likely]]
+        return field;
+    JSObject* extra = extraProperties();
+    return extra && isValidOffset(extra->structure()->get(vm, name)) ? nullptr : field;
+}
+
+bool Object::defineInExtraProperties(JSGlobalObject* globalObject, const FieldData& field, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    State& state = this->state();
+    const LayoutData& layout = this->layout();
+    uint32_t numberOfFields = layout.numberOfFields;
+    JSValue current = read(field);
+    unsigned currentAttributes = current ? attributesOf(field) : 0;
+    willAddExtraProperty(vm, name);
+    if (!current) {
+        JSObject* extra = ensureExtraProperties(vm);
+        bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
+        didChangeExtraProperties(vm);
+        return isDefined;
+    }
+    positionExtraKeys(state);
+    Vector<uint16_t, 16> keys;
+    uint32_t numberOfExtraKeysBefore = 0;
+    bool isPassed = false;
+    forEachKeyInOrder(state, [&](uint16_t key) {
+        if (key == indexOf(field)) {
+            isPassed = true;
+            keys.append(static_cast<uint16_t>(numberOfFields + numberOfExtraKeysBefore));
+        } else if (key < numberOfFields)
+            keys.append(key);
+        else {
+            if (!isPassed)
+                numberOfExtraKeysBefore = key - numberOfFields + 1;
+            keys.append(static_cast<uint16_t>(key + isPassed));
+        }
+    });
+    RELEASE_ASSERT(isPassed);
+    JSObject* extra = ensureExtraProperties(vm);
+    struct Later {
+        RefPtr<UniquedStringImpl> name;
+        JSValue value;
+        unsigned attributes;
+    };
+    Vector<Later, 8> later;
+    MarkedArgumentBuffer kept;
+    uint32_t ordinal = 0;
+    extra->structure()->forEachProperty(vm, [&](const auto& property) {
+        if (hasPositionAmongKeys(property.key()) && ordinal++ >= numberOfExtraKeysBefore) {
+            JSValue value = extra->getDirect(property.offset());
+            kept.append(value);
+            later.append({ property.key(), value, property.attributes() });
+        }
+        return true;
+    });
+    {
+        VM::DeletePropertyModeScope ignoresConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+        for (auto& property : later) {
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(extra, globalObject, property.name.get(), slot);
+        }
+    }
+    extra->putDirect(vm, name, current, currentAttributes);
+    for (auto& property : later) {
+        if (property.attributes & PropertyAttribute::Accessor)
+            extra->putDirectNonIndexAccessor(vm, property.name.get(), uncheckedDowncast<GetterSetter>(property.value), property.attributes);
+        else
+            extra->putDirect(vm, property.name.get(), property.value, property.attributes);
+    }
+    clear(field);
+    if (orderWord() & orderWordIsFrozen) [[unlikely]]
+        setAttributesOf(vm, field, 0);
+    setOrderAndCount(state.orderStartingWith(layout, keys.span()));
+    bool isDefined = extra->methodTable()->defineOwnProperty(extra, globalObject, name, descriptor, shouldThrow);
+    didChangeExtraProperties(vm);
+    return isDefined;
 }
 
 void Object::forEachFieldInKeyOrder(State& state, const Invocable<void(uint16_t)> auto& functor) const
@@ -3643,6 +3720,8 @@ bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, Pro
     if (attributes != currentAttributes && !getsAttributes) {
         if (layout.mayDespecialize)
             RELEASE_AND_RETURN(scope, object->convertToOrdinaryObject(vm)->methodTable()->defineOwnProperty(cell, globalObject, name, descriptor, shouldThrow));
+        if (isUndeclaredField(field->flags))
+            RELEASE_AND_RETURN(scope, object->defineInExtraProperties(globalObject, *field, name, descriptor, shouldThrow));
         bool goesOn = state.reportOrThrow(globalObject, { .kind = "field-redefine"_s, .on = &layout, .member = name.uid() }, makeString("Cannot redefine property '"_s, StringView(name.uid()), "' of "_s, state.nameOf(layout), ": declared properties stay writable, enumerable and configurable data properties"_s), State::InAudit::Ignored);
         EXCEPTION_ASSERT(!!scope.exception() == !goesOn);
         if (!goesOn)
@@ -13511,7 +13590,8 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
     for (auto& made : all) {
         vm.writeBarrier(made.object);
         countObject(std::bit_cast<Object*>(made.object));
-        if (made.plan->graphConversionEpoch != m_quickConversionEpoch && coercionPlan(made.before, *made.type) == made.plan) {
+        const CoercionPlan* listed = made.before->isStructureExtensible() ? coercionPlan(made.before, *made.type) : m_coercionPlansOfNonExtensibleObjects.get({ made.before, made.type });
+        if (made.plan->graphConversionEpoch != m_quickConversionEpoch && listed == made.plan) {
             made.plan->graphConversionEpoch = m_quickConversionEpoch;
             cacheQuickConversion(made.before, *made.type, *made.plan, *made.plan, 0, std::bit_cast<Object*>(made.object), WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(made.before->inlineCapacity())), made.object == top ? typeAndReason : 0);
         }

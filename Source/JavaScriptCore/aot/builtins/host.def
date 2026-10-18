@@ -54,7 +54,7 @@ static Buffer.byteLength (any, any/-?, any/-...) -> number ; CallsUserCode ; Inl
 
 static Response.json (any, any?, any/-...) -> anything ; CallsUserCode ; Inline(ResponseJSON)
 
-static Bun.escapeHTML (toString) -> string ; MayThrow Allocates ; HostCall
+static Bun.escapeHTML (toString) -> string ; MayThrow Allocates ; Inline(EscapeHTML)
 static Bun.escapeHTML (any/G?, any/-...) -> string ; CallsUserCode ; HostCall
 
 header Accept

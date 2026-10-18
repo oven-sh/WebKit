@@ -218,6 +218,8 @@ struct HostClassEntryPoints {
     GetRequestOrResponseHeader getRequestOrResponseHeader { nullptr };
     using CallHeadersMethod = EncodedJSValue (*)(JSGlobalObject*, EncodedJSValue headersOrHolder, EncodedJSValue name, EncodedJSValue value, uint32_t methodAndKnownName);
     CallHeadersMethod callHeadersMethod { nullptr };
+    using NewResponseFromUTF8 = EncodedJSValue (*)(JSGlobalObject*, const uint8_t* bytes, size_t size, EncodedJSValue status, EncodedJSValue statusText, EncodedJSValue headers, unsigned headerCount, const EncodedJSValue* headerNamesAndValues);
+    NewResponseFromUTF8 newResponseFromUTF8 { nullptr };
 };
 JS_EXPORT_PRIVATE void setHostClassEntryPoints(const HostClassEntryPoints&);
 const HostClassEntryPoints& hostClassEntryPoints();

@@ -384,32 +384,36 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
     {
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (view->is8Bit()) {
-            const Latin1Character* characters = view->span8().data();
-            size_t length = view->length();
+        auto convertIfASCII = [&](auto span) ALWAYS_INLINE_LAMBDA -> JSString* {
+            auto* characters = span.data();
+            size_t length = span.size();
             unsigned isNotASCII = 0;
             unsigned changes = 0;
             for (size_t i = 0; i < length; ++i) {
-                isNotASCII |= characters[i] & 0x80;
+                isNotASCII |= characters[i] & ~0x7f;
                 changes |= letterCase == LetterCase::Lower ? isASCIIUpper(characters[i]) : isASCIILower(characters[i]);
             }
-            if (!isNotASCII) {
-                if (!changes)
-                    return string;
-                if (state && length >= 2 && length <= Typed::State::maxCaseConvertedStringLength) {
-                    std::array<Latin1Character, Typed::State::maxCaseConvertedStringLength> converted;
-                    for (size_t i = 0; i < length; ++i)
-                        converted[i] = letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]);
-                    return state->caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
-                }
-                std::span<Latin1Character> buffer;
-                Ref impl = StringImpl::createUninitialized(length, buffer);
-                Latin1Character* converted = buffer.data();
+            if (isNotASCII)
+                return nullptr;
+            if constexpr (sizeof(*characters) > 1)
+                countOperationNamed(vm, "convertCase: ASCII in 16 bits");
+            if (!changes)
+                return string;
+            if (state && length >= 2 && length <= Typed::State::maxCaseConvertedStringLength) {
+                std::array<Latin1Character, Typed::State::maxCaseConvertedStringLength> converted;
                 for (size_t i = 0; i < length; ++i)
-                    converted[i] = letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]);
-                return jsString(vm, String { WTF::move(impl) });
+                    converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
+                return state->caseConvertedString(vm, std::span<const Latin1Character> { converted }.first(length));
             }
-        }
+            std::span<Latin1Character> buffer;
+            Ref impl = StringImpl::createUninitialized(length, buffer);
+            Latin1Character* converted = buffer.data();
+            for (size_t i = 0; i < length; ++i)
+                converted[i] = static_cast<Latin1Character>(letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]));
+            return jsString(vm, String { WTF::move(impl) });
+        };
+        if (JSString* converted = view->is8Bit() ? convertIfASCII(view->span8()) : convertIfASCII(view->span16()))
+            return converted;
     }
     auto characters = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);

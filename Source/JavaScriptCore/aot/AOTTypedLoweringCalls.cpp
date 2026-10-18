@@ -3041,6 +3041,19 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
         return ensure(callGeneric(in<Boxed>(callee), in<Boxed>(thisValue), value.arguments, methodName, value.speculatedMethod), type);
     if (auto call = lowerBuiltinFunctionCall(result, callee, thisValue, value.arguments))
         return *call;
+    if (value.callsPredictedStatic) {
+        if (BuiltinID entry = m_program.predictedStaticCalledBy(m_function, value)) {
+            Value direct = value;
+            direct.opcode = Opcode::CallBuiltin;
+            direct.callsPredictedStatic = false;
+            direct.children = { ValueID(), ValueID(), ValueID() };
+            direct.immediates = { entry.index(), Format::none };
+            return eitherOperand(equal(in<Boxed>(callee), box(builtinCell(m_builtins.cellOf(entry)))), repOf(type), [&] {
+                SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
+                return lowerResolvedBuiltin(result, direct);
+            }, genericPath);
+        }
+    }
     if (BuiltinName global = globalNameOf(callee)) {
         if (auto builtin = predictedBuiltin(BuiltinKind::Function, { }, global, value.arguments))
             return lowerPredictedBuiltin(result, *builtin, std::nullopt, genericPath);

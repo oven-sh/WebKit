@@ -869,7 +869,24 @@ bool Lowering::usesSiteCaches(StringID name) const
 {
     if (name && m_program.possibleAccessorNames.get(name.index()))
         return false;
-    return m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
+    if (!m_out.m_block->frequency() || !m_function.module)
+        return false;
+    if (m_program.modulesRunPerRequest.get(m_function.module.index()))
+        return true;
+    if (!m_program.functionsWithSiteCaches.get(m_id.index()))
+        return false;
+    return !name || !m_program.hostAccessorNames.get(name.index()) || !receiverMayBeHostObject(name);
+}
+
+bool Lowering::receiverMayBeHostObject(StringID name) const
+{
+    if (!m_currentBlock || m_currentIndexInBlock >= m_currentBlock->values.size())
+        return true;
+    auto& access = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+    if ((access.opcode != Opcode::GetById && access.opcode != Opcode::PutById) || access.string() != name)
+        return true;
+    auto& receiver = typeOf(access.child(0));
+    return receiver.anyObject || !receiver.engineClasses.isEmpty() || receiver.acceptsUntypedObjects(m_program);
 }
 
 Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)

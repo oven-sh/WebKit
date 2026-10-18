@@ -1526,6 +1526,7 @@ private:
     LValue slotFromAccessRun(const AccessRun&, Boxed base, StringID, LBasicBlock own);
     Boxed emitStandaloneCachedGetById(Boxed base, StringID, bool isInRun = false);
     bool usesSiteCaches(StringID name = { }) const;
+    bool receiverMayBeHostObject(StringID name) const;
     Boxed getByNameThroughSiteCache(Boxed base, uint32_t name);
     void putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t name, Boxed value);
     void emitPutByNameThroughTable(Stub, Boxed base, uint32_t identifier, Boxed value);

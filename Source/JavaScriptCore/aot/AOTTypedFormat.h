@@ -12,7 +12,7 @@
 namespace JSC { namespace AOT { namespace Typed { namespace Format {
 
 static constexpr uint32_t magic = 0x52495442;
-static constexpr uint32_t version = 37;
+static constexpr uint32_t version = 38;
 static constexpr uint32_t none = UINT32_MAX;
 
 struct Section {
@@ -90,6 +90,7 @@ enum FieldFlag : uint32_t {
     FieldIsAbsentAtCreation = 1 << 10,
     FieldIsNeverObservedAbsent = 1 << 11,
     FieldDisallowsUndefined = 1 << 12,
+    FieldIsUndeclared = 1 << 13,
 };
 
 enum SingleFunctionFlag : uint32_t {
@@ -434,6 +435,7 @@ struct Header {
     Section targets;
     Span extendedGlobals;
     Span prototypePropertyNames;
+    Span hostAccessorNames;
     Span builtinModules;
     Span builtinFunctions;
     Span functionsByKey;

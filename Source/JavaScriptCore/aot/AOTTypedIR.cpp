@@ -145,6 +145,10 @@ private:
             m_out.print(" without promise");
         if (value.takesElementsOfArrayLiteral)
             m_out.print(" takes elements");
+        if (value.callsPredictedStatic)
+            m_out.print(" calls predicted static");
+        if (value.takesUnsharedString)
+            m_out.print(" takes unshared string");
         if (value.tableInImage() != Format::none)
             m_out.print(" table in image ", value.tableInImage());
         if (value.dropsDroppableCallerFrame)
@@ -212,7 +216,7 @@ private:
             quoted(field.name);
             m_out.print(" ");
             type(field.type);
-            m_out.print(" flags ", (field.flags & (fieldIsOptional | fieldIsImmutable)) | (field.flags & fieldIsMethod ? Format::FieldIsMethod : 0) | (field.flags & fieldIsAnnotated ? Format::FieldIsAnnotated : 0) | (field.flags & fieldIsNeverReadUninitialized ? Format::FieldIsNeverReadUninitialized : 0) | (field.flags & fieldIsStoredOnce ? Format::FieldIsStoredOnce : 0) | (field.flags & fieldIsNeverStored ? Format::FieldIsNeverStored : 0) | (field.flags & fieldIsPredictedInt32 ? Format::FieldIsPredictedInt32 : 0) | (field.flags & fieldIsSetAtCreation ? Format::FieldIsSetAtCreation : 0) | (field.flags & fieldMayBeSetAtCreation ? Format::FieldMayBeSetAtCreation : 0) | (field.flags & fieldIsAbsentAtCreation ? Format::FieldIsAbsentAtCreation : 0) | (field.flags & fieldIsNeverObservedAbsent ? Format::FieldIsNeverObservedAbsent : 0));
+            m_out.print(" flags ", (field.flags & (fieldIsOptional | fieldIsImmutable)) | (field.flags & fieldIsMethod ? Format::FieldIsMethod : 0) | (field.flags & fieldIsAnnotated ? Format::FieldIsAnnotated : 0) | (field.flags & fieldIsNeverReadUninitialized ? Format::FieldIsNeverReadUninitialized : 0) | (field.flags & fieldIsStoredOnce ? Format::FieldIsStoredOnce : 0) | (field.flags & fieldIsNeverStored ? Format::FieldIsNeverStored : 0) | (field.flags & fieldIsPredictedInt32 ? Format::FieldIsPredictedInt32 : 0) | (field.flags & fieldIsSetAtCreation ? Format::FieldIsSetAtCreation : 0) | (field.flags & fieldMayBeSetAtCreation ? Format::FieldMayBeSetAtCreation : 0) | (field.flags & fieldIsAbsentAtCreation ? Format::FieldIsAbsentAtCreation : 0) | (field.flags & fieldIsNeverObservedAbsent ? Format::FieldIsNeverObservedAbsent : 0) | (field.isUndeclared ? Format::FieldIsUndeclared : 0));
             for (auto& literal : field.literals) {
                 if (literal.string) {
                     m_out.print(" ");
