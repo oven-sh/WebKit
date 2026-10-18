@@ -203,7 +203,7 @@ CodePtr<WasmEntryPtrTag> Callee::entrypoint() const
     return codePtr;
 }
 
-std::tuple<void*, void*> Callee::range() const
+NEVER_INLINE std::tuple<void*, void*> Callee::range() const
 {
     std::tuple<void*, void*> result;
     runWithDowncast([&](auto* derived) {

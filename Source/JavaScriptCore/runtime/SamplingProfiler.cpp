@@ -960,7 +960,7 @@ void SamplingProfiler::shutdown()
     m_isShutDown = true;
 }
 
-void SamplingProfiler::start()
+NEVER_INLINE void SamplingProfiler::start()
 {
     Locker locker { m_lock };
     startWithLock();
@@ -998,7 +998,7 @@ void SamplingProfiler::noticeJSLockAcquisition()
     noticeCurrentThreadAsJSCExecutionThreadWithLock();
 }
 
-void SamplingProfiler::noticeVMEntry()
+NEVER_INLINE void SamplingProfiler::noticeVMEntry()
 {
     Locker locker { m_lock };
     ASSERT(m_vm.entryScope);

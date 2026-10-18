@@ -3221,7 +3221,10 @@ bool PropertyLookupTable::setLazyClosure(Structure* structure, uint32_t name, Pr
 {
     auto code = codeForInlineOrOutOfLineOffset(offset);
     uint32_t index = code ? ensureIndex(structure, name) : 0;
-    if (!index || !releaseSlotsUnlessUsedByStores(index) || !setEntryWithKind(structure, name, Kind::LazyClosure, *code, after->id().bits(), nullptr))
+    if (!index)
+        return false;
+    releaseSlotsAt(index);
+    if (!setEntryWithKind(structure, name, Kind::LazyClosure, *code, after->id().bits(), nullptr))
         return false;
     m_newAdditionIndices.append(index);
     return true;

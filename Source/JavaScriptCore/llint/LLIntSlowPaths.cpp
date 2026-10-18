@@ -539,7 +539,7 @@ void copyInlineCacheIntoPredecodedInstruction(CodeBlock* codeBlock, const JSInst
     }
 }
 
-void copyInlineCachesIntoPredecodedInstructions(CodeBlock* codeBlock)
+NEVER_INLINE void copyInlineCachesIntoPredecodedInstructions(CodeBlock* codeBlock)
 {
     for (const auto& instruction : codeBlock->instructions())
         copyInlineCacheIntoPredecodedInstruction(codeBlock, instruction.ptr());

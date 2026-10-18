@@ -80,7 +80,7 @@ void HeapSnapshot::sweepCell(JSCell* cell)
         m_previous->sweepCell(cell);
 }
 
-void HeapSnapshot::shrinkToFit()
+NEVER_INLINE void HeapSnapshot::shrinkToFit()
 {
     if (m_finalized && m_hasCellsToSweep) {
         m_filter.reset();

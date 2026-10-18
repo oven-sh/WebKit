@@ -748,46 +748,150 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     return true;
 }
 
-bool CompactTable::tryFillEmptySet(JSGlobalObject* globalObject, JSSet* owner, std::span<const WriteBarrier<Unknown>> strings)
+static ALWAYS_INLINE uint32_t narrowed(const JSString* key)
 {
-    VM& vm = globalObject->vm();
-    Typed::State* state = stateOf(globalObject);
-    ASSERT(!owner->m_storage && !owner->m_compactTable);
-    if (!state || state->data.usesWideReferences || state->isCounting() || strings.empty() || strings.size() > maxCapacityWithTags)
-        return false;
-    CompactTable* table = create(vm, structureFor(globalObject, state), Width::Narrow, Width::None, strings.size());
-    if (!table->hasTags())
-        return false;
-    constexpr uint64_t ones = 0x0101010101010101ull;
-    uint32_t* keys = table->at<uint32_t>(table->offsetOfKeys());
-    uint64_t tags = 0;
+    return static_cast<uint32_t>(std::bit_cast<uintptr_t>(key) >> MarkedBlockCage::shift);
+}
+
+static ALWAYS_INLINE bool holdsSameText(uint32_t narrowKey, const StringImpl* impl, unsigned hash)
+{
+    const StringImpl* other = uncheckedDowncast<JSString>(MarkedBlockCage::decode(narrowKey))->tryGetValueImpl();
+    return other == impl || (other->existingHash() == hash && equal(other, impl));
+}
+
+static ALWAYS_INLINE bool isResolvedString(JSValue value)
+{
+    return value && value.isString() && !asString(value)->isRope();
+}
+
+static constexpr uint64_t onesInBytes = 0x0101010101010101ull;
+
+static NEVER_INLINE bool gatherDistinctStrings(std::span<const WriteBarrier<Unknown>> strings, uint32_t* keys, uint64_t& tags, uint32_t& used)
+{
+    for (auto& string : strings) {
+        JSValue value = string.get();
+        if (!isResolvedString(value))
+            return false;
+        const StringImpl* impl = asString(value)->tryGetValueImpl();
+        unsigned hash = impl->hash();
+        uint64_t tag = hash >> CompactTable::shortTagShift;
+        uint64_t difference = tags ^ tag * onesInBytes;
+        bool isPresent = false;
+        for (uint64_t candidates = (difference - onesInBytes) & ~difference & onesInBytes << 7 & ((1ull << (used * 8)) - 1); candidates && !isPresent; candidates &= candidates - 1)
+            isPresent = holdsSameText(keys[WTF::ctz(candidates) / 8], impl, hash);
+        if (isPresent)
+            continue;
+        keys[used] = narrowed(asString(value));
+        tags |= tag << (used * 8);
+        ++used;
+    }
+    return true;
+}
+
+template<typename Slot>
+uint32_t CompactTable::fillWithHashedStrings(std::span<const WriteBarrier<Unknown>> strings)
+{
+    constexpr bool isShort = sizeof(Slot) == sizeof(uint16_t);
+    constexpr unsigned entryBits = isShort ? shortSlotEntryBits : longSlotEntryBits;
+    constexpr unsigned tagShift = isShort ? shortTagShift : longTagShift;
+    constexpr Slot freeSlot = isShort ? freeShortSlot : freeLongSlot;
+    Slot* slots = at<Slot>(offsetOfIndex());
+    uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    uint32_t mask = (1u << m_indexBits) - 1;
     uint32_t used = 0;
     for (auto& string : strings) {
         JSString* key = asString(string.get());
         const StringImpl* impl = key->tryGetValueImpl();
-        if (!impl || !canHold(Width::Narrow, key))
-            return false;
-        unsigned hash = impl->hash();
-        uint64_t tag = shortTagOf(hash);
-        uint64_t difference = tags ^ tag * ones;
-        bool isPresent = false;
-        for (uint64_t candidates = (difference - ones) & ~difference & ones << 7 & ((1ull << (used * 8)) - 1); candidates && !isPresent; candidates &= candidates - 1) {
-            const StringImpl* other = uncheckedDowncast<JSString>(MarkedBlockCage::decode(keys[WTF::ctz(candidates) / 8]))->tryGetValueImpl();
-            isPresent = other == impl || (other->existingHash() == hash && equal(other, impl));
+        unsigned hash = impl->existingHash();
+        uint32_t tag = hash >> tagShift << entryBits;
+        for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+            uint32_t slot = slots[i];
+            if (slot == freeSlot) {
+                slots[i] = tag | used;
+                keys[used++] = narrowed(key);
+                break;
+            }
+            if (uint32_t entry = slot ^ tag; !(entry >> entryBits) && holdsSameText(keys[entry], impl, hash))
+                break;
         }
-        if (isPresent)
-            continue;
-        keys[used] = MarkedBlockCage::encode(key);
-        tags |= tag << (used * 8);
-        ++used;
     }
-    *table->at<uint64_t>(offsetOfIndex()) = tags;
-    WTF::storeStoreFence();
-    table->m_used = used;
-    table->m_alive = used;
-    vm.writeBarrier(table);
-    owner->m_compactTable.set(vm, owner, table);
-    return true;
+    return used;
+}
+
+OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES CompactTable::newSetOfStringsQuickly(Instance* instance, EncodedJSValue encodedList)
+{
+    JSValue list = JSValue::decode(encodedList);
+    if (!list.isCell() || list.asCell()->type() != ArrayType || (list.asCell()->indexingType() & IndexingShapeMask) != ContiguousShape)
+        [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+    Typed::State& state = *instance->typed;
+    if (!instance->compactTableStructureID || state.data.usesWideReferences || state.isCounting()) [[unlikely]]
+        [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+    VM& vm = *instance->vm;
+    const Butterfly* butterfly = uncheckedDowncast<JSArray>(list.asCell())->butterfly();
+    const WriteBarrier<Unknown>* strings = butterfly->contiguous().data();
+    size_t length = butterfly->publicLength();
+
+    CompactTable* table;
+    if (length <= maxCapacityWithTags) {
+        if (!length)
+            [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+        std::array<uint32_t, maxCapacityWithTags> storage { };
+        uint32_t* keys = storage.data();
+        uint64_t tags = 0;
+        uint64_t flagsOfUsed = 0;
+        size_t i = 0;
+        for (; i < length; ++i) {
+            JSValue value = strings[i].get();
+            if (!isResolvedString(value))
+                [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+            const StringImpl* impl = asString(value)->tryGetValueImpl();
+            if (!impl->hasHash()) [[unlikely]]
+                break;
+            uint64_t tag = impl->existingHash() >> shortTagShift;
+            uint64_t difference = tags ^ tag * onesInBytes;
+            if ((difference - onesInBytes) & ~difference & flagsOfUsed) [[unlikely]]
+                break;
+            keys[i] = narrowed(asString(value));
+            tags |= tag << (i * 8);
+            flagsOfUsed = flagsOfUsed << 8 | 0x80;
+        }
+        uint32_t used = i;
+        if (i < length && !gatherDistinctStrings({ strings + i, length - i }, keys, tags, used)) [[unlikely]]
+            [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+        static_assert(initialCapacity * 2 == maxCapacityWithTags && sizeof(storage) == 4 * sizeof(uint64_t) && !(initialSize(Width::None) % MarkedSpace::sizeStep) && !(initialCapacity * sizeof(uint32_t) % MarkedSpace::sizeStep));
+        bool isInitialSize = used <= initialCapacity;
+        size_t size = isInitialSize ? initialSize(Width::None) : initialSize(Width::None) + initialCapacity * sizeof(uint32_t);
+        table = new (NotNull, tryAllocateCellHelper<CompactTable, AllocationFailureMode::Assert>(vm, size, nullptr)) CompactTable(vm, std::bit_cast<StructureID>(instance->compactTableStructureID).decode());
+        table->m_used = used;
+        table->m_alive = used;
+        table->m_capacity = isInitialSize ? initialCapacity : maxCapacityWithTags;
+        table->m_keysShift = keysShiftWithTags;
+        table->m_valueWidth = Width::None;
+        *table->at<uint64_t>(offsetOfIndex()) = tags;
+        memcpy(table->at<uint8_t>(offsetOfIndex() + maxCapacityWithTags), keys, initialCapacity * sizeof(uint32_t));
+        if (!isInitialSize)
+            memcpy(table->at<uint8_t>(offsetOfIndex() + maxCapacityWithTags + initialCapacity * sizeof(uint32_t)), keys + initialCapacity, initialCapacity * sizeof(uint32_t));
+        table->finishCreation(vm);
+    } else {
+        if (length > maxCapacity)
+            [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+        for (size_t i = 0; i < length; ++i) {
+            JSValue value = strings[i].get();
+            if (!isResolvedString(value))
+                [[clang::musttail]] return newSetOfStringsGeneric(instance, encodedList);
+            asString(value)->tryGetValueImpl()->hash();
+        }
+        table = create(vm, std::bit_cast<StructureID>(instance->compactTableStructureID).decode(), Width::Narrow, Width::None, length);
+        uint32_t used = table->hasShortSlots() ? table->fillWithHashedStrings<uint16_t>({ strings, length }) : table->fillWithHashedStrings<uint32_t>({ strings, length });
+        WTF::storeStoreFence();
+        table->m_used = used;
+        table->m_alive = used;
+    }
+    JSSet* set = JSSet::create(vm, instance->globalObject->setStructure());
+    set->m_compactTable.setWithoutWriteBarrier(table);
+    vm.mutatorFence();
+    ensureStillAliveHere(list);
+    return { set, nullptr };
 }
 
 template<typename Traits>

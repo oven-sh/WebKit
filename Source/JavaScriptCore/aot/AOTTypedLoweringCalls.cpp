@@ -1823,6 +1823,8 @@ CellPointer Lowering::stringConstant(StringID string)
     if (!m_isInLoop || Options::useAOTWideReferences()) {
         LValue cell = callStubInBlock(Stub::TypedString, Stub::TypedStringInBlock1, key);
         cell->as<PatchpointValue>()->pureFunctionKey = stringsKey | key;
+        if (Options::validateAOTNarrowReferences()) [[unlikely]]
+            m_context.generatorsOfCellsKeptForGood.add(cell->as<PatchpointValue>()->generator().get());
         return CellPointer(cell);
     }
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
@@ -1910,6 +1912,8 @@ CellPointer Lowering::stringConstant(StringID string)
             jit.jump().linkTo(done, &jit);
         });
     });
+    if (Options::validateAOTNarrowReferences()) [[unlikely]]
+        m_context.generatorsOfCellsKeptForGood.add(patchpoint->generator().get());
     return CellPointer(patchpoint);
 }
 

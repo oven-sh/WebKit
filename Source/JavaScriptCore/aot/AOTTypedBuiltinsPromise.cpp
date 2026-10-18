@@ -525,6 +525,8 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                 jit.move(CCallHelpers::TrustedImm32(static_cast<uint32_t>(*word)), stubImmediateGPR);
             context->stubCalls.call(jit, stub, site);
         });
+        if (Options::validateAOTNarrowReferences()) [[unlikely]]
+            m_context.frameSavingGenerators.add(patchpoint->generator().get());
         unwindToLandingPad(patchpoint, site);
         return ensure(Boxed(patchpoint), type);
     }

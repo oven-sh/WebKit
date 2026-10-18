@@ -48,7 +48,7 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JITThunks);
 
-JITThunks::JITThunks() = default;
+NEVER_INLINE JITThunks::JITThunks() = default;
 
 JITThunks::~JITThunks() = default;
 
@@ -174,13 +174,13 @@ CodePtr<JITThunkPtrTag> JITThunks::ctiNativeTailCallWithoutSavedTags(VM& vm)
     return ctiStub(vm, CommonJITThunkID::NativeTailCallWithoutSavedTags).code();
 }
 
-CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionCall(VM& vm)
+NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionCall(VM& vm)
 {
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionCall).code();
 }
 
-CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionConstruct(VM& vm)
+NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionConstruct(VM& vm)
 {
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionConstruct).code();
@@ -221,14 +221,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStubImpl(ThunkGenerator key,
     return handleEntry(addResult.iterator->value);
 }
 
-MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, ThunkGenerator generator)
+NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, ThunkGenerator generator)
 {
     return ctiStubImpl(generator, [&] {
         return generator(vm);
     });
 }
 
-MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, CommonJITThunkID thunkID)
+NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, CommonJITThunkID thunkID)
 {
     unsigned index = static_cast<unsigned>(thunkID);
     if (index < numberOfVMIndependentCommonThunkIDs)

@@ -148,7 +148,7 @@ constinit const ASCIILiteral typedArrayErrorMessageBufferIsAlreadyDetached = "Bu
 constinit const ASCIILiteral typedArrayErrorMessageByteOffsetExceedSourceBufferByteLength = "byteOffset exceeds source ArrayBuffer byteLength"_s;
 
 template<typename ViewClass>
-inline JSObject* constructGenericTypedArrayViewWithArrayBuffer(JSGlobalObject* globalObject, Structure* structure, JSArrayBuffer* jsBuffer, size_t offset, std::optional<size_t> lengthOpt)
+NEVER_INLINE JSObject* constructGenericTypedArrayViewWithArrayBuffer(JSGlobalObject* globalObject, Structure* structure, JSArrayBuffer* jsBuffer, size_t offset, std::optional<size_t> lengthOpt)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

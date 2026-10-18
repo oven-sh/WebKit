@@ -5714,6 +5714,8 @@ static void outlineDestructuredParameterReads(Program& program)
             program.functionsWithSiteCaches.set(bodyID.index());
         if (program.functionsHotOnlyAsHottest.get(i))
             program.functionsHotOnlyAsHottest.set(bodyID.index());
+        if (program.functionsCalledOnlyFromHotLoops.get(i))
+            program.functionsCalledOnlyFromHotLoops.set(bodyID.index());
         program.functions[i] = WTF::move(wrapper);
         bodies.append(WTF::move(body));
     }
@@ -6117,6 +6119,8 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
             program.functionsWithSiteCaches.set(workerID.index());
         if (program.functionsHotOnlyAsHottest.get(i))
             program.functionsHotOnlyAsHottest.set(workerID.index());
+        if (program.functionsCalledOnlyFromHotLoops.get(i))
+            program.functionsCalledOnlyFromHotLoops.set(workerID.index());
     }
     program.types.freeze();
 }
@@ -10553,6 +10557,27 @@ static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* fun
                 program.functionsHotOnlyInLoops.clear(marked);
             }
         }
+    }
+    Vector<uint32_t> callsFromHotLoops(FillWith { }, count, 0u);
+    Vector<unsigned> worklist;
+    for (unsigned i = 0; i < count; ++i) {
+        if (program.inlinesAsHotOutsideLoops(FunctionID(i)))
+            worklist.append(i);
+    }
+    while (!worklist.isEmpty()) {
+        unsigned caller = worklist.takeLast();
+        auto& function = std::as_const(program).functions[caller];
+        std::as_const(program).functions.forEachValue(caller, directCalls, [&](ValueID id) {
+            unsigned callee = function.at(id).function().index();
+            auto& called = std::as_const(program).functions[callee];
+            bool isOnlyCalledDirectly = (called.kind == FunctionKind::Plain || called.kind == FunctionKind::Arrow) && !called.has(Format::FunctionIsUsedAsValue) && !called.isGenericEntrypoint() && !program.genericEntrypoints.contains(callee);
+            if (!isOnlyCalledDirectly || !chosen.get(callee) || program.isCalledFromHotLoops(FunctionID(callee)))
+                return;
+            if (++callsFromHotLoops[callee] == program.numberOfDirectCalls[callee]) {
+                program.functionsCalledOnlyFromHotLoops.set(callee);
+                worklist.append(callee);
+            }
+        });
     }
     program.functionsWithSiteCaches = WTF::move(chosen);
 }

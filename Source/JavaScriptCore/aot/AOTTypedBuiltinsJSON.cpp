@@ -484,8 +484,17 @@ static NEVER_INLINE Latin1Character* appendTypedObject(Instance* instance, JSGlo
     return writeTypedObject(instance, globalObject, vm, cursor, object, jsonPlanOf(keys), depth);
 }
 
-static NEVER_INLINE JSONPlanCache::WithExtraProperties* makeJSONPlanWithExtraProperties(Instance* instance, VM& vm, Typed::Object& object, JSObject* extra, uint64_t hash)
+static NEVER_INLINE JSONPlanCache::WithExtraProperties* makeJSONPlanWithExtraProperties(Instance* instance, VM& vm, Typed::Object& object, JSObject* extra, uint64_t hash, unsigned depth)
 {
+    auto& plans = instance->jsonPlanCache->withExtraProperties;
+    if (plans.size() >= JSONPlanCache::maxNumberWithExtraProperties) {
+        if (depth)
+            return nullptr;
+        plans.clear();
+        instance->jsonPlanCache->recentWithExtraProperties.fill(nullptr);
+    }
+    if (depth && plans.contains(hash))
+        return nullptr;
     auto* properties = hasIndexedProperties(extra->indexingType()) ? nullptr : object.fieldsAndExtraPropertiesInKeyOrder(vm);
     if (!properties)
         return nullptr;
@@ -519,11 +528,6 @@ static NEVER_INLINE JSONPlanCache::WithExtraProperties* makeJSONPlanWithExtraPro
     made->ofExtraProperties = extra->structureID();
     made->shapeWord = Typed::shapeWordOf(object.shape());
     made->orderAndCount = object.orderWord() & Typed::orderAndCountMask;
-    auto& plans = instance->jsonPlanCache->withExtraProperties;
-    if (plans.size() >= JSONPlanCache::maxNumberWithExtraProperties) {
-        plans.clear();
-        instance->jsonPlanCache->recentWithExtraProperties.fill(nullptr);
-    }
     return plans.set(hash, WTF::move(made)).iterator->value.get();
 }
 
@@ -557,7 +561,7 @@ static NEVER_INLINE Latin1Character* appendTypedObjectWithExtraProperties(Instan
         auto found = instance->jsonPlanCache->withExtraProperties.find(hash);
         auto* plan = found == instance->jsonPlanCache->withExtraProperties.end() ? nullptr : found->value.get();
         if (!describes(plan))
-            plan = makeJSONPlanWithExtraProperties(instance, vm, object, extra, hash);
+            plan = makeJSONPlanWithExtraProperties(instance, vm, object, extra, hash, depth);
         if (!plan)
             return nullptr;
         recent = plan;

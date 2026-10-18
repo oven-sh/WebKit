@@ -223,7 +223,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringReplaceRegExp, JSCell*, (Instanc
     OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, uncheckedDowncast<JSString>(string), regExpObject, JSValue::decode(replacement)));
 }
 
-static JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSString* replacement, const String& replacementText)
+static NEVER_INLINE JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSString* replacement, const String& replacementText)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     RegExp* regExp = regExpObject->regExp();

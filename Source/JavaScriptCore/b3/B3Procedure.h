@@ -298,6 +298,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void setLastPhase(RefPtr<SharedTask<void(Procedure&)>> phase) { m_lastPhase = WTF::move(phase); }
     SharedTask<void(Procedure&)>* lastPhase() const { return m_lastPhase.get(); }
+    void setValidationBeforeLowering(RefPtr<SharedTask<void(Procedure&)>> validation) { m_validationBeforeLowering = WTF::move(validation); }
+    SharedTask<void(Procedure&)>* validationBeforeLowering() const { return m_validationBeforeLowering.get(); }
 #endif
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
@@ -436,6 +438,7 @@ private:
     RefPtr<StackmapGenerator> m_loopPollGenerator;
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;
+    RefPtr<SharedTask<void(Procedure&)>> m_validationBeforeLowering;
 #endif
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };

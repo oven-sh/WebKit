@@ -38,7 +38,7 @@ static constexpr bool verbose = false;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeProfiler);
 
-TypeProfiler::TypeProfiler()
+NEVER_INLINE TypeProfiler::TypeProfiler()
     : m_nextUniqueVariableID(1)
 { 
 }
@@ -148,7 +148,7 @@ TypeLocation* TypeProfiler::nextTypeLocation()
     return m_typeLocationInfo.add(); 
 }
 
-void TypeProfiler::invalidateTypeSetCache(VM& vm)
+NEVER_INLINE void TypeProfiler::invalidateTypeSetCache(VM& vm)
 {
     for (Bag<TypeLocation>::iterator iter = m_typeLocationInfo.begin(); !!iter; ++iter) {
         TypeLocation* location = *iter;

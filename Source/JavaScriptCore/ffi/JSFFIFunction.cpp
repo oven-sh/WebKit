@@ -61,7 +61,7 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
     ASSERT(!m_hooks || !m_icCode);
 }
 
-JSFFIFunction::~JSFFIFunction() = default;
+NEVER_INLINE JSFFIFunction::~JSFFIFunction() = default;
 
 template<typename Visitor>
 void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)

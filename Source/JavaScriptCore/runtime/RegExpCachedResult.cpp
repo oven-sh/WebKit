@@ -128,7 +128,7 @@ JSString* RegExpCachedResult::rightContext(JSGlobalObject* globalObject, JSObjec
     return m_reifiedRightContext.get();
 }
 
-void RegExpCachedResult::setInput(JSGlobalObject* globalObject, JSObject* owner, JSString* input)
+NEVER_INLINE void RegExpCachedResult::setInput(JSGlobalObject* globalObject, JSObject* owner, JSString* input)
 {
     // Make sure we're reified, otherwise m_reifiedInput will be ignored.
     VM& vm = globalObject->vm();

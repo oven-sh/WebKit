@@ -24,6 +24,7 @@ inline JSONGiveUpIfRepeated
 inline JSONGiveUp
 inline JSONKeyOrderMark
 inline JSONRecordKey
+inline JSONPushKey
 inline JSONResetKeyOrder
 inline JSONExtraMembersAt
 inline JSONAddExtraMember
@@ -44,9 +45,9 @@ runtime JSONSkipMember : RuntimeState void* (uint64_t cursor) noexcept
 runtime JSONGiveUpIfEscaped : RuntimeState void (uint64_t cursor) noexcept
 runtime JSONGiveUpIfRepeated : RuntimeState void (uint64_t cursor, JSCell* name) noexcept
 runtime JSONReserveKeyOrder : RuntimeState void* () noexcept
-runtime JSONExtraMembersAt : Heap EncodedJSValue (uint64_t cursor, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark) noexcept
-runtime JSONAddExtraMember : Heap EncodedJSValue (EncodedJSValue extraProperties, JSCell* name, EncodedJSValue value, uint64_t mark) noexcept
-runtime JSONApplyKeyOrder : Heap void (JSCell* object, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark) noexcept
+runtime JSONExtraMembersAt : Heap EncodedJSValue (uint64_t cursor, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark, uint64_t sequence) noexcept
+runtime JSONAddExtraMember : Heap EncodedJSValue (EncodedJSValue extraProperties, JSCell* name, EncodedJSValue value, uint64_t mark, uint64_t sequence) noexcept
+runtime JSONApplyKeyOrder : Heap void (JSCell* object, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark, uint64_t sequence) noexcept
 runtime JSONFindMember : RuntimeState void* (uint64_t cursor, JSCell* name) noexcept
 runtime JSONParseWithShape : RuntimeState EncodedJSValue (EncodedJSValue text, JSCell* shapes) noexcept
 
@@ -74,10 +75,11 @@ operation JSONGiveUpIfRepeated (any/-, any/-) -> undefined ; ReadsRuntimeState W
 operation JSONGiveUp () -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONGiveUp, None)
 operation JSONKeyOrderMark () -> int[0,4503599627370496] ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONKeyOrderMark, None)
 operation JSONRecordKey (any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONRecordKey, None)
+operation JSONPushKey (any/-, any/-) -> int[0,4503599627370496] ; Pure ; Inline(JSONPushKey, None)
 operation JSONResetKeyOrder (any/-) -> undefined ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONResetKeyOrder, None)
-operation JSONExtraMembersAt (any/-, any/WR, any/-, any/-) -> anything ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONExtraMembersAt, None)
-operation JSONAddExtraMember (any/WR, any/-, any/K, any/-) -> anything ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONAddExtraMember, None)
-operation JSONApplyKeyOrder (any/Ww, any/K, any/-, any/-) -> undefined ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONApplyKeyOrder, None)
+operation JSONExtraMembersAt (any/-, any/WR, any/-, any/-, any/-) -> anything ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONExtraMembersAt, None)
+operation JSONAddExtraMember (any/WR, any/-, any/K, any/-, any/-) -> anything ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONAddExtraMember, None)
+operation JSONApplyKeyOrder (any/Ww, any/K, any/-, any/-, any/-) -> undefined ; Allocates WritesArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONApplyKeyOrder, None)
 operation JSONFindMember (any/-, any/-) -> int[0,4503599627370496] ; ReadsRuntimeState WritesRuntimeState ; Inline(JSONFindMember, None)
 operation JSONParseWithShape (any/-, any/-) -> anything/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(JSONParseWithShape, None)
 operation Likely (any/-) -> boolean ; Pure ; Inline(Likely, None)

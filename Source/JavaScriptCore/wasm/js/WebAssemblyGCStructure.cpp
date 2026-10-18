@@ -57,6 +57,8 @@ WebAssemblyGCStructure::WebAssemblyGCStructure(VM& vm, const TypeInfo& typeInfo,
     }
 }
 
+NEVER_INLINE WebAssemblyGCStructure::~WebAssemblyGCStructure() = default;
+
 WebAssemblyGCStructure* WebAssemblyGCStructure::create(VM& vm, const TypeInfo& typeInfo, const ClassInfo* classInfo, Ref<const Wasm::RTT>&& rtt)
 {
     ASSERT(vm.structureStructure);

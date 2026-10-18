@@ -616,6 +616,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ReadNamespaceExportByNameWithinFrame) \
     v(ReadThroughSlotsByNameWithinFrame) \
     v(GetByNameWithinFrameAfterFirstProbe) \
+    v(GetByNameAfterFirstProbe) \
+    v(GetByNameAfterFirstProbePreservingTwo) \
     v(GetByName) \
     v(GetByNamePreservingTwo) \
     v(GetByNameWithinFrame) \
@@ -649,6 +651,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInRDI) \
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInR8) \
     v(GetByNameWithDirectColumnPreservingTwoWithReceiverInR15) \
+    v(GetByNameAndFillSiteCacheAtOnce) \
+    v(GetByNameAndFillSiteCacheAtOncePreservingTwo) \
     v(GetByNameAndFillSiteCache) \
     v(GetByNameAndFillSiteCachePreservingTwo) \
     v(GetByNameChain) \
@@ -738,6 +742,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutByNameSloppyPreservingTwo) \
     v(PutByNameSloppyWithDirectColumn) \
     v(PutByNameSloppyWithDirectColumnPreservingTwo) \
+    v(PutByNameAndFillSiteCacheAtOnce) \
+    v(PutByNameAndFillSiteCacheAtOncePreservingTwo) \
+    v(PutByNameSloppyAndFillSiteCacheAtOnce) \
+    v(PutByNameSloppyAndFillSiteCacheAtOncePreservingTwo) \
     v(PutByNameAndFillSiteCache) \
     v(PutByNameAndFillSiteCachePreservingTwo) \
     v(PutByNameSloppyAndFillSiteCache) \
@@ -1149,7 +1157,10 @@ class IndexReferences {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
-    CCallHelpers::JumpList loadSiteCacheUnlessStructureDiffers(CCallHelpers&, GPRReg receiver, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction);
+    CCallHelpers::JumpList loadSiteCacheUnlessStructureDiffers(CCallHelpers&, GPRReg receiver, GPRReg firstWord, GPRReg secondWord, unsigned wordInFunction, CCallHelpers::Jump* hasAnotherStructure = nullptr);
+    static CCallHelpers::Jump countMissAndBranchIfSiteIsFilledAnew(CCallHelpers&, GPRReg scratch);
+    static CCallHelpers::JumpList loadOwnInlineValueByLookupTable(CCallHelpers&, GPRReg receiver, uint32_t name, GPRReg dest);
+    static CCallHelpers::JumpList storeOwnInlineValueByLookupTable(CCallHelpers&, GPRReg receiver, uint32_t name, GPRReg value);
     void getAddressOfSiteCacheWordAfterMiss(CCallHelpers&, GPRReg dest, unsigned wordInFunction);
     static void loadFromCachedLocation(CCallHelpers&, GPRReg receiver, GPRReg cachedWord, GPRReg cachedHolder, GPRReg dest);
     Vector<IndexReference> link(LinkBuffer&);

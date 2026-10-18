@@ -282,14 +282,20 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorKeys, (JSGlobalObject* globalObject, C
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
+void objectAssignPropertyByProperty(JSGlobalObject*, VM&, JSObject* target, JSObject* source);
+
 void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
 #if ENABLE(AOT)
     if (target->type() == ObjectType && AOT::Typed::tryAssignToCompiledObject(vm, target, source))
         return;
 #endif
+    objectAssignPropertyByProperty(globalObject, vm, target, source);
+}
+
+NEVER_INLINE void objectAssignPropertyByProperty(JSGlobalObject* globalObject, VM& vm, JSObject* target, JSObject* source)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.
     // For example, [[Get]] of source object could configure setter to target object. So disable the fast path.

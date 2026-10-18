@@ -73,7 +73,7 @@ JITWorklist* JITWorklist::existingGlobalWorklistOrNull()
     return theGlobalJITWorklist;
 }
 
-JITWorklist& JITWorklist::ensureGlobalWorklist()
+NEVER_INLINE JITWorklist& JITWorklist::ensureGlobalWorklist()
 {
     static std::once_flag once;
     std::call_once(
@@ -194,7 +194,7 @@ size_t JITWorklist::queueLength(const AbstractLocker&) const
     return queueLength;
 }
 
-size_t JITWorklist::totalOngoingCompilations() const
+NEVER_INLINE size_t JITWorklist::totalOngoingCompilations() const
 {
     Locker locker { *m_lock };
     return totalOngoingCompilations(locker);
@@ -220,7 +220,7 @@ void JITWorklist::suspendAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         thread->m_rightToRun.lock();
 }
 
-void JITWorklist::resumeAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+NEVER_INLINE void JITWorklist::resumeAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     for (auto& thread : m_threads)
         thread->m_rightToRun.unlock();
@@ -301,7 +301,7 @@ void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
     }
 }
 
-void JITWorklist::completeAllPlansForVM(VM& vm)
+NEVER_INLINE void JITWorklist::completeAllPlansForVM(VM& vm)
 {
     if (!vm.numberOfActiveJITPlans())
         return;

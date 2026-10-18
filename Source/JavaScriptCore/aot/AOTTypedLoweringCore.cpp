@@ -1057,6 +1057,8 @@ void Lowering::findStructureDescriptorOfRun(AccessRun& run) const
     }
     uint32_t only = Format::none;
     for (uint32_t number : *fewest) {
+        if (number < m_program.firstThisStructureDescriptor && !m_program.structuresMadeByUntypedUserCode.get(number))
+            continue;
         auto& row = m_program.structureDescriptors[number];
         if (!std::ranges::all_of(run.names, [&](StringID name) { return row.names.contains(name); }))
             continue;
@@ -1471,6 +1473,12 @@ bool Lowering::run()
             return false;
     }
     m_heaps.computeRangesAndDecorateInstructions();
+    if (Options::validateAOTNarrowReferences()) [[unlikely]]
+        m_context.extensionWordRange = m_heaps.AOTTypedObject_extension.range();
+    for (const B3::AbstractHeap* heap : m_narrowSlotHeaps) {
+        if (heap->range().end() == heap->range().begin() + 1)
+            m_context.narrowSlotRanges.add(heap->range().begin(), heap->range().end());
+    }
     returnHeapsToThread();
     invalidateAccessRunVerdicts();
     m_proc.deleteOrphans();
@@ -2406,6 +2414,30 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         Boxed result = AOT_TYPED_OPERATION_WITH_EFFECTS(LanguageOperation, builtinCallEffects(value), word32(numberInCode(builtin.implementation.operation)), count, list);
         return guaranteesResultType(m_program, m_function, value) ? convert(result, type, value.rep) : ensure(result, type);
     };
+    if ((builtin.implementation.operation == LanguageOperation::UnlistFields || builtin.implementation.operation == LanguageOperation::ListFields) && isNeverLaidOut(typeOf(value.arguments[0]))) {
+        LayoutID ofClass = typeOf(value.arguments[0]).singleLayout();
+        auto numberOfFieldsBefore = [&](ValueID name, ValueID includesName) -> std::optional<uint32_t> {
+            if ((m_function.at(name).opcode != Opcode::String && m_function.at(name).opcode != Opcode::ConstantSymbol) || m_function.at(includesName).opcode != Opcode::Boolean)
+                return std::nullopt;
+            auto& fields = m_program.at(ofClass).fields;
+            auto named = m_program.at(ofClass).fieldNamed(m_function.at(name).string());
+            if (!named)
+                return std::nullopt;
+            uint32_t number = 0;
+            for (uint32_t index = 0; index < *named + m_function.at(includesName).boolean(); ++index)
+                number += !(fields[index].flags & fieldIsNeverStored);
+            return number;
+        };
+        if (builtin.implementation.operation == LanguageOperation::UnlistFields)
+            return ensure(signExtended(word32(0)), m_program.at(m_program.types.int32), type);
+        auto end = numberOfFieldsBefore(value.arguments[1], value.arguments[2]);
+        auto begin = value.arguments.size() == 6 ? numberOfFieldsBefore(value.arguments[3], value.arguments[4]) : std::optional<uint32_t>(0);
+        if (begin && end) {
+            if (*begin < *end)
+                AOT_TYPED_OPERATION_WITH_EFFECTS(DefineFieldsOfPlainThis, builtinCallEffects(value), cellOf(value.arguments[0]), word32(ofClass.index()), word32(*begin), word32(*end));
+            return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+        }
+    }
     if (builtin.implementation.operation == LanguageOperation::UnlistFields || (builtin.implementation.operation == LanguageOperation::ListFields && value.arguments.size() == 6)) {
         bool unlists = builtin.implementation.operation == LanguageOperation::UnlistFields;
         auto& receiver = typeOf(value.arguments[0]);
@@ -3791,7 +3823,15 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     constexpr unsigned maxValuesInCachedProcedure = 128;
     CompiledProcedureCache* cache = CompiledProcedureCache::current();
     CompiledProcedureCache::Entry* newEntry = nullptr;
-    bool passesDependOnlyOnProcedure = context.nullishTests.isEmpty() && context.latePathCallAccesses.isEmpty() && context.loopPollSites.isEmpty() && context.accessesThroughPointer.isEmpty() && !context.keepsCellsAliveForWords && !context.numberBoxingGenerator && !proc.loopPollGenerator();
+    Vector<String> narrowReferenceFindings;
+    if (Options::validateAOTNarrowReferences()) [[unlikely]] {
+        proc.setValidationBeforeLowering(createSharedTask<void(Procedure&)>([&](Procedure& proc) {
+            narrowReferenceFindings = validateNarrowReferences(proc, context);
+            if (Options::validateAOTNarrowReferences() == 3 && !narrowReferenceFindings.isEmpty())
+                dataLog(toString(proc));
+        }));
+    }
+    bool passesDependOnlyOnProcedure = !Options::validateAOTNarrowReferences() && context.nullishTests.isEmpty() && context.latePathCallAccesses.isEmpty() && context.loopPollSites.isEmpty() && context.accessesThroughPointer.isEmpty() && !context.keepsCellsAliveForWords && !context.numberBoxingGenerator && !proc.loopPollGenerator();
     if (cache && passesDependOnlyOnProcedure && proc.values().size() <= maxValuesInCachedProcedure && !Options::dumpAOTB3Graph()) {
         ProcedureFingerprint fingerprint;
         std::array<StackmapGenerator*, 3> distinguishedGenerators { context.nullishTestMarker.get(), context.emptyGenerator.get(), context.slotBlockFetchGenerator.get() };
@@ -3826,6 +3866,14 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     }
 
     generateToAir(proc);
+    if (!narrowReferenceFindings.isEmpty()) [[unlikely]] {
+        for (auto& finding : narrowReferenceFindings)
+            dataLogLn("AOT narrow reference: ", function.name ? String::fromUTF8(program.string(function.name)) : String("(no name)"_s), ": ", finding);
+        if (Options::validateAOTNarrowReferences() == 1) {
+            result.whyDeclined = makeString("the collector could miss an object: "_s, narrowReferenceFindings.first());
+            return false;
+        }
+    }
     CompilationCohort::yieldBeforePhase("prepareForAir"_s);
     if (context.unwindsToLandingPads)
         placeInvokeResults(proc.code());

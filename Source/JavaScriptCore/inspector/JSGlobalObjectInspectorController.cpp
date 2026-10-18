@@ -171,7 +171,7 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
     m_strongVM = nullptr;
 }
 
-void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message)
+NEVER_INLINE void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message)
 {
     m_backendDispatcher->dispatch(message);
 }

@@ -59,13 +59,13 @@ namespace IntlNumberFormatInternal {
 static constexpr bool verbose = false;
 }
 
-void UNumberFormatterDeleter::operator()(UNumberFormatter* formatter)
+NEVER_INLINE void UNumberFormatterDeleter::operator()(UNumberFormatter* formatter)
 {
     if (formatter)
         unumf_close(formatter);
 }
 
-void UNumberRangeFormatterDeleter::operator()(UNumberRangeFormatter* formatter)
+NEVER_INLINE void UNumberRangeFormatterDeleter::operator()(UNumberRangeFormatter* formatter)
 {
     if (formatter)
         unumrf_close(formatter);

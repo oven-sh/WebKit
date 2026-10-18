@@ -63,6 +63,12 @@ public:
     void freeBlock(void*);
     bool owns(const void*) const;
     bool isReserved() const { return m_manager.load(std::memory_order_acquire); }
+    struct Indices {
+        uintptr_t base { 0 };
+        uint32_t first { 0 };
+        uint32_t count { 0 };
+    };
+    Indices usedIndices() const;
     static void decommitFreeBlocks();
     static void logExhaustion();
     using ExhaustionHandler = void (*)();

@@ -109,6 +109,16 @@ public:
         addCommittedFreeBlocks(index, index + 1);
     }
 
+    MarkedBlockCage::Indices usedIndices()
+    {
+        constexpr uint64_t indicesPerBlock = MarkedBlock::blockSize >> MarkedBlockCage::shift;
+        Locker locker { m_lock };
+        bool hasWrapped = m_firstUnusedBlock > m_firstWrappedBlock;
+        uint64_t first = (hasWrapped ? reservedBlockCount : m_firstBlockIndex) * indicesPerBlock;
+        uint64_t end = hasWrapped ? m_size >> MarkedBlockCage::shift : first + (m_firstUnusedBlock - 1) * indicesPerBlock;
+        return { m_start, static_cast<uint32_t>(first), static_cast<uint32_t>(std::min<uint64_t>(end - first, std::numeric_limits<uint32_t>::max())) };
+    }
+
     void decommitFreeBlocks()
     {
         BitVector blocks;
@@ -373,6 +383,12 @@ bool MarkedBlockCage::owns(const void* pointer) const
 {
     MarkedBlockCageManager* manager = m_manager.load(std::memory_order_relaxed);
     return manager && manager->contains(pointer);
+}
+
+MarkedBlockCage::Indices MarkedBlockCage::usedIndices() const
+{
+    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_acquire);
+    return manager ? manager->usedIndices() : Indices { };
 }
 
 void MarkedBlockCage::decommitFreeBlocks()

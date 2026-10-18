@@ -60,7 +60,7 @@ JSFFICallback::JSFFICallback(VM& vm, Structure* structure, Ref<FFI::Signature>&&
 {
 }
 
-JSFFICallback::~JSFFICallback() = default;
+NEVER_INLINE JSFFICallback::~JSFFICallback() = default;
 
 void JSFFICallback::destroy(JSCell* cell)
 {

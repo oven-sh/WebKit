@@ -277,6 +277,10 @@ Boxed Lowering::boxLiteralString(LiteralStringWord word)
         return Boxed(found->value);
     Boxed boxed(callAllocationStub(Stub::LiteralStringToString, { { word.value(), stubTemporaryGPRs[2] } }, { Writes::Pure, false }, false));
     m_boxedLiteralStrings.add(boxed.value(), word.value());
+    if (Options::validateAOTNarrowReferences()) [[unlikely]] {
+        if (auto* patchpoint = boxed.value()->as<PatchpointValue>())
+            m_context.generatorsOfStringsFromLiteralStrings.add(patchpoint->generator().get());
+    }
     return boxed;
 }
 

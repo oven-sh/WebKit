@@ -39,6 +39,7 @@ struct Slot;
     v(operationAOTTypedSetStaticField) \
     v(operationAOTTypedSetByNameInThisStructure) \
     v(operationAOTTypedPutLazyClosure) \
+    v(operationAOTTypedDefineFieldsOfPlainThis) \
     v(operationAOTTypedDefineByName) \
     v(operationAOTTypedDefineOwnProperty) \
     v(operationAOTTypedDefineOwnPropertyAtSite) \
@@ -318,6 +319,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetStaticField, Heap, EncodedJSValu
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetStaticField, Heap, void, (Instance*, uint32_t ofClass, uint32_t field, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameInThisStructure, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutLazyClosure, Heap, void, (Instance*, EncodedJSValue, uint32_t function, uint32_t name));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineFieldsOfPlainThis, Heap, void, (Instance*, JSCell* object, uint32_t ofClass, uint32_t begin, uint32_t end));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineByName, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 struct DescriptorLiteral {
     static constexpr uint32_t hasValue = 1u << 0;

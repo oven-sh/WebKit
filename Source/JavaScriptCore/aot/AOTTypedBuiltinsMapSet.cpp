@@ -94,10 +94,6 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
             return nullptr;
     }
     Table* table = Table::create(vm, structure);
-    if constexpr (!isMap) {
-        if (CompactTable::tryFillEmptySet(globalObject, table, std::span { list->butterfly()->contiguous().data(), length }))
-            return table;
-    }
     for (unsigned i = 0; i < length; ++i) {
         auto [key, value] = entryAt(i);
         bool isAdded = CompactTable::tryAdd(globalObject, table, key, value, CompactTable::CreateIfNeeded::Yes, length);
@@ -110,7 +106,19 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewStringSet, JSCell*, (Instance* instance, EncodedJSValue list))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (!Options::useAOTOperationCounters()) [[likely]]
+        [[clang::musttail]] return CompactTable::newSetOfStringsQuickly(instance, list);
+    [[clang::musttail]] return newSetOfStringsGeneric(instance, list);
+}
+
+NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES newSetOfStringsGeneric(Instance* instance, EncodedJSValue list)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, "operationAOTTypedTryNewStringSet");
+    auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSSet>(globalObject, globalObject->setStructure(), JSValue::decode(list)));
 }
 
@@ -614,7 +622,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         return m_out.add(entries, m_out.mul(number, m_out.constIntPtr((isMap ? JSMap::Helper::EntrySize : JSSet::Helper::EntrySize) * sizeof(EncodedJSValue))));
     };
     auto decoded = [&](LValue index, LValue table) {
-        LValue cell = m_out.opaque(decodeCell32(index));
+        LValue cell = decodedCell(index);
         ensureStillAliveHere(CellPointer(table));
         return cell;
     };

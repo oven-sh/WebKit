@@ -34,6 +34,8 @@
 #define JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS 0
 #endif
 
+#include "MarkedBlockCage.h"
+
 namespace JSC {
 
 class CodeBlockSet;
@@ -82,6 +84,7 @@ private:
     size_t m_size;
     size_t m_capacity;
     JSC::Heap& m_heap;
+    MarkedBlockCage::Indices m_narrowReferences;
     HeapCell* m_inlineRoots[inlineCapacity];
 };
 

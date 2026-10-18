@@ -39,6 +39,8 @@ class VM;
 struct UnlinkedHandlerInfo;
 struct UnlinkedStringJumpTable;
 
+void objectAssignPropertyByProperty(JSGlobalObject*, VM&, JSObject* target, JSObject* source);
+
 namespace AOT {
 
 struct Data;

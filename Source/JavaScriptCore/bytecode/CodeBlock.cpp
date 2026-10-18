@@ -1906,7 +1906,7 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, AbstractSlotVisitor&);
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, SlotVisitor&);
 
-void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
+NEVER_INLINE void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 {
     VM& vm = *m_vm;
 

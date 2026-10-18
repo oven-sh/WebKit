@@ -227,6 +227,10 @@ void generateToAir(Procedure& procedure)
         dataLog(procedure);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* validation = procedure.validationBeforeLowering())
+        validation->run(procedure);
+#endif
     lowerToAir(procedure);
     if (shouldDumpIR(procedure, B3Mode))
         procedure.setShouldDumpIR();

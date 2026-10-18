@@ -2283,7 +2283,7 @@ std::unique_ptr<ParsedNode> Parser<LexerType>::parse(ParserError& error, const I
 }
 
 template <class ParsedNode>
-std::unique_ptr<ParsedNode> parse(
+NEVER_INLINE std::unique_ptr<ParsedNode> parse(
     VM& vm, const SourceCode& source,
     const Identifier& name, ImplementationVisibility implementationVisibility, JSParserBuiltinMode builtinMode,
     LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, SourceParseMode parseMode, FunctionMode functionMode, SuperBinding superBinding,
@@ -2337,7 +2337,7 @@ std::unique_ptr<ParsedNode> parse(
 }
 
 template <class ParsedNode>
-std::unique_ptr<ParsedNode> parseRootNode(
+NEVER_INLINE std::unique_ptr<ParsedNode> parseRootNode(
     VM& vm, const SourceCode& source,
     ImplementationVisibility implementationVisibility, JSParserBuiltinMode builtinMode,
     LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, SourceParseMode parseMode,
@@ -2378,7 +2378,7 @@ std::unique_ptr<ParsedNode> parseRootNode(
     return result;
 }
 
-inline std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
+inline NEVER_INLINE std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
 {
     ASSERT(!source.provider()->source().isNull());
 

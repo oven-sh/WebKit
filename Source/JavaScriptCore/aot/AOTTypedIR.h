@@ -814,6 +814,7 @@ struct Field {
     uint32_t offset { 0 };
     bool isOutOfLine { false };
     bool isUndeclared { false };
+    bool isCreatedWithLazyClosure { false };
     bool isMissingInSomeSubtype { false };
     bool isAnyObjectInSomeSubtype { false };
     bool hasDifferentTypeInSomeSupertype { false };
@@ -1528,6 +1529,8 @@ public:
     bool isHotOutsideLoops(FunctionID id) const { return isStaticallyHot(id) && !isHotOnlyInLoops(id); }
     BitVector functionsHotOnlyAsHottest;
     bool inlinesAsHotOutsideLoops(FunctionID id) const { return isHotOutsideLoops(id) && !functionsHotOnlyAsHottest.get(id.index()); }
+    BitVector functionsCalledOnlyFromHotLoops;
+    bool isCalledFromHotLoops(FunctionID id) const { return inlinesAsHotOutsideLoops(id) || functionsCalledOnlyFromHotLoops.get(id.index()); }
     bool mayEncounterMasqueradesAsUndefined { false };
     bool propagatesExceptionObjects { false };
     Vector<uint32_t> numberOfDirectCalls;
@@ -1653,6 +1656,7 @@ public:
     UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>> structureDescriptorsByName;
     UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 1>> recordLayoutsByFieldName;
     BitVector structuresWithoutTransitions;
+    BitVector structuresMadeByUntypedUserCode;
     UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>> structureDescriptorsByHash;
     uint32_t findStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const;
     uint32_t ensureStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype);

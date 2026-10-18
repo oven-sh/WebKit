@@ -70,9 +70,9 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONSkipMember, RuntimeSta
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONGiveUpIfEscaped, RuntimeState, void, (Instance*, uint64_t cursor));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONGiveUpIfRepeated, RuntimeState, void, (Instance*, uint64_t cursor, JSCell* name));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONReserveKeyOrder, RuntimeState, void*, (Instance*));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONExtraMembersAt, Heap, EncodedJSValue, (Instance*, uint64_t cursor, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAddExtraMember, Heap, EncodedJSValue, (Instance*, EncodedJSValue extraProperties, JSCell* name, EncodedJSValue value, uint64_t mark));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONApplyKeyOrder, Heap, void, (Instance*, JSCell* object, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONExtraMembersAt, Heap, EncodedJSValue, (Instance*, uint64_t cursor, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark, uint64_t sequence));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONAddExtraMember, Heap, EncodedJSValue, (Instance*, EncodedJSValue extraProperties, JSCell* name, EncodedJSValue value, uint64_t mark, uint64_t sequence));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONApplyKeyOrder, Heap, void, (Instance*, JSCell* object, EncodedJSValue extraProperties, JSCell* declaredNames, uint64_t mark, uint64_t sequence));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONFindMember, RuntimeState, void*, (Instance*, uint64_t cursor, JSCell* name));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONParseWithShape, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue text, JSCell* shapes));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedJSONReserve, RuntimeState, void*, (Instance*, uint64_t cursor, uint64_t size));

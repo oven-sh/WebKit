@@ -169,7 +169,7 @@ void JSWebAssemblyInstance::finishCreation(VM& vm)
     m_anchor = m_module->registerAnchor(this);
 }
 
-JSWebAssemblyInstance::~JSWebAssemblyInstance()
+NEVER_INLINE JSWebAssemblyInstance::~JSWebAssemblyInstance()
 {
     if (m_anchor) {
         m_anchor->tearDown();
@@ -444,7 +444,7 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     return jsInstance;
 }
 
-void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
+NEVER_INLINE void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
 {
     for (unsigned index = 0; index < numImportFunctions(); ++index) {
         auto* info = importFunctionInfo(index);

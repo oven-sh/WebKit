@@ -44,7 +44,7 @@ static constexpr bool verbose = false;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeProfilerLog);
 
-TypeProfilerLog::TypeProfilerLog(VM& vm)
+NEVER_INLINE TypeProfilerLog::TypeProfilerLog(VM& vm)
     : m_vm(vm)
     , m_logSize(50000)
     , m_logStartPtr(new LogEntry[m_logSize])
@@ -132,7 +132,7 @@ void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
 
 // We don't need a SlotVisitor version of this because TypeProfilerLog is only used by
 // dev tools, and is therefore not on the critical path for performance.
-void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
+NEVER_INLINE void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
 {
     for (LogEntry* entry = m_logStartPtr; entry != m_currentLogEntryPtr; ++entry) {
         visitor.appendUnbarriered(entry->value);

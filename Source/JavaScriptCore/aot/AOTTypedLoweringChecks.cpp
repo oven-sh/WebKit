@@ -14,9 +14,13 @@
 #include "B3InsertionSetInlines.h"
 #include "B3MemoryValueInlines.h"
 #include "B3StackmapGenerationParams.h"
+#include "B3UpsilonValue.h"
 #include "B3UseCounts.h"
+#include "B3ValueInlines.h"
 #include "JSCInlines.h"
+#include <wtf/IndexMap.h>
 #include <wtf/SetForScope.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1302,7 +1306,14 @@ Operand Lowering::narrowOrElse(Operand operand, const Type& from, const Type& to
     case Rep::Int64:
         if (!(to.primitives & Primitive::Int))
             return never();
-        orElse(isSubsetOf(operand.as<Integer>(), to.integers), otherwise);
+        if (from.isInteger() && from.integers.minimum >= 0 && to.integers.minimum <= 0 && to.integers.maximum > 0 && !(static_cast<uint64_t>(to.integers.maximum) & (static_cast<uint64_t>(to.integers.maximum) + 1)))
+            orElse(Word32(m_out.testIsZero64(operand.value, m_out.constInt64(~to.integers.maximum))), otherwise);
+        else if (from.isInteger() && from.integers.minimum >= to.integers.minimum)
+            orElse(lessThanOrEqual(operand.as<Integer>(), integer(to.integers.maximum)), otherwise);
+        else if (from.isInteger() && from.integers.maximum <= to.integers.maximum)
+            orElse(greaterThanOrEqual(operand.as<Integer>(), integer(to.integers.minimum)), otherwise);
+        else
+            orElse(isSubsetOf(operand.as<Integer>(), to.integers), otherwise);
         return convert(operand, to, rep);
     case Rep::Int32:
         if (!(to.primitives & Primitive::Boolean))
@@ -2842,6 +2853,10 @@ void useFaultsForNullishTests(Procedure& proc, LoweringContext& context)
                 context->faultingAccesses.append({ instruction, params[1].gpr(), nullishTest });
             });
             context.accessesThroughPointer.add(access, isStore ? 1 : 0);
+            if (type == Int32 && context.isNarrowSlot(memory->range())) [[unlikely]]
+                context.accessesToNarrowSlots.add(access);
+            if (!isStore && context.extensionWordRange && memory->range() == context.extensionWordRange) [[unlikely]]
+                context.accessesToExtensionWords.add(access);
             if (isStore)
                 memory->replaceWithNop();
             else if (isExtended) {
@@ -3101,6 +3116,7 @@ void foldDecodingsIntoAccesses(Procedure& proc, LoweringContext& context)
         jit.getEffectiveAddress(CCallHelpers::BaseIndex(base, word, static_cast<CCallHelpers::Scale>(cell32Shift)), result);
         done.link(&jit);
     });
+    context.wordBoxingGenerator = generator;
     InsertionSet insertionSet(proc);
     for (B3::BasicBlock* block : proc) {
         for (unsigned index = 0; index < block->size(); ++index) {
@@ -3123,6 +3139,477 @@ void foldDecodingsIntoAccesses(Procedure& proc, LoweringContext& context)
         insertionSet.execute(block);
     }
 #endif
+}
+
+namespace {
+
+class NarrowReferenceValidation {
+public:
+    NarrowReferenceValidation(Procedure& proc, LoweringContext& context)
+        : m_proc(proc)
+        , m_context(context)
+    {
+    }
+
+    Vector<String> run()
+    {
+        findWords();
+        if (m_words.isEmpty())
+            return { };
+        findPointers();
+        Vector<B3::BasicBlock*> postOrder = m_proc.blocksInPostOrder();
+        m_wordsAtHead.resize(m_proc.size());
+        m_pointersAtHead.resize(m_proc.size());
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (B3::BasicBlock* block : postOrder)
+                changed |= walk(block, false);
+        }
+        for (B3::BasicBlock* block : postOrder)
+            walk(block, true);
+        return WTF::move(m_findings);
+    }
+
+private:
+    using Numbers = UncheckedKeyHashMap<B3::Value*, unsigned>;
+
+    static B3::Value* pointerSource(B3::Value* value)
+    {
+        while (value->opcode() == B3::Identity || value->opcode() == B3::Opaque)
+            value = value->child(0);
+        return value;
+    }
+
+    static bool isShift(B3::Value* value, B3::Opcode opcode) { return value->opcode() == opcode && value->child(1)->isInt32(cell32Shift); }
+
+    static bool isEncodingOf(B3::Value* word, B3::Value* pointer)
+    {
+        while (word->opcode() == B3::Identity || word->opcode() == B3::Trunc || word->opcode() == B3::ZExt32)
+            word = word->child(0);
+        return isShift(word, B3::ZShr) && pointerSource(word->child(0)) == pointerSource(pointer);
+    }
+
+    static B3::Value* wordOf(B3::Value* value)
+    {
+        for (;;) {
+            switch (value->opcode()) {
+            case B3::Identity:
+            case B3::Opaque:
+            case B3::ZExt32:
+            case B3::Trunc:
+                value = value->child(0);
+                continue;
+            case B3::Shl:
+                if (!isShift(value, B3::Shl))
+                    return value;
+                value = value->child(0);
+                continue;
+            case B3::Add:
+            case B3::Sub:
+                if (value->type() != Int32 || !value->child(1)->hasInt32())
+                    return value;
+                value = value->child(0);
+                continue;
+            case B3::Select: {
+                B3::Value* first = value->child(1);
+                B3::Value* second = value->child(2);
+                if (first->isConstant() || isEncodingOf(second, first))
+                    value = second;
+                else if (second->isConstant() || isEncodingOf(first, second))
+                    value = first;
+                else
+                    return value;
+                continue;
+            }
+            default:
+                return value;
+            }
+        }
+    }
+
+    static bool isBase(B3::Value* value)
+    {
+        return isCellCageBase(value) || (value->opcode() == B3::Add && isCellCageBase(value->child(0)) && value->child(1)->hasInt());
+    }
+
+    static B3::Value* wordDecodedBy(B3::Value* sum)
+    {
+        if (sum->opcode() != B3::Add)
+            return nullptr;
+        for (unsigned i = 0; i < 2; ++i) {
+            if (isShift(sum->child(i), B3::Shl) && isBase(sum->child(!i)))
+                return wordOf(sum->child(i)->child(0));
+        }
+        return nullptr;
+    }
+
+    static B3::Value* withoutIdentity(B3::Value* value)
+    {
+        while (value->opcode() == B3::Identity)
+            value = value->child(0);
+        return value;
+    }
+
+    bool isKeptForGood(B3::Value* value) const
+    {
+        auto* patchpoint = value->as<PatchpointValue>();
+        return patchpoint && m_context.generatorsOfCellsKeptForGood.contains(patchpoint->generator().get());
+    }
+
+    bool add(Numbers& numbers, Vector<B3::Value*>& list, B3::Value* value)
+    {
+        if (value->isConstant() || (isShift(value, B3::ZShr) && isKeptForGood(pointerSource(value->child(0)))) || !numbers.add(value, list.size()).isNewEntry)
+            return false;
+        list.append(value);
+        return true;
+    }
+
+    void findWords()
+    {
+        for (B3::BasicBlock* block : m_proc) {
+            for (B3::Value* value : *block) {
+                m_owner.add(value, block);
+                if (B3::Value* word = wordDecodedBy(value)) {
+                    m_sums.add(value, word);
+                    add(m_wordNumbers, m_words, word);
+                }
+                if (auto* upsilon = value->as<UpsilonValue>())
+                    m_upsilons.add(upsilon->phi(), Vector<UpsilonValue*, 2> { }).iterator->value.append(upsilon);
+                if (m_context.accessesToNarrowSlots.contains(value))
+                    add(m_wordNumbers, m_words, value->type() == Void ? wordOf(value->child(0)) : value);
+                if (boxesWord(value))
+                    add(m_wordNumbers, m_words, wordOf(value->child(0)));
+                if (auto access = m_context.accessesThroughPointer.find(value); access != m_context.accessesThroughPointer.end() && isCellCageBase(value->child(access->value)))
+                    add(m_wordNumbers, m_words, wordOf(value->child(value->numChildren() - 1)));
+                auto* memory = value->as<MemoryValue>();
+                if (!memory || !m_context.isNarrowSlot(memory->range()))
+                    continue;
+                if (memory->opcode() == B3::Store && memory->child(0)->type() == Int32)
+                    add(m_wordNumbers, m_words, wordOf(memory->child(0)));
+                else if (memory->opcode() == B3::Load && memory->type() == Int32)
+                    add(m_wordNumbers, m_words, memory);
+            }
+        }
+        for (bool changed = !m_words.isEmpty(); changed;) {
+            changed = false;
+            for (auto& entry : m_upsilons) {
+                if (!entry.key->type().isInt())
+                    continue;
+                for (UpsilonValue* upsilon : entry.value) {
+                    B3::Value* incoming = wordOf(upsilon->child(0));
+                    if (m_wordNumbers.contains(entry.key))
+                        changed |= incoming->type() == Int32 && add(m_wordNumbers, m_words, incoming);
+                }
+            }
+        }
+    }
+
+    B3::Value* ownerOf(B3::Value* word) const
+    {
+        if (auto* memory = word->as<MemoryValue>(); memory && memory->opcode() == B3::Load && m_context.extensionWordRange && memory->range() == m_context.extensionWordRange)
+            return pointerSource(memory->lastChild());
+        if (m_context.accessesToExtensionWords.contains(word))
+            return pointerSource(word->child(m_context.accessesThroughPointer.get(word)));
+        return nullptr;
+    }
+
+    bool boxesWord(B3::Value* value) const
+    {
+        auto* patchpoint = value->as<PatchpointValue>();
+        return patchpoint && m_context.wordBoxingGenerator && patchpoint->generator() == m_context.wordBoxingGenerator;
+    }
+
+    bool isStringFromLiteralString(B3::Value* value) const
+    {
+        auto* patchpoint = value->as<PatchpointValue>();
+        return patchpoint && m_context.generatorsOfStringsFromLiteralStrings.contains(patchpoint->generator().get());
+    }
+
+    void findPointers()
+    {
+        for (B3::BasicBlock* block : m_proc) {
+            for (B3::Value* value : *block) {
+                if (boxesWord(value))
+                    add(m_pointerNumbers, m_pointers, value);
+                for (unsigned i = 0; i < value->numChildren(); ++i) {
+                    B3::Value* child = withoutIdentity(value->child(i));
+                    if (m_sums.contains(child) && !isAddressOf(value, i))
+                        add(m_pointerNumbers, m_pointers, child);
+                }
+            }
+        }
+        for (unsigned i = 0; i < m_words.size(); ++i) {
+            if (isShift(m_words[i], B3::ZShr))
+                add(m_pointerNumbers, m_pointers, pointerSource(m_words[i]->child(0)));
+            if (B3::Value* owner = ownerOf(m_words[i]))
+                add(m_pointerNumbers, m_pointers, owner);
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (B3::BasicBlock* block : m_proc) {
+                for (B3::Value* value : *block) {
+                    if (value->type() != Int64 || m_wordNumbers.contains(value))
+                        continue;
+                    if (value->opcode() == B3::Select && wordOf(value) == value && (m_pointerNumbers.contains(pointerSource(value->child(1))) || m_pointerNumbers.contains(pointerSource(value->child(2)))))
+                        changed |= add(m_pointerNumbers, m_pointers, value);
+                    if (isStringFromLiteralString(value) && m_pointerNumbers.contains(pointerSource(value->child(0))))
+                        changed |= add(m_pointerNumbers, m_pointers, value);
+                }
+            }
+            for (auto& entry : m_upsilons) {
+                if (entry.key->type() != Int64 || m_wordNumbers.contains(entry.key))
+                    continue;
+                for (UpsilonValue* upsilon : entry.value) {
+                    if (m_pointerNumbers.contains(pointerSource(upsilon->child(0))))
+                        changed |= add(m_pointerNumbers, m_pointers, entry.key);
+                }
+            }
+        }
+    }
+
+    static bool isAddressOf(B3::Value* user, unsigned child)
+    {
+        return user->as<MemoryValue>() && child + 1 == user->numChildren();
+    }
+
+    bool protects(B3::Value* pointer, B3::Value* word)
+    {
+        bool isOutermost = !m_depth;
+        if (isOutermost)
+            m_assumed.shrink(0);
+        ++m_depth;
+        bool result = protectsImpl(pointerSource(pointer), word);
+        --m_depth;
+        if (isOutermost && !result) {
+            for (auto& key : m_assumed) {
+                if (auto found = m_protects.find(key); found != m_protects.end() && found->value)
+                    m_protects.remove(found);
+            }
+        }
+        return result;
+    }
+
+    bool protectsImpl(B3::Value* pointer, B3::Value* word)
+    {
+        if (word->isConstant() || pointer == pointerSource(word))
+            return true;
+        if (auto found = m_sums.find(pointer); found != m_sums.end() && found->value == word)
+            return true;
+        if (isShift(word, B3::ZShr) && pointerSource(word->child(0)) == pointer)
+            return true;
+        if (boxesWord(pointer) && wordOf(pointer->child(0)) == word)
+            return true;
+        if (ownerOf(word) == pointer)
+            return true;
+        if (isStringFromLiteralString(pointer))
+            return protectsImpl(pointerSource(pointer->child(0)), word);
+        if (pointer->opcode() != B3::Select && pointer->opcode() != B3::Phi)
+            return false;
+        std::pair<B3::Value*, B3::Value*> key { pointer, word };
+        auto added = m_protects.add(key, true);
+        if (!added.isNewEntry)
+            return added.iterator->value;
+        m_assumed.append(key);
+        bool result = false;
+        if (pointer->opcode() == B3::Select) {
+            for (unsigned i = 1; i <= 2 && !result; ++i) {
+                B3::Value* other = pointer->child(3 - i);
+                result = (other->isConstant() || wordOf(other) == word) && protectsImpl(pointerSource(pointer->child(i)), word);
+            }
+            if (!result && word->opcode() == B3::Select && word->child(0) == pointer->child(0))
+                result = protectsImpl(pointerSource(pointer->child(1)), wordOf(word->child(1))) && protectsImpl(pointerSource(pointer->child(2)), wordOf(word->child(2)));
+        } else if (auto pointers = m_upsilons.find(pointer); pointers != m_upsilons.end()) {
+            bool wordIsJoinedThere = word->opcode() == B3::Phi && m_owner.get(word) == m_owner.get(pointer);
+            result = true;
+            for (UpsilonValue* incoming : pointers->value) {
+                B3::Value* incomingWord = word;
+                if (wordIsJoinedThere) {
+                    incomingWord = nullptr;
+                    for (UpsilonValue* candidate : m_upsilons.find(word)->value) {
+                        if (m_owner.get(candidate) == m_owner.get(incoming))
+                            incomingWord = wordOf(candidate->child(0));
+                    }
+                }
+                if (!incomingWord || !protectsImpl(pointerSource(incoming->child(0)), incomingWord)) {
+                    result = false;
+                    break;
+                }
+            }
+        }
+        m_protects.set(key, result);
+        return result;
+    }
+
+    bool isSafepoint(B3::Value* value) const
+    {
+        if (value->opcode() == B3::CCall)
+            return true;
+        auto* patchpoint = value->as<PatchpointValue>();
+        if (!patchpoint)
+            return false;
+        auto* generator = patchpoint->generator().get();
+        if (m_context.generatorsThatCannotCollect.contains(generator) || generator == m_context.wordBoxingGenerator.get() || generator == m_context.emptyGenerator.get() || generator == m_context.nullishTestMarker.get() || generator == m_context.numberBoxingGenerator.get() || generator == m_context.slotBlockFetchGenerator.get() || m_context.accessesThroughPointer.contains(patchpoint))
+            return false;
+        auto& effects = patchpoint->effects;
+        return effects.terminal || effects.exitsSideways || effects.controlDependent || effects.writesLocalState || effects.readsLocalState || effects.writesPinned || effects.readsPinned || effects.fence || effects.writes || effects.reads;
+    }
+
+    bool usesOnlyBits(B3::Value* user, unsigned child) const
+    {
+        switch (user->opcode()) {
+        case B3::Equal:
+        case B3::NotEqual:
+        case B3::Above:
+        case B3::Below:
+        case B3::AboveEqual:
+        case B3::BelowEqual:
+        case B3::LessThan:
+        case B3::GreaterThan:
+        case B3::LessEqual:
+        case B3::GreaterEqual:
+            return user->child(!child)->isConstant();
+        case B3::Branch:
+        case B3::Check:
+        case B3::Select:
+        case B3::Return:
+        case B3::CCall:
+            return true;
+        case B3::Store:
+            return child || user->child(0)->type() != Int32;
+        case B3::Patchpoint:
+            if (boxesWord(user))
+                return child;
+            if (auto access = m_context.accessesThroughPointer.find(user); access != m_context.accessesThroughPointer.end() && isCellCageBase(user->child(access->value)))
+                return child + 1 != user->numChildren();
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void check(B3::Value* safepoint, const BitVector& words, const BitVector& pointers)
+    {
+        auto* patchpoint = safepoint->as<PatchpointValue>();
+        bool savesFrame = patchpoint && m_context.frameSavingGenerators.contains(patchpoint->generator().get());
+        for (size_t number : words) {
+            B3::Value* word = m_words[number];
+            bool isProtected = false;
+            if (!savesFrame) {
+                for (size_t pointer : pointers) {
+                    if ((isProtected = protects(m_pointers[pointer], word)))
+                        break;
+                }
+            }
+            for (unsigned i = 0; patchpoint && !isProtected && i < patchpoint->numChildren(); ++i) {
+                ValueRep::Kind kind = patchpoint->constrainedChild(i).rep().kind();
+                if (kind == ValueRep::LateColdAny || kind == ValueRep::LateRegister || kind == ValueRep::SomeLateRegister)
+                    isProtected = protects(patchpoint->child(i), word);
+            }
+            if (isProtected || !m_reported.add({ word, safepoint }).isNewEntry)
+                continue;
+            B3::Value* use = m_lastUse.get(word);
+            m_findings.append(toString("the 32-bit reference ", deepDump(m_proc, word), " is used by ", deepDump(m_proc, use), " behind ", deepDump(m_proc, safepoint), savesFrame ? ", which saves the frame and does not list a pointer to its object" : ", across which no pointer to its object is alive"));
+        }
+    }
+
+    bool walk(B3::BasicBlock* block, bool reports)
+    {
+        BitVector words;
+        BitVector pointers;
+        for (B3::BasicBlock* successor : block->successorBlocks()) {
+            words.merge(m_wordsAtHead[successor]);
+            pointers.merge(m_pointersAtHead[successor]);
+        }
+        auto useWord = [&](B3::Value* word, B3::Value* user) {
+            auto found = m_wordNumbers.find(word);
+            if (found == m_wordNumbers.end())
+                return;
+            words.set(found->value);
+            m_lastUse.set(word, user);
+        };
+        auto usePointer = [&](B3::Value* pointer) {
+            auto found = m_pointerNumbers.find(pointer);
+            if (found == m_pointerNumbers.end())
+                return false;
+            pointers.set(found->value);
+            return true;
+        };
+        for (unsigned index = block->size(); index--;) {
+            B3::Value* value = block->at(index);
+            if (auto* upsilon = value->as<UpsilonValue>()) {
+                B3::Value* phi = upsilon->phi();
+                if (auto found = m_wordNumbers.find(phi); found != m_wordNumbers.end()) {
+                    if (words.get(found->value))
+                        useWord(wordOf(upsilon->child(0)), m_lastUse.get(phi) ? m_lastUse.get(phi) : value);
+                    words.clear(found->value);
+                } else if (auto pointer = m_pointerNumbers.find(phi); pointer != m_pointerNumbers.end()) {
+                    if (pointers.get(pointer->value))
+                        usePointer(pointerSource(upsilon->child(0)));
+                    pointers.clear(pointer->value);
+                }
+                continue;
+            }
+            if (value->opcode() == B3::Phi)
+                continue;
+            if (auto word = m_wordNumbers.find(value); word != m_wordNumbers.end())
+                words.clear(word->value);
+            if (auto pointer = m_pointerNumbers.find(value); pointer != m_pointerNumbers.end())
+                pointers.clear(pointer->value);
+            if (reports && isSafepoint(value))
+                check(value, words, pointers);
+            if (auto* marker = value->as<PatchpointValue>(); marker && marker->numChildren() == 2 && marker->generator() == m_context.emptyGenerator) {
+                if (auto word = m_wordNumbers.find(wordOf(marker->child(1))); word != m_wordNumbers.end())
+                    words.clear(word->value);
+            }
+            if (auto sum = m_sums.find(value); sum != m_sums.end()) {
+                if (m_pointerNumbers.contains(value))
+                    useWord(sum->value, value);
+                continue;
+            }
+            if (wordOf(value) != value)
+                continue;
+            for (unsigned i = 0; i < value->numChildren(); ++i) {
+                B3::Value* child = withoutIdentity(value->child(i));
+                if (auto sum = m_sums.find(child); sum != m_sums.end() && isAddressOf(value, i)) {
+                    useWord(sum->value, value);
+                    continue;
+                }
+                if (usePointer(pointerSource(child)))
+                    continue;
+                if (!usesOnlyBits(value, i))
+                    useWord(wordOf(child), value);
+            }
+        }
+        bool changed = words != m_wordsAtHead[block] || pointers != m_pointersAtHead[block];
+        m_wordsAtHead[block] = WTF::move(words);
+        m_pointersAtHead[block] = WTF::move(pointers);
+        return changed;
+    }
+
+    Procedure& m_proc;
+    LoweringContext& m_context;
+    Numbers m_wordNumbers;
+    Numbers m_pointerNumbers;
+    Vector<B3::Value*> m_words;
+    Vector<B3::Value*> m_pointers;
+    UncheckedKeyHashMap<B3::Value*, B3::Value*> m_sums;
+    UncheckedKeyHashMap<B3::Value*, B3::BasicBlock*> m_owner;
+    UncheckedKeyHashMap<B3::Value*, Vector<UpsilonValue*, 2>> m_upsilons;
+    UncheckedKeyHashMap<std::pair<B3::Value*, B3::Value*>, bool> m_protects;
+    Vector<std::pair<B3::Value*, B3::Value*>, 8> m_assumed;
+    unsigned m_depth { 0 };
+    IndexMap<B3::BasicBlock*, BitVector> m_wordsAtHead;
+    IndexMap<B3::BasicBlock*, BitVector> m_pointersAtHead;
+    UncheckedKeyHashMap<B3::Value*, B3::Value*> m_lastUse;
+    UncheckedKeyHashSet<std::pair<B3::Value*, B3::Value*>> m_reported;
+    Vector<String> m_findings;
+};
+
+} // anonymous namespace
+
+Vector<String> validateNarrowReferences(Procedure& proc, LoweringContext& context)
+{
+    return NarrowReferenceValidation(proc, context).run();
 }
 
 void branchOverUndefinedForAbsentCells(Procedure& proc)

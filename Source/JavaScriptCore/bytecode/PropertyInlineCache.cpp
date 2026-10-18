@@ -40,7 +40,7 @@ namespace PropertyInlineCacheInternal {
 static constexpr bool verbose = false;
 }
 
-PropertyInlineCache::~PropertyInlineCache() = default;
+NEVER_INLINE PropertyInlineCache::~PropertyInlineCache() = default;
 
 RepatchingPropertyInlineCache::RepatchingPropertyInlineCache()
     : RepatchingPropertyInlineCache(AccessType::GetById, { })

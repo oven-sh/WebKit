@@ -240,7 +240,7 @@ public:
         }
     }
 
-    void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
+    NEVER_INLINE void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
     {
         if (!m_wasmMemory)
             return;

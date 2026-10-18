@@ -47,6 +47,8 @@ class WebAssemblyGCStructure final : public Structure {
 public:
     friend class Structure;
 
+    ~WebAssemblyGCStructure();
+
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {

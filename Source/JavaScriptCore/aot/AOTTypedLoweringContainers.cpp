@@ -1042,9 +1042,26 @@ bool Lowering::isDroppedForTesting(const char* file, unsigned line)
     return makeString(slash == notFound ? path : path.substring(slash + 1), ':', line) == StringView::fromLatin1(byteCast<char>(Options::aotGuardToDropForTesting()));
 }
 
-void Lowering::ensureStillAliveHere(CellPointer owner, const char* file, unsigned line)
+bool Lowering::isProtectionDroppedForTesting(const char* file, unsigned line, const char* function)
 {
-    if (isDroppedForTesting(file, line)) [[unlikely]]
+    if (!Options::aotGuardToDropForTesting()) [[likely]]
+        return false;
+    static const bool lists = !strcmp(byteCast<char>(Options::aotGuardToDropForTesting()), "list-protections");
+    if (!lists)
+        return isDroppedForTesting(file, line);
+    static Lock lock;
+    static NeverDestroyed<UncheckedKeyHashSet<String>> listed;
+    const char* slash = strrchr(file, '/');
+    String place = makeString(StringView::fromLatin1(slash ? slash + 1 : file), ':', line, ' ', StringView::fromLatin1(function));
+    Locker locker { lock };
+    if (listed->add(place).isNewEntry)
+        dataLogLn("AOT protection: ", place);
+    return false;
+}
+
+void Lowering::ensureStillAliveHere(CellPointer owner, const char* file, unsigned line, const char* function)
+{
+    if (isProtectionDroppedForTesting(file, line, function)) [[unlikely]]
         return;
     PatchpointValue* patchpoint = m_out.patchpoint(Void);
     patchpoint->effects = Effects::none();
@@ -1054,9 +1071,9 @@ void Lowering::ensureStillAliveHere(CellPointer owner, const char* file, unsigne
     patchpoint->setGenerator(m_emptyGenerator);
 }
 
-void Lowering::ensureStillAliveHereForWord(CellPointer owner, LValue word, const char* file, unsigned line)
+void Lowering::ensureStillAliveHereForWord(CellPointer owner, LValue word, const char* file, unsigned line, const char* function)
 {
-    if (isDroppedForTesting(file, line)) [[unlikely]]
+    if (isProtectionDroppedForTesting(file, line, function)) [[unlikely]]
         return;
     PatchpointValue* patchpoint = m_out.patchpoint(Void);
     patchpoint->effects = Effects::none();

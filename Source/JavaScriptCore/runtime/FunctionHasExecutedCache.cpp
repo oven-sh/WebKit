@@ -50,7 +50,7 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     return hasExecuted;
 }
 
-void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end)
+NEVER_INLINE void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end)
 {
     RangeMap& map = m_rangeMap.add(id, RangeMap { }).iterator->value;
     FunctionRange range;
@@ -61,7 +61,7 @@ void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start
     map.add(range, false);
 }
 
-void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
+NEVER_INLINE void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
 {
     // FIXME: We should never have an instance where we return here, but currently do in some situations. Find out why.
     auto iterator = m_rangeMap.find(id);

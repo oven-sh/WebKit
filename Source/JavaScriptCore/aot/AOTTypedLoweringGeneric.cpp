@@ -878,6 +878,13 @@ bool Lowering::usesSiteCaches(StringID name) const
     return !name || !m_program.hostAccessorNames.get(name.index()) || !receiverMayBeHostObject(name);
 }
 
+bool Lowering::isInHotLoopOfUserCode() const
+{
+    if (m_function.has(Format::FunctionIsBuiltin | Format::FunctionIsInBuiltinModule))
+        return false;
+    return m_isInLoop || m_program.isCalledFromHotLoops(m_id);
+}
+
 bool Lowering::receiverMayBeHostObject(StringID name) const
 {
     if (!m_currentBlock || m_currentIndexInBlock >= m_currentBlock->values.size())
@@ -902,6 +909,11 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
     patchpoint->clobberEarly(RegisterSet { cached, holder });
     if (isARM64())
         patchpoint->clobberEarly(RegisterSet { readSiteCacheGPR });
+    bool meetsManyObjects = isInHotLoopOfUserCode();
+    if (meetsManyObjects && isARM64()) {
+        for (GPRReg reg : stubTemporaryGPRs)
+            patchpoint->clobberEarly(RegisterSet { reg });
+    }
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     RegisterSet clobbered = *registersClobberedBy(Stub::GetByName);
@@ -912,19 +924,36 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site;
     site.bits = nextSite();
-    patchpoint->setGenerator([context = &m_context, name, word, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([context = &m_context, name, word, site, meetsManyObjects](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg receiver = params[1].gpr();
         CCallHelpers::Label start = jit.label();
-        CCallHelpers::JumpList misses = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word);
+        CCallHelpers::Jump hasAnotherStructure;
+        CCallHelpers::JumpList missesInLine = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
         IndexReferences::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
         RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
         live.remove(GPRInfo::returnValueGPR);
-        Stub stub = stubVariantPreserving(Stub::GetByName, live) == Stub::GetByName ? Stub::GetByNameAndFillSiteCache : Stub::GetByNameAndFillSiteCachePreservingTwo;
+        bool preservesTwo = stubVariantPreserving(Stub::GetByName, live) != Stub::GetByName;
+        Stub stub = static_cast<Stub>(static_cast<unsigned>(meetsManyObjects ? Stub::GetByNameAndFillSiteCacheAtOnce : Stub::GetByNameAndFillSiteCache) + preservesTwo);
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
+            CCallHelpers::JumpList misses = missesInLine;
+            if (meetsManyObjects) {
+                CCallHelpers::Label startOfProbe = jit.label();
+                hasAnotherStructure.link(&jit);
+                misses.append(jit.branchTest64(CCallHelpers::Zero, cached));
+                misses.append(IndexReferences::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
+                CCallHelpers::JumpList needsHandlerOfKind = IndexReferences::loadOwnInlineValueByLookupTable(jit, receiver, name, GPRInfo::returnValueGPR);
+                jit.jump().linkTo(done, &jit);
+                context->rangesKeptInline.append({ startOfProbe, jit.label() });
+                needsHandlerOfKind.link(&jit);
+                jit.move(receiver, firstStubOperandGPR);
+                jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
+                context->stubCalls.call(jit, static_cast<Stub>(static_cast<unsigned>(Stub::GetByNameAfterFirstProbe) + preservesTwo), site);
+                jit.jump().linkTo(done, &jit);
+            }
             misses.link(&jit);
             jit.move(receiver, firstStubOperandGPR);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
@@ -959,24 +988,42 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
     patchpoint->clobberLate(clobbered);
     CallSite site;
     site.bits = nextSite();
-    patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    bool meetsManyObjects = isInHotLoopOfUserCode();
+    patchpoint->setGenerator([context = &m_context, isSloppy, name, word, site, meetsManyObjects](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::Label start = jit.label();
-        CCallHelpers::JumpList misses = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word);
+        CCallHelpers::Jump hasAnotherStructure;
+        CCallHelpers::JumpList missesInLine = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
         jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
         jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
         jit.store32(structureAfterStore, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset()));
+        CCallHelpers::Label isStored = jit.label();
         jit.load8(CCallHelpers::Address(firstStubOperandGPR, JSCell::cellStateOffset()), cached);
         CCallHelpers::Jump needsBarrier = jit.branch32(CCallHelpers::BelowOrEqual, cached, CCallHelpers::Address(instanceGPR, Instance::offsetOfBarrierThreshold()));
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
         bool preservesTwo = stubVariantPreserving(Stub::PutByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::PutByName;
-        Stub stub = static_cast<Stub>(static_cast<unsigned>(isSloppy ? Stub::PutByNameSloppyAndFillSiteCache : Stub::PutByNameAndFillSiteCache) + preservesTwo);
+        Stub stub = static_cast<Stub>(static_cast<unsigned>(meetsManyObjects ? (isSloppy ? Stub::PutByNameSloppyAndFillSiteCacheAtOnce : Stub::PutByNameAndFillSiteCacheAtOnce) : isSloppy ? Stub::PutByNameSloppyAndFillSiteCache : Stub::PutByNameAndFillSiteCache) + preservesTwo);
+        Stub stubOfTable = static_cast<Stub>(static_cast<unsigned>(isSloppy ? Stub::PutByNameSloppyWithDirectColumn : Stub::PutByNameWithDirectColumn) + preservesTwo);
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             needsBarrier.link(&jit);
             context->stubCalls.call(jit, Stub::WriteBarrier, CallSite { });
             jit.jump().linkTo(done, &jit);
+            CCallHelpers::JumpList misses = missesInLine;
+            if (meetsManyObjects) {
+                CCallHelpers::Label startOfProbe = jit.label();
+                hasAnotherStructure.link(&jit);
+                misses.append(jit.branchTest64(CCallHelpers::Zero, cached));
+                misses.append(IndexReferences::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
+                CCallHelpers::JumpList needsHandlerOfKind = IndexReferences::storeOwnInlineValueByLookupTable(jit, firstStubOperandGPR, name, GPRInfo::argumentGPR1);
+                context->rangesKeptInline.append({ startOfProbe, jit.label() });
+                jit.jump().linkTo(isStored, &jit);
+                needsHandlerOfKind.link(&jit);
+                jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
+                context->stubCalls.call(jit, stubOfTable, site);
+                jit.jump().linkTo(done, &jit);
+            }
             misses.link(&jit);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
             context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, storeSiteCacheGPR, word);
@@ -1159,7 +1206,7 @@ bool Lowering::isPlainReadByName(size_t index)
     StringID name = read.string();
     if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || iteratorResultSlot(read.child(0), name))
         return false;
-    if (m_program.possibleAccessorNames.get(name.index()) || usesSiteCaches(name))
+    if (m_program.possibleAccessorNames.get(name.index()) || (usesSiteCaches(name) && !isInHotLoopOfUserCode()))
         return false;
     return !!tableIndexOfName(name);
 }

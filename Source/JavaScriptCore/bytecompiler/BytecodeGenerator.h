@@ -417,7 +417,7 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
+        static NEVER_INLINE ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]

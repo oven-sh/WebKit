@@ -29,6 +29,7 @@
 #include "CalleeBits.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "JITStubRoutineSet.h"
 #include "JSCast.h"
 #include "JSCellButterfly.h"
@@ -47,6 +48,9 @@ ConservativeRoots::ConservativeRoots(JSC::Heap& heap)
     , m_capacity(inlineCapacity)
     , m_heap(heap)
 {
+    bool isDroppedForTesting = Options::aotGuardToDropForTesting() && !strcmp(byteCast<char>(Options::aotGuardToDropForTesting()), "narrow-reference-scan");
+    if (MarkedBlockCage::isRequired() && !isDroppedForTesting)
+        m_narrowReferences = heap.fastMallocAllocator->markedBlockCage().usedIndices();
 }
 
 ConservativeRoots::~ConservativeRoots()
@@ -229,12 +233,30 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
 
     HeapVersion markingVersion = m_heap.objectSpace().markingVersion();
     HeapVersion newlyAllocatedVersion = m_heap.objectSpace().newlyAllocatedVersion();
+    const MarkedBlockCage::Indices narrow = m_narrowReferences;
+    auto addNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {
+        if (word - narrow.first >= narrow.count || word & 1)
+            return;
+        char* pointer = std::bit_cast<char*>(narrow.base + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift));
+        MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
+        if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate)) || !m_heap.objectSpace().blocks().set().contains(candidate))
+            return;
+        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, pointer))
+            genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+    };
+    auto addNarrowReferences = [&](char* bits) ALWAYS_INLINE_LAMBDA {
+        if (!narrow.count)
+            return;
+        addNarrowReference(static_cast<uint32_t>(std::bit_cast<uintptr_t>(bits)));
+        addNarrowReference(static_cast<uint32_t>(std::bit_cast<uintptr_t>(bits) >> 32));
+    };
 #if ENABLE(WEBASSEMBLY)
     if (boxedWasmCalleeFilter.bits()) {
         constexpr bool lookForWasmCallees = true;
         for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
             if (isPoisonedForConservativeScan(it))
                 continue;
+            addNarrowReferences(*it);
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
         }
     } else {
@@ -253,6 +275,7 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
         for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
             if (isPoisonedForConservativeScan(it))
                 continue;
+            addNarrowReferences(*it);
             char* pointer = removeArrayPtrTag(*it);
             uintptr_t bits = std::bit_cast<uintptr_t>(pointer);
             uintptr_t blockBits = bits & MarkedBlock::blockMask;

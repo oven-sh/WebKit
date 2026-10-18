@@ -1551,7 +1551,7 @@ struct State {
     JSValue createThis(JSGlobalObject*, Closure*, JSObject* newTarget);
     Structure* structureForThis(JSGlobalObject*, Closure* constructor, JSObject* newTarget, unsigned inlineCapacity);
     Structure* structureForThisWithSlimClosure(JSGlobalObject*, JSObject* constructor, JSObject* newTarget, unsigned inlineCapacity);
-    unsigned inlineCapacityForThis(VM&, uint32_t constructor, uint32_t newTarget, unsigned seen, JSObject* prototype) const;
+    unsigned inlineCapacityForThis(VM&, uint32_t constructor, uint32_t newTarget, unsigned seen, JSObject* prototype, unsigned declaredByConstructor = 0) const;
     const AllocationData* thisAllocation(uint32_t function) const;
     bool rejectsFreshObject(uint32_t function, uint32_t shape) const;
     bool createsFixedLayoutObjects(uint32_t function) const { return objectCreatorFlags(function) & isObjectCreator; }
@@ -2026,13 +2026,27 @@ struct State {
     const PlainCopyPlan& plainCopyPlan(VM&, const LayoutData&, uint32_t orderWord);
     struct AssignmentPlan {
         enum class Kind : uint8_t { Int32OrNumberBox, Boxed, Cell32, Double, Boolean, General };
+        static constexpr uint8_t holdsUntypedObjects = 128;
+        static constexpr uint8_t holdsAnyObject = 1;
+        static constexpr uint32_t widthOf(Kind kind)
+        {
+            constexpr std::array<uint8_t, 6> widths { 4, 8, 4, 8, 1, 0 };
+            return widths[static_cast<unsigned>(kind)];
+        }
         struct FieldStore {
             uint32_t read;
             Kind kind;
             uint8_t acceptedKinds;
-            bool acceptsWhatSourceHolds;
+            uint8_t objectsHeldAsTheyAre;
+            bool acceptsWhatSourceHolds : 1;
+            bool isOutOfLine : 1;
+            bool isAbsentWhenEmpty : 1;
+            StructureID lastStructureHeldAsItIs;
+            uint32_t offset;
             const FieldData* from;
             const FieldData* to;
+            uint32_t orderWordBeforeCreation { UINT32_MAX };
+            uint32_t orderWordAfterCreation { 0 };
         };
         struct ExtraPropertyStore {
             uint32_t read;
@@ -2045,13 +2059,15 @@ struct State {
         uint32_t sourceOrderWord { 0 };
         bool isUsable { false };
         bool addsExtraProperties { false };
+        bool mayCreateFields { false };
+        uint32_t sizeOfExtensionFilled { 0 };
         Structure* extraPropertiesAfter { nullptr };
         Structure* targetAfter { nullptr };
         Vector<FieldStore> fieldStores;
         Vector<ExtraPropertyStore> extraPropertyStores;
         Vector<StructureID, 4> prototypeStructures;
     };
-    const AssignmentPlan& assignmentPlan(VM&, Object& target, JSObject* extraProperties, JSObject* source, uint32_t sourceOrderWord);
+    AssignmentPlan& assignmentPlan(VM&, Object& target, JSObject* extraProperties, JSObject* source, uint32_t sourceOrderWord);
     void clearAssignmentPlans();
     bool everyFieldIsOrdinaryProperty(VM&, const LayoutData&);
     bool mayInterceptPutOfOwnProperty(VM&, const LayoutData&, JSObject* extraProperties, JSObject* prototype);
@@ -2362,11 +2378,17 @@ private:
     };
     std::array<InitialObjectState, 16> m_initialObjectStatesByNewTarget;
     struct InitialPlainObjectState {
+        struct ClosureOverObject {
+            PropertyOffset offset;
+            uint32_t function;
+            bool isLazy;
+        };
         Closure* constructor { nullptr };
         JSObject* newTarget { nullptr };
         Structure* structure { nullptr };
         uint32_t epoch { 0 };
         Vector<uint8_t> body;
+        Vector<ClosureOverObject> closures;
     };
     std::array<InitialPlainObjectState, 16> m_initialPlainObjectStatesByNewTarget;
     void shareWithStub(VM&, Closure* constructor, JSObject* newTarget, Structure*, uint32_t epoch, std::span<const uint8_t> body);

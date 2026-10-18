@@ -192,6 +192,8 @@ static constexpr uint32_t nameIsFieldCreatedWithoutStorage = 1u << 31;
 static constexpr uint32_t pinnedFieldGuardShift = 24;
 static constexpr uint32_t unpinnedFieldIsUndeclared = 1u << pinnedFieldGuardShift;
 inline bool isUndeclaredField(uint32_t flags) { return (flags & (fieldIsPinned | unpinnedFieldIsUndeclared)) == unpinnedFieldIsUndeclared; }
+static constexpr uint32_t unpinnedFieldIsCreatedWithLazyClosure = 2u << pinnedFieldGuardShift;
+inline bool isCreatedWithLazyClosure(uint32_t flags) { return (flags & (fieldIsPinned | unpinnedFieldIsCreatedWithLazyClosure)) == unpinnedFieldIsCreatedWithLazyClosure; }
 static constexpr uint32_t numberOfPinnedFieldGuards = 256;
 
 struct RuntimeShapeTest {

@@ -142,7 +142,7 @@ void PolymorphicAccessJITStubRoutine::invalidate()
     }
 }
 
-unsigned PolymorphicAccessJITStubRoutine::computeHash(std::span<const Ref<AccessCase>> cases)
+NEVER_INLINE unsigned PolymorphicAccessJITStubRoutine::computeHash(std::span<const Ref<AccessCase>> cases)
 {
     if (cases.size() == 1)
         return cases.front()->hash();

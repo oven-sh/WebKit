@@ -525,7 +525,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectAssignFrom, void, (Instance* ins
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     scope.release();
-    assignFrom(instance, globalObject, asObject(target), JSValue::decode(source));
+    if (target->type() == ObjectType && JSValue::decode(source).isObject()) {
+        if (!Typed::tryAssignToCompiledObject(vm, asObject(target), asObject(JSValue::decode(source))))
+            objectAssignPropertyByProperty(globalObject, vm, asObject(target), asObject(JSValue::decode(source)));
+    } else
+        assignFrom(instance, globalObject, asObject(target), JSValue::decode(source));
     OPERATION_RETURN(scope);
 }
 
@@ -589,7 +593,7 @@ static std::optional<bool> cacheCompiledObjectLocation(Instance* instance, JSObj
         instance->cacheOwnPropertyLocation(structure->id().bits(), name.uid(), 0);
         return false;
     }
-    if (field->flags & Typed::fieldIsOutOfLine)
+    if (field->flags & (Typed::fieldIsOutOfLine | Typed::fieldMayBeUnlisted))
         return std::nullopt;
     unsigned width = 0;
     unsigned marker = 0;
@@ -1175,7 +1179,7 @@ Lowering::OwnField Lowering::ownFieldOfSubtypes(LayoutID view, StringID name) co
         }
         isInNone = false;
         TypeID stored = layout.fields[*index].stored;
-        if (!stored || m_program.at(stored).primitives & Primitive::Absent)
+        if (!stored || m_program.at(stored).primitives & Primitive::Absent || layout.fields[*index].flags & fieldMayBeUnlisted)
             isInAll = false;
     }
     return isInAll ? OwnField::InAllMembers : isInNone ? OwnField::InNoMember : OwnField::Varies;

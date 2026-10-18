@@ -757,6 +757,26 @@ static void createDataProperty(JSGlobalObject* globalObject, JSObject* object, P
         object->createDataProperty(globalObject, name, value, true);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineFieldsOfPlainThis, void, (Instance* instance, JSCell* cell, uint32_t ofClass, uint32_t begin, uint32_t end))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    State& state = *instance->typed;
+    if (state.compiledObject(cell))
+        OPERATION_RETURN(scope);
+    JSObject* object = asObject(cell);
+    const Typed::LayoutData& layout = *state.classWithIndex(ofClass);
+    for (const Typed::FieldData& field : std::span { layout.fields(), layout.numberOfFields }.subspan(begin, end - begin)) {
+        if (field.flags & (Typed::fieldIsAbsentAtCreation | Typed::fieldIsPlaceholder) || !(field.flags & Typed::fieldMayBeUnlisted))
+            continue;
+        const Identifier& name = state.name(vm, field.name);
+        if (isValidOffset(object->getDirectOffset(vm, name)))
+            continue;
+        createDataProperty(globalObject, object, name, jsUndefined());
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedDefineByKey, void, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue encodedKey, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);

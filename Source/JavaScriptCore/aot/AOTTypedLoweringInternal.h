@@ -219,6 +219,20 @@ struct LoweringContext {
     RefPtr<B3::StackmapGenerator> emptyGenerator;
     UncheckedKeyHashMap<B3::Value*, unsigned> accessesThroughPointer;
     bool keepsCellsAliveForWords { false };
+    UncheckedKeyHashMap<uint64_t, uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> narrowSlotRanges;
+    UncheckedKeyHashSet<B3::StackmapGenerator*> frameSavingGenerators;
+    UncheckedKeyHashSet<B3::Value*> accessesToNarrowSlots;
+    UncheckedKeyHashSet<B3::StackmapGenerator*> generatorsThatCannotCollect;
+    UncheckedKeyHashSet<B3::StackmapGenerator*> generatorsOfStringsFromLiteralStrings;
+    UncheckedKeyHashSet<B3::StackmapGenerator*> generatorsOfCellsKeptForGood;
+    RefPtr<B3::StackmapGenerator> wordBoxingGenerator;
+    B3::HeapRange extensionWordRange;
+    UncheckedKeyHashSet<B3::Value*> accessesToExtensionWords;
+    bool isNarrowSlot(const B3::HeapRange& range) const
+    {
+        auto found = narrowSlotRanges.find(range.begin());
+        return found != narrowSlotRanges.end() && found->value == range.end();
+    }
     struct LatePathCallAccess {
         unsigned child;
         uint32_t nullishTest { std::numeric_limits<uint32_t>::max() };
@@ -323,6 +337,7 @@ void useFaultsForNullishTests(B3::Procedure&, LoweringContext&);
 void checkShadowBeforeAccesses(B3::Procedure&);
 #endif
 void foldDecodingsIntoAccesses(B3::Procedure&, LoweringContext&);
+Vector<String> validateNarrowReferences(B3::Procedure&, LoweringContext&);
 void branchOverUndefinedForAbsentCells(B3::Procedure&);
 void splitBranchConditions(B3::Procedure&);
 void foldNumberBoxings(B3::Procedure&, LoweringContext&);
@@ -967,6 +982,26 @@ private:
         return equal(cell, CellPointer(closureIfCreated(general)));
     }
     void validateCell32(LValue index, LValue stored, bool mayBeNullish);
+    LValue noteNarrowSlot(TypedPointer slot, LValue access)
+    {
+        if (Options::validateAOTNarrowReferences()) [[unlikely]] {
+            m_narrowSlotHeaps.add(slot.heap());
+            m_context.accessesToNarrowSlots.add(access);
+        }
+        return access;
+    }
+    UncheckedKeyHashSet<const B3::AbstractHeap*> m_narrowSlotHeaps;
+    void noteLastPatchpointCannotCollect()
+    {
+        if (!Options::validateAOTNarrowReferences()) [[likely]]
+            return;
+        for (unsigned i = m_out.m_block->size(); i--;) {
+            if (auto* patchpoint = m_out.m_block->at(i)->as<B3::PatchpointValue>()) {
+                m_context.generatorsThatCannotCollect.add(patchpoint->generator().get());
+                return;
+            }
+        }
+    }
     void store(Store, Operand, TypedPointer);
     const B3::AbstractHeap& heapOf(SlotID slot) { return m_heaps.AOTTyped_slots[slot.index()]; }
     void barrier(CellPointer owner);
@@ -1210,6 +1245,7 @@ private:
         unsigned slot { 0 };
     };
     ValueID withoutUpcasts(ValueID) const;
+    bool isNeverLaidOut(const Type& receiver) const;
     bool isLazyClosureStore(const Value& closure, const Value& store);
     void putLazyClosure(Boxed holder, StringID, FunctionID);
     std::optional<FunctionID> lazyClosureStoredBy(const Value& store);
@@ -1528,6 +1564,7 @@ private:
     LValue slotFromAccessRun(const AccessRun&, Boxed base, StringID, LBasicBlock own);
     Boxed emitStandaloneCachedGetById(Boxed base, StringID, bool isInRun = false);
     bool usesSiteCaches(StringID name = { }) const;
+    bool isInHotLoopOfUserCode() const;
     bool receiverMayBeHostObject(StringID name) const;
     Boxed getByNameThroughSiteCache(Boxed base, uint32_t name);
     void putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t name, Boxed value);
@@ -1628,8 +1665,14 @@ private:
     Word32 tryStoreArrayElement(CellPointer array, Integer index, ValueID stored);
     Operand pushArrayElement(CellPointer array, ValueID receiver, ValueID pushed, const Type&);
     Operand pushArrayElements(CellPointer array, const Value&, const Type&);
-    void ensureStillAliveHere(CellPointer owner, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
-    void ensureStillAliveHereForWord(CellPointer owner, LValue word, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
+    void ensureStillAliveHere(CellPointer owner, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE(), const char* function = __builtin_FUNCTION());
+    void ensureStillAliveHereForWord(CellPointer owner, LValue word, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE(), const char* function = __builtin_FUNCTION());
+    static bool isProtectionDroppedForTesting(const char* file = __builtin_FILE(), unsigned line = __builtin_LINE(), const char* function = __builtin_FUNCTION());
+    LValue decodedCell(LValue word, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE(), const char* function = __builtin_FUNCTION())
+    {
+        LValue cell = decodeCell32(word);
+        return isProtectionDroppedForTesting(file, line, function) ? cell : m_out.opaque(cell);
+    }
     static bool isDroppedForTesting(const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
     static bool isForcedForTesting(const char* file, unsigned line);
     struct TypedArrayReceiver {

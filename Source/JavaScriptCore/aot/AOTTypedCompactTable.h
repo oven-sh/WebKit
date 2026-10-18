@@ -21,7 +21,12 @@ namespace JSC {
 class JSMap;
 class JSSet;
 
-namespace AOT { namespace Typed {
+namespace AOT {
+
+struct Instance;
+OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES newSetOfStringsGeneric(Instance*, EncodedJSValue list);
+
+namespace Typed {
 
 struct State;
 struct TableInImage;
@@ -294,7 +299,7 @@ public:
 
     enum class CreateIfNeeded : bool { No, Yes };
     template<typename Traits> static bool tryAddAbsent(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSString* key, JSValue);
-    static bool tryFillEmptySet(JSGlobalObject*, JSSet*, std::span<const WriteBarrier<Unknown>> strings);
+    static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES newSetOfStringsQuickly(Instance*, EncodedJSValue list);
     template<typename Traits> static bool tryAdd(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key, JSValue, CreateIfNeeded = CreateIfNeeded::No, uint32_t minCapacity = initialCapacity);
     template<typename Traits> static bool remove(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key);
     template<typename Traits> static void clear(VM&, JSOrderedHashTable<Traits>*);
@@ -353,6 +358,7 @@ private:
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
+    template<typename Slot> uint32_t fillWithHashedStrings(std::span<const WriteBarrier<Unknown>>);
     void append(VM&, JSString* key, unsigned hash, JSValue);
     CompactTable* copyWithCapacity(VM&, Width value) const;
     void becomeObsolete(VM&, State, JSCell* successor);
