@@ -90,6 +90,8 @@ public:
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&) const;
     BasicBlockLocation* dummyBasicBlock() LIFETIME_BOUND { return &m_dummyBasicBlock; }
+    // Every BasicBlockLocation stays where it is: code points at it.
+    void clearExecutionCounts();
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 

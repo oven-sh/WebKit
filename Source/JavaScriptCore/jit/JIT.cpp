@@ -1055,7 +1055,7 @@ CompilationResult JIT::compileSync(VM&, CodeBlock* codeBlock, JITCompilationEffo
 void JIT::doMainThreadPreparationBeforeCompile(VM& vm)
 {
     // This ensures that we have the most up to date type information when performing typecheck optimizations for op_profile_type.
-    if (vm.typeProfiler())
+    if (vm.typeProfilerForInstrumentedCode())
         vm.typeProfilerLog()->processLogEntries(vm, "Preparing for JIT compilation."_s);
 }
 

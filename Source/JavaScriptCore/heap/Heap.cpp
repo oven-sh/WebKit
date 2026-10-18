@@ -952,8 +952,8 @@ void Heap::pruneDeadReferences()
         Thread::currentSingleton().setCurrentAtomStringTable(previous);
     });
 
-    if (vm().typeProfiler())
-        vm().typeProfiler()->invalidateTypeSetCache(vm());
+    if (auto* typeProfiler = vm().typeProfilerForInstrumentedCode())
+        typeProfiler->invalidateTypeSetCache(vm());
 
     cancelDeferredWorkIfNeeded();
     reapWeakHandles();
@@ -1116,6 +1116,9 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsPar
     // MicrotaskCallCache lives outside any CodeBlock and keys its cached entry points on the callee's
     // executable, so after the code is detached above its callee check would still hit and call into it.
     vm.clearMicrotaskCallCaches();
+
+    // No CodeBlock is left to write into a profiler, and the compilations are done.
+    vm.releaseProfilersThatAreOff();
 
 #if ENABLE(WEBASSEMBLY)
     {
@@ -3098,7 +3101,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
             if constexpr (samplingProfilerSupported)
                 visitSamplingProfiler(vm, visitor);
 
-            if (vm.typeProfiler())
+            if (vm.typeProfilerForInstrumentedCode())
                 vm.typeProfilerLog()->visit(visitor);
             
             if (auto* shadowChicken = vm.shadowChicken())

@@ -394,9 +394,9 @@ inline OptionSet<CodeGenerationMode> JSGlobalObject::defaultCodeGenerationMode()
     OptionSet<CodeGenerationMode> codeGenerationMode;
     if (hasInteractiveDebugger() || Options::forceDebuggerBytecodeGeneration() || Options::debuggerTriggersBreakpointException())
         codeGenerationMode.add(CodeGenerationMode::Debugger);
-    if (vm().typeProfiler())
+    if (vm().isTypeProfilerEnabled())
         codeGenerationMode.add(CodeGenerationMode::TypeProfiler);
-    if (vm().controlFlowProfiler())
+    if (vm().isControlFlowProfilerEnabled())
         codeGenerationMode.add(CodeGenerationMode::ControlFlowProfiler);
     return codeGenerationMode;
 }

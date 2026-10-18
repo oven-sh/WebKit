@@ -87,6 +87,7 @@ public:
     JS_EXPORT_PRIVATE TypeSet();
     void addTypeInformation(RuntimeType, RefPtr<StructureShape>&&, Structure*, bool sawPolyProtoStructure);
     void invalidateCache(VM&);
+    void clear();
     String dumpTypes() const;
     String displayName() const;
     Ref<JSON::ArrayOf<Inspector::Protocol::Runtime::StructureDescription>> allStructureRepresentations() const;

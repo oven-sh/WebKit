@@ -59,6 +59,8 @@ public:
     ~TypeProfilerLog();
 
     JS_EXPORT_PRIVATE void processLogEntries(VM&, const String&);
+    // Drops the entries without processing them.
+    void clear() { m_currentLogEntryPtr = m_logStartPtr; }
     LogEntry* logEndPtr() const { return m_logEndPtr; }
 
     void visit(AbstractSlotVisitor&);
