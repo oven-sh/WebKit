@@ -72,6 +72,68 @@ shouldThrowSyntaxError(filler + "a{2,1}", "");
     shouldThrowSyntaxError("[^\\p{RGI_Emoji}&&\\p{RGI_Emoji}]" + filler, "v", negated);
 }
 
+// So are the errors that only building the YarrPattern finds. YarrPatternConstructor::setupOffsets refuses input
+// positions that do not fit in 32 bits, and a pattern whose quantifier counts can get there is built eagerly.
+{
+    let tooLong = "pattern exceeds string length limits";
+    // Twice: the second creation must not depend on what the first one left in the RegExp cache.
+    for (let i = 0; i < 2; ++i) {
+        shouldThrowSyntaxError(filler + "y{4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "y{4294967296}", "", tooLong);
+        shouldThrowSyntaxError("a{2147483647}".repeat(3) + filler, "", tooLong);
+        shouldThrowSyntaxError(filler + "[y]{4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "(y{4294967295})?", "", tooLong);
+        shouldThrowSyntaxError(filler + "y{4294967294,4294967295}", "", tooLong);
+        shouldThrowSyntaxError(filler + "\\u{1F600}{2147483648}", "u", tooLong);
+    }
+
+    // The same counts where the YarrPattern can be built.
+    shouldBe(new RegExp(filler + "(?:y){4294967295}").test(filler + "y"), false, "huge count on a group");
+    shouldBe(new RegExp(filler + "y{0,4294967295}").test(filler), true, "huge maximum, no minimum");
+    shouldBe(new RegExp(filler + "y{16777216}").test(filler + "y"), false, "large count that fits");
+    shouldBe(new RegExp(filler + "y{3}z{2,}").test(filler + "yyyzz"), true, "small counts");
+
+    // setupOffsets numbers the body of a group from what is before the group. The byte compiler also counts what
+    // follows it, and reports its own limit at the first match, with the option on or off.
+    shouldBe(new RegExp(filler + "(?:a|b{4294967215})").test(filler), false, "alternative at the limit");
+    let followed = new RegExp(filler + "(?:a|b{4294967215})c");
+    let error = null;
+    try {
+        followed.test(filler);
+    } catch (e) {
+        error = e;
+    }
+    shouldBe(String(error), "SyntaxError: Invalid regular expression: " + tooLong, "alternative at the limit, then one more character");
+    shouldThrowSyntaxError(filler + "(?:a|b{4294967216})", "", tooLong);
+}
+
+// RegExp.prototype.compile() refuses such a pattern as well, and leaves the RegExp as it was.
+{
+    let re = /keep/g;
+    re.lastIndex = 2;
+    let threw = false;
+    try {
+        re.compile(filler + "y{4294967295}");
+    } catch (e) {
+        threw = e instanceof SyntaxError;
+    }
+    shouldBe(threw, true, "compile() with a pattern that construction refuses");
+    shouldBe(re.source, "keep", "source after the refused compile()");
+    shouldBe(re.lastIndex, 2, "lastIndex after the refused compile()");
+}
+
+// A literal of such a pattern throws when it is evaluated, not at its first match.
+{
+    let makeLiteral = new Function("return /" + filler + "y{4294967295}/;");
+    let threw = false;
+    try {
+        makeLiteral();
+    } catch (e) {
+        threw = e instanceof SyntaxError;
+    }
+    shouldBe(threw, true, "evaluating a literal that construction refuses");
+}
+
 // Back references are validated against the counted captures (non-unicode: octal escape fallback).
 shouldBe(new RegExp("(a)" + filler.slice(2) + "|\\1b").test("b"), true, "backreference to an unmatched group matches empty");
 shouldBe(new RegExp(filler + "\\8").test(filler + "8"), true, "\\8 without captures is a literal");
