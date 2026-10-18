@@ -274,6 +274,27 @@ std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& va
 
 std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& value)
 {
+    auto isKeptAsOptionalInteger = [&](ValueID operand) {
+        auto& type = typeOf(operand);
+        return !type.isInteger() && isNumericOperand(type) && !(type.primitives & Primitive::Null) && get(operand).rep == Rep::OptionalInt64;
+    };
+    if (isKeptAsOptionalInteger(value.child(0)) && isKeptAsOptionalInteger(value.child(1))) {
+        static_assert(undefinedInteger > maxExactInteger);
+        Integer x = assumedInteger(get(value.child(0)).as<OptionalInteger>());
+        Integer y = assumedInteger(get(value.child(1)).as<OptionalInteger>());
+        bool asksWhetherFirstIsGreater = value.opcode == Opcode::Greater || value.opcode == Opcode::GreaterEq;
+        Word32 greaterIsDefined = lessThan(asksWhetherFirstIsGreater ? x : y, integer(undefinedInteger));
+        switch (value.opcode) {
+        case Opcode::Less:
+            return logicalAnd(lessThan(x, y), greaterIsDefined);
+        case Opcode::Greater:
+            return logicalAnd(greaterThan(x, y), greaterIsDefined);
+        case Opcode::LessEq:
+            return logicalAnd(lessThanOrEqual(x, y), greaterIsDefined);
+        default:
+            return logicalAnd(greaterThanOrEqual(x, y), greaterIsDefined);
+        }
+    }
     bool integerIsFirst = typeOf(value.child(0)).isInteger();
     ValueID integerOperand = value.child(integerIsFirst ? 0 : 1);
     ValueID optionalOperand = value.child(integerIsFirst ? 1 : 0);

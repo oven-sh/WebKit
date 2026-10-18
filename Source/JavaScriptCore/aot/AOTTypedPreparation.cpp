@@ -2972,9 +2972,6 @@ static void findStaticallyHotFunctions(Program& program)
         "internal:streams/readable"_s, "internal:streams/state"_s, "internal:streams/writable"_s, "internal:process/next_tick_queue"_s, "internal:validators"_s,
     };
     BitVector runsPerRequest(program.modules.size());
-    BitVector hasSiteCaches(program.modules.size());
-    for (unsigned module = 0; module < program.modules.size(); ++module)
-        hasSiteCaches.set(module);
     for (auto& [number, code] : program.builtinModules) {
         ModuleID module = code ? std::as_const(program).at(code).module : ModuleID();
         if (!module)
@@ -2982,11 +2979,8 @@ static void findStaticallyHotFunctions(Program& program)
         auto path = program.string(program.modules[module.index()].path);
         if (std::ranges::any_of(perRequestRuntimeModules, [&](ASCIILiteral name) { return equalSpans(path, name.span8()); }))
             runsPerRequest.set(module.index());
-        else
-            hasSiteCaches.clear(module.index());
     }
     program.modulesRunPerRequest = runsPerRequest;
-    program.modulesWithSiteCaches = WTF::move(hasSiteCaches);
     if (!runsPerRequest.isEmpty()) {
         BitVector isModuleBody(count);
         for (auto& [number, code] : program.builtinModules) {
@@ -10959,6 +10953,33 @@ static void leaveResultsOfTailCallsToReceivers(Program& program)
         if (!resultTypeOf(FunctionID(member)).isAnything())
             hadResultType.set(member);
     }
+    Vector<unsigned> numberOfTypedCalls(FillWith { }, count, 0u);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = constProgram.functions[i];
+        if (!constProgram.hasCode(FunctionID(i)) || function.has(Format::FunctionIsDeclaredGenericEntrypoint))
+            return;
+        static constexpr OpcodeSet directCalls { Opcode::CallDirect };
+        constProgram.functions.forEachValue(i, directCalls, [&](ValueID id) {
+            auto& call = function.at(id);
+            if (call.isJumpToContinuation() || !hadResultType.get(call.function().index()) || constProgram.at(call.type).isAnything() || sites[i].containsIf([&](auto& site) { return site.call == id; }))
+                return;
+            WTF::atomicExchangeAdd(&numberOfTypedCalls[call.function().index()], 1u, std::memory_order_relaxed);
+        });
+    });
+    static constexpr unsigned sizeOfCheckAtCall = 20;
+    static constexpr unsigned sizeOfValue = 8;
+    static constexpr unsigned sizeOfEmptyFunction = 48;
+    Vector<FunctionID> selfCheckingCopyOf(count);
+    for (size_t member : hadResultType) {
+        if (numberOfTypedCalls[member] * sizeOfCheckAtCall <= constProgram.functions[member].values.size() * sizeOfValue + sizeOfEmptyFunction)
+            continue;
+        Function copy = constProgram.functions[member];
+        copy.flags &= ~static_cast<uint32_t>(Format::FunctionIsUsedAsValue);
+        copy.isUsedAsObject = false;
+        selfCheckingCopyOf[member] = FunctionID(program.functions.size());
+        program.functions.append(WTF::move(copy));
+        sites.append(Vector<TailCallSite>(sites[member]));
+    }
     struct LeftToReceivers {
         Vector<Value> casts;
         TypeID typeBeforeCasts;
@@ -11012,7 +11033,7 @@ static void leaveResultsOfTailCallsToReceivers(Program& program)
                 namesOfMethodsThatLeftCasts.add(method.name.index());
         }
     }
-    forEachIndexInParallel(count, [&](unsigned i) {
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!constProgram.hasCode(FunctionID(i)))
             return;
         auto calleeOf = [&](const Function& function, const Value& call) -> FunctionID {
@@ -11056,6 +11077,10 @@ static void leaveResultsOfTailCallsToReceivers(Program& program)
                 FunctionID callee = calleeOf(function, function.at(id));
                 if (!callee || returnsArgument(id))
                     continue;
+                if (function.at(id).opcode == Opcode::CallDirect && selfCheckingCopyOf[callee.index()] && !function.has(Format::FunctionIsDeclaredGenericEntrypoint)) {
+                    function.at(id).immediates[0] = selfCheckingCopyOf[callee.index()].index();
+                    continue;
+                }
                 auto& left = leftBy[callee.index()];
                 Value call(function.at(id));
                 call.type = program.types.anything;
@@ -11127,7 +11152,7 @@ static void leaveResultsOfTailCallsToReceivers(Program& program)
     });
     for (size_t member : hadResultType)
         program.functions.atKeepingValueIndex(member).resultType = TypeID();
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: tail calls: ", hadResultType.bitCount(), " functions leave the check of their result to who receives it");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: tail calls: ", hadResultType.bitCount(), " functions leave the check of their result to who receives it, ", program.functions.size() - count, " of them have a copy for typed callers that checks its own result");
 }
 
 namespace {

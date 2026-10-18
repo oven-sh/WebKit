@@ -2182,6 +2182,15 @@ private:
                     continue;
                 }
                 copied.forEachChild(mapped);
+                if (copied.opcode == Opcode::Operation && copied.immediates[0] == Operations::IsKnownFunction.index() && copied.arguments.size() == 1) {
+                    Opcode origin = m_caller.at(m_program.originOf(m_caller, copied.arguments[0])).opcode;
+                    if (origin == Opcode::NewClosure || origin == Opcode::NewClosureOnce || origin == Opcode::FunctionReference) {
+                        copied.opcode = Opcode::Boolean;
+                        copied.arguments.clear();
+                        copied.children = { };
+                        copied.immediates = { true, Format::none };
+                    }
+                }
                 if (head && isUncheckedFieldRead(callee, callee.at(value))) {
                     Value test;
                     test.opcode = Opcode::HasShapeOf;

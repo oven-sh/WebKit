@@ -11207,6 +11207,15 @@ static unsigned dataAttributesFor(std::optional<Object::Integrity> integrity)
     return *integrity == Object::Integrity::Frozen ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : static_cast<unsigned>(PropertyAttribute::DontDelete);
 }
 
+static uint32_t orderWordBitsFor(std::optional<Object::Integrity> integrity)
+{
+    if (!integrity)
+        return 0;
+    if (*integrity == Object::Integrity::NotExtensible)
+        return orderWordIsNotExtensible;
+    return orderWordIsNotExtensible | orderWordIsSealed | (*integrity == Object::Integrity::Frozen ? orderWordIsFrozen : 0);
+}
+
 class Coercion {
 public:
     enum class Mode : uint8_t { Cast, Narrowing, Coerce, CoerceFreshObject, CoerceFreshGraph, Test };
@@ -12435,13 +12444,14 @@ private:
         return first == &chosen;
     }
 
-    std::unique_ptr<State::CoercionPlan> planFor(JSObject* object, Structure* structure, const Properties& properties, const RuntimeType& type, const LayoutData& layout, uint32_t orderAndCount, State::CoercionPlan::Discriminants& discriminants)
+    std::unique_ptr<State::CoercionPlan> planFor(JSObject* object, Structure* structure, const Properties& properties, const RuntimeType& type, const LayoutData& layout, uint32_t orderAndCount, State::CoercionPlan::Discriminants& discriminants, std::optional<Object::Integrity> integrity = std::nullopt)
     {
         auto plan = makeUnique<State::CoercionPlan>();
+        unsigned attributesOfAll = dataAttributesFor(integrity);
         if (object->structure() != structure || structure->isDictionary() || structure->hasPolyProto() || hasIndexedProperties(structure->indexingType()))
             return plan;
         bool isExact = false;
-        if (properties.containsIf([](auto& property) { return !!property.attributes; }) || !choiceDependsOnNamesAndLiterals(object, properties, type, layout, discriminants, isExact, plan->hasAlternatives))
+        if (properties.containsIf([&](auto& property) { return property.attributes != attributesOfAll; }) || !choiceDependsOnNamesAndLiterals(object, properties, type, layout, discriminants, isExact, plan->hasAlternatives))
             return plan;
         plan->chosen = &layout;
         if (!isExact)
@@ -12456,7 +12466,7 @@ private:
         }
         for (auto& planned : plan->fields)
             planned.acceptedKinds = m_state.kindsAcceptedBy(m_state.ownTypeOf(*planned.field));
-        m_state.finishCoercionPlan(*plan, layout, orderAndCount);
+        m_state.finishCoercionPlan(*plan, layout, orderAndCount, orderWordBitsFor(integrity));
         return plan;
     }
 
@@ -12496,7 +12506,7 @@ public:
     }
 
 private:
-    JSValue copyByPlan(JSObject* object, const State::CoercionPlan& plan)
+    JSValue copyByPlan(JSObject* object, const State::CoercionPlan& plan, std::optional<Object::Integrity> integrity)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         const LayoutData& layout = *plan.layout;
@@ -12526,6 +12536,10 @@ private:
         result->setOrderAndCount(plan.orderAndCount);
         ensureStillAliveHere(object);
         m_state.countObject(result);
+        if (integrity) {
+            result->setIntegrity(m_globalObject, *integrity);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return result;
     }
 
@@ -12536,13 +12550,13 @@ private:
             return failCoercion(object, type);
         Structure* sourceStructure = object->structure();
         auto integrity = plainDataIntegrity(m_vm, object);
-        const State::CoercionPlan* plan = integrity ? nullptr : m_state.coercionPlan(object, type);
+        const State::CoercionPlan* plan = m_state.coercionPlan(object, type, !integrity);
         if (plan && plan->layout && plan->extraProperties.isEmpty()) {
             bool hasOnlyCoercibleValues = std::ranges::all_of(plan->fields, [&](auto& planned) {
                 return mayBeCoerced(object->getDirect(planned.offset), m_state.ownTypeOf(*planned.field));
             });
             if (hasOnlyCoercibleValues)
-                RELEASE_AND_RETURN(scope, copyByPlan(object, *plan));
+                RELEASE_AND_RETURN(scope, copyByPlan(object, *plan, integrity));
         }
         Properties properties = propertiesOf(object);
         if (hasCustomProperties(properties))
@@ -12626,12 +12640,12 @@ private:
             result->setIntegrity(m_globalObject, *integrity);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        if (integrity || !attributesPerField.isEmpty())
+        if (!attributesPerField.isEmpty())
             return result;
         if (!plan && m_state.canAddCoercionPlans()) {
             State::CoercionPlan::Discriminants discriminants;
-            auto made = planFor(object, sourceStructure, properties, type, *layout, orderAndCount, discriminants);
-            m_state.addCoercionPlan(object, sourceStructure, type, WTF::move(made), discriminants);
+            auto made = planFor(object, sourceStructure, properties, type, *layout, orderAndCount, discriminants, integrity);
+            m_state.addCoercionPlan(object, sourceStructure, type, WTF::move(made), discriminants, !integrity);
         }
         return result;
     }
@@ -13191,9 +13205,9 @@ const State::CoercionPlan* State::coercionPlan(Structure* structure, const Runti
     return m_lastCoercionPlanLookup.plan;
 }
 
-const State::CoercionPlan* State::coercionPlan(JSObject* object, const RuntimeType& type) const
+const State::CoercionPlan* State::coercionPlan(JSObject* object, const RuntimeType& type, bool isExtensible) const
 {
-    const CoercionPlan* found = coercionPlan(object->structure(), type);
+    const CoercionPlan* found = isExtensible ? coercionPlan(object->structure(), type) : m_coercionPlansOfNonExtensibleObjects.get({ object->structure(), &type });
     while (found && found->discriminant != invalidOffset) {
         JSValue held = object->getDirect(found->discriminant);
         if (!held.isString() || asString(held)->isRope())
@@ -13206,14 +13220,15 @@ const State::CoercionPlan* State::coercionPlan(JSObject* object, const RuntimeTy
     return found;
 }
 
-void State::addCoercionPlan(JSObject* object, Structure* structure, const RuntimeType& type, std::unique_ptr<CoercionPlan>&& plan, const CoercionPlan::Discriminants& discriminants)
+void State::addCoercionPlan(JSObject* object, Structure* structure, const RuntimeType& type, std::unique_ptr<CoercionPlan>&& plan, const CoercionPlan::Discriminants& discriminants, bool isExtensible)
 {
-    if (m_coercionPlans.size() >= maxCoercionPlans)
+    auto& plans = isExtensible ? m_coercionPlans : m_coercionPlansOfNonExtensibleObjects;
+    if (plans.size() >= maxCoercionPlans)
         return;
     m_lastCoercionPlanLookup = { };
     m_hasNewCoercionPlans = true;
     if (discriminants.isEmpty()) {
-        m_coercionPlans.add({ structure, &type }, WTF::move(plan));
+        plans.add({ structure, &type }, WTF::move(plan));
         return;
     }
     auto planWithDiscriminant = [](PropertyOffset discriminant) {
@@ -13221,7 +13236,7 @@ void State::addCoercionPlan(JSObject* object, Structure* structure, const Runtim
         made->discriminant = discriminant;
         return made;
     };
-    CoercionPlan* at = m_coercionPlans.ensure({ structure, &type }, [&] {
+    CoercionPlan* at = plans.ensure({ structure, &type }, [&] {
         return planWithDiscriminant(discriminants[0]);
     }).iterator->value.get();
     for (size_t i = 0; i < discriminants.size(); ++i) {
@@ -13428,7 +13443,7 @@ bool State::tryConvertInPlaceByPlans(VM& vm, JSObject* top, const RuntimeType& t
             if (known.object == object)
                 return acceptsShape(type, known.plan->layout->shape);
         }
-        const CoercionPlan* plan = coercionPlan(object, type);
+        const CoercionPlan* plan = coercionPlan(object, type, object->isStructureExtensible());
         if (!plan)
             plan = firstCoercionPlanForShape(vm, object, type);
         if (!plan || !plan->layout || plan->initialBody.isEmpty() || !plan->extraProperties.isEmpty() || all.size() >= maxNumber || object->structure()->mayBePrototype() || object->cellSize() < plan->layout->size)
@@ -14286,7 +14301,7 @@ bool State::tryQuickConversion(VM& vm, JSValue value, const RuntimeType& type, u
     return true;
 }
 
-void State::finishCoercionPlan(CoercionPlan& plan, const LayoutData& layout, uint32_t orderAndCount)
+void State::finishCoercionPlan(CoercionPlan& plan, const LayoutData& layout, uint32_t orderAndCount, uint32_t integrityBits)
 {
     plan.orderAndCount = orderAndCount;
     plan.layout = &layout;
@@ -14298,7 +14313,7 @@ void State::finishCoercionPlan(CoercionPlan& plan, const LayoutData& layout, uin
         if (const FieldData& field = layout.fields()[i]; !(field.flags & fieldIsOutOfLine))
             clearSlot(cell + field.offset, field.store());
     }
-    *reinterpret_cast<uint32_t*>(cell + offsetOfOrderWord) = (orderWordOf(keysAreInLayoutOrder, 0) & ~orderAndCountMask) | orderAndCount;
+    *reinterpret_cast<uint32_t*>(cell + offsetOfOrderWord) = (orderWordOf(keysAreInLayoutOrder, 0) & ~orderAndCountMask) | orderAndCount | integrityBits;
     *reinterpret_cast<uint32_t*>(cell + offsetOfShapeWord) = shapeWordOf(layout.shape);
 }
 
@@ -14837,12 +14852,14 @@ void State::removeDeadCoercionPlans(VM& vm, bool newOnly)
     ++m_quickConversionEpoch;
     if (!std::exchange(m_hasNewCoercionPlans, false) && newOnly)
         return;
-    m_coercionPlans.removeIf([&](auto& entry) {
+    auto isDead = [&](auto& entry) {
         if (vm.heap.isMarked(entry.key.first))
             return false;
         m_coercionPlansByDiscriminantCount -= nestedPlanCount(*entry.value);
         return true;
-    });
+    };
+    m_coercionPlans.removeIf(isDead);
+    m_coercionPlansOfNonExtensibleObjects.removeIf(isDead);
 }
 
 const State::CopyPlan* State::copyPlan(uint32_t shape, uint32_t orderWord, uint32_t copyShape, std::span<UniquedStringImpl* const> excluded) const

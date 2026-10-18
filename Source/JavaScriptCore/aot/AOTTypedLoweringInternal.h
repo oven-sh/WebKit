@@ -684,7 +684,7 @@ private:
     ptrdiff_t closureStructureIDOffset(const Function&);
     Word32 isUnreifiedSlimClosure(CellPointer);
     Word32 hasTypeOfFunctionFlag(CellPointer cell) { return hasBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeOfReturnsFunction); }
-    void checkClosureOfOrElse(CellPointer, FunctionID, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified = false);
+    void checkClosureOfOrElse(CellPointer, FunctionID, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified = false, bool otherwiseIsRare = false);
     void branchOnClosureOf(const Value&, LBasicBlock isOne, LBasicBlock isNone);
     void branchOnRelational(const Value&, LBasicBlock holds, LBasicBlock doesNotHold);
     bool isAwaitMayContinue(const Value&) const;
@@ -994,7 +994,7 @@ private:
     Word32 isAbsent(Operand raw);
     bool isLoweringInitializingStore() const { return isInitializingStore(m_program, m_function, *m_currentBlock, m_currentIndexInBlock); }
     const Field* fieldFor(const Type& receiver, StringID) const;
-    const Field* predictedFieldFor(const Type& expected, StringID) const;
+    const Field* predictedFieldFor(const Type& expected, StringID, bool mayBeOutOfLine = false) const;
     CellPointer withFieldOrElse(ValueID object, LayoutID supertype, const Field&, LBasicBlock otherwise, bool mayBeAbsent = false);
     bool hasSubtypeKeepingField(LayoutID supertype, StringID) const;
     bool hasSubtypeWithField(LayoutID supertype, StringID) const;

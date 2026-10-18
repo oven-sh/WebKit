@@ -33,12 +33,20 @@ public:
         NaturalLoops& loops = m_proc.naturalLoops();
         if (!loops.numLoops())
             return false;
-        m_proc.resetValueOwners();
         Vector<BasicBlock*, 8> heads;
         IndexSet<Value*> branchesOnLoadedValues;
+        bool didResetValueOwners = false;
         for (BasicBlock* block : m_proc) {
+            if (block->last()->opcode() != Branch || block->taken().isRare() || block->notTaken().isRare())
+                continue;
+            if (block->taken().block()->numPredecessors() != 1 && block->notTaken().block()->numPredecessors() != 1)
+                continue;
             const NaturalLoop* loop = loops.innerMostLoopOf(block);
-            if (loop && block->last()->opcode() == Branch && dependsOnValueLoadedInLoop(loops, *loop, block->last()->child(0))) {
+            if (!loop)
+                continue;
+            if (!std::exchange(didResetValueOwners, true))
+                m_proc.resetValueOwners();
+            if (dependsOnValueLoadedInLoop(loops, *loop, block->last()->child(0))) {
                 heads.append(block);
                 branchesOnLoadedValues.add(block->last());
             }

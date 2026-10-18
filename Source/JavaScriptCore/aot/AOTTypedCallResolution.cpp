@@ -204,7 +204,7 @@ private:
         case Opcode::PutById:
             return resolveByShape(block, index, MethodKind::Setter) || resolveOnClassObject(block, index);
         case Opcode::Call:
-            return resolvePredictedMethodCall(block, index) || resolveCall(block, index) || resolvePredictedBuiltinCall(block, index) || resolveMethodReadCall(block, index) || resolveCallOrApply(block, index);
+            return resolvePredictedMethodCall(block, index) || resolveMethodReadCall(block, index) || resolveCall(block, index) || resolvePredictedBuiltinCall(block, index) || resolveCallOrApply(block, index);
         case Opcode::Operation:
             return resolveConstruct(block, index) || resolveSuper(block, index) || resolveCallNoInline(block, index);
         case Opcode::Construct:

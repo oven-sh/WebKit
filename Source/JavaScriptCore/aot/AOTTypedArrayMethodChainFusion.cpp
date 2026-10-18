@@ -23,6 +23,9 @@ struct Link {
     FunctionID function;
     bool isFilter { false };
     bool testsInput { false };
+    bool isFlatMap { false };
+    unsigned greatestNumberOfParts { 0 };
+    FunctionID functionReturningParts;
 };
 
 struct Chain {
@@ -145,6 +148,83 @@ public:
             }
         }
         return true;
+    }
+
+    static BitVector blocksThatOnlyReturnTheirParameter(const Function& function)
+    {
+        BitVector result(function.blocks.size());
+        for (bool changed = true; std::exchange(changed, false);) {
+            for (unsigned b = 1; b < function.blocks.size(); ++b) {
+                auto& block = function.blocks[b];
+                auto& terminator = block.terminator;
+                if (result.get(b) || block.parameters.size() != 1 || !block.values.isEmpty())
+                    continue;
+                bool returns = terminator.kind == TerminatorKind::Return && terminator.value == block.parameters[0];
+                bool handsOn = terminator.kind == TerminatorKind::Jump && result.get(terminator.targets[0].block.index()) && terminator.targets[0].arguments[0] == block.parameters[0];
+                if (returns || handsOn) {
+                    result.set(b);
+                    changed = true;
+                }
+            }
+        }
+        return result;
+    }
+
+    static bool forEachLiteralReturnedBy(const Function& function, const Invocable<bool(unsigned block, ValueID literal)> auto& functor)
+    {
+        Vector<uint32_t> useCounts(FillWith { }, function.values.size(), 0u);
+        auto use = [&](ValueID child) {
+            ++useCounts[child.index()];
+        };
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values)
+                function.at(id).forEachChild(use);
+            if (block.terminator.value)
+                use(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    use(argument);
+            }
+        }
+        BitVector onlyReturns = blocksThatOnlyReturnTheirParameter(function);
+        auto visit = [&](unsigned block, ValueID value) {
+            return function.at(value).opcode == Opcode::NewArray && useCounts[value.index()] == 1 && function.blocks[block].values.contains(value) && functor(block, value);
+        };
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto& block = function.blocks[b];
+            if (onlyReturns.get(b)) {
+                if (useCounts[block.parameters[0].index()] != 1)
+                    return false;
+                continue;
+            }
+            if (block.terminator.kind == TerminatorKind::Return) {
+                if (!block.terminator.value || !visit(b, block.terminator.value))
+                    return false;
+                continue;
+            }
+            for (auto& target : block.terminator.targets) {
+                if (onlyReturns.get(target.block.index()) && (block.terminator.kind != TerminatorKind::Jump || !visit(b, target.arguments[0])))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    std::optional<unsigned> greatestLiteralReturnedBy(FunctionID id) const
+    {
+        static constexpr unsigned maxParts = 3;
+        auto& function = m_program.at(id);
+        if (function.blocks.isEmpty() || !function.resultTypes.isEmpty())
+            return std::nullopt;
+        unsigned greatest = 0;
+        bool areAllLiterals = forEachLiteralReturnedBy(function, [&](unsigned, ValueID literal) {
+            auto& parts = function.at(literal).arguments;
+            greatest = std::max<unsigned>(greatest, parts.size());
+            return parts.size() <= maxParts && std::ranges::none_of(parts, [&](ValueID part) {
+                return m_program.typeOf(function, part).primitives & Primitive::Absent;
+            });
+        });
+        return areAllLiterals ? std::optional(greatest) : std::nullopt;
     }
 
     std::optional<Facts> factsOf(FunctionID id, std::span<const FunctionID> functionsCaptured, uint8_t parametersNeverNullish, unsigned maxParameters, unsigned depth = 0)
@@ -367,7 +447,8 @@ private:
     {
         static const BuiltinName filter = named("filter"_s);
         static const BuiltinName map = named("map"_s);
-        return name && (name == filter || name == map);
+        static const BuiltinName flatMap = named("flatMap"_s);
+        return name && (name == filter || name == map || name == flatMap);
     }
 
     static std::optional<ChainEnd> endNamed(BuiltinName name, size_t numberOfArguments)
@@ -465,6 +546,7 @@ private:
     std::optional<Chain> chainStartingAt(unsigned block, unsigned firstIndex, ASCIILiteral& reason)
     {
         static const BuiltinName filter = named("filter"_s);
+        static const BuiltinName flatMap = named("flatMap"_s);
         static const BuiltinName length = named("length"_s);
         auto& values = m_function.blocks[block].values;
         Chain chain;
@@ -505,6 +587,8 @@ private:
                 break;
             if (value.arguments.isEmpty() || value.arguments.contains(current))
                 break;
+            if (!chain.stages.isEmpty() && chain.stages.last().isFlatMap)
+                break;
             if (!current && isSlice(value)) {
                 chain.isSliced = true;
                 chain.sliceStart = value.arguments[0];
@@ -518,7 +602,13 @@ private:
             methodRead = { };
             auto& callback = m_function.at(originOf(value.arguments[0]));
             bool isLiteral = callback.opcode == Opcode::FunctionReference || callback.opcode == Opcode::NewClosure;
-            Link link { index, value.arguments[0], isLiteral ? callback.function() : FunctionID(), name == filter, false };
+            Link link;
+            link.index = index;
+            link.callback = value.arguments[0];
+            if (isLiteral)
+                link.function = callback.function();
+            link.isFilter = name == filter;
+            link.isFlatMap = name == flatMap;
             if (isStageName(name) && value.arguments.size() == 1) {
                 if (!isLiteral) {
                     if (!chain.stages.isEmpty())
@@ -552,7 +642,7 @@ private:
             while (chain.moved.last() > chain.lastIndex)
                 chain.moved.removeLast();
         }
-        if (chain.stages.isEmpty() || chain.isSliced + chain.stages.size() + (chain.end != ChainEnd::Array) < 2)
+        if (chain.stages.isEmpty() || chain.isSliced + chain.stages.size() + (chain.end != ChainEnd::Array) + chain.stages.last().isFlatMap < 2)
             return std::nullopt;
         if (chain.lastIndex + 1 == values.size() && m_function.blocks[block].terminator.kind == TerminatorKind::Invoke) {
             reason = "an exception handler"_s;
@@ -598,6 +688,14 @@ private:
             }
             if (!stage.isFilter)
                 inputIsNeverNullish = facts->resultIsNeverNullish;
+            if (!stage.isFlatMap)
+                continue;
+            auto greatest = analysis.greatestLiteralReturnedBy(stage.function);
+            if (!greatest) {
+                reason = "a callback of flatMap that returns something else than array literals"_s;
+                return false;
+            }
+            stage.greatestNumberOfParts = *greatest;
         }
         if (chain.end == ChainEnd::Array || chain.end == ChainEnd::Length)
             return true;
@@ -679,6 +777,14 @@ struct IndexTypes {
     TypeID indexBelowLength;
     TypeID count;
     TypeID indexOrMinusOne;
+    static constexpr int64_t lengthsMultipliedEnd = 1 << 28;
+    TypeID endOfLengthsMultiplied;
+    TypeID lengthMultiplied;
+    TypeID greatestIndex;
+    TypeID sum;
+    TypeID sumWithRoom;
+    std::array<TypeID, 4> numberOfParts;
+    std::array<TypeID, 4> upToParts;
 };
 
 class FusedLoopEmitter {
@@ -925,6 +1031,34 @@ private:
         return append(WTF::move(value));
     }
 
+    ValueID callForParts(const Link& link, ValueID element)
+    {
+        auto& callee = m_program.at(link.function);
+        Value value = make(Opcode::CallDirect, m_program.types.undefined);
+        value.immediates = { link.functionReturningParts.index(), Format::none };
+        auto& closure = m_function.at(m_program.originOf(m_function, link.callback));
+        if (closure.opcode == Opcode::NewClosure)
+            value.arguments = closure.arguments;
+        if (!callee.parameterTypes.isEmpty()) {
+            TypeID type = callee.parameterTypes[0];
+            CastReason reason = callee.parameterCastReason(0);
+            if (type && !m_program.castIsRedundant(typeOf(element), m_program.at(type), reason)) {
+                element = cast(element, type, reason);
+                m_function.at(element).setParameterCheckCallee(link.function);
+            }
+            value.arguments.append(element);
+        }
+        return append(WTF::move(value));
+    }
+
+    ValueID resultAt(ValueID call, unsigned index, TypeID type)
+    {
+        Value value = make(Opcode::ResultAt, type);
+        value.children[0] = call;
+        value.immediates = { index, Format::none };
+        return append(WTF::move(value));
+    }
+
     void continueUnlessNullish(ValueID value)
     {
         if (typeOf(value).mayBeUndefinedOrNull())
@@ -946,7 +1080,8 @@ private:
         });
         bool exitsEarly = chain.end == ChainEnd::Some || chain.end == ChainEnd::Every || chain.end == ChainEnd::Find || chain.end == ChainEnd::FindIndex;
         bool visitsAllElements = exitsEarly && stagesMayRestart;
-        bool countsResults = chain.end == ChainEnd::Length || ((chain.end == ChainEnd::Array || chain.end == ChainEnd::FindIndex) && (hasFilter || chain.isSliced));
+        const Link* flattened = chain.stages.last().isFlatMap ? &chain.stages.last() : nullptr;
+        bool countsResults = chain.end == ChainEnd::Length || ((chain.end == ChainEnd::Array || chain.end == ChainEnd::FindIndex) && (hasFilter || chain.isSliced || flattened));
 
         ValueID length = [&] {
             Value read = make(Opcode::GetById, m_types.index);
@@ -964,6 +1099,11 @@ private:
             if (chain.end == ChainEnd::Array)
                 capacity = choose(binary(Opcode::Less, m_program.types.boolean, first, length), [&] { return binary(Opcode::Sub, m_types.index, length, first); }, [&] { return zero; });
         }
+        if (flattened && chain.end == ChainEnd::Array) {
+            continueIf(binary(Opcode::Less, m_program.types.boolean, capacity, integer(IndexTypes::lengthsMultipliedEnd, m_types.endOfLengthsMultiplied)));
+            unsigned factor = std::max(flattened->greatestNumberOfParts, 1u);
+            capacity = binary(Opcode::Mul, m_types.index, unary(Opcode::ToNumeric, m_types.lengthMultiplied, capacity), integer(factor, m_types.numberOfParts[factor]));
+        }
         ValueID made;
         if (chain.end == ChainEnd::Array)
             made = operation(countsResults ? Operations::NewArrayWithCapacity : Operations::NewArrayWithSpecies, m_arrayType, { capacity, m_array });
@@ -979,8 +1119,9 @@ private:
         size_t accumulatorState = notFound;
         size_t isDoneState = notFound;
         size_t foundState = notFound;
+        bool sumsParts = flattened && chain.end == ChainEnd::Length;
         if (countsResults)
-            countState = addState(m_types.index, zero);
+            countState = addState(sumsParts ? m_types.sum : m_types.index, zero);
         auto fieldTypeOf = [&](ValueID store) {
             TypeID type = m_program.at(m_function.at(store).layout()).fields[m_function.at(store).field()].type;
             return type ? type : m_program.types.anything;
@@ -1057,6 +1198,11 @@ private:
             finish(operation(Operations::TruncateNewArray, m_arrayType, { made, countsResults ? state[countState] : length }));
             break;
         case ChainEnd::Length:
+            if (sumsParts) {
+                continueIf(binary(Opcode::LessEq, m_program.types.boolean, state[countState], integer(UINT32_MAX, m_types.greatestIndex)));
+                finish(unary(Opcode::ToNumeric, m_types.index, state[countState]));
+                break;
+            }
             finish(state[countState]);
             break;
         case ChainEnd::Reduce:
@@ -1080,6 +1226,10 @@ private:
         for (auto& stage : chain.stages) {
             if (stage.testsInput)
                 continueUnlessNullish(element);
+            if (stage.isFlatMap) {
+                element = callForParts(stage, element);
+                break;
+            }
             ValueID returned = call(stage, { element });
             if (!stage.isFilter) {
                 element = returned;
@@ -1095,6 +1245,25 @@ private:
             BlockID searching = addBlock();
             branch(state[isDoneState], { next, Arguments(state) }, { searching, { } });
             moveTo(searching);
+        }
+        if (flattened) {
+            unsigned greatest = flattened->greatestNumberOfParts;
+            ValueID numberOfParts = resultAt(element, 0, m_types.upToParts[greatest]);
+            if (sumsParts)
+                changed[countState] = binary(Opcode::Add, m_types.sum, unary(Opcode::ToNumeric, m_types.sumWithRoom, state[countState]), numberOfParts);
+            for (unsigned k = 0; k < greatest && !sumsParts; ++k) {
+                BlockID hasPart = addBlock();
+                BlockID behindPart = addBlock();
+                ValueID countBehindPart = addParameter(behindPart, m_types.index);
+                branch(binary(Opcode::Less, m_program.types.boolean, integer(k, m_types.numberOfParts[k]), numberOfParts), { hasPart, { } }, { behindPart, { changed[countState] } });
+                moveTo(hasPart);
+                continueIf(operation(Operations::TryPutByValDirect, m_program.types.boolean, { made, changed[countState], resultAt(element, k + 1, m_program.types.anything) }));
+                jump(behindPart, { plusOne(changed[countState]) });
+                moveTo(behindPart);
+                changed[countState] = countBehindPart;
+            }
+            jump(next, WTF::move(changed));
+            return;
         }
         switch (chain.end) {
         case ChainEnd::Array:
@@ -1167,6 +1336,89 @@ private:
     BlockID m_block;
 };
 
+FunctionID addFunctionReturningParts(Program& program, FunctionID id, unsigned greatest, const IndexTypes& types)
+{
+    Function function = std::as_const(program).functions[id.index()];
+    auto add = [&](unsigned block, Opcode opcode, TypeID type, uint32_t position) {
+        Value value;
+        value.opcode = opcode;
+        value.position = position;
+        value.type = type;
+        value.rep = repOf(program.at(type));
+        ValueID made(function.values.size());
+        function.values.append(WTF::move(value));
+        function.blocks[block].values.append(made);
+        return made;
+    };
+    Vector<std::pair<unsigned, ValueID>, 4> literals;
+    BitVector onlyReturns = CallbackAnalysis::blocksThatOnlyReturnTheirParameter(function);
+    bool areAllLiterals = CallbackAnalysis::forEachLiteralReturnedBy(function, [&](unsigned block, ValueID literal) {
+        literals.append({ block, literal });
+        return true;
+    });
+    RELEASE_ASSERT(areAllLiterals);
+    for (auto [block, literal] : literals) {
+        Arguments parts = function.at(literal).arguments;
+        uint32_t position = function.at(literal).position;
+        uint32_t inlineFrame = function.at(literal).inlineFrame;
+        function.blocks[block].values.removeFirst(literal);
+        Arguments results;
+        results.append(add(block, Opcode::Integer, types.numberOfParts[parts.size()], position));
+        function.at(results.last()).setBits(parts.size());
+        for (unsigned k = 0; k < greatest; ++k) {
+            if (k >= parts.size()) {
+                results.append(add(block, Opcode::Unspecified, program.types.anything, position));
+                continue;
+            }
+            if (function.at(parts[k]).type == program.types.anything) {
+                results.append(parts[k]);
+                continue;
+            }
+            results.append(add(block, Opcode::Cast, program.types.anything, position));
+            function.at(results.last()).children[0] = parts[k];
+            function.at(results.last()).immediates[1] = static_cast<uint32_t>(CastReason::Upcast);
+        }
+        ValueID returned = add(block, Opcode::Results, program.types.undefined, position);
+        function.at(returned).arguments = WTF::move(results);
+        for (ValueID made : function.blocks[block].values) {
+            if (made.index() >= std::as_const(program).functions[id.index()].values.size())
+                function.at(made).inlineFrame = inlineFrame;
+        }
+        auto& terminator = function.blocks[block].terminator;
+        terminator = Terminator { };
+        terminator.kind = TerminatorKind::Return;
+        terminator.value = returned;
+    }
+    for (size_t b : onlyReturns) {
+        auto& block = function.blocks[b];
+        block.parameters.clear();
+        block.terminator = Terminator { };
+        block.terminator.kind = TerminatorKind::Unreachable;
+    }
+    function.resultType = program.types.undefined;
+    function.resultTypes.append(types.upToParts[greatest]);
+    for (unsigned k = 0; k < greatest; ++k)
+        function.resultTypes.append(program.types.anything);
+    function.flags |= Format::FunctionIsHiddenInStackTraces;
+    function.worker = { };
+    function.nullishResultKind = 0;
+
+    FunctionID made(program.functions.size());
+    program.functions.append(WTF::move(function));
+    program.numberOfDirectCalls.append(1);
+    auto copyBit = [&](BitVector& bits) {
+        if (bits.get(id.index()))
+            bits.set(made.index());
+    };
+    copyBit(program.staticallyHotFunctions);
+    copyBit(program.staticallyWarmFunctions);
+    copyBit(program.functionsHotOnlyInLoops);
+    copyBit(program.functionsInCycles);
+    copyBit(program.functionsWithInliningDisabled);
+    copyBit(program.callGraphColdFunctions);
+    return made;
+}
+
 } // anonymous namespace
 
 void fuseArrayMethodChains(Program& program)
@@ -1206,7 +1458,27 @@ void fuseArrayMethodChains(Program& program)
     types.indexBelowLength = program.types.intern(Type::integer({ 0, UINT32_MAX - 1 }));
     types.count = program.types.intern(Type::integer({ 1, UINT32_MAX }));
     types.indexOrMinusOne = program.types.intern(Type::integer({ -1, UINT32_MAX }));
+    types.endOfLengthsMultiplied = program.types.intern(Type::integer(Range::one(IndexTypes::lengthsMultipliedEnd)));
+    types.lengthMultiplied = program.types.intern(Type::integer({ 0, IndexTypes::lengthsMultipliedEnd - 1 }));
+    types.greatestIndex = program.types.intern(Type::integer(Range::one(UINT32_MAX)));
+    types.sum = program.types.intern(Type::integer({ 0, maxExactInteger }));
+    types.sumWithRoom = program.types.intern(Type::integer({ 0, maxExactInteger - 4 }));
+    for (unsigned k = 0; k < 4; ++k) {
+        types.numberOfParts[k] = program.types.intern(Type::integer(Range::one(k)));
+        types.upToParts[k] = program.types.intern(Type::integer({ 0, k }));
+    }
     program.types.freeze();
+    UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsReturningParts;
+    for (auto& entry : found) {
+        for (auto& chain : entry.chains) {
+            auto& stage = chain.stages.last();
+            if (!stage.isFlatMap)
+                continue;
+            stage.functionReturningParts = functionsReturningParts.ensure(stage.function.index(), [&] {
+                return addFunctionReturningParts(program, stage.function, stage.greatestNumberOfParts, types);
+            }).iterator->value;
+        }
+    }
     forEachIndexInParallel(found.size(), [&](unsigned k) {
         auto& function = program.functions[found[k].function];
         FusedLoopEmitter emitter(program, function, types);

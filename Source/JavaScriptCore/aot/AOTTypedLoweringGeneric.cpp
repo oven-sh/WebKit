@@ -869,7 +869,7 @@ bool Lowering::usesSiteCaches(StringID name) const
 {
     if (name && m_program.possibleAccessorNames.get(name.index()))
         return false;
-    return m_out.m_block->frequency() && m_function.module && m_program.modulesWithSiteCaches.get(m_function.module.index());
+    return m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index());
 }
 
 Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)

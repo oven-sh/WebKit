@@ -607,7 +607,7 @@ Word32 Lowering::isKnownClosureStructureID(Word32 structureID)
     return equal(structureID, Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, row, Instance::offsetOfKnownClosureStructureIDs()))));
 }
 
-void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified)
+void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool mustBeUnmodified, LBasicBlock otherwise, bool allowsModified, bool otherwiseIsRare)
 {
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
     auto& callee = m_program.at(function);
@@ -621,11 +621,11 @@ void Lowering::checkClosureOfOrElse(CellPointer cell, FunctionID function, bool 
         LBasicBlock isOne = m_out.newBlock();
         m_out.branch(hasClosureStructure(cell, closureStructureIDOffset(callee)).value(), usually(isUnmodifiedStructure), rarely(isModified));
         m_out.appendTo(isUnmodifiedStructure);
-        m_out.branch(equal(closureFunction(cell, m_program.usesSlimClosures(callee)), word32(entrypoint->value.index())).value(), unsure(isOne), unsure(otherwise));
+        m_out.branch(equal(closureFunction(cell, m_program.usesSlimClosures(callee)), word32(entrypoint->value.index())).value(), otherwiseIsRare ? usually(isOne) : unsure(isOne), otherwiseIsRare ? rarely(otherwise) : unsure(otherwise));
         m_out.appendTo(isModified);
         Integer entry(callAllocationStub(Stub::TypedClosureEntry, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));
         Word32 entrypointTarget(m_out.bitAnd(m_out.castToInt32(m_out.lShr(entry.value(), m_out.constInt32(ClosureWord::functionShift))), m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
-        m_out.branch(logicalAnd(logicalNot(isZero(entry)), equal(entrypointTarget, word32(entrypoint->value.index()))).value(), unsure(isOne), unsure(otherwise));
+        m_out.branch(logicalAnd(logicalNot(isZero(entry)), equal(entrypointTarget, word32(entrypoint->value.index()))).value(), otherwiseIsRare ? usually(isOne) : unsure(isOne), otherwiseIsRare ? rarely(otherwise) : unsure(otherwise));
         m_out.appendTo(isOne);
         return;
     }
@@ -654,7 +654,11 @@ void Lowering::branchOnClosureOf(const Value& value, LBasicBlock isOne, LBasicBl
         m_out.jump(isOne);
         return;
     }
-    checkClosureOfOrElse(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), value.function(), value.immediates[1] == closureIsUnmodified, isNone, value.immediates[1] == closureMayBeModified);
+    bool fallsBackToGeneralCall = m_function.at(m_currentBlock->terminator.targets[1].block).values.containsIf([&](ValueID id) {
+        auto& other = m_function.at(id);
+        return (other.opcode == Opcode::Call || other.opcode == Opcode::Construct) && other.child(0) == value.child(0);
+    });
+    checkClosureOfOrElse(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), value.function(), value.immediates[1] == closureIsUnmodified, isNone, value.immediates[1] == closureMayBeModified, fallsBackToGeneralCall);
     m_out.jump(isOne);
 }
 

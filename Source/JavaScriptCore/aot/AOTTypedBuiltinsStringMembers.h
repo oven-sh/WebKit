@@ -52,7 +52,8 @@
     bool collectConcatenationParts(const BitVector& isInBlock, ValueID, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough, bool looksThroughStrings);
     void findConcatenationsWithNumbers();
     std::optional<Operand> lowerAsConcatenationPart(ValueID, const Value&);
-    CellPointer concatenateInOnePiece(const ConcatenationParts&);
+    CellPointer concatenateInOnePiece(const ConcatenationParts&, bool isKey = true);
+    BitVector m_concatenationsNotUsedAsKeys;
     struct StringOrder {
         BlockID block;
         LValue order;

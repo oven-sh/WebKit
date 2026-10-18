@@ -2150,8 +2150,20 @@ void Lowering::findConcatenationsWithNumbers()
                 continue;
             if (!keys)
                 keys = computeMapKeyValues(m_program, m_id, m_function);
-            if (!keys->get(id.index()))
-                continue;
+            bool isKey = keys->get(id.index());
+            if (!isKey) {
+                bool isPartOfLongerString = false;
+                for (ValueID userID : usersOf(id)) {
+                    auto& user = m_function.at(userID);
+                    isPartOfLongerString |= user.opcode == Opcode::Add || user.opcode == Opcode::Strcat;
+                    if (user.opcode == Opcode::CallBuiltin) {
+                        auto& implementation = m_builtins.at(user.builtin()).implementation;
+                        isPartOfLongerString |= implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::StringAppend;
+                    }
+                }
+                if (isPartOfLongerString)
+                    continue;
+            }
             bool isLookupKey = false;
             bool isFirstLookedUpInTable = false;
             for (size_t j = i + 1; j < block.values.size(); ++j) {
@@ -2171,8 +2183,8 @@ void Lowering::findConcatenationsWithNumbers()
                 }
                 break;
             }
-            bool isSunk = isLookupKey && useCountOf(id) == 1;
-            bool isMadeByLookup = isFirstLookedUpInTable && useCountOf(id) > 1;
+            bool isSunk = isKey && isLookupKey && useCountOf(id) == 1;
+            bool isMadeByLookup = isKey && isFirstLookedUpInTable && useCountOf(id) > 1;
             if (!isMadeByLookup && !isConcatenation(value, false))
                 continue;
             ConcatenationParts parts;
@@ -2180,6 +2192,20 @@ void Lowering::findConcatenationsWithNumbers()
             collectConcatenationParts(isInBlock, id, true, parts, lookedThrough, isMadeByLookup);
             if (parts.size() < 2 || parts.size() > 8)
                 continue;
+            if (!isKey) {
+                bool hasInteger = false;
+                bool hasOtherNumber = false;
+                for (ValueID part : parts) {
+                    auto& type = typeOf(part);
+                    if (type.isInteger())
+                        hasInteger = true;
+                    else
+                        hasOtherNumber |= isNumberOrNullish(type);
+                }
+                if (!hasInteger || hasOtherNumber)
+                    continue;
+                m_concatenationsNotUsedAsKeys.set(id.index());
+            }
             for (ValueID part : lookedThrough)
                 m_isLazilyFetched.set(part.index());
             m_concatenationParts.add(id.index(), WTF::move(parts));
@@ -2586,7 +2612,7 @@ std::optional<Operand> Lowering::lowerAsConcatenationPart(ValueID id, const Valu
     auto found = m_concatenationParts.find(id.index());
     if (found == m_concatenationParts.end())
         return std::nullopt;
-    return convert(concatenateInOnePiece(found->value), typeOf(id), value.rep);
+    return convert(concatenateInOnePiece(found->value, !m_concatenationsNotUsedAsKeys.get(id.index())), typeOf(id), value.rep);
 }
 
 LValue Lowering::storeKeyParts(const ConcatenationParts& parts)
@@ -2682,8 +2708,31 @@ CellPointer Lowering::concatenateIfNeeded(const Value& value)
     return concatenate(first, stringPartOf(value.child(1))).string;
 }
 
-CellPointer Lowering::concatenateInOnePiece(const ConcatenationParts& parts)
+CellPointer Lowering::concatenateInOnePiece(const ConcatenationParts& parts, bool isKey)
 {
+    if (!isKey) {
+        if (!m_isInLoop && !m_program.isHotOutsideLoops(m_id))
+            return concatenateAsRopes(parts.span());
+        LBasicBlock asRopes = m_out.newBlock();
+        LBasicBlock inOnePiece = m_out.newBlock();
+        Join join(m_out, Rep::Cell, Int64);
+        Word32 everyIntegerIsSmall;
+        for (ValueID part : parts) {
+            if (!typeOf(part).isInteger())
+                continue;
+            Word32 isSmall = belowOrEqual(in<Integer>(part), integer(NumericStrings::cacheSize - 1));
+            everyIntegerIsSmall = everyIntegerIsSmall ? logicalAnd(everyIntegerIsSmall, isSmall) : isSmall;
+        }
+        m_out.branch(everyIntegerIsSmall.value(), unsure(asRopes), unsure(inOnePiece));
+        m_out.appendTo(asRopes);
+        join.add(concatenateAsRopes(parts.span()));
+        m_out.appendTo(inOnePiece);
+        LValue buffer = transientBuffer(parts.size() * sizeof(EncodedJSValue));
+        for (unsigned i = 0; i < parts.size(); ++i)
+            m_out.store64(convertTo<Boxed>(get(parts[i]), typeOf(parts[i])).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+        join.add(AOT_TYPED_OPERATION(ConcatenateFlat, word32(parts.size()), Pointer(buffer)));
+        return join.finish().as<CellPointer>();
+    }
     static constexpr int64_t maxLength = 64;
     static constexpr int64_t maxInt32StringLength = 11;
     int64_t room = maxLength;

@@ -253,6 +253,7 @@ std::optional<Writes> writesOfInlineArrayLoops(InlineBuiltin which, std::span<co
     case InlineBuiltin::HasContiguousIndex:
     case InlineBuiltin::GetContiguousIndex:
     case InlineBuiltin::IsPlainArrayLike:
+    case InlineBuiltin::IsKnownFunction:
         return Writes::Nothing;
     case InlineBuiltin::NewArrayWithSpecies:
     case InlineBuiltin::NewArrayWithCapacity:
@@ -422,6 +423,10 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         }
         Word32 isPlain = logicalAnd(Word32(m_out.equal(m_out.load64(structure, m_heaps.Structure_prototype), objectPrototype)), hasNoBits(orderWordOf(cell), orderWordHasExtraProperties));
         return booleanResult(logicalAnd(isPlain, passes(shapeWordOf(cell), m_program.at(view).test)), type);
+    }
+    case InlineBuiltin::IsKnownFunction: {
+        Opcode origin = m_function.at(originOf(arguments[0])).opcode;
+        return booleanResult(boolean(origin == Opcode::NewClosure || origin == Opcode::NewClosureOnce || origin == Opcode::FunctionReference), type);
     }
     case InlineBuiltin::IsDoubleArray:
         if (!mayContainNumbers(arguments[0]))

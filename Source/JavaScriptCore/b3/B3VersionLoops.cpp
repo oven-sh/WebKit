@@ -95,6 +95,7 @@ private:
         unsigned numberOfClonedValues { 0 };
         unsigned numberOfHoistedValues { 0 };
         unsigned numberOfOmittedValues { 0 };
+        bool mayLeaveEveryTurn { false };
         std::optional<unsigned> nextVersionIndex;
         Value* unswitchedTerminal { nullptr };
         BasicBlock* nextVersionSuccessor { nullptr };
@@ -200,8 +201,9 @@ private:
         UnswitchCandidate candidate;
         std::optional<Version> version = tryCreateVersion(loops, loop, preHeader, nullptr, nullptr, &candidate);
         if (topTestedVersion) {
-            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues - topTestedVersion->numberOfOmittedValues;
-            unsigned staysOnOtherPath = version ? version->numberOfClonedValues - version->numberOfHoistedValues - version->numberOfOmittedValues : topTestedVersion->numberOfClonedValues;
+            bool countsOmittedValues = !topTestedVersion->mayLeaveEveryTurn;
+            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues - (countsOmittedValues ? topTestedVersion->numberOfOmittedValues : 0);
+            unsigned staysOnOtherPath = version ? version->numberOfClonedValues - version->numberOfHoistedValues - (countsOmittedValues ? version->numberOfOmittedValues : 0) : topTestedVersion->numberOfClonedValues;
             if (topTestedVersion->isTopTested ? stays * 4 <= staysOnOtherPath * 3 : stays < staysOnOtherPath) {
                 addVersion(WTF::move(*topTestedVersion));
                 return;
@@ -647,6 +649,24 @@ private:
                     hoistedGuardConditions.add(withoutRepetition(block->last()->child(0)), likelySuccessor == block->successorBlock(0));
             } else if (!endsWithPoll(block)) {
                 allGuardsSoFarAreHoisted = false;
+                bool comesBack = false;
+                for (BasicBlock* successor : block->successorBlocks())
+                    comesBack |= successor != likelySuccessor && loops.belongsTo(successor, loop);
+                if (comesBack) {
+                    static constexpr unsigned maxNumberOfSources = 16;
+                    bool changesFromTurnToTurn = false;
+                    IndexSet<Value*> seen;
+                    Vector<Value*, 16> worklist { block->last() };
+                    for (unsigned count = 0; !worklist.isEmpty() && !changesFromTurnToTurn; ++count) {
+                        Value* value = worklist.takeLast();
+                        if (isInvariant(value) || !seen.add(value))
+                            continue;
+                        changesFromTurnToTurn = value->opcode() == Phi || count >= maxNumberOfSources;
+                        for (Value* child : value->children())
+                            worklist.append(child);
+                    }
+                    version.mayLeaveEveryTurn |= !changesFromTurnToTurn;
+                }
                 if (!topTest && block != unswitchedBlock && block->last()->opcode() == Branch) {
                     const FrequentedBlock& other = block->successor(block->successorBlock(0) == likelySuccessor ? 1 : 0);
                     if (!loops.belongsTo(other.block(), loop) && !isRare(other, block))

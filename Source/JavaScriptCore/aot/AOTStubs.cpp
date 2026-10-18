@@ -10149,6 +10149,19 @@ static void keepFilledSiteCacheMostly(CCallHelpers& jit, Address word, CCallHelp
     isEmpty.link(&jit);
 }
 
+static void fillSiteCacheWithNoStructure(CCallHelpers& jit, CCallHelpers::JumpList& cannotBeServed, GPRReg cache, GPRReg scratch, CCallHelpers::Label withoutCache)
+{
+    cannotBeServed.link(&jit);
+#if CPU(X86_64)
+    UNUSED_PARAM(scratch);
+    jit.store64(TrustedImm32(SiteCaches::structureIDOfNoStructure), Address(cache));
+#else
+    jit.move(TrustedImm32(SiteCaches::structureIDOfNoStructure), scratch);
+    jit.store64(scratch, Address(cache));
+#endif
+    jit.jump().linkTo(withoutCache, &jit);
+}
+
 static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves preserves)
 {
     using Kind = PropertyLookupTable::Kind;
@@ -10159,9 +10172,10 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     static_assert(noOverlap(cache, preservedIntegerGPRs[0], preservedIntegerGPRs[1]));
     auto inRow = [&](int32_t offset) { return CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
     CCallHelpers::Label withoutCache = stubLabels()[static_cast<unsigned>(preserves == Preserves::TwoIntegers ? Stub::GetByNameWithDirectColumnPreservingTwo : Stub::GetByNameWithDirectColumn)];
-    jit.branchIfNotCell(R0).linkTo(withoutCache, &jit);
     keepFilledSiteCacheMostly(jit, Address(cache), withoutCache);
+    jit.branchIfNotCell(R0).linkTo(withoutCache, &jit);
     Address holderInCache { cache, sizeof(uint64_t) };
+    CCallHelpers::JumpList cannotBeServed;
 
     loadRowByName(jit, R0, row, T11);
 #if CPU(ARM64)
@@ -10181,6 +10195,8 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     Jump valueIsInOwnStorage = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::valueIsInStorage));
     static_assert(PropertyLookupTable::impliesAbsent(Kind::AbsentAndStoreAddsInNewStorage) && !PropertyLookupTable::impliesAbsent(Kind::DefineAddsInline));
     extractBits(jit, nameCellGPR, kindInCellShift, PropertyLookupTable::bitsOfKind, T11);
+    jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Kind::LazyClosure))).linkTo(withoutCache, &jit);
+    cannotBeServed.append(jit.branch32(CCallHelpers::Above, T11, TrustedImm32(static_cast<int32_t>(Kind::OutOfLine))));
     jit.branch32(CCallHelpers::Above, T11, TrustedImm32(static_cast<int32_t>(Kind::AbsentAndStoreAddsInNewStorage))).linkTo(withoutCache, &jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfHolderOfUndefined()), T13);
     jit.store64(T13, holderInCache);
@@ -10210,6 +10226,8 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     fillSiteCache(jit, R0, payload, T11, cache);
     jit.load64(CCallHelpers::BaseIndex(T13, nameDifferenceGPR, CCallHelpers::TimesEight), R0);
     jit.ret();
+
+    fillSiteCacheWithNoStructure(jit, cannotBeServed, cache, T11, withoutCache);
 #else
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
     Jump notInlineEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
@@ -10229,8 +10247,10 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     Jump isInheritedOutOfLine = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Kind::InheritedOutOfLine)));
     Jump isAbsent = jit.branch32(CCallHelpers::BelowOrEqual, T11, TrustedImm32(static_cast<int32_t>(Kind::AbsentAndStoreAddsInNewStorage)));
     static_assert(PropertyLookupTable::impliesAbsent(Kind::AbsentAndStoreAddsInNewStorage) && !PropertyLookupTable::impliesAbsent(Kind::DefineAddsInline) && static_cast<unsigned>(Kind::OutOfLine) + 1 == static_cast<unsigned>(Kind::OutOfLineAndWritten));
+    jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Kind::LazyClosure))).linkTo(withoutCache, &jit);
     jit.sub32(TrustedImm32(static_cast<int32_t>(Kind::OutOfLine)), T11);
-    jit.branch32(CCallHelpers::Above, T11, TrustedImm32(1)).linkTo(withoutCache, &jit);
+    cannotBeServed.append(jit.branch32(CCallHelpers::GreaterThan, T11, TrustedImm32(1)));
+    jit.branch32(CCallHelpers::LessThan, T11, TrustedImm32(0)).linkTo(withoutCache, &jit);
     jit.load32(inRow(PropertyLookupTable::offsetOfPayloads), T11);
     jit.rshift32(TrustedImm32(2), T11);
     jit.or32(TrustedImm32(SiteCaches::isOutOfLine), T11);
@@ -10272,6 +10292,8 @@ static void generateGetByNameAndFillSiteCache(CCallHelpers& jit, Preserves prese
     jit.loadPtr(Address(T13, JSObject::butterflyOffset()), T13);
     jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesFour, -4 * static_cast<int32_t>(SiteCaches::isOutOfLine)), R0);
     jit.ret();
+
+    fillSiteCacheWithNoStructure(jit, cannotBeServed, cache, T11, withoutCache);
 #endif
 }
 static void generateGetByNameAndFillSiteCache(CCallHelpers& jit) { generateGetByNameAndFillSiteCache(jit, Preserves::Nothing); }
@@ -13199,8 +13221,9 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     auto inRow = [&](int32_t offset) { return CCallHelpers::BaseIndex(row, name, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn + offset); };
     Address structureAfterStoreInCache { cache, sizeof(uint64_t) };
     CCallHelpers::Label general = stubLabels()[static_cast<unsigned>(withoutCache)];
-    jit.branchIfNotCell(R0).linkTo(general, &jit);
     keepFilledSiteCacheMostly(jit, Address(cache), general);
+    jit.branchIfNotCell(R0).linkTo(general, &jit);
+    CCallHelpers::JumpList cannotBeServed;
     loadRowByName(jit, R0, row, T11);
 #if CPU(ARM64)
     static_assert(noOverlap(R0, A1, name, row, cache, T10, T11, nameCellGPR, nameDifferenceGPR));
@@ -13208,7 +13231,7 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     jit.load64(inRow(0), nameCellGPR);
     Jump notInlineEntry = branchIfCellNameDiffers(jit, name);
     extractBits(jit, nameCellGPR, kindInCellShift, 8, T10);
-    jit.branchTest32(CCallHelpers::Zero, T10).linkTo(general, &jit);
+    cannotBeServed.append(jit.branchTest32(CCallHelpers::Zero, T10));
     jit.lshift32(TrustedImm32(3), T10);
     jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
     jit.store64(T11, structureAfterStoreInCache);
@@ -13219,9 +13242,9 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
 
     notInlineEntry.link(&jit);
     branchIfCellHasNoEntry(jit).linkTo(general, &jit);
-    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::storeNeedsNoHandler)).linkTo(general, &jit);
-    jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::valueIsInStorage)).linkTo(general, &jit);
-    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(codeInCellShift, PropertyLookupTable::storesAlsoAdd)).linkTo(general, &jit);
+    cannotBeServed.append(jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::storeNeedsNoHandler)));
+    cannotBeServed.append(jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(kindInCellShift, PropertyLookupTable::valueIsInStorage)));
+    cannotBeServed.append(jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(codeInCellShift, PropertyLookupTable::storesAlsoAdd)));
     extractBits(jit, nameCellGPR, codeInCellShift, 7, T10);
     jit.lshift32(TrustedImm32(3), T10);
     jit.zeroExtend32ToWord(nameCellGPR, row);
@@ -13235,7 +13258,7 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     jit.m_assembler.cmpw_rm(name, PropertyLookupTable::offsetOfFirstColumn + PropertyLookupTable::offsetOfNameInEntry, row, name, CCallHelpers::TimesEight);
     Jump notInlineEntry = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
     jit.load8(inRow(PropertyLookupTable::offsetOfStoreOffsetInEntry), T10);
-    jit.branchTest32(CCallHelpers::Zero, T10).linkTo(general, &jit);
+    cannotBeServed.append(jit.branchTest32(CCallHelpers::Zero, T10));
     jit.lshift32(TrustedImm32(3), T10);
     jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
     jit.store64(T11, structureAfterStoreInCache);
@@ -13250,7 +13273,7 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)).linkTo(general, &jit);
     jit.load8(inRow(PropertyLookupTable::offsetOfKindInEntry), T11);
     Jump addsWhereAbsent = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Kind::AbsentAndStoreAddsInline)));
-    jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(static_cast<int32_t>(Kind::StoreAddsInline))).linkTo(general, &jit);
+    cannotBeServed.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(static_cast<int32_t>(Kind::StoreAddsInline))));
     addsWhereAbsent.link(&jit);
     jit.load8(inRow(PropertyLookupTable::offsetOfCodeInEntry), T10);
     jit.load32(inRow(PropertyLookupTable::offsetOfPayloads), row);
@@ -13261,6 +13284,7 @@ static void generatePutByNameAndFillSiteCache(CCallHelpers& jit, Stub withoutCac
     jit.store32(row, Address(R0, JSCell::structureIDOffset()));
     jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::WriteBarrier)], &jit);
 #endif
+    fillSiteCacheWithNoStructure(jit, cannotBeServed, cache, T11, general);
 }
 static void generatePutByNameAndFillSiteCache(CCallHelpers& jit) { generatePutByNameAndFillSiteCache(jit, Stub::PutByNameWithDirectColumn); }
 static void generatePutByNameAndFillSiteCachePreservingTwo(CCallHelpers& jit) { generatePutByNameAndFillSiteCache(jit, Stub::PutByNameWithDirectColumnPreservingTwo); }
@@ -17575,6 +17599,7 @@ static void generateFindMethodCellByName(CCallHelpers& jit) { generateFindMethod
 
 static void fillSiteCache(CCallHelpers&, GPRReg cell, GPRReg payload, GPRReg word, GPRReg cacheAndScratch);
 static void keepFilledSiteCacheMostly(CCallHelpers&, Address word, CCallHelpers::Label withoutCache);
+static void fillSiteCacheWithNoStructure(CCallHelpers&, CCallHelpers::JumpList& cannotBeServed, GPRReg cache, GPRReg scratch, CCallHelpers::Label withoutCache);
 
 static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
 {
@@ -17586,8 +17611,9 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     for (unsigned i = 0; i < numberOfArgumentGPRs; ++i)
         RELEASE_ASSERT(noOverlap(argumentGPR(i), thisGPR, name, cache, word, entry));
     CCallHelpers::Label withoutCache = stubLabels()[static_cast<unsigned>(Stub::FindMethodCellByName)];
-    jit.branchIfNotCell(thisGPR).linkTo(withoutCache, &jit);
     keepFilledSiteCacheMostly(jit, Address(cache), withoutCache);
+    jit.branchIfNotCell(thisGPR).linkTo(withoutCache, &jit);
+    CCallHelpers::JumpList cannotBeServed;
     loadRowByName(jit, thisGPR, entry, word);
     jit.and32(TrustedImm32(PropertyLookupTable::numberOfColumns - 1), name, word);
 #if CPU(ARM64)
@@ -17599,7 +17625,11 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     Address holderInCache { cache, sizeof(uint64_t) };
     jit.load64(CCallHelpers::BaseIndex(entry, word, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn), nameCellGPR);
     Jump hasNoKindEntry = branchIfCellNameDiffers(jit, name);
-    jit.branchTest64(CCallHelpers::Zero, nameCellGPR, hasFlag(PropertyLookupTable::holderIsInPayload)).linkTo(withoutCache, &jit);
+    Jump holderIsInPayload = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::holderIsInPayload));
+    extractBits(jit, nameCellGPR, kindInCellShift, PropertyLookupTable::bitsOfKind, word);
+    jit.branch32(CCallHelpers::Equal, word, TrustedImm32(static_cast<int32_t>(PropertyLookupTable::Kind::LazyClosure))).linkTo(withoutCache, &jit);
+    cannotBeServed.append(jit.jump());
+    holderIsInPayload.link(&jit);
     jit.m_assembler.add<64>(entry, cellCageBaseGPR, nameCellGPR, ARM64Assembler::UXTW, Typed::cell32Shift);
     jit.extractSignedBitfield64(nameCellGPR, TrustedImm32(codeInCellShift), TrustedImm32(8), nameDifferenceGPR);
     jit.lshift32(nameDifferenceGPR, TrustedImm32(1), word);
@@ -17635,7 +17665,8 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     Address holderInCache { cache, sizeof(uint64_t) };
     Jump hasNoKindEntry = jit.branchTest32(CCallHelpers::NonZero, word);
     Jump holderHasOutOfLine = jit.branch8(CCallHelpers::Equal, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::InheritedOutOfLine)));
-    jit.branch8(CCallHelpers::NotEqual, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::InheritedInline))).linkTo(withoutCache, &jit);
+    jit.branch8(CCallHelpers::Equal, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::LazyClosure))).linkTo(withoutCache, &jit);
+    cannotBeServed.append(jit.branch8(CCallHelpers::NotEqual, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::InheritedInline))));
     jit.load8(Address(entry, PropertyLookupTable::offsetOfCodeInEntry), word);
     jit.load32(Address(entry, PropertyLookupTable::offsetOfPayloads), entry);
     decodeCell32(jit, entry, entry);
@@ -17672,6 +17703,7 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     jit.move(method, calleeGPR);
     jit.ret();
 #endif
+    fillSiteCacheWithNoStructure(jit, cannotBeServed, cache, word, withoutCache);
 }
 static void generateSpreadArray(CCallHelpers& jit) { generateCallWithArray(jit, Typed::LanguageOperation::CallWithSpread); }
 static void generateConstructClosure(CCallHelpers& jit) { jit.breakpoint(); }

@@ -18,6 +18,7 @@ inline GrowNewArray
 inline TryPutIndex
 inline IsPlainArrayLike
 inline TrySortByKey
+inline IsKnownFunction
 
 runtime NewArrayWithHoles : RuntimeState JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity)
 runtime GrowNewArray : Heap void (JSCell* array, uint64_t length)
@@ -44,6 +45,7 @@ intrinsic GrowNewArray (any/w, any/-) -> undefined ; MayThrow WritesArguments ; 
 intrinsic TryPutIndex (any/w, any/-, any/K) -> boolean ; WritesArguments ; Inline(TryPutIndex)
 intrinsic IsPlainArrayLike (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsPlainArrayLike)
 intrinsic TrySortByKey (any/w, any/-, any/-) -> anything ; MayThrow Allocates WritesArguments ; Inline(TrySortByKey)
+intrinsic IsKnownFunction (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsKnownFunction)
 
 static Object.groupBy (any/GP?, any/C?, any/-...) -> new Object/N ; CallsUserCode ; Call
 

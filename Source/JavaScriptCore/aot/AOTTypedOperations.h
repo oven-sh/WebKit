@@ -204,6 +204,7 @@ struct Slot;
     v(operationAOTTypedNewArray) \
     v(operationAOTTypedTryGetByValWithKeyParts) \
     v(operationAOTTypedTryMapOrSetLookupWithKeyParts) \
+    v(operationAOTTypedConcatenateFlat) \
     v(operationAOTTypedFindMakingKey) \
     v(operationAOTTypedMapSetAfterLookup) \
     v(operationAOTTypedSetAddAfterLookup) \
@@ -545,6 +546,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryPutProperties, Heap, size_t, (In
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArray, RuntimeState, JSCell*, (Instance*, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryGetByValWithKeyParts, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, Nothing, EncodedJSValue, (Instance*, JSCell*, uint32_t, uint32_t, const EncodedJSValue*));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConcatenateFlat, RuntimeState, JSCell*, (Instance*, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedFindMakingKey, RuntimeState, JSCell*, (Instance*, JSCell*, uint32_t, const EncodedJSValue*, EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMapSetAfterLookup, RuntimeState, void, (Instance*, JSCell*, JSCell*, EncodedJSValue, uint64_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetAddAfterLookup, RuntimeState, void, (Instance*, JSCell*, JSCell*, uint64_t));

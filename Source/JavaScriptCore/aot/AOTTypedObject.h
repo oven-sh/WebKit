@@ -1735,10 +1735,10 @@ struct State {
     UncheckedKeyHashMap<std::pair<Structure*, uint64_t>, std::unique_ptr<TypedClonePlan>> m_typedClonePlans;
     TypedClonePlan m_noTypedClonePlan;
     const CoercionPlan* coercionPlan(Structure*, const RuntimeType&) const;
-    const CoercionPlan* coercionPlan(JSObject*, const RuntimeType&) const;
+    const CoercionPlan* coercionPlan(JSObject*, const RuntimeType&, bool isExtensible = true) const;
     const CoercionPlan* firstCoercionPlanForShape(VM&, JSObject*, const RuntimeType&);
-    void finishCoercionPlan(CoercionPlan&, const LayoutData&, uint32_t orderAndCount);
-    void addCoercionPlan(JSObject*, Structure*, const RuntimeType&, std::unique_ptr<CoercionPlan>&&, const CoercionPlan::Discriminants&);
+    void finishCoercionPlan(CoercionPlan&, const LayoutData&, uint32_t orderAndCount, uint32_t integrityBits = 0);
+    void addCoercionPlan(JSObject*, Structure*, const RuntimeType&, std::unique_ptr<CoercionPlan>&&, const CoercionPlan::Discriminants&, bool isExtensible = true);
     bool canAddCoercionPlans() const { return m_coercionPlans.size() < maxCoercionPlans; }
     void removeDeadCoercionPlans(VM&, bool newOnly);
     static constexpr size_t maxCachedKeyLength = 64;
@@ -2370,6 +2370,7 @@ private:
     static constexpr unsigned maxCoercionPlansByDiscriminant = 16384;
     unsigned m_coercionPlansByDiscriminantCount { 0 };
     UncheckedKeyHashMap<std::pair<Structure*, const RuntimeType*>, std::unique_ptr<CoercionPlan>> m_coercionPlans;
+    UncheckedKeyHashMap<std::pair<Structure*, const RuntimeType*>, std::unique_ptr<CoercionPlan>> m_coercionPlansOfNonExtensibleObjects;
     bool m_hasNewCoercionPlans { false };
     bool m_hasCachedExtraPropertyReads { false };
     bool m_hasCachedLateFieldCreations { false };

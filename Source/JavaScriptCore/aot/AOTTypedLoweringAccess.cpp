@@ -2210,13 +2210,13 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
     }
 }
 
-const Field* Lowering::predictedFieldFor(const Type& expected, StringID name) const
+const Field* Lowering::predictedFieldFor(const Type& expected, StringID name, bool mayBeOutOfLine) const
 {
     LayoutID supertype = expected.singleLayout();
     if (!supertype || !isObjectLayout(m_program.at(supertype).kind) || m_program.at(supertype).test.neverPasses())
         return nullptr;
     const Field* field = fieldFor(expected, name);
-    if (!field || field->isOutOfLine || (field->isMissingInSomeSubtype && field->subtypesWithField.neverPasses()))
+    if (!field || (field->isOutOfLine && !mayBeOutOfLine) || (field->isMissingInSomeSubtype && field->subtypesWithField.neverPasses()))
         return nullptr;
     return field;
 }
@@ -2457,9 +2457,10 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         if (value.isOnSlowPath)
             return genericPath();
         if (auto expectedObject = predictionOf(object, Primitive::All)) {
-            if (const Field* expectedField = predictedFieldFor(*expectedObject, name)) {
+            if (const Field* expectedField = predictedFieldFor(*expectedObject, name, true)) {
                 return ifPredictionHolds({ { object, &*expectedObject } }, repOf(type), [&](LBasicBlock otherwise) {
-                    return readField(withFieldOrElse(object, expectedObject->singleLayout(), *expectedField, otherwise), *expectedField, type);
+                    LayoutID supertype = expectedObject->singleLayout();
+                    return readField(withFieldOrElse(object, supertype, *expectedField, otherwise, !mayInherit(m_program, supertype, name)), *expectedField, type);
                 }, genericPath);
             }
         }
@@ -6329,14 +6330,29 @@ void Lowering::lowerPutById(ValueID, const Value& value)
             return;
         }
         auto expected = predictionOf(object);
-        const Field* expectedField = expected ? predictedFieldFor(*expected, name) : nullptr;
-        if (!expectedField || hasSubtypeKeepingField(expected->singleLayout(), name) || m_program.at(expectedField->slot).isDiscriminant || prefersGenericPathInColdCode()) {
+        const Field* expectedField = expected ? predictedFieldFor(*expected, name, true) : nullptr;
+        if (!expectedField || object == stored || hasSubtypeKeepingField(expected->singleLayout(), name) || m_program.at(expectedField->slot).isDiscriminant || prefersGenericPathInColdCode()) {
             genericPath();
             return;
         }
         Type held = m_program.at(expectedField->stored).withoutPrimitives(Primitive::Absent);
         if (expectedField->type && m_program.at(expectedField->type).withoutPrimitives(Primitive::Absent).isSubsetOf(held, m_program))
             held = m_program.at(expectedField->type).withoutPrimitives(Primitive::Absent);
+        if (expectedField->isOutOfLine) {
+            ifPredictionHolds({ { object, &*expected }, { stored, &held, false, true } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
+                LayoutID supertype = expected->singleLayout();
+                CellPointer cell = withFieldOrElse(object, supertype, *expectedField, otherwise, true);
+                bool mayHaveIntegrity = mayBeFrozen(supertype) || m_program.at(supertype).subtypes.containsIf([&](LayoutID subtype) {
+                    return m_program.at(subtype).isImmutableAfterAllocation;
+                });
+                if (mayHaveIntegrity)
+                    orElse(hasNoBits(orderWordOf(cell), orderWordIsFrozen), otherwise);
+                SetForScope isAfterStoreShapeTest(m_isAfterStoreShapeTest, true);
+                writeField(cell, object, *expectedField, stored);
+                return { };
+            }, genericPath);
+            return;
+        }
         ifPredictionHolds({ { object, &*expected }, { stored, &held, false, true } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
             LayoutID supertype = expected->singleLayout();
             bool createsInline = m_program.at(expectedField->stored).primitives & Primitive::Absent && !inheritsThroughLayoutPrototype(m_program, supertype, name);

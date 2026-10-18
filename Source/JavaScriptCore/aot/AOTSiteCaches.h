@@ -25,6 +25,7 @@ public:
     static constexpr uint32_t isOutOfLine = 1;
     static constexpr unsigned wordsOfLocation = 2;
     static constexpr uint32_t missesBetweenReplacements = 8;
+    static constexpr uint32_t structureIDOfNoStructure = 1;
     static constexpr unsigned pageShift = 12;
     static constexpr size_t pageSize = 1u << pageShift;
     static constexpr size_t offsetOfTouchedPages = 4 * MB;
