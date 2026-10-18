@@ -167,11 +167,12 @@ static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
 static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
 
 #if ASSERT_ENABLED
-// An error of a YarrPattern build that creation rules out: the Parser refuses a negated class that may contain
-// strings. So no build at compile finds it.
+// Errors of a YarrPattern build that creation rules out: the Parser refuses a negated class that may contain strings,
+// and finishCreation() builds a pattern that setupOffsets() can refuse. So no build at compile finds one. (The byte
+// compiler has limits of its own.)
 static bool isRuledOutAtCreation(Yarr::ErrorCode error)
 {
-    return error == Yarr::ErrorCode::NegatedClassSetMayContainStrings;
+    return error == Yarr::ErrorCode::NegatedClassSetMayContainStrings || error == Yarr::ErrorCode::OffsetTooLarge || error == Yarr::ErrorCode::FrameTooLarge;
 }
 #endif
 
@@ -185,7 +186,7 @@ void RegExp::finishCreation(VM& vm)
             m_state = ParseError;
             return;
         }
-        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
+        if (!summary.hasNamedCaptureGroups && !summary.isOnlyPatternCharacters && !summary.mayExceedOffsetLimits && summary.maxParenthesesDepth <= maxLazilyConstructedParenthesesDepth) {
             m_numSubpatterns = summary.numSubpatterns;
             m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
             return;

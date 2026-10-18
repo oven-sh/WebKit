@@ -32,6 +32,11 @@
 
 namespace JSC { namespace Yarr {
 
+// YarrPatternConstructor::setupOffsets() refuses a pattern whose input positions or call frame do not fit in 32 bits.
+// Both are sums over the terms: a few units for each pattern character, and twice the minimum of each quantifier.
+// That takes a length plus quantifier minimums of about 2^31. This threshold is 128 times lower.
+static constexpr uint64_t offsetLimitsThreshold = 1 << 24;
+
 class SyntaxChecker {
 public:
     void LEGACY_NODELETE assertionBOL() { m_summary.isOnlyPatternCharacters = false; }
@@ -63,18 +68,24 @@ public:
     void LEGACY_NODELETE atomBackReference(unsigned) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedBackReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
-    void LEGACY_NODELETE quantifyAtom(unsigned, unsigned, bool) { m_summary.isOnlyPatternCharacters = false; }
+    void LEGACY_NODELETE quantifyAtom(unsigned min, unsigned, bool)
+    {
+        m_summary.isOnlyPatternCharacters = false;
+        m_quantifierMinimumSum += min;
+    }
     void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE resetForReparsing()
     {
         m_summary = { };
         m_parenthesesDepth = 0;
+        m_quantifierMinimumSum = 0;
     }
 
     constexpr static bool LEGACY_NODELETE abortedDueToError() { return false; }
     constexpr static ErrorCode LEGACY_NODELETE abortErrorCode() { return ErrorCode::NoError; }
 
     SyntaxSummary m_summary;
+    uint64_t m_quantifierMinimumSum { 0 };
 
 private:
     void parenthesesBegin()
@@ -91,6 +102,7 @@ SyntaxSummary checkSyntax(StringView pattern, OptionSet<Flags> flags)
 {
     SyntaxChecker syntaxChecker;
     syntaxChecker.m_summary.error = parse(syntaxChecker, pattern, compileMode(flags));
+    syntaxChecker.m_summary.mayExceedOffsetLimits = pattern.length() + syntaxChecker.m_quantifierMinimumSum >= offsetLimitsThreshold;
     return syntaxChecker.m_summary;
 }
 
