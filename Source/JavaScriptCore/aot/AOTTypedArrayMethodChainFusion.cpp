@@ -1417,6 +1417,7 @@ FunctionID addFunctionReturningParts(Program& program, FunctionID id, unsigned g
     copyBit(program.functionsWithInliningDisabled);
     copyBit(program.callGraphColdFunctions);
     copyBit(program.functionsWithSiteCaches);
+    copyBit(program.functionsHotOnlyAsHottest);
     return made;
 }
 

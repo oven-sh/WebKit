@@ -129,7 +129,7 @@ bool ProcedureFingerprint::appendValue(Value* value, std::span<StackmapGenerator
         append(memory->offset());
         append(memory->range());
         append(memory->fenceRange());
-        append(static_cast<uint32_t>(memory->readsMutability()) | memory->controlDependent() << 1);
+        append(static_cast<uint32_t>(memory->readsMutability()) | memory->controlDependent() << 1 | memory->isInAlignedHeader() << 2);
         return true;
     }
     case Get:

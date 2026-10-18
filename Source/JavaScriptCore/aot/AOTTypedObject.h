@@ -164,6 +164,17 @@ public:
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
     void initializeExtraProperties(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
+    struct KeyOrderAtBirth {
+        uint32_t orderAndCount;
+        Structure* withExtraProperties;
+    };
+    std::optional<KeyOrderAtBirth> keyOrderAtBirth(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
+    void setKeyOrderAtBirth(VM& vm, KeyOrderAtBirth order, JSObject* extraProperties)
+    {
+        at<uint32_t>(offsetOfOrderWord) = (at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask) | order.orderAndCount;
+        if (extraProperties)
+            setExtraProperties(vm, extraProperties, order.withExtraProperties);
+    }
     void specializeStructureForExtraProperties(VM&);
     static bool specializeStructureForExtraPropertiesIfNeeded(VM& vm, JSCell* cell)
     {
@@ -2349,6 +2360,13 @@ private:
         Vector<uint8_t> body;
     };
     std::array<InitialObjectState, 16> m_initialObjectStatesByNewTarget;
+    struct InitialPlainObjectState {
+        Closure* constructor { nullptr };
+        JSObject* newTarget { nullptr };
+        Structure* structure { nullptr };
+        uint32_t epoch { 0 };
+    };
+    std::array<InitialPlainObjectState, 16> m_initialPlainObjectStatesByNewTarget;
     void shareWithStub(VM&, const InitialObjectState&);
     void forgetInitialObjectStates();
     HeapVersion m_initialObjectStatesVersion { 0 };

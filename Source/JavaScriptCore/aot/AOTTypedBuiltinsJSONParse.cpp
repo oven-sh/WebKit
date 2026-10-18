@@ -10,6 +10,7 @@
 
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 #include "GCMemoryOperations.h"
 #include "JSArrayBufferView.h"
 #include "JSCInlines.h"
@@ -144,6 +145,7 @@ static uint8_t* openUTF8JSONSource(Instance* instance, std::span<const uint8_t> 
     instance->jsonSourceEncoding = charactersAreAllASCII(bytes) ? JSONSourceEncoding::Latin1 : JSONSourceEncoding::UTF8;
     instance->jsonParserGaveUp = 0;
     instance->jsonParserFrame = frame;
+    instance->jsonKeyOrderTop = instance->jsonKeyOrderStart;
     return start;
 }
 
@@ -161,6 +163,7 @@ static ALWAYS_INLINE uint8_t* openJSONString(Instance* instance, StringView text
 {
     instance->jsonParserGaveUp = 0;
     instance->jsonParserFrame = frame;
+    instance->jsonKeyOrderTop = instance->jsonKeyOrderStart;
     if (!text.is8Bit()) [[unlikely]]
         return open16BitJSONSource(instance, text.span16());
     size_t length = text.length();
@@ -421,6 +424,46 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONGiveUpIfRepeated, void, (
         instance->jsonParserGaveUp = 1;
 }
 
+static JSCell* makeStringWithEscapes(Instance*, VM&, const uint8_t* start, const uint8_t* cursor);
+
+static NEVER_INLINE bool isNameWrittenWithEscapes(Instance* instance, CallFrame* callFrame, const uint8_t* key, std::span<const Latin1Character> name)
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    instance->jsonCursor = 0;
+    JSCell* decoded = makeStringWithEscapes(instance, vm, key, findEndOfPlainJSONCharacters(key));
+    return instance->jsonCursor && StringView { uncheckedDowncast<JSString>(decoded)->tryGetValueImpl() } == StringView { name };
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONFindMember, void*, (Instance* instance, uint64_t cursorBits, JSCell* nameCell))
+{
+    countOperationNamed(instance, __func__);
+    auto name = uncheckedDowncast<JSString>(nameCell)->tryGetValueImpl()->span8();
+    const uint8_t* cursor = skipJSONWhitespaceCharacters(std::bit_cast<const uint8_t*>(cursorBits));
+    while (*cursor == '"') {
+        const uint8_t* key = cursor + 1;
+        bool hasEscapes = false;
+        cursor = skipJSONString(key, hasEscapes);
+        if (!cursor)
+            return nullptr;
+        bool isFound = hasEscapes ? isNameWrittenWithEscapes(instance, DECLARE_CALL_FRAME(*instance->vm), key, name) : static_cast<size_t>(cursor - 1 - key) == name.size() && !memcmp(key, name.data(), name.size());
+        cursor = skipJSONWhitespaceCharacters(cursor);
+        if (*cursor != ':')
+            return nullptr;
+        cursor = skipJSONWhitespaceCharacters(cursor + 1);
+        if (isFound)
+            return const_cast<uint8_t*>(cursor);
+        cursor = skipJSONValue(instance, cursor);
+        if (!cursor)
+            return nullptr;
+        cursor = skipJSONWhitespaceCharacters(cursor);
+        if (*cursor != ',')
+            return nullptr;
+        cursor = skipJSONWhitespaceCharacters(cursor + 1);
+    }
+    return nullptr;
+}
+
 static bool appendPlainCharacters(Instance* instance, StringBuilder& builder, std::span<const uint8_t> characters)
 {
     if (isLatin1(instance, characters)) {
@@ -646,9 +689,50 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONValueAt, EncodedJSValue, 
     return parseJSONValueAt(instance, vm, globalObject, std::bit_cast<const uint8_t*>(cursorBits));
 }
 
+static ALWAYS_INLINE std::optional<JSValue> tryParseJSONScalarAt(Instance* instance, VM& vm, const uint8_t* start)
+{
+    auto endsAfter = [&](size_t length, JSValue value) {
+        instance->jsonCursor = std::bit_cast<uint64_t>(start + length);
+        return value;
+    };
+    switch (*start) {
+    case '"': {
+        if (auto* entry = vm.jsonCache().findString(std::span<const Latin1Character> { byteCast<Latin1Character>(start), jsonSourcePadding })) {
+            if (instance->jsonSourceEncoding == JSONSourceEncoding::Latin1 || isShortTextLatin1AfterDecoding(instance, start, entry->textLength))
+                return endsAfter(entry->textLength, entry->string);
+        }
+        JSCell* string = makeUncachedString(instance, vm, start + 1);
+        return instance->jsonCursor ? JSValue(string) : jsUndefined();
+    }
+    case 't':
+        if (WTF::unalignedLoad<uint32_t>(start) == ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
+            return endsAfter(4, jsBoolean(true));
+        return std::nullopt;
+    case 'f':
+        if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24))
+            return endsAfter(5, jsBoolean(false));
+        return std::nullopt;
+    case 'n':
+        if (WTF::unalignedLoad<uint32_t>(start) == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
+            return endsAfter(4, jsNull());
+        return std::nullopt;
+    case '{':
+    case '[':
+        return std::nullopt;
+    default:
+        if (void* end = parseNumber(instance, start))
+            return endsAfter(static_cast<const uint8_t*>(end) - start, jsNumber(instance->jsonNumber));
+        return std::nullopt;
+    }
+}
+
 static EncodedJSValue parseJSONValueAt(Instance* instance, VM& vm, JSGlobalObject* globalObject, const uint8_t* start)
 {
     instance->jsonCursor = 0;
+    if (instance->jsonParserGaveUp) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    if (auto scalar = tryParseJSONScalarAt(instance, vm, start))
+        return JSValue::encode(*scalar);
     const uint8_t* end = skipJSONValue(instance, start);
     if (!end)
         return JSValue::encode(jsUndefined());
@@ -671,6 +755,446 @@ static EncodedJSValue parseJSONValueAt(Instance* instance, VM& vm, JSGlobalObjec
     }
     instance->jsonCursor = std::bit_cast<uint64_t>(end);
     return JSValue::encode(parsed);
+}
+
+static constexpr size_t jsonKeyOrderCapacity = 4096;
+static constexpr uint16_t recordsExtraProperties = 0x8000;
+static constexpr unsigned maxNumberOfKnownKeyOrders = 1 << 14;
+static constexpr unsigned minInlineCapacityOfExtraProperties = 2;
+static constexpr unsigned minNumberOfKnownExtraMembers = 1 << 8;
+static constexpr unsigned maxNumberOfKnownExtraMembers = 1 << 14;
+static constexpr unsigned maxExtraMembersAddedAtOnce = 32;
+static constexpr ptrdiff_t maxDigitsOfSmallJSONInteger = 9;
+
+struct JSONKnownExtraMember {
+    ALWAYS_INLINE bool isAt(const uint8_t* text) const
+    {
+        if ((WTF::unalignedLoad<uint64_t>(text) & firstBytesMask) != firstBytes)
+            return false;
+        if (size <= 8)
+            return true;
+        if (WTF::unalignedLoad<uint64_t>(text + size - 8) != lastBytes)
+            return false;
+        return size <= 16 || !memcmp(text + 8, after->transitionPropertyName()->span8().data() + 8, size - 16);
+    }
+
+    StructureID before;
+    PropertyOffset offset { invalidOffset };
+    Structure* after { nullptr };
+    uint64_t firstBytes { 0 };
+    uint64_t firstBytesMask { 0 };
+    uint64_t lastBytes { 0 };
+    unsigned size { 0 };
+    unsigned likelyNext { 0 };
+};
+
+struct JSONKnownKeyOrder {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONKnownKeyOrder);
+    JSCell* declaredNames { nullptr };
+    StructureID object;
+    StructureID extraProperties;
+    uint32_t orderAndCount { 0 };
+    bool isUsedSinceFullCollection { true };
+    Strong<Structure> withExtraProperties;
+    Strong<Structure> ofExtraProperties;
+    Vector<uint16_t, 16> recorded;
+};
+
+struct JSONKeyOrders {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JSONKeyOrders);
+    std::array<uint16_t, jsonKeyOrderCapacity> recorded;
+    UncheckedKeyHashMap<uint64_t, std::unique_ptr<JSONKnownKeyOrder>> known;
+    JSCell* lastDeclaredNames { nullptr };
+    Structure* lastEmptyStructure { nullptr };
+    UncheckedKeyHashMap<JSCell*, Strong<Structure>> emptyStructures;
+    Vector<JSONKnownExtraMember> members = Vector<JSONKnownExtraMember>(minNumberOfKnownExtraMembers);
+    unsigned shiftForMembers { 32 - WTF::fastLog2(minNumberOfKnownExtraMembers) };
+    unsigned numberOfReplacedMembers { 0 };
+    bool hasMembers { false };
+};
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONReserveKeyOrder, void*, (Instance* instance))
+{
+    countOperationNamed(instance, __func__);
+    auto* orders = new JSONKeyOrders;
+    instance->jsonKeyOrders = orders;
+    instance->jsonKeyOrderStart = instance->jsonKeyOrderTop = orders->recorded.data();
+    instance->jsonKeyOrderEnd = orders->recorded.data() + orders->recorded.size();
+    return instance->jsonKeyOrderTop;
+}
+
+static ALWAYS_INLINE void recordExtraProperty(Instance* instance, const uint16_t* mark, unsigned ordinal)
+{
+    uint16_t* top = instance->jsonKeyOrderTop;
+    if (ordinal >= recordsExtraProperties) [[unlikely]] {
+        instance->jsonParserGaveUp = 1;
+        return;
+    }
+    uint16_t entry = recordsExtraProperties | ordinal;
+    if (top > mark && top[-1] & recordsExtraProperties) {
+        top[-1] = entry;
+        return;
+    }
+    if (top == instance->jsonKeyOrderEnd) [[unlikely]] {
+        instance->jsonParserGaveUp = 1;
+        return;
+    }
+    *top = entry;
+    instance->jsonKeyOrderTop = top + 1;
+}
+
+static NEVER_INLINE Structure* findEmptyStructureOfExtraProperties(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSCell* declaredNames)
+{
+    auto& orders = *instance->jsonKeyOrders;
+    auto& structure = orders.emptyStructures.ensure(declaredNames, [&] {
+        return Strong<Structure>(vm, JSFinalObject::createStructure(vm, globalObject, jsNull(), minInlineCapacityOfExtraProperties));
+    }).iterator->value;
+    orders.lastDeclaredNames = declaredNames;
+    orders.lastEmptyStructure = structure.get();
+    return structure.get();
+}
+
+static ALWAYS_INLINE JSObject* createExtraProperties(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSCell* declaredNames)
+{
+    auto& orders = *instance->jsonKeyOrders;
+    Structure* structure = orders.lastDeclaredNames == declaredNames ? orders.lastEmptyStructure : findEmptyStructureOfExtraProperties(instance, vm, globalObject, declaredNames);
+    return JSFinalObject::create(vm, structure);
+}
+
+static void widenExtraProperties(Instance* instance, VM& vm, JSCell* declaredNames, unsigned numberOfProperties)
+{
+    auto& orders = *instance->jsonKeyOrders;
+    auto found = orders.emptyStructures.find(declaredNames);
+    unsigned inlineCapacity = std::min<unsigned>(WTF::roundUpToMultipleOf<2>(numberOfProperties), JSFinalObject::maxInlineCapacity);
+    if (found == orders.emptyStructures.end() || found->value->inlineCapacity() >= inlineCapacity)
+        return;
+    found->value.set(vm, JSFinalObject::createStructure(vm, instance->globalObject, jsNull(), inlineCapacity));
+    orders.lastDeclaredNames = nullptr;
+}
+
+static ALWAYS_INLINE const uint8_t* skipJSONColon(const uint8_t* cursor)
+{
+    if (*cursor != ':') [[unlikely]] {
+        cursor = skipJSONWhitespaceCharacters(cursor);
+        if (*cursor != ':')
+            return nullptr;
+    }
+    return cursor + 1;
+}
+
+static ALWAYS_INLINE unsigned numberOfPropertiesOf(Structure* structure)
+{
+    return numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
+}
+
+static void addExtraProperty(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* extra, UniquedStringImpl* name, JSValue value, const uint16_t* mark)
+{
+    if (auto index = parseIndex(*name)) [[unlikely]] {
+        extra->putDirectIndex(globalObject, *index, value);
+        return;
+    }
+    Structure* from = extra->structure();
+    unsigned attributes;
+    if (PropertyOffset offset = from->get(vm, name, attributes); isValidOffset(offset)) {
+        extra->putDirectOffset(vm, offset, value);
+        return;
+    }
+    extra->putDirect(vm, name, value);
+    recordExtraProperty(instance, mark, numberOfPropertiesOf(from));
+}
+
+static ALWAYS_INLINE JSONKnownExtraMember* pairOfKnownExtraMembersFor(JSONKeyOrders& orders, StructureID before, const uint8_t* name)
+{
+    uint32_t hash = ((before.bits() >> 4) ^ WTF::unalignedLoad<uint16_t>(name) * 0x85ebca6bu) * 0x9e3779b1u;
+    return orders.members.mutableSpan().data() + (hash >> orders.shiftForMembers & ~1u);
+}
+
+static ALWAYS_INLINE JSONKnownExtraMember* findKnownExtraMember(JSONKeyOrders& orders, StructureID before, const uint8_t* name)
+{
+    auto* pair = pairOfKnownExtraMembersFor(orders, before, name);
+    if (pair[0].before == before && pair[0].isAt(name)) [[likely]]
+        return pair;
+    return pair[1].before == before && pair[1].isAt(name) ? pair + 1 : nullptr;
+}
+
+static NEVER_INLINE Structure* findTransitionForName(Instance* instance, VM& vm, Structure* from, const uint8_t* name, const uint8_t*& afterName)
+{
+    const uint8_t* quote = findEndOfPlainJSONCharacters(name);
+    if (*quote != '"' || !isLatin1(instance, { name, quote }) || from->isDictionary())
+        return nullptr;
+    afterName = quote + 1;
+    std::span<const Latin1Character> key { byteCast<Latin1Character>(name), byteCast<Latin1Character>(quote) };
+    Structure* to = from->trySingleTransition();
+    if (to) {
+        UniquedStringImpl* added = to->transitionPropertyName();
+        if (to->transitionKind() != TransitionKind::PropertyAddition || to->transitionPropertyAttributes() || added->isSymbol() || !added->is8Bit() || !equalSpans(added->span8(), key))
+            return nullptr;
+    } else {
+        RefPtr<AtomStringImpl> atom = vm.jsonCache().existingIdentifier(vm, key);
+        if (!atom)
+            atom = AtomStringImpl::lookUp(key);
+        PropertyOffset offset;
+        to = atom ? Structure::addPropertyTransitionToExistingStructure(from, atom.get(), 0, offset) : nullptr;
+        if (!to)
+            return nullptr;
+    }
+    if (*afterName != ':' || from->outOfLineCapacity() != to->outOfLineCapacity() || !charactersAreAllASCII(key))
+        return to;
+    auto& orders = *instance->jsonKeyOrders;
+    auto* known = pairOfKnownExtraMembersFor(orders, from->id(), name);
+    if (known[1].after && ++orders.numberOfReplacedMembers > orders.members.size() / 4 && orders.members.size() < maxNumberOfKnownExtraMembers) {
+        orders.members = Vector<JSONKnownExtraMember>(2 * orders.members.size());
+        --orders.shiftForMembers;
+        orders.numberOfReplacedMembers = 0;
+        known = pairOfKnownExtraMembersFor(orders, from->id(), name);
+    }
+    known[1] = known[0];
+    unsigned size = key.size() + 2;
+    uint64_t mask = size >= 8 ? std::numeric_limits<uint64_t>::max() : (1ULL << (8 * size)) - 1;
+    *known = { from->id(), to->transitionOffset(), to, WTF::unalignedLoad<uint64_t>(name) & mask, mask, size > 8 ? WTF::unalignedLoad<uint64_t>(name + size - 8) : 0, size, 0 };
+    orders.hasMembers = true;
+    return to;
+}
+
+static ALWAYS_INLINE const uint8_t* tryParseSmallJSONInteger(const uint8_t* start, JSValue& value)
+{
+    unsigned digit = *start - '0';
+    if (digit > 9)
+        return nullptr;
+    const uint8_t* cursor = start + 1;
+    uint32_t number = digit;
+    unsigned next = *cursor - '0';
+    if (digit) {
+        for (; next <= 9; next = *++cursor - '0')
+            number = number * 10 + next;
+    }
+    if (next <= 9 || cursor - start > maxDigitsOfSmallJSONInteger || *cursor == '.' || (*cursor | 0x20) == 'e') [[unlikely]]
+        return nullptr;
+    value = jsNumber(static_cast<int32_t>(number));
+    return cursor;
+}
+
+static NEVER_INLINE const uint8_t* parseExtraMemberWithNewName(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* extra, JSCell* declaredNames, const uint8_t* start, const uint16_t* mark)
+{
+    const uint8_t* quote = findEndOfPlainJSONCharacters(start);
+    const uint8_t* afterName = quote + 1;
+    std::span<const uint8_t> characters { start, quote };
+    RefPtr<UniquedStringImpl> name;
+    if (*quote == '"' && isLatin1(instance, characters))
+        name = vm.jsonCache().makeIdentifier(vm, byteCast<Latin1Character>(characters));
+    else {
+        instance->jsonCursor = 0;
+        JSCell* decoded = makeStringWithEscapes(instance, vm, start, quote);
+        afterName = std::bit_cast<const uint8_t*>(instance->jsonCursor);
+        if (!afterName)
+            return nullptr;
+        name = uncheckedDowncast<JSString>(decoded)->toIdentifier(globalObject).impl();
+        if (StringView { uncheckedDowncast<JSString>(declaredNames)->tryGetValueImpl() }.find(makeString('"', StringView { name.get() }, '"')) != notFound)
+            return nullptr;
+    }
+    const uint8_t* valueStart = skipJSONColon(afterName);
+    if (!valueStart)
+        return nullptr;
+    JSValue value = JSValue::decode(parseJSONValueAt(instance, vm, globalObject, skipJSONWhitespaceCharacters(valueStart)));
+    auto* end = std::bit_cast<const uint8_t*>(instance->jsonCursor);
+    if (!end)
+        return nullptr;
+    addExtraProperty(instance, vm, globalObject, extra, name.get(), value, mark);
+    return instance->jsonParserGaveUp ? nullptr : end;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONExtraMembersAt, EncodedJSValue, (Instance* instance, uint64_t cursorBits, EncodedJSValue encodedExtra, JSCell* declaredNames, uint64_t markBits))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* cursor = std::bit_cast<const uint8_t*>(cursorBits);
+    auto* mark = std::bit_cast<const uint16_t*>(markBits);
+    instance->jsonCursor = 0;
+    if (*cursor != '"') [[unlikely]] {
+        instance->jsonParserGaveUp = 1;
+        return encodedExtra;
+    }
+    JSValue given = JSValue::decode(encodedExtra);
+    JSObject* extra = given.isCell() ? asObject(given) : createExtraProperties(instance, vm, globalObject, declaredNames);
+    auto& orders = *instance->jsonKeyOrders;
+    Structure* structure = extra->structure();
+    EncodedJSValue values[maxExtraMembersAddedAtOnce];
+    PropertyOffset offsets[maxExtraMembersAddedAtOnce];
+    unsigned count = 0;
+    auto addParsedMembers = [&] ALWAYS_INLINE_LAMBDA {
+        if (!count)
+            return;
+        for (unsigned i = 0; i < count; ++i)
+            extra->putDirectOffset(vm, offsets[i], JSValue::decode(values[i]));
+        extra->setStructure(vm, structure);
+        recordExtraProperty(instance, mark, numberOfPropertiesOf(structure) - 1);
+        count = 0;
+    };
+    const uint8_t* end = nullptr;
+    JSONKnownExtraMember* previous = nullptr;
+    for (bool isKnownToBeExtra = true;; isKnownToBeExtra = false) {
+        const uint8_t* name = cursor + 1;
+        const uint8_t* valueStart = nullptr;
+        Structure* next;
+        PropertyOffset offset = invalidOffset;
+        JSONKnownExtraMember* known = previous ? orders.members.mutableSpan().data() + previous->likelyNext : nullptr;
+        if (!known || known->before != structure->id() || !known->isAt(name)) {
+            known = findKnownExtraMember(orders, structure->id(), name);
+            if (known && previous)
+                previous->likelyNext = known - orders.members.span().data();
+        }
+        previous = known;
+        if (known) [[likely]] {
+            next = known->after;
+            offset = known->offset;
+            valueStart = name + known->size;
+        } else {
+            if (!isKnownToBeExtra) {
+                addParsedMembers();
+                instance->jsonCursor = std::bit_cast<uint64_t>(end);
+                return JSValue::encode(extra);
+            }
+            const uint8_t* afterName = nullptr;
+            next = findTransitionForName(instance, vm, structure, name, afterName);
+            if (next && next->outOfLineCapacity() != structure->outOfLineCapacity())
+                next = nullptr;
+            if (!next) {
+                addParsedMembers();
+                end = parseExtraMemberWithNewName(instance, vm, globalObject, extra, declaredNames, name, mark);
+                if (!end)
+                    break;
+                structure = extra->structure();
+            } else {
+                offset = next->transitionOffset();
+                valueStart = skipJSONColon(afterName);
+                if (!valueStart)
+                    break;
+            }
+        }
+        if (next) {
+            if (*valueStart <= ' ') [[unlikely]]
+                valueStart = skipJSONWhitespaceCharacters(valueStart);
+            JSValue value;
+            end = tryParseSmallJSONInteger(valueStart, value);
+            if (!end) {
+                auto scalar = tryParseJSONScalarAt(instance, vm, valueStart);
+                value = scalar ? *scalar : JSValue::decode(parseJSONValueAt(instance, vm, globalObject, valueStart));
+                end = std::bit_cast<const uint8_t*>(instance->jsonCursor);
+                if (!end) [[unlikely]]
+                    break;
+            }
+            values[count] = JSValue::encode(value);
+            offsets[count] = offset;
+            structure = next;
+            if (++count == maxExtraMembersAddedAtOnce) [[unlikely]]
+                addParsedMembers();
+        }
+        cursor = end + 1;
+        if (*end != ',' || (*cursor != '"' && *(cursor = skipJSONWhitespaceCharacters(cursor)) != '"')) {
+            addParsedMembers();
+            instance->jsonCursor = std::bit_cast<uint64_t>(end);
+            return JSValue::encode(extra);
+        }
+    }
+    instance->jsonCursor = 0;
+    instance->jsonParserGaveUp = 1;
+    return JSValue::encode(extra);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAddExtraMember, EncodedJSValue, (Instance* instance, EncodedJSValue encodedExtra, JSCell* nameCell, EncodedJSValue encodedValue, uint64_t markBits))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue given = JSValue::decode(encodedExtra);
+    JSObject* extra = given.isCell() ? asObject(given) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    addExtraProperty(instance, vm, globalObject, extra, uncheckedDowncast<JSString>(nameCell)->toIdentifier(globalObject).impl(), JSValue::decode(encodedValue), std::bit_cast<const uint16_t*>(markBits));
+    return JSValue::encode(extra);
+}
+
+static NEVER_INLINE void learnKeyOrder(Instance* instance, CallFrame* callFrame, Typed::Object* object, JSObject* extra, JSCell* declaredNames, std::span<const uint16_t> recorded, uint64_t hash)
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    Typed::State& state = object->state();
+    const Typed::LayoutData& layout = object->layout();
+    instance->jsonParserGaveUp = 1;
+    Vector<uint16_t, 16> fieldOfMember;
+    const StringImpl* names = uncheckedDowncast<JSString>(declaredNames)->tryGetValueImpl();
+    if (!names || !names->is8Bit())
+        return;
+    for (auto rest = names->span8(); !rest.empty();) {
+        size_t length = find(rest.subspan(1), '"');
+        RELEASE_ASSERT(rest[0] == '"' && length != notFound);
+        const Typed::FieldData* field = state.field(vm, layout, Identifier::fromString(vm, rest.subspan(1, length)).impl());
+        if (!field)
+            return;
+        fieldOfMember.append(field - layout.fields());
+        rest = rest.subspan(length + 2);
+    }
+    Vector<uint16_t, 16> keys;
+    for (uint16_t entry : recorded) {
+        if (!(entry & recordsExtraProperties)) {
+            keys.append(fieldOfMember[entry]);
+            continue;
+        }
+        unsigned key = layout.numberOfFields + (entry & ~recordsExtraProperties);
+        if (key >= UINT16_MAX)
+            return;
+        keys.append(key);
+    }
+    auto order = object->keyOrderAtBirth(vm, keys.span(), extra);
+    if (!order)
+        return;
+    instance->jsonParserGaveUp = 0;
+    if (extra && extra->structure()->outOfLineCapacity())
+        widenExtraProperties(instance, vm, declaredNames, numberOfPropertiesOf(extra->structure()));
+    StructureID before = object->structureID();
+    object->setKeyOrderAtBirth(vm, *order, extra);
+    if (state.isCounting() || (extra && extra->structure()->isDictionary()))
+        return;
+    auto& orders = instance->jsonKeyOrders->known;
+    if (orders.size() >= maxNumberOfKnownKeyOrders)
+        orders.clear();
+    auto& known = *orders.ensure(hash, [] { return makeUnique<JSONKnownKeyOrder>(); }).iterator->value;
+    known.declaredNames = declaredNames;
+    known.object = before;
+    known.extraProperties = extra ? extra->structureID() : StructureID();
+    known.orderAndCount = order->orderAndCount;
+    known.isUsedSinceFullCollection = true;
+    if (extra) {
+        known.withExtraProperties.set(vm, order->withExtraProperties);
+        known.ofExtraProperties.set(vm, extra->structure());
+    } else {
+        known.withExtraProperties.clear();
+        known.ofExtraProperties.clear();
+    }
+    known.recorded = Vector<uint16_t, 16>(recorded);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONApplyKeyOrder, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedExtra, JSCell* declaredNames, uint64_t markBits))
+{
+    countOperationNamed(instance, __func__);
+    auto* mark = std::bit_cast<uint16_t*>(markBits);
+    std::span<const uint16_t> recorded { mark, instance->jsonKeyOrderTop };
+    instance->jsonKeyOrderTop = mark;
+    if (instance->jsonParserGaveUp) [[unlikely]]
+        return;
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    JSValue given = JSValue::decode(encodedExtra);
+    JSObject* extra = given.isCell() ? asObject(given) : nullptr;
+    StructureID ofExtraProperties = extra ? extra->structureID() : StructureID();
+    uint64_t hash = std::bit_cast<uintptr_t>(declaredNames) ^ static_cast<uint64_t>(ofExtraProperties.bits()) << 32;
+    for (uint16_t entry : recorded)
+        hash = (hash ^ entry) * 0x9E3779B97F4A7C15ULL;
+    hash = std::max<uint64_t>(hash, 1) - (hash == std::numeric_limits<uint64_t>::max());
+    auto& orders = instance->jsonKeyOrders->known;
+    if (auto found = orders.find(hash); found != orders.end()) [[likely]] {
+        auto& known = *found->value;
+        if (known.declaredNames == declaredNames && known.object == object->structureID() && known.extraProperties == ofExtraProperties && equalSpans(known.recorded.span(), recorded) && !object->hasFlagsInOrderWord()) [[likely]] {
+            known.isUsedSinceFullCollection = true;
+            object->setKeyOrderAtBirth(*instance->vm, { known.orderAndCount, known.withExtraProperties.get() }, extra);
+            return;
+        }
+    }
+    learnKeyOrder(instance, DECLARE_CALL_FRAME(*instance->vm), object, extra, declaredNames, recorded, hash);
 }
 
 static constexpr unsigned maxShapedMembers = 48;
@@ -1733,6 +2257,21 @@ void destroyJSONSource(Instance& instance)
 {
     freeJSONSource(instance);
     delete instance.jsonShapeTables;
+    delete instance.jsonKeyOrders;
+}
+
+void forgetUnusedJSONKeyOrders(Instance& instance, bool isYoungCollection)
+{
+    auto* orders = instance.jsonKeyOrders;
+    if (!orders)
+        return;
+    if (std::exchange(orders->hasMembers, false))
+        orders->members.fill({ });
+    if (isYoungCollection)
+        return;
+    orders->known.removeIf([&](auto& entry) {
+        return !std::exchange(entry.value->isUsedSinceFullCollection, false) || !instance.vm->heap.isMarked(entry.value->object.decode());
+    });
 }
 
 void releaseLargeJSONSource(Instance& instance)
@@ -1778,7 +2317,15 @@ std::optional<Writes> writesOfInlineJSONParse(InlineBuiltin which, std::span<con
     case InlineBuiltin::JSONGiveUpIfRepeated:
     case InlineBuiltin::JSONGiveUp:
     case InlineBuiltin::JSONParseWithShape:
+    case InlineBuiltin::JSONKeyOrderMark:
+    case InlineBuiltin::JSONRecordKey:
+    case InlineBuiltin::JSONResetKeyOrder:
+    case InlineBuiltin::JSONFindMember:
         return Writes::RuntimeState;
+    case InlineBuiltin::JSONExtraMembersAt:
+    case InlineBuiltin::JSONAddExtraMember:
+    case InlineBuiltin::JSONApplyKeyOrder:
+        return Writes::Heap;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -2072,6 +2619,54 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
     case InlineBuiltin::JSONGiveUp:
         didEmitWrite(writes);
         m_out.store32(m_out.constInt32(1), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONParserGaveUp()));
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    case InlineBuiltin::JSONKeyOrderMark: {
+        didEmitWrite(writes);
+        LBasicBlock isNotReserved = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue top = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONKeyOrderTop()));
+        ValueFromBlock reserved = m_out.anchor(top);
+        m_out.branch(m_out.notZero64(top), usually(continuation), rarely(isNotReserved));
+        m_out.appendTo(isNotReserved);
+        ValueFromBlock byOperation = m_out.anchor(AOT_TYPED_OPERATION(JSONReserveKeyOrder).value());
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return returnCursor(m_out.phi(Int64, reserved, byOperation));
+    }
+    case InlineBuiltin::JSONRecordKey: {
+        didEmitWrite(writes);
+        LBasicBlock hasRoom = m_out.newBlock();
+        LBasicBlock isFull = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        TypedPointer slot = m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONKeyOrderTop());
+        LValue top = m_out.load64(slot);
+        m_out.branch(m_out.notEqual(top, m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONKeyOrderEnd()))), usually(hasRoom), rarely(isFull));
+        m_out.appendTo(hasRoom);
+        m_out.store32As16(m_out.castToInt32(in<Integer>(arguments[0]).value()), m_out.address(m_heaps.AOTTyped_runtimeState, top, 0));
+        m_out.store64(m_out.add(top, m_out.constInt64(sizeof(uint16_t))), slot);
+        m_out.jump(continuation);
+        m_out.appendTo(isFull);
+        m_out.store32(m_out.constInt32(1), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONParserGaveUp()));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    }
+    case InlineBuiltin::JSONResetKeyOrder:
+        didEmitWrite(writes);
+        m_out.store64(in<Integer>(arguments[0]).value(), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONKeyOrderTop()));
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    case InlineBuiltin::JSONFindMember:
+        didEmitWrite(writes);
+        return returnCursor(AOT_TYPED_OPERATION(JSONFindMember, in<Integer>(arguments[0]), in<CellPointer>(arguments[1])).value());
+    case InlineBuiltin::JSONExtraMembersAt:
+        didEmitWrite(writes);
+        return ensure(AOT_TYPED_OPERATION(JSONExtraMembersAt, in<Integer>(arguments[0]), in<Boxed>(arguments[1]), in<CellPointer>(arguments[2]), in<Integer>(arguments[3])), type);
+    case InlineBuiltin::JSONAddExtraMember:
+        didEmitWrite(writes);
+        return ensure(AOT_TYPED_OPERATION(JSONAddExtraMember, in<Boxed>(arguments[0]), in<CellPointer>(arguments[1]), in<Boxed>(arguments[2]), in<Integer>(arguments[3])), type);
+    case InlineBuiltin::JSONApplyKeyOrder:
+        didEmitWrite(writes);
+        AOT_TYPED_OPERATION(JSONApplyKeyOrder, in<CellPointer>(arguments[0]), in<Boxed>(arguments[1]), in<CellPointer>(arguments[2]), in<Integer>(arguments[3]));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     default:
         RELEASE_ASSERT_NOT_REACHED();

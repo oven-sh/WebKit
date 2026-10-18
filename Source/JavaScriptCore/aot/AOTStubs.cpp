@@ -17626,9 +17626,19 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     jit.load64(CCallHelpers::BaseIndex(entry, word, CCallHelpers::TimesEight, PropertyLookupTable::offsetOfFirstColumn), nameCellGPR);
     Jump hasNoKindEntry = branchIfCellNameDiffers(jit, name);
     Jump holderIsInPayload = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::holderIsInPayload));
+    Jump valueIsInOwnStorage = jit.branchTest64(CCallHelpers::NonZero, nameCellGPR, hasFlag(PropertyLookupTable::valueIsInStorage));
     extractBits(jit, nameCellGPR, kindInCellShift, PropertyLookupTable::bitsOfKind, word);
     jit.branch32(CCallHelpers::Equal, word, TrustedImm32(static_cast<int32_t>(PropertyLookupTable::Kind::LazyClosure))).linkTo(withoutCache, &jit);
     cannotBeServed.append(jit.jump());
+    CCallHelpers::JumpList isRead;
+    valueIsInOwnStorage.link(&jit);
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), method);
+    jit.m_assembler.ldr<64>(method, method, nameCellGPR, ARM64Assembler::SXTW, 0);
+    jit.branchIfNotCell(method).linkTo(withoutCache, &jit);
+    jit.store64(TrustedImm32(0), holderInCache);
+    jit.rshift32(nameCellGPR, TrustedImm32(2), word);
+    jit.or32(TrustedImm32(SiteCaches::isOutOfLine), word);
+    isRead.append(jit.jump());
     holderIsInPayload.link(&jit);
     jit.m_assembler.add<64>(entry, cellCageBaseGPR, nameCellGPR, ARM64Assembler::UXTW, Typed::cell32Shift);
     jit.extractSignedBitfield64(nameCellGPR, TrustedImm32(codeInCellShift), TrustedImm32(8), nameDifferenceGPR);
@@ -17641,7 +17651,7 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     jit.load64(CCallHelpers::BaseIndex(method, nameDifferenceGPR, CCallHelpers::TimesEight), method);
     jit.branchIfNotCell(method).linkTo(withoutCache, &jit);
     jit.store64(entry, holderInCache);
-    Jump isInherited = jit.jump();
+    isRead.append(jit.jump());
 
     hasNoKindEntry.link(&jit);
     jit.m_assembler.sub<64>(nameDifferenceGPR, nameDifferenceGPR, UInt12(PropertyLookupTable::hasKindAndCode >> 12), 12);
@@ -17651,7 +17661,7 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     jit.store64(TrustedImm32(0), holderInCache);
     jit.lshift32(nameCellGPR, TrustedImm32(1), word);
 
-    isInherited.link(&jit);
+    isRead.link(&jit);
     fillSiteCache(jit, thisGPR, word, entry, cache);
     jit.move(method, calleeGPR);
     jit.ret();
@@ -17666,6 +17676,10 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     Jump hasNoKindEntry = jit.branchTest32(CCallHelpers::NonZero, word);
     Jump holderHasOutOfLine = jit.branch8(CCallHelpers::Equal, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::InheritedOutOfLine)));
     jit.branch8(CCallHelpers::Equal, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::LazyClosure))).linkTo(withoutCache, &jit);
+    static_assert(static_cast<unsigned>(Kind::OutOfLine) + 1 == static_cast<unsigned>(Kind::OutOfLineAndWritten));
+    jit.load8(Address(entry, PropertyLookupTable::offsetOfKindInEntry), word);
+    jit.sub32(TrustedImm32(static_cast<int32_t>(Kind::OutOfLine)), word);
+    Jump isOwnOutOfLine = jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(1));
     cannotBeServed.append(jit.branch8(CCallHelpers::NotEqual, Address(entry, PropertyLookupTable::offsetOfKindInEntry), TrustedImm32(static_cast<int32_t>(Kind::InheritedInline))));
     jit.load8(Address(entry, PropertyLookupTable::offsetOfCodeInEntry), word);
     jit.load32(Address(entry, PropertyLookupTable::offsetOfPayloads), entry);
@@ -17688,6 +17702,17 @@ static void generateFindMethodByNameAndFillSiteCache(CCallHelpers& jit)
     jit.sub32(TrustedImm32(256), word);
     jit.lshift32(TrustedImm32(1), word);
     jit.or32(TrustedImm32(SiteCaches::isOutOfLine), word);
+    isRead.append(jit.jump());
+
+    isOwnOutOfLine.link(&jit);
+    jit.load32(Address(entry, PropertyLookupTable::offsetOfPayloads), word);
+    jit.rshift32(TrustedImm32(2), word);
+    jit.or32(TrustedImm32(SiteCaches::isOutOfLine), word);
+    jit.signExtend32ToPtr(word, entry);
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), method);
+    jit.load64(CCallHelpers::BaseIndex(method, entry, CCallHelpers::TimesFour, -4 * static_cast<int32_t>(SiteCaches::isOutOfLine)), method);
+    jit.branchIfNotCell(method).linkTo(withoutCache, &jit);
+    jit.store64(TrustedImm32(0), holderInCache);
     isRead.append(jit.jump());
 
     hasNoKindEntry.link(&jit);

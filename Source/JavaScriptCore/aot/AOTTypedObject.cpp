@@ -2040,6 +2040,36 @@ void Object::initializeExtraProperties(VM& vm, std::span<const ExtraProperty> in
     setExtraProperties(vm, createExtraProperties(structure()->realm(), inOrder));
 }
 
+std::optional<Object::KeyOrderAtBirth> Object::keyOrderAtBirth(VM& vm, std::span<const uint16_t> keys, JSObject* extra)
+{
+    State& state = this->state();
+    const LayoutData& layout = this->layout();
+    if (hasFlagsInOrderWord() || state.isPrototypeShape(layout.shape))
+        return std::nullopt;
+    Structure* withExtraProperties = nullptr;
+    if (extra) {
+        bool areAllExtra = true;
+        extra->structure()->forEachProperty(vm, [&](const auto& property) {
+            UniquedStringImpl* name = property.key();
+            areAllExtra = !property.attributes() && !state.field(vm, layout, name) && !state.hasImmutableMethod(layout, name);
+            return areAllExtra;
+        });
+        if (!areAllExtra)
+            return std::nullopt;
+        extra->structure()->forEachProperty(vm, [&](const auto& property) {
+            willAddExtraProperty(vm, property.key());
+            return true;
+        });
+        withExtraProperties = state.existingStructureFor(layout.shape, getPrototypeDirect(), *extra->structure());
+        if (!withExtraProperties)
+            withExtraProperties = state.structureFor(vm, layout.shape, getPrototypeDirect(), true);
+    }
+    uint32_t orderAndCount = state.orderStartingWith(layout, keys, false);
+    if (orderOf(orderAndCount) == keysAreInLayoutOrder)
+        return std::nullopt;
+    return KeyOrderAtBirth { orderAndCount, withExtraProperties };
+}
+
 void Object::didChangeExtraProperties(VM& vm)
 {
     JSObject* extra = extraProperties();
@@ -9785,6 +9815,7 @@ void State::forgetInitialObjectStates()
 {
     instance.forgetTypedThisAllocations();
     m_initialObjectStatesByNewTarget.fill({ });
+    m_initialPlainObjectStatesByNewTarget.fill({ });
 }
 
 void State::shareWithStub(VM& vm, const InitialObjectState& known)
@@ -9821,6 +9852,20 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
         shareWithStub(vm, known);
         return Object::createWithBody(vm, known.structure, known.body.span());
     }
+    InitialPlainObjectState& knownPlain = m_initialPlainObjectStatesByNewTarget[(std::bit_cast<uintptr_t>(newTarget) >> 4) % m_initialPlainObjectStatesByNewTarget.size()];
+    if (knownPlain.newTarget == newTarget && knownPlain.constructor == constructor && knownPlain.epoch == instance.negativeOffsetFields().typedPrototypeEpoch) {
+        Structure* structure = knownPlain.structure;
+        Butterfly* butterfly = nullptr;
+        if (unsigned outOfLineCapacity = structure->outOfLineCapacity())
+            butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+        JSFinalObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
+        WriteBarrierBase<Unknown>* inlineStorage = object->inlineStorage();
+        for (unsigned i = 0, size = structure->inlineSize(); i < size; ++i)
+            inlineStorage[i].setWithoutWriteBarrier(jsUndefined());
+        for (unsigned i = 0, size = structure->outOfLineSize(); i < size; ++i)
+            object->locationForOffset(firstOutOfLineOffset + static_cast<PropertyOffset>(i))->setWithoutWriteBarrier(jsUndefined());
+        return object;
+    }
     const LayoutData* ofClass = constructor->classData();
     if (ofClass && ofClass->hasUntypedBase)
         return jsUndefined();
@@ -9828,13 +9873,15 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
     JSValue prototype;
     bool constructorAcceptsAnyObject = ofClass && ofClass->hasFixedLayout && ofClass->mayDespecialize;
     bool isCreatedWithoutLayout = false;
+    bool newTargetIsClassOfProgram = false;
     if (auto* target = dynamicDowncast<Closure>(newTarget); ofClass && target && target->structure()->aotInstance() == &instance) {
         const LayoutData* ofTarget = target->classData();
+        newTargetIsClassOfProgram = ofTarget;
         for (const LayoutData* next = ofTarget; next; next = baseOf(*next)) {
             if (next != ofClass)
                 continue;
             made = ofTarget;
-            isCreatedWithoutLayout = ofTarget != ofClass && constructorAcceptsAnyObject;
+            isCreatedWithoutLayout = (ofTarget != ofClass || !ofClass->shape) && constructorAcceptsAnyObject;
             prototype = target->prototypeProperty(vm);
             break;
         }
@@ -9842,7 +9889,7 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
     if (!prototype) {
         prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, { });
-        isCreatedWithoutLayout = constructorAcceptsAnyObject && prototype != constructor->prototypeProperty(vm);
+        isCreatedWithoutLayout = constructorAcceptsAnyObject && (!ofClass->shape || prototype != constructor->prototypeProperty(vm));
         if (ofClass && ofClass->hasFixedLayout && !isCreatedWithoutLayout && !ofClass->mayHaveOtherPrototype && prototype != constructor->prototypeProperty(vm) && !reportOrThrow(scope, globalObject, { .kind = "construct-new-target"_s, .on = ofClass }, makeString("Cannot construct "_s, nameOf(*ofClass), " with a different new.target: only a subclass in TypeScript code of the program can extend it"_s), InAudit::Performed, "instanceof answers by the class the object was declared as"_s))
             return { };
     }
@@ -9879,6 +9926,11 @@ JSValue State::createThis(JSGlobalObject* globalObject, Closure* constructor, JS
                 if (!(field.flags & (fieldIsAbsentAtCreation | fieldIsPlaceholder)))
                     object->putDirect(vm, name(vm, field.name), jsUndefined());
             }
+            Structure* withFields = object->structure();
+            auto remember = makeScopeExit([&] {
+                if (newTargetIsClassOfProgram && object->structure() == withFields && !withFields->isDictionary() && !isCounting() && !data.isCompiledForAudit)
+                    knownPlain = { constructor, newTarget, withFields, instance.negativeOffsetFields().typedPrototypeEpoch };
+            });
             for (const LayoutData* declaring = ofClass; declaring; declaring = baseOf(*declaring))
                 addPrivateMethods(globalObject, object, *declaring);
             Vector<const LayoutData*, 4> descendants;

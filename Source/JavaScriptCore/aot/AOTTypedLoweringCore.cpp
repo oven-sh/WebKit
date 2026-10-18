@@ -1161,6 +1161,8 @@ void Lowering::findAccessRuns(const Vector<BlockID>& order)
             }
             if (access.isStore)
                 run.stored |= 1u << index;
+            else
+                run.hasRead = true;
         }
         findStructureDescriptorOfRun(run);
         if (looksOnlyInLoops && run.findStructureDescriptor == Format::none)
@@ -3402,25 +3404,21 @@ static void makeCallsPreserveLiveRegisters(Procedure& proc, LoweringContext& con
     }
     if (calls.isEmpty())
         return;
-    BitVector allPathsCall(proc.size());
-    for (B3::BasicBlock* block : proc)
-        allPathsCall.set(block->index());
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (unsigned i = proc.size(); i--;) {
-            B3::BasicBlock* block = proc[i];
-            if (!block || hasCall.get(i) || !allPathsCall.get(i))
-                continue;
-            bool holds = block->numSuccessors() || block->last()->opcode() == B3::Oops;
-            for (B3::BasicBlock* successor : block->successorBlocks())
-                holds &= allPathsCall.get(successor->index());
-            if (!holds) {
-                allPathsCall.clear(i);
-                changed = true;
-            }
+    bool somePathReturnsWithoutCall = false;
+    BitVector isReachedWithoutCall(proc.size());
+    Vector<B3::BasicBlock*, 16> worklist { proc.at(0) };
+    isReachedWithoutCall.set(proc.at(0)->index());
+    while (!worklist.isEmpty() && !somePathReturnsWithoutCall) {
+        B3::BasicBlock* block = worklist.takeLast();
+        if (hasCall.get(block->index()))
+            continue;
+        somePathReturnsWithoutCall = !block->numSuccessors() && block->last()->opcode() != B3::Oops;
+        for (B3::BasicBlock* successor : block->successorBlocks()) {
+            if (!isReachedWithoutCall.set(successor->index()))
+                worklist.append(successor);
         }
     }
-    if (allPathsCall.get(proc.at(0)->index()))
+    if (!somePathReturnsWithoutCall)
         return;
     double predictedCalls = 0;
     for (PatchpointValue* call : calls)

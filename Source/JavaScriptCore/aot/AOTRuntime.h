@@ -57,6 +57,7 @@ enum class FormatPatternsOrigin : uint8_t { NotCompared, ThisICU, AnotherICU };
 struct JSONWideSegment;
 struct JSONPlanCache;
 struct JSONShapeTables;
+struct JSONKeyOrders;
 struct StringAppender;
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
@@ -1177,6 +1178,10 @@ struct Instance {
     double jsonNumber;
     uint64_t jsonParserFrame;
     JSONShapeTables* jsonShapeTables;
+    uint16_t* jsonKeyOrderStart;
+    uint16_t* jsonKeyOrderTop;
+    uint16_t* jsonKeyOrderEnd;
+    JSONKeyOrders* jsonKeyOrders;
     Latin1Character* stringAppenderOrigin;
     uint64_t stringAppenderLength;
     uint64_t stringAppenderLimit;
@@ -1193,6 +1198,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfJSONCursor() { return OBJECT_OFFSETOF(Instance, jsonCursor); }
     static constexpr ptrdiff_t offsetOfJSONNumber() { return OBJECT_OFFSETOF(Instance, jsonNumber); }
     static constexpr ptrdiff_t offsetOfJSONParserFrame() { return OBJECT_OFFSETOF(Instance, jsonParserFrame); }
+    static constexpr ptrdiff_t offsetOfJSONKeyOrderTop() { return OBJECT_OFFSETOF(Instance, jsonKeyOrderTop); }
+    static constexpr ptrdiff_t offsetOfJSONKeyOrderEnd() { return OBJECT_OFFSETOF(Instance, jsonKeyOrderEnd); }
     static constexpr ptrdiff_t offsetOfStringAppenderLength() { return OBJECT_OFFSETOF(Instance, stringAppenderLength); }
     static constexpr ptrdiff_t offsetOfStringAppenderOwner() { return OBJECT_OFFSETOF(Instance, stringAppenderOwner); }
     static constexpr ptrdiff_t offsetOfStringAppenderStartsTop() { return OBJECT_OFFSETOF(Instance, stringAppenderStartsTop); }

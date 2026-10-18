@@ -231,6 +231,7 @@ void destroyJSONSource(Instance&);
 void destroyStringAppender(Instance&);
 void destroyFormatPatternState(Instance&);
 void releaseLargeJSONSource(Instance&);
+void forgetUnusedJSONKeyOrders(Instance&, bool isYoungCollection);
 JSValue tryParseJSONWithLearnedShapes(JSGlobalObject*, StringView);
 JS_EXPORT_PRIVATE JSValue tryParseUTF8JSONWithLearnedShapes(JSGlobalObject*, std::span<const uint8_t>);
 String takePreparedJSON(Instance&, JSValue);

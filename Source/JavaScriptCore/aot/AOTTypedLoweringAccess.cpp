@@ -342,6 +342,8 @@ LValue Lowering::marked(LValue load, unsigned flags)
         memory->setControlDependent(false);
     if (flags & IsFixed)
         memory->setReadsMutability(Mutability::Immutable);
+    if (flags & IsInAlignedHeader)
+        memory->setIsInAlignedHeader(true);
     return load;
 }
 
@@ -360,11 +362,12 @@ uint32_t Lowering::minObjectSizeOf(LayoutID supertype) const
 
 unsigned Lowering::safeIfReaches(CellPointer cell, unsigned end) const
 {
+    static_assert(MarkedBlock::atomSize == MemoryValue::alignedHeaderSize);
     auto found = m_cellTypes.find(cell.value());
     if (found == m_cellTypes.end())
-        return 0;
+        return end <= MarkedBlock::atomSize ? IsInAlignedHeader : 0;
     if (end <= MarkedBlock::atomSize)
-        return IsSafe;
+        return IsSafe | IsInAlignedHeader;
     auto& type = m_program.at(found->value);
     if (type.primitives || type.anyObject || type.anyFunction)
         return 0;

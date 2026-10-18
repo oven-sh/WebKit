@@ -294,6 +294,7 @@ public:
 
     enum class CreateIfNeeded : bool { No, Yes };
     template<typename Traits> static bool tryAddAbsent(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSString* key, JSValue);
+    static bool tryFillEmptySet(JSGlobalObject*, JSSet*, std::span<const WriteBarrier<Unknown>> strings);
     template<typename Traits> static bool tryAdd(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key, JSValue, CreateIfNeeded = CreateIfNeeded::No, uint32_t minCapacity = initialCapacity);
     template<typename Traits> static bool remove(JSGlobalObject*, JSOrderedHashTable<Traits>*, JSValue key);
     template<typename Traits> static void clear(VM&, JSOrderedHashTable<Traits>*);

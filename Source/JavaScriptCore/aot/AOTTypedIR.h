@@ -1526,6 +1526,8 @@ public:
     bool isInCycle(FunctionID id) const { return functionsInCycles.get(id.index()); }
     bool isHotOnlyInLoops(FunctionID id) const { return functionsHotOnlyInLoops.get(id.index()); }
     bool isHotOutsideLoops(FunctionID id) const { return isStaticallyHot(id) && !isHotOnlyInLoops(id); }
+    BitVector functionsHotOnlyAsHottest;
+    bool inlinesAsHotOutsideLoops(FunctionID id) const { return isHotOutsideLoops(id) && !functionsHotOnlyAsHottest.get(id.index()); }
     bool mayEncounterMasqueradesAsUndefined { false };
     bool propagatesExceptionObjects { false };
     Vector<uint32_t> numberOfDirectCalls;

@@ -5712,6 +5712,8 @@ static void outlineDestructuredParameterReads(Program& program)
             program.callGraphColdFunctions.set(bodyID.index());
         if (program.functionsWithSiteCaches.get(i))
             program.functionsWithSiteCaches.set(bodyID.index());
+        if (program.functionsHotOnlyAsHottest.get(i))
+            program.functionsHotOnlyAsHottest.set(bodyID.index());
         program.functions[i] = WTF::move(wrapper);
         bodies.append(WTF::move(body));
     }
@@ -6113,6 +6115,8 @@ static void splitOffWorkers(Program& program, const BitVector* considered)
             program.callGraphColdFunctions.set(workerID.index());
         if (program.functionsWithSiteCaches.get(i))
             program.functionsWithSiteCaches.set(workerID.index());
+        if (program.functionsHotOnlyAsHottest.get(i))
+            program.functionsHotOnlyAsHottest.set(workerID.index());
     }
     program.types.freeze();
 }
@@ -10493,6 +10497,7 @@ static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* fun
 {
     static constexpr uint64_t maxAccessesByName = 32768;
     static constexpr OpcodeSet accessesByName { Opcode::GetById, Opcode::PutById, Opcode::CallMethod };
+    static constexpr OpcodeSet directCalls { Opcode::CallDirect };
     unsigned forced = Options::aotHotByTextForTesting();
     if (forced && forced != 2) [[unlikely]]
         return;
@@ -10502,6 +10507,21 @@ static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* fun
         if (ModuleID module = code ? std::as_const(program).at(code).module : ModuleID())
             isBuiltinModule.set(module.index());
     }
+    auto accessesOf = [&](unsigned i) {
+        uint64_t own = 0;
+        std::as_const(program).functions.forEachValue(i, accessesByName, [&](ValueID) {
+            ++own;
+        });
+        return own;
+    };
+    auto callsFunctionWithAccesses = [&](unsigned i) {
+        auto& function = std::as_const(program).functions[i];
+        bool result = false;
+        std::as_const(program).functions.forEachValue(i, directCalls, [&](ValueID id) {
+            result = result || accessesOf(function.at(id).function().index());
+        });
+        return result;
+    };
     BitVector chosen(count);
     uint64_t accesses = 0;
     for (unsigned k = count; k--;) {
@@ -10509,10 +10529,9 @@ static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* fun
         auto& function = std::as_const(program).functions[i];
         if (!function.module || isBuiltinModule.get(function.module.index()))
             continue;
-        uint64_t own = 0;
-        std::as_const(program).functions.forEachValue(i, accessesByName, [&](ValueID) {
-            ++own;
-        });
+        uint64_t own = accessesOf(i);
+        if (!own && !callsFunctionWithAccesses(i))
+            continue;
         if (accesses + own > maxAccessesByName)
             break;
         accesses += own;
@@ -10527,6 +10546,8 @@ static void chooseHottestFunctions(Program& program, const Vector<uint32_t>* fun
             program.callGraphColdFunctions.clear(i);
             auto entry = program.genericEntrypoints.find(i);
             for (unsigned marked : { i, entry != program.genericEntrypoints.end() ? entry->value.index() : i }) {
+                if (!program.isHotOutsideLoops(FunctionID(marked)))
+                    program.functionsHotOnlyAsHottest.set(marked);
                 program.staticallyHotFunctions.set(marked);
                 program.staticallyWarmFunctions.set(marked);
                 program.functionsHotOnlyInLoops.clear(marked);

@@ -3829,6 +3829,25 @@ private:
             auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
             return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::IsDoubleArray && value.arguments.size() == 1;
         };
+        auto isMadeAsString = [&](auto& isMadeAsString, ValueID id, unsigned depth) -> bool {
+            static constexpr unsigned maxDepth = 3;
+            auto& definition = definitionOf(id);
+            if (definition.opcode == Opcode::String || definition.opcode == Opcode::Strcat || definition.opcode == Opcode::ToString)
+                return true;
+            if (definition.opcode != Opcode::Parameter || !definition.parameterBlock().index() || depth >= maxDepth)
+                return false;
+            bool hasEdge = false;
+            for (auto& block : m_function.blocks) {
+                for (auto& target : block.terminator.targets) {
+                    if (target.block != definition.parameterBlock())
+                        continue;
+                    if (block.terminator.kind != TerminatorKind::Jump || definition.parameterIndex() >= target.arguments.size() || !isMadeAsString(isMadeAsString, target.arguments[definition.parameterIndex()], depth + 1))
+                        return false;
+                    hasEdge = true;
+                }
+            }
+            return hasEdge;
+        };
         auto mayContainNumbers = [&](ValueID array) {
             for (;; array = m_function.at(array).child(0)) {
                 TypeID elements = m_program.typeOf(m_function, array).elements;
@@ -3894,6 +3913,8 @@ private:
                         result = value.typeofType() == TypeofType::Function;
                     else if (operand.opcode == Opcode::NewObject || operand.opcode == Opcode::NewArray)
                         result = value.typeofType() == TypeofType::Object;
+                    else if (isMadeAsString(isMadeAsString, value.child(0), 0))
+                        result = value.typeofType() == TypeofType::String;
                     break;
                 case Opcode::IsClosureOf:
                     if (auto& operand = definitionOf(value.child(0)); operand.opcode == Opcode::NewClosure || operand.opcode == Opcode::NewClosureOnce || operand.opcode == Opcode::FunctionReference) {

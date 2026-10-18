@@ -207,10 +207,17 @@ std::optional<CountedLoop> analyzeTopTestedCountedLoop(NaturalLoops& loops, cons
     }
     if (!result.start || !result.next)
         return std::nullopt;
-    if (result.next->opcode() != Add || result.next->child(0) != result.inductionVariable || !result.next->child(1)->hasInt64())
+    Value* increment = result.next;
+    if (increment->opcode() == SExt32 && increment->child(0)->opcode() == Trunc) {
+        increment = increment->child(0)->child(0);
+        result.wrapsAroundInt32 = true;
+    }
+    if (increment->opcode() != Add || increment->child(0) != result.inductionVariable || !increment->child(1)->hasInt64())
         return std::nullopt;
-    result.step = result.next->child(1)->asInt64();
+    result.step = increment->child(1)->asInt64();
     if (!result.step || result.step > maxIterationsPerStrip || result.step < -maxIterationsPerStrip || (result.step > 0) != result.increases())
+        return std::nullopt;
+    if (result.wrapsAroundInt32 && result.isUnsigned())
         return std::nullopt;
     return result;
 }

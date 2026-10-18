@@ -3584,6 +3584,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
         AOT::writeOperationCounts(*vm);
     }
     releaseLargeJSONSource(*this);
+    forgetUnusedJSONKeyOrders(*this, newOnly);
     zeroBytes(structuresOfThis);
     if (typed) {
         typed->removeDeadCoercionPlans(*vm, newOnly);

@@ -94,6 +94,10 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
             return nullptr;
     }
     Table* table = Table::create(vm, structure);
+    if constexpr (!isMap) {
+        if (CompactTable::tryFillEmptySet(globalObject, table, std::span { list->butterfly()->contiguous().data(), length }))
+            return table;
+    }
     for (unsigned i = 0; i < length; ++i) {
         auto [key, value] = entryAt(i);
         bool isAdded = CompactTable::tryAdd(globalObject, table, key, value, CompactTable::CreateIfNeeded::Yes, length);

@@ -7074,7 +7074,7 @@ private:
         if (hasRareData)
             data.rareData() = { layout.sizeWithSpecializationCapacity, static_cast<uint32_t>(specializations.size()), hasFieldsWithSymbolKeys, specializationsOffset, layout.extensionSize, discriminant, fieldsByNameOffset, literalsWithoutFieldOffset };
         data.mayBeFrozen = layout.mayBeFrozen || layout.isImmutableAfterAllocation;
-        data.mayDespecialize = layout.mayDespecialize;
+        data.mayDespecialize = layout.mayDespecialize || (layout.kind == LayoutKind::Instance && layout.hasFixedLayout && !layout.isAllocated && layout.acceptsUntypedObjects && !layout.checksUntypedObjects());
         data.hasFixedLayout = layout.hasFixedLayout;
         data.isEvaluatedOnce = layout.isEvaluatedOnce;
         data.hasUntypedBase = layout.hasUntypedBase;

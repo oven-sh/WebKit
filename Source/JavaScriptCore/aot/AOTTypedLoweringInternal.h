@@ -885,6 +885,7 @@ private:
     enum LoadFlag : uint8_t {
         IsSafe = 1,
         IsFixed = 2,
+        IsInAlignedHeader = 4,
     };
     LValue marked(LValue load, unsigned flags);
     template<typename T, typename Base> T loadField(Base, const B3::AbstractHeap&, unsigned flags = 0);
@@ -1514,6 +1515,7 @@ private:
         B3::Variable* verdict { nullptr };
         unsigned header { 0 };
         uint32_t stored { 0 };
+        bool hasRead { false };
         Vector<StringID, 8> names;
         uint32_t findStructureDescriptor { Format::none };
         Vector<uint8_t> places;

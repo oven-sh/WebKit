@@ -112,7 +112,7 @@ public:
                 }
                 if (!canInline(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
-                bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id);
+                bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.inlinesAsHotOutsideLoops(m_id);
                 if (m_program.at(callee).isSharedCallBody && !callerIsHot)
                     continue;
                 if (m_program.at(callee).worker && !isOnlyRead(call) && !isReadOnlyThroughPhisAndCalls(call) && !passesReadOnlyAllocation(m_caller.at(call)))
@@ -871,7 +871,7 @@ private:
         if (callee.nullishResultKind || callee.resumeFunction || !canInline(callee, call))
             return false;
         bool isInLoop = m_isInCallerLoop.get(m_blockOfValue[user.index()]);
-        if (!isInLoop && !m_program.isHotOutsideLoops(m_id))
+        if (!isInLoop && !m_program.inlinesAsHotOutsideLoops(m_id))
             return false;
         uint32_t copies = enclosingInlineCopies(call);
         if (copies >= maxDepth || (copies && !isInLoop))

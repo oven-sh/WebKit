@@ -1428,7 +1428,7 @@ void Lowering::emitCachedPutById(Boxed base, StringID name, Boxed value)
     }
     m_out.jump(continuation);
     inColdBlock(own, [&] {
-        emitStandaloneCachedPutById(base, name, value, true);
+        emitStandaloneCachedPutById(base, name, value, !run->hasRead && run->findStructureDescriptor == Format::none);
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
@@ -1487,7 +1487,7 @@ void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed valu
         }
         callICStub(Stub::PutById, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 });
     };
-    if (onlyThroughStub || (!m_isInLoop && (m_function.isTyped() || !m_program.isHotOutsideLoops(m_id)))) {
+    if (onlyThroughStub || !m_out.m_block->frequency() || (!m_isInLoop && (m_function.isTyped() || !m_program.isHotOutsideLoops(m_id)))) {
         callStubPath(SlotAddressUse::FastPath);
         return;
     }

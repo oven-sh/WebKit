@@ -85,6 +85,12 @@ private:
         BasicBlock* continuation;
     };
 
+    struct IndexLimit {
+        Value* limit;
+        int64_t minOffset;
+        int64_t maxOffset;
+    };
+
     struct Version {
         BasicBlock* preHeader { nullptr };
         BasicBlock* header { nullptr };
@@ -95,7 +101,9 @@ private:
         unsigned numberOfClonedValues { 0 };
         unsigned numberOfHoistedValues { 0 };
         unsigned numberOfOmittedValues { 0 };
-        bool mayLeaveEveryTurn { false };
+        bool mayExitEveryIteration { false };
+        unsigned numberOfValuesHoistedPastGuards { 0 };
+        BasicBlock* firstIterationSlowPath { nullptr };
         std::optional<unsigned> nextVersionIndex;
         Value* unswitchedTerminal { nullptr };
         BasicBlock* nextVersionSuccessor { nullptr };
@@ -107,6 +115,8 @@ private:
         bool isTopTested { false };
         UncheckedKeyHashMap<Value*, bool> comparisonResults;
         std::optional<Poll> poll;
+        Vector<IndexLimit, 4> indexLimits;
+        Variable* clampedBound { nullptr };
         Variable* bound { nullptr };
         Variable* stripEnd { nullptr };
         BasicBlock* fastVersionFirstPreHeader { nullptr };
@@ -189,6 +199,8 @@ private:
 
         auto addVersion = [&](Version&& version) {
             findExcursion(loops, loop, version);
+            if (version.firstIterationSlowPath && !version.excursionBlocks.contains(version.firstIterationSlowPath) && !version.unswitchedTerminal && version.isEnteredFromPreHeader)
+                return;
             for (BasicBlock* block : version.hotBlocks)
                 m_hotBlocks.add(block);
             for (BasicBlock* block : version.excursionBlocks)
@@ -201,8 +213,8 @@ private:
         UnswitchCandidate candidate;
         std::optional<Version> version = tryCreateVersion(loops, loop, preHeader, nullptr, nullptr, &candidate);
         if (topTestedVersion) {
-            bool countsOmittedValues = !topTestedVersion->mayLeaveEveryTurn;
-            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues - (countsOmittedValues ? topTestedVersion->numberOfOmittedValues : 0);
+            bool countsOmittedValues = !topTestedVersion->mayExitEveryIteration;
+            unsigned stays = topTestedVersion->numberOfClonedValues - topTestedVersion->numberOfHoistedValues - (countsOmittedValues ? topTestedVersion->numberOfOmittedValues : 0) + (countsOmittedValues ? 0 : topTestedVersion->numberOfValuesHoistedPastGuards);
             unsigned staysOnOtherPath = version ? version->numberOfClonedValues - version->numberOfHoistedValues - (countsOmittedValues ? version->numberOfOmittedValues : 0) : topTestedVersion->numberOfClonedValues;
             if (topTestedVersion->isTopTested ? stays * 4 <= staysOnOtherPath * 3 : stays < staysOnOtherPath) {
                 addVersion(WTF::move(*topTestedVersion));
@@ -584,6 +596,133 @@ private:
             }
             return beginOfLower && endOfUpper && *endOfUpper - *beginOfLower < minPageSize;
         };
+        auto visitTransitiveInputs = [&](Value* root, unsigned limit, const auto& visit) {
+            IndexSet<Value*> seen;
+            Vector<Value*, 16> worklist { root };
+            while (!worklist.isEmpty()) {
+                Value* value = worklist.takeLast();
+                if (value->isConstant() || !seen.add(value))
+                    continue;
+                if (!limit-- || !visit(value))
+                    return false;
+                for (Value* child : value->children())
+                    worklist.append(child);
+                if (value->opcode() != Phi)
+                    continue;
+                if (auto* upsilons = m_upsilons.find(value)) {
+                    for (UpsilonValue* upsilon : *upsilons)
+                        worklist.append(upsilon->child(0));
+                }
+            }
+            return true;
+        };
+        static constexpr unsigned maxGuardInputs = 48;
+        static constexpr unsigned maxAddressInputs = 12;
+        IndexSet<Value*> remainingGuardInputs;
+        bool remainingGuardInputsAreKnown = true;
+        auto isIndependentOfRemainingGuards = [&](Value* value) {
+            auto* load = value->as<MemoryValue>();
+            return load && load->isLoad() && remainingGuardInputsAreKnown && visitTransitiveInputs(load->lastChild(), maxAddressInputs, [&](Value* source) {
+                return !remainingGuardInputs.contains(source);
+            });
+        };
+        auto sharesAlignedHeaderWithHoistedLoad = [&](Value* value) {
+            auto* load = value->as<MemoryValue>();
+            if (!load || !load->isLoad() || !load->isInAlignedHeader())
+                return false;
+            for (Value* hoisted : valuesBeforeFastLoop) {
+                auto* other = hoisted->as<MemoryValue>();
+                if (other && other->isLoad() && other->isInAlignedHeader() && withoutRepetition(other->lastChild()) == withoutRepetition(load->lastChild()))
+                    return true;
+            }
+            static constexpr unsigned maxDominatorsToScan = 24;
+            unsigned valueBudget = 512;
+            Dominators& dominators = m_proc.dominators();
+            BasicBlock* block = preHeader;
+            for (unsigned count = 0; block && count < maxDominatorsToScan; ++count, block = dominators.idom(block)) {
+                for (Value* before : *block) {
+                    if (!valueBudget--)
+                        return false;
+                    auto* other = before->as<MemoryValue>();
+                    if (other && other->isLoad() && other->isInAlignedHeader() && other->lastChild() == withoutRepetition(load->lastChild()))
+                        return true;
+                }
+            }
+            return false;
+        };
+        auto matchesValueBeforeLoop = [&](auto& self, Value* inside, Value* before) -> bool {
+            if (inside == before)
+                return !loops.belongsTo(inside->owner, loop);
+            if (!hotBlocks.contains(inside->owner) || loops.belongsTo(before->owner, loop) || inside->kind() != before->kind() || inside->type() != before->type())
+                return false;
+            if (inside->opcode() == ZExt32 || inside->opcode() == SExt32)
+                return self(self, inside->child(0), before->child(0));
+            auto* load = inside->as<MemoryValue>();
+            if (!load || !load->isLoad() || load->offset() != before->as<MemoryValue>()->offset() || !valuesBeforeFastLoop.contains(before))
+                return false;
+            Effects effects = load->effects();
+            if (effects.readsMutability != Mutability::Immutable && writes.overlaps(effects.reads))
+                return false;
+            return self(self, load->lastChild(), before->lastChild());
+        };
+        auto invariantValueOfHeaderPhi = [&](Value* phi) -> Value* {
+            auto* upsilons = m_upsilons.find(phi);
+            if (!upsilons)
+                return nullptr;
+            Value* entering = nullptr;
+            for (UpsilonValue* upsilon : *upsilons) {
+                if (loops.belongsTo(upsilon->owner, loop))
+                    continue;
+                if (entering)
+                    return nullptr;
+                entering = upsilon->child(0);
+            }
+            if (!entering || entering->isConstant())
+                return nullptr;
+            for (UpsilonValue* upsilon : *upsilons) {
+                if (loops.belongsTo(upsilon->owner, loop) && !matchesValueBeforeLoop(matchesValueBeforeLoop, upsilon->child(0), entering))
+                    return nullptr;
+            }
+            return entering;
+        };
+        IndexSet<Value*> hoistedPastRemainingGuards;
+        UncheckedKeyHashMap<Value*, bool> remainingGuardConditions;
+        std::optional<IndexSet<BasicBlock*>> rejoiningBlocks;
+        auto slowPathRejoinsLoop = [&](BasicBlock* asked) {
+            if (!rejoiningBlocks) {
+                rejoiningBlocks.emplace();
+                IndexSet<BasicBlock*> seen;
+                Vector<BasicBlock*, 16> worklist { loop.header() };
+                while (!worklist.isEmpty()) {
+                    for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
+                        if (predecessor == loop.header() || !loops.belongsTo(predecessor, loop) || !seen.add(predecessor))
+                            continue;
+                        bool canBeCloned = true;
+                        if (!hotBlocks.contains(predecessor)) {
+                            for (Value* value : *predecessor)
+                                canBeCloned &= canCloneForLoop(value) && !isCall(value) && !value->effects().fence;
+                        }
+                        if (!canBeCloned)
+                            continue;
+                        rejoiningBlocks->add(predecessor);
+                        worklist.append(predecessor);
+                    }
+                }
+            }
+            return rejoiningBlocks->contains(asked);
+        };
+        auto shouldKeepGuardInLoop = [&](BasicBlock* block, BasicBlock* likelySuccessor) {
+            bool usesValueHoistedPastGuards = false;
+            for (Value* child : block->last()->children())
+                usesValueHoistedPastGuards |= hoistedPastRemainingGuards.contains(child);
+            if (!usesValueHoistedPastGuards)
+                return false;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (successor != likelySuccessor && slowPathRejoinsLoop(successor))
+                    return true;
+            }
+            return false;
+        };
         UncheckedKeyHashMap<Value*, bool> hoistedGuardConditions;
         BasicBlock* topTest = nullptr;
         IndexSet<BasicBlock*> blocksReachedWithoutTopTest;
@@ -596,12 +735,15 @@ private:
             valuesBeforeFastLoop.append(value);
             numberOfHoistedValues += emitsInstructions(value);
         };
+        Vector<Value*, 8> variantGuards;
         IndexSet<BasicBlock*> visited;
         for (BasicBlock* block = loop.header(); block && hotBlocks.contains(block) && visited.add(block);) {
             for (Value* value : *block) {
                 if (value->opcode() == Phi) {
-                    Value* only = block == loop.header() || !m_resolvesSingleInputPhis ? nullptr : singleInputInFastVersion(value);
+                    Value* only = !m_resolvesSingleInputPhis ? nullptr : block == loop.header() ? invariantValueOfHeaderPhi(value) : singleInputInFastVersion(value);
                     if (only && isInvariant(only)) {
+                        if (block == loop.header() || hoistedPastRemainingGuards.contains(only))
+                            hoistedPastRemainingGuards.add(value);
                         version.repeatedValues.add(value, only);
                         hoist(value);
                     }
@@ -620,8 +762,17 @@ private:
                     hoist(value);
                     continue;
                 }
-                if (!repeatsHoistedLoad(value) && effects.controlDependent && !allGuardsSoFarAreHoisted && !isBetweenHoistedLoads(value))
-                    continue;
+                bool isPastRemainingGuards = false;
+                if (!repeatsHoistedLoad(value) && effects.controlDependent && !allGuardsSoFarAreHoisted && !isBetweenHoistedLoads(value)) {
+                    if (!sharesAlignedHeaderWithHoistedLoad(value) && !isIndependentOfRemainingGuards(value))
+                        continue;
+                    isPastRemainingGuards = true;
+                }
+                isPastRemainingGuards |= hoistedPastRemainingGuards.contains(withoutRepetition(value));
+                for (Value* child : value->children())
+                    isPastRemainingGuards |= hoistedPastRemainingGuards.contains(child);
+                if (isPastRemainingGuards && hoistedPastRemainingGuards.add(value))
+                    version.numberOfValuesHoistedPastGuards += emitsInstructions(value);
                 repeatsHoistedComputation(value);
                 if (value->opcode() == Select) {
                     if (auto known = hoistedGuardConditions.find(withoutRepetition(value->child(0))); known != hoistedGuardConditions.end())
@@ -641,31 +792,95 @@ private:
             }
             if (block == unswitchedBlock && !hasInvariantChildren(block->last()))
                 return std::nullopt;
-            if (hasInvariantChildren(block->last())) {
+            if (hasInvariantChildren(block->last()) && !shouldKeepGuardInLoop(block, likelySuccessor)) {
                 hoist(block->last());
                 hoistsGuard = true;
                 version.hoistedGuardLikelySuccessors.add(block->last(), likelySuccessor);
                 if (block->last()->opcode() == Branch)
                     hoistedGuardConditions.add(withoutRepetition(block->last()->child(0)), likelySuccessor == block->successorBlock(0));
             } else if (!endsWithPoll(block)) {
+                if (!version.firstIterationSlowPath && block->last()->opcode() == Branch) {
+                    auto valueOnFirstIteration = [&](auto& self, Value* value) -> std::optional<int64_t> {
+                        if (value->hasInt64())
+                            return value->asInt64();
+                        if (value->opcode() == Add && value->type() == Int64) {
+                            auto left = self(self, value->child(0));
+                            auto right = left ? self(self, value->child(1)) : std::nullopt;
+                            if (!right)
+                                return std::nullopt;
+                            return static_cast<int64_t>(static_cast<uint64_t>(*left) + static_cast<uint64_t>(*right));
+                        }
+                        if (value->opcode() != Phi || value->owner != loop.header())
+                            return std::nullopt;
+                        std::optional<int64_t> result;
+                        if (auto* upsilons = m_upsilons.find(value)) {
+                            for (UpsilonValue* upsilon : *upsilons) {
+                                if (loops.belongsTo(upsilon->owner, loop))
+                                    continue;
+                                if (result || !upsilon->child(0)->hasInt64())
+                                    return std::nullopt;
+                                result = upsilon->child(0)->asInt64();
+                            }
+                        }
+                        return result;
+                    };
+                    Value* condition = block->last()->child(0);
+                    bool indexIsFirst = condition->opcode() == Below || condition->opcode() == AboveEqual;
+                    if (indexIsFirst || condition->opcode() == Above || condition->opcode() == BelowEqual) {
+                        bool isTrueInBounds = condition->opcode() == Below || condition->opcode() == Above;
+                        BasicBlock* inBoundsSuccessor = block->successorBlock(isTrueInBounds ? 0 : 1);
+                        auto index = valueOnFirstIteration(valueOnFirstIteration, condition->child(indexIsFirst ? 0 : 1));
+                        auto isZeroExtendedLength = [&](Value* value) {
+                            if (value->opcode() == ZExt32)
+                                return true;
+                            auto* upsilons = value->opcode() == Phi ? m_upsilons.find(value) : nullptr;
+                            if (!upsilons)
+                                return false;
+                            for (UpsilonValue* upsilon : *upsilons) {
+                                if (upsilon->child(0)->opcode() != ZExt32)
+                                    return false;
+                            }
+                            return true;
+                        };
+                        if (index && *index < 0 && isZeroExtendedLength(condition->child(indexIsFirst ? 1 : 0)) && inBoundsSuccessor == likelySuccessor)
+                            version.firstIterationSlowPath = block->successorBlock(isTrueInBounds ? 1 : 0);
+                    }
+                }
+                if (block->last()->opcode() == Branch) {
+                    bool isTaken = likelySuccessor == block->successorBlock(0);
+                    auto known = remainingGuardConditions.add(withoutRepetition(block->last()->child(0)), isTaken);
+                    if (!known.isNewEntry && known.iterator->value == isTaken) {
+                        version.hoistedValueSet.add(block->last());
+                        version.hoistedGuardLikelySuccessors.add(block->last(), likelySuccessor);
+                        ++numberOfHoistedValues;
+                        block = likelySuccessor;
+                        continue;
+                    }
+                }
                 allGuardsSoFarAreHoisted = false;
-                bool comesBack = false;
+                remainingGuardInputsAreKnown = remainingGuardInputsAreKnown && visitTransitiveInputs(block->last(), maxGuardInputs, [&](Value* source) {
+                    remainingGuardInputs.add(source);
+                    return true;
+                });
+                bool slowPathStaysInLoop = false;
                 for (BasicBlock* successor : block->successorBlocks())
-                    comesBack |= successor != likelySuccessor && loops.belongsTo(successor, loop);
-                if (comesBack) {
+                    slowPathStaysInLoop |= successor != likelySuccessor && loops.belongsTo(successor, loop);
+                if (slowPathStaysInLoop) {
                     static constexpr unsigned maxNumberOfSources = 16;
-                    bool changesFromTurnToTurn = false;
+                    bool variesAcrossIterations = false;
                     IndexSet<Value*> seen;
                     Vector<Value*, 16> worklist { block->last() };
-                    for (unsigned count = 0; !worklist.isEmpty() && !changesFromTurnToTurn; ++count) {
+                    for (unsigned count = 0; !worklist.isEmpty() && !variesAcrossIterations; ++count) {
                         Value* value = worklist.takeLast();
                         if (isInvariant(value) || !seen.add(value))
                             continue;
-                        changesFromTurnToTurn = value->opcode() == Phi || count >= maxNumberOfSources;
+                        variesAcrossIterations = value->opcode() == Phi || count >= maxNumberOfSources;
                         for (Value* child : value->children())
                             worklist.append(child);
                     }
-                    version.mayLeaveEveryTurn |= !changesFromTurnToTurn;
+                    version.mayExitEveryIteration |= !variesAcrossIterations;
+                    if (variesAcrossIterations)
+                        variantGuards.append(block->last());
                 }
                 if (!topTest && block != unswitchedBlock && block->last()->opcode() == Branch) {
                     const FrequentedBlock& other = block->successor(block->successorBlock(0) == likelySuccessor ? 1 : 0);
@@ -748,7 +963,7 @@ private:
                         version.comparisonResults.add(value, *outcome);
                 }
             }
-            if (!version.isTopTested && !relationHoldsOnEntry(*version.countedLoop))
+            if (!version.isTopTested && !relationHoldsOnEntry(version))
                 version.comparisonResults.clear();
         }
         if (version.countedLoop && hotBlocks.contains(version.countedLoop->test) && hotBlocks.contains(version.countedLoop->latch))
@@ -760,6 +975,91 @@ private:
             version.hoistedGuardLikelySuccessors.add(version.poll->block->last(), version.poll->continuation);
             version.numberOfOmittedValues += emitsInstructions(version.poll->limit) + emitsInstructions(version.poll->condition) + 1;
         }
+        bool advancesOnEveryPath = version.poll && !version.countedLoop->saturation && version.countedLoop->increases();
+        if (advancesOnEveryPath) {
+            for (UpsilonValue* upsilon : *m_upsilons.find(version.countedLoop->inductionVariable))
+                advancesOnEveryPath &= upsilon->owner == preHeader || upsilon->child(0) == version.countedLoop->next;
+        }
+        auto lagsOneIteration = [&](Value* phi) {
+            const CountedLoop& counted = *version.countedLoop;
+            if (phi->opcode() != Phi || phi->owner != loop.header() || phi == counted.inductionVariable)
+                return false;
+            auto* upsilons = m_upsilons.find(phi);
+            if (!upsilons)
+                return false;
+            auto isStartMinusStep = [&](Value* value) {
+                Value* start = counted.start;
+                if (start->hasInt64())
+                    return value->hasInt64() && value->asInt64() == start->asInt64() - counted.step;
+                return start->opcode() == Add && start->child(1)->hasInt64() && start->child(1)->asInt64() == counted.step && isSameValue(start->child(0), value);
+            };
+            for (UpsilonValue* upsilon : *upsilons) {
+                if (upsilon->owner == preHeader ? !isStartMinusStep(upsilon->child(0)) : upsilon->child(0) != counted.inductionVariable)
+                    return false;
+            }
+            return true;
+        };
+        auto isStoredInLoop = [&](Value* limit) {
+            while (limit->opcode() == ZExt32 || limit->opcode() == SExt32)
+                limit = limit->child(0);
+            auto* load = limit->as<MemoryValue>();
+            if (!load || !load->isLoad())
+                return false;
+            for (unsigned i = loop.size(); i--;) {
+                for (Value* value : *loop.at(i)) {
+                    auto* store = value->as<MemoryValue>();
+                    if (store && store->isStore() && store->range().overlaps(load->range()))
+                        return true;
+                }
+            }
+            return false;
+        };
+        if (advancesOnEveryPath) {
+            static constexpr unsigned maxNumberOfLimits = 4;
+            std::optional<int64_t> knownStart;
+            if (Value* start = version.countedLoop->start; start->hasInt64())
+                knownStart = start->asInt64();
+            else if (start->opcode() == Add && start->child(0)->hasInt64() && start->child(1)->hasInt64())
+                knownStart = static_cast<int64_t>(static_cast<uint64_t>(start->child(0)->asInt64()) + static_cast<uint64_t>(start->child(1)->asInt64()));
+            for (BasicBlock* block : version.hotBlocks) {
+                if (version.isTopTested && blocksReachedWithoutTopTest.contains(block))
+                    continue;
+                for (Value* value : *block) {
+                    bool indexIsFirst = value->opcode() == Below || value->opcode() == AboveEqual;
+                    if ((!indexIsFirst && value->opcode() != Above && value->opcode() != BelowEqual) || version.comparisonResults.contains(value) || version.hoistedValueSet.contains(value))
+                        continue;
+                    Value* index = value->child(indexIsFirst ? 0 : 1);
+                    Value* limit = value->child(indexIsFirst ? 1 : 0);
+                    if (index->type() != Int64 || !isInvariant(limit) || value == version.countedLoop->test->last()->child(0))
+                        continue;
+                    int64_t offset = 0;
+                    if (lagsOneIteration(index))
+                        offset = -version.countedLoop->step;
+                    else if (index != version.countedLoop->inductionVariable) {
+                        if (index->opcode() != Add || index->child(0) != version.countedLoop->inductionVariable || !index->child(1)->hasInt64())
+                            continue;
+                        offset = index->child(1)->asInt64();
+                        if (offset < -maxIterationsPerStrip || offset > maxIterationsPerStrip)
+                            continue;
+                    }
+                    if (knownStart && *knownStart + offset < 0)
+                        continue;
+                    if (isStoredInLoop(limit))
+                        continue;
+                    limit = withoutRepetition(limit);
+                    size_t found = version.indexLimits.findIf([&](auto& indexLimit) { return indexLimit.limit == limit; });
+                    if (found == notFound) {
+                        if (version.indexLimits.size() == maxNumberOfLimits)
+                            continue;
+                        found = version.indexLimits.size();
+                        version.indexLimits.append({ limit, offset, offset });
+                    }
+                    version.indexLimits[found].minOffset = std::min(version.indexLimits[found].minOffset, offset);
+                    version.indexLimits[found].maxOffset = std::max(version.indexLimits[found].maxOffset, offset);
+                    version.comparisonResults.add(value, value->opcode() == Below || value->opcode() == Above);
+                }
+            }
+        }
         for (auto& entry : version.comparisonResults) {
             Value* comparison = entry.key;
             if (version.hoistedValueSet.contains(comparison))
@@ -767,7 +1067,21 @@ private:
             Value* last = comparison->owner->last();
             version.numberOfOmittedValues += emitsInstructions(comparison) + (last->opcode() == Branch && last->child(0) == comparison && m_numberOfUses[comparison] == 1);
         }
+        if (!version.hidesRanges && numberOfClonedValues - numberOfHoistedValues + version.numberOfValuesHoistedPastGuards > maxNumberOfClonedValues) {
+            for (Value* guard : variantGuards) {
+                if (guard->opcode() != Branch || !version.comparisonResults.contains(guard->child(0)))
+                    return std::nullopt;
+            }
+        }
         return version;
+    }
+
+    static bool relationHoldsOnEntry(const Version& version)
+    {
+        CountedLoop loop = *version.countedLoop;
+        if (Value* repeated = version.repeatedValues.get(loop.bound))
+            loop.bound = repeated;
+        return B3::relationHoldsOnEntry(loop);
     }
 
     std::optional<Poll> findPoll(const Version& version)
@@ -843,10 +1157,45 @@ private:
         Origin origin = loop.test->last()->origin();
         Value* hoistedBound = version.hoistedClones.get(loop.bound);
         Value* bound = hoistedBound ? hoistedBound : loop.bound;
+        auto emitEntryGuard = [&](Opcode relation, Value* left, Value* right) {
+            BasicBlock* next = m_proc.addBlock(frequency);
+            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, relation, origin, left, right));
+            block->setSuccessors(FrequentedBlock(next), FrequentedBlock(version.header, FrequencyClass::Rare));
+            block = next;
+            version.fastVersionLastPreHeader = block;
+        };
+        auto constant = [&](int64_t value) {
+            return block->appendNew<Const64Value>(m_proc, origin, value);
+        };
+        static constexpr int64_t maxLimit = 1ll << 62;
+        if (loop.wrapsAroundInt32 && (version.isTopTested || !version.indexLimits.isEmpty())) {
+            if (loop.increases())
+                emitEntryGuard(LessEqual, bound, constant(std::numeric_limits<int32_t>::max() - maxIterationsPerStrip));
+            else
+                emitEntryGuard(GreaterEqual, bound, constant(std::numeric_limits<int32_t>::min() + maxIterationsPerStrip));
+        }
+        Value* clampedBound = bound;
+        if (!version.indexLimits.isEmpty()) {
+            if (loop.isUnsigned())
+                emitEntryGuard(BelowEqual, bound, constant(maxLimit));
+            for (auto& indexLimit : version.indexLimits) {
+                Value* hoistedIndexLimit = version.hoistedClones.get(indexLimit.limit);
+                Value* limit = hoistedIndexLimit ? hoistedIndexLimit : indexLimit.limit;
+                emitEntryGuard(GreaterEqual, loop.start, constant(-indexLimit.minOffset));
+                emitEntryGuard(BelowEqual, limit, constant(maxLimit));
+                Value* last = block->appendNew<Value>(m_proc, Sub, origin, limit, constant(indexLimit.maxOffset + loop.includesEqual()));
+                emitEntryGuard(GreaterEqual, last, constant(0));
+                clampedBound = block->appendNew<Value>(m_proc, Select, origin, block->appendNew<Value>(m_proc, LessThan, origin, last, clampedBound), last, clampedBound);
+            }
+            if (!version.isTopTested)
+                emitEntryGuard(loop.relation, loop.start, clampedBound);
+            version.clampedBound = m_proc.addVariable(Int64);
+            block->appendNew<VariableValue>(m_proc, Set, origin, version.clampedBound, clampedBound);
+        }
         version.bound = m_proc.addVariable(Int64);
         version.stripEnd = m_proc.addVariable(Int64);
         block->appendNew<VariableValue>(m_proc, Set, origin, version.bound, bound);
-        block->appendNew<VariableValue>(m_proc, Set, origin, version.stripEnd, appendStripEnd(m_proc, block, loop, loop.start, bound, !relationHoldsOnEntry(loop)));
+        block->appendNew<VariableValue>(m_proc, Set, origin, version.stripEnd, appendStripEnd(m_proc, block, loop, loop.start, clampedBound, version.clampedBound ? version.isTopTested : !relationHoldsOnEntry(version)));
     }
 
     void splitEdgesIntoSlowPaths()
@@ -1033,6 +1382,13 @@ private:
         Value* nextAtRealTest = get(realTest, inductionVariableNext);
         realTest->appendNew<Value>(m_proc, Branch, origin, realTest->appendNew<Value>(m_proc, loop.relation, origin, nextAtRealTest, get(realTest, version.bound)));
         realTest->setSuccessors(FrequentedBlock(stripPoll, FrequencyClass::Rare), FrequentedBlock(exit));
+        if (version.clampedBound) {
+            BasicBlock* clampedBoundTest = m_proc.addBlock(frequency);
+            realTest->replaceSuccessor(stripPoll, clampedBoundTest);
+            Value* nextAtClampedBoundTest = get(clampedBoundTest, inductionVariableNext);
+            clampedBoundTest->appendNew<Value>(m_proc, Branch, origin, clampedBoundTest->appendNew<Value>(m_proc, loop.relation, origin, nextAtClampedBoundTest, get(clampedBoundTest, version.clampedBound)));
+            clampedBoundTest->setSuccessors(FrequentedBlock(stripPoll), FrequentedBlock(originalLoopLatch, FrequencyClass::Rare));
+        }
 
         Value* limit = m_proc.clone(version.poll->limit);
         limit->as<PatchpointValue>()->setGenerator(RefPtr { m_proc.loopPollGenerator() });
@@ -1050,7 +1406,7 @@ private:
             successor = successor.block() == version.poll->continuation ? FrequentedBlock(nextStrip) : FrequentedBlock(originalLoopLatch, FrequencyClass::Rare);
 
         Value* nextAtNextStrip = get(nextStrip, inductionVariableNext);
-        nextStrip->appendNew<VariableValue>(m_proc, Set, origin, version.stripEnd, appendStripEnd(m_proc, nextStrip, loop, nextAtNextStrip, get(nextStrip, version.bound), false));
+        nextStrip->appendNew<VariableValue>(m_proc, Set, origin, version.stripEnd, appendStripEnd(m_proc, nextStrip, loop, nextAtNextStrip, get(nextStrip, version.clampedBound ? version.clampedBound : version.bound), false));
         nextStrip->appendNew<Value>(m_proc, Jump, origin);
         nextStrip->setSuccessors(FrequentedBlock(version.isTopTested ? clones.get(version.header) : latch));
         if (version.isTopTested)

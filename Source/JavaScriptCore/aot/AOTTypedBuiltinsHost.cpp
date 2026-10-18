@@ -69,6 +69,29 @@ static ALWAYS_INLINE bool copyAndCheckASCII(uint8_t* to, const Latin1Character* 
     return !(bits & 0x80);
 }
 
+static uint8_t* writeLatin1AsUTF8(uint8_t* to, const Latin1Character* from, size_t size)
+{
+    constexpr uint64_t highBits = 0x8080808080808080ull;
+    for (size_t at = 0; at < size;) {
+        for (; at + 8 <= size; at += 8, to += 8) {
+            uint64_t word = WTF::unalignedLoad<uint64_t>(from + at);
+            if (word & highBits)
+                break;
+            WTF::unalignedStore<uint64_t>(to, word);
+        }
+        for (size_t stop = std::min(size, at + 8); at < stop; ++at) {
+            uint8_t character = from[at];
+            if (character < 0x80)
+                *to++ = character;
+            else {
+                *to++ = 0xc0 | character >> 6;
+                *to++ = 0x80 | (character & 0x3f);
+            }
+        }
+    }
+    return to;
+}
+
 static bool tryEncodeRopeAsUTF8(JSString* root, Vector<uint8_t>& bytes)
 {
     static_assert(sizeof(void*) == 8 && std::endian::native == std::endian::little);
@@ -104,8 +127,12 @@ static bool tryEncodeRopeAsUTF8(JSString* root, Vector<uint8_t>& bytes)
         const Latin1Character* characters = impl.span8().data() + offset;
         if (!ensureRoom(count))
             return false;
-        if (!copyAndCheckASCII(cursor, characters, count)) [[unlikely]]
-            return appendConverted(std::span { characters, count }, 2);
+        if (!copyAndCheckASCII(cursor, characters, count)) [[unlikely]] {
+            if (!ensureRoom(count * 2))
+                return false;
+            cursor = writeLatin1AsUTF8(cursor, characters, count);
+            return true;
+        }
         cursor += count;
         return true;
     };

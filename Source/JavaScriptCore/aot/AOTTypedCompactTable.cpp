@@ -748,6 +748,48 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     return true;
 }
 
+bool CompactTable::tryFillEmptySet(JSGlobalObject* globalObject, JSSet* owner, std::span<const WriteBarrier<Unknown>> strings)
+{
+    VM& vm = globalObject->vm();
+    Typed::State* state = stateOf(globalObject);
+    ASSERT(!owner->m_storage && !owner->m_compactTable);
+    if (!state || state->data.usesWideReferences || state->isCounting() || strings.empty() || strings.size() > maxCapacityWithTags)
+        return false;
+    CompactTable* table = create(vm, structureFor(globalObject, state), Width::Narrow, Width::None, strings.size());
+    if (!table->hasTags())
+        return false;
+    constexpr uint64_t ones = 0x0101010101010101ull;
+    uint32_t* keys = table->at<uint32_t>(table->offsetOfKeys());
+    uint64_t tags = 0;
+    uint32_t used = 0;
+    for (auto& string : strings) {
+        JSString* key = asString(string.get());
+        const StringImpl* impl = key->tryGetValueImpl();
+        if (!impl || !canHold(Width::Narrow, key))
+            return false;
+        unsigned hash = impl->hash();
+        uint64_t tag = shortTagOf(hash);
+        uint64_t difference = tags ^ tag * ones;
+        bool isPresent = false;
+        for (uint64_t candidates = (difference - ones) & ~difference & ones << 7 & ((1ull << (used * 8)) - 1); candidates && !isPresent; candidates &= candidates - 1) {
+            const StringImpl* other = uncheckedDowncast<JSString>(MarkedBlockCage::decode(keys[WTF::ctz(candidates) / 8]))->tryGetValueImpl();
+            isPresent = other == impl || (other->existingHash() == hash && equal(other, impl));
+        }
+        if (isPresent)
+            continue;
+        keys[used] = MarkedBlockCage::encode(key);
+        tags |= tag << (used * 8);
+        ++used;
+    }
+    *table->at<uint64_t>(offsetOfIndex()) = tags;
+    WTF::storeStoreFence();
+    table->m_used = used;
+    table->m_alive = used;
+    vm.writeBarrier(table);
+    owner->m_compactTable.set(vm, owner, table);
+    return true;
+}
+
 template<typename Traits>
 bool CompactTable::tryAddAbsent(JSGlobalObject* globalObject, JSOrderedHashTable<Traits>* owner, JSString* key, JSValue value)
 {
