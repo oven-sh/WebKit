@@ -166,6 +166,15 @@ static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
 // Deeper patterns are built eagerly so that YarrPatternConstructor's recursion limit still reports at construction.
 static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
 
+#if ASSERT_ENABLED
+// An error of a YarrPattern build that creation rules out: the Parser refuses a negated class that may contain
+// strings. So no build at compile finds it.
+static bool isRuledOutAtCreation(Yarr::ErrorCode error)
+{
+    return error == Yarr::ErrorCode::NegatedClassSetMayContainStrings;
+}
+#endif
+
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -323,6 +332,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         return;
 
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+    ASSERT(!isRuledOutAtCreation(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -342,6 +352,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     Locker locker { cellLock() };
     
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+    ASSERT(!isRuledOutAtCreation(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -430,6 +441,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     Locker locker { cellLock() };
 
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::MatchOnly);
+    ASSERT(!isRuledOutAtCreation(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -471,6 +483,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     // than the match-only one above, whose capturing fixed-string alternations may have been
     // flattened (dropping their subpatterns) for the JIT.
     Yarr::YarrPattern bytecodePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
+    ASSERT(!isRuledOutAtCreation(m_constructionErrorCode));
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
