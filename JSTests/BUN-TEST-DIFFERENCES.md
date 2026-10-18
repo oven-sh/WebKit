@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 122 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 123 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A9 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -114,6 +114,16 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
+### A10. A URI function whose result has the argument's code units returns the argument
+
+- Fork code: `withStringArgument` and `unchanged` in `runtime/JSGlobalObjectFunctions.cpp`. `encodeURI`,
+  `encodeURIComponent` and `escape` return the argument when every code unit is in the unescaped set. `decodeURI`,
+  `decodeURIComponent` and `unescape` return it when it has no `%`. A 16-bit argument whose code units fit in 8 bits
+  is copied into an 8-bit string instead. Upstream builds every result in a `StringBuilder`.
+- File: `stress/out-of-memory-in-globalFuncUnescape.js`: `unescape` of 2^30 `\u0100` (no `%`) returns the argument
+  where upstream's builder overflows and throws `RangeError: Out of memory`. The test keeps an overflow case through
+  `encodeURIComponent`, whose result is six code units for each input code unit.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -156,7 +166,7 @@ Rules for an edit to an upstream test:
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

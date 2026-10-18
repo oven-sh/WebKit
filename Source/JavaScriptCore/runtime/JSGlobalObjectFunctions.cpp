@@ -44,7 +44,6 @@
 #include <stdio.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
-#include <wtf/HexNumber.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -55,8 +54,49 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// The six URI functions take one argument, read it as a string, and return a string. When no code
+// unit of the argument changes, the result is the argument itself. The callback gets the JSString
+// for that, and its code units.
+template<typename Callback>
+static ALWAYS_INLINE JSValue withStringArgument(JSGlobalObject* globalObject, JSValue argument, Callback callback)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* string = argument.toStringOrNull(globalObject);
+    EXCEPTION_ASSERT(!!scope.exception() == !string);
+    if (!string) [[unlikely]]
+        return { };
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (view->is8Bit())
+        RELEASE_AND_RETURN(scope, callback(string, view->span8()));
+    RELEASE_AND_RETURN(scope, callback(string, view->span16()));
+}
+
+// The result when it has the argument's code units: the argument itself. A 16-bit string whose
+// code units all fit in 8 bits is copied into an 8-bit string instead, as the builder made one
+// before: a caller reads an 8-bit result without a conversion.
 template<typename CharacterType>
-static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNotEscape, std::span<const CharacterType> characters)
+static JSValue unchanged(JSGlobalObject* globalObject, JSString* string, std::span<const CharacterType> characters)
+{
+    if constexpr (sizeof(CharacterType) == 1)
+        return string;
+    else {
+        if (!WTF::charactersAreAllLatin1(characters))
+            return string;
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        std::span<Latin1Character> output;
+        auto impl = StringImpl::tryCreateUninitialized(characters.size(), output);
+        if (!impl) [[unlikely]]
+            return throwOutOfMemoryError(globalObject, scope);
+        StringImpl::copyCharacters(output, characters);
+        return jsString(vm, impl.releaseNonNull());
+    }
+}
+
+template<typename CharacterType>
+static JSValue encode(JSGlobalObject* globalObject, JSString* string, std::span<const CharacterType> characters, const WTF::BitSet<256>& doNotEscape)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -68,32 +108,49 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
         return JSC::throwException(globalObject, scope, createURIError(globalObject, "String contained an illegal UTF-16 sequence."_s));
     };
 
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
-    builder.reserveCapacity(characters.size());
+    // 4-c. If C is in unescapedSet, then R gets the code unit C.
+    auto isUnescaped = [&doNotEscape](CharacterType character) {
+        return character < doNotEscape.size() && doNotEscape.get(character);
+    };
 
-    // 4. Repeat
+    // The leading code units in unescapedSet are copied as they are. When every code unit is,
+    // R is the string.
+    size_t prefixLength = 0;
+    while (prefixLength < characters.size() && isUnescaped(characters[prefixLength]))
+        ++prefixLength;
+    if (prefixLength == characters.size())
+        RELEASE_AND_RETURN(scope, unchanged(globalObject, string, characters));
+
+    // First pass: the length of R, with the checks of step 4-d. One octet becomes the three code
+    // units "%XY".
+    uint64_t outputLength = prefixLength;
     auto* end = std::to_address(characters.end());
-    for (auto* cursor = characters.data(); cursor != end; ++cursor) {
+    for (auto* cursor = characters.data() + prefixLength; cursor != end; ++cursor) {
         auto character = *cursor;
 
-        // 4-c. If C is in unescapedSet, then
-        if (character < doNotEscape.size() && doNotEscape.get(character)) {
-            // 4-c-i. Let S be a String containing only the code unit C.
-            // 4-c-ii. Let R be a new String value computed by concatenating the previous value of R and S.
-            builder.append(static_cast<Latin1Character>(character));
+        if (isUnescaped(character)) {
+            ++outputLength;
             continue;
         }
 
-        // 4-d-i. If the code unit value of C is not less than 0xDC00 and not greater than 0xDFFF, throw a URIError exception.
-        if (U16_IS_TRAIL(character))
-            return throwException();
+        if constexpr (sizeof(CharacterType) == 1) {
+            // 4-d-iv. The UTF-8 transformation of a code unit below 0x80 is one octet, of a code
+            // unit below 0x100 two octets.
+            outputLength += character < 0x80 ? 3 : 6;
+            continue;
+        } else {
+            // 4-d-i. If the code unit value of C is not less than 0xDC00 and not greater than 0xDFFF, throw a URIError exception.
+            if (U16_IS_TRAIL(character))
+                return throwException();
 
-        // 4-d-ii. If the code unit value of C is less than 0xD800 or greater than 0xDBFF, then
-        // 4-d-ii-1. Let V be the code unit value of C.
-        char32_t codePoint;
-        if (!U16_IS_LEAD(character))
-            codePoint = character;
-        else {
+            // 4-d-ii. If the code unit value of C is less than 0xD800 or greater than 0xDBFF, then
+            // 4-d-ii-1. Let V be the code unit value of C. Its UTF-8 transformation is one, two
+            // or three octets.
+            if (!U16_IS_LEAD(character)) {
+                outputLength += character < 0x80 ? 3 : character < 0x800 ? 6 : 9;
+                continue;
+            }
+
             // 4-d-iii. Else,
             // 4-d-iii-1. Increase k by 1.
             ++cursor;
@@ -102,14 +159,40 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
             if (cursor == end)
                 return throwException();
 
-            // 4-d-iii-3. Let kChar be the code unit value of the code unit at index k within string.
-            auto trail = *cursor;
-
             // 4-d-iii-4. If kChar is less than 0xDC00 or greater than 0xDFFF, throw a URIError exception.
-            if (!U16_IS_TRAIL(trail))
+            if (!U16_IS_TRAIL(*cursor))
                 return throwException();
 
-            // 4-d-iii-5. Let V be UTF16Decode(C, kChar).
+            // 4-d-iii-5. Let V be UTF16Decode(C, kChar). Its UTF-8 transformation is four octets.
+            outputLength += 12;
+        }
+    }
+
+    if (outputLength > StringImpl::MaxLength) [[unlikely]]
+        return throwOutOfMemoryError(globalObject, scope);
+    std::span<Latin1Character> output;
+    auto impl = StringImpl::tryCreateUninitialized(static_cast<size_t>(outputLength), output);
+    if (!impl) [[unlikely]]
+        return throwOutOfMemoryError(globalObject, scope);
+
+    // Second pass: fill R. The first pass checked the surrogates.
+    StringImpl::copyCharacters(output.first(prefixLength), characters.first(prefixLength));
+    auto* out = output.data() + prefixLength;
+    for (auto* cursor = characters.data() + prefixLength; cursor != end; ++cursor) {
+        auto character = *cursor;
+
+        if (isUnescaped(character)) {
+            *out++ = static_cast<Latin1Character>(character);
+            continue;
+        }
+
+        char32_t codePoint;
+        if constexpr (sizeof(CharacterType) == 1)
+            codePoint = character;
+        else if (!U16_IS_LEAD(character))
+            codePoint = character;
+        else {
+            auto trail = *++cursor;
             codePoint = U16_GET_SUPPLEMENTARY(character, trail);
         }
 
@@ -128,34 +211,44 @@ static JSValue encode(JSGlobalObject* globalObject, const WTF::BitSet<256>& doNo
             // 4-d-vi-2. Let S be a String containing three code units "%XY" where XY are two uppercase hexadecimal digits encoding the value of jOctet.
             // 4-d-vi-3. Let R be a new String value computed by concatenating the previous value of R and S.
             auto octet = utf8OctetsBuffer[index];
-            std::array<Latin1Character, 3> escaped { '%', static_cast<Latin1Character>(upperNibbleToASCIIHexDigit(octet)), static_cast<Latin1Character>(lowerNibbleToASCIIHexDigit(octet)) };
-            builder.append(std::span<const Latin1Character> { escaped });
+            *out++ = '%';
+            *out++ = upperNibbleToASCIIHexDigit(octet);
+            *out++ = lowerNibbleToASCIIHexDigit(octet);
         }
     }
+    ASSERT(out == std::to_address(output.end()));
 
-    if (builder.hasOverflowed()) [[unlikely]]
-        return throwOutOfMemoryError(globalObject, scope);
-    return jsString(vm, builder.toString());
+    return jsString(vm, impl.releaseNonNull());
 }
 
 static JSValue encode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotEscape)
 {
-    return toStringView(globalObject, argument, [&] (StringView view) {
-        if (view.is8Bit())
-            return encode(globalObject, doNotEscape, view.span8());
-        return encode(globalObject, doNotEscape, view.span16());
+    return withStringArgument(globalObject, argument, [&](JSString* string, auto characters) {
+        return encode(globalObject, string, characters, doNotEscape);
     });
 }
 
 template <typename CharType>
 ALWAYS_INLINE
-static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> characters, const WTF::BitSet<256>& doNotUnescape, bool strict)
+static JSValue decode(JSGlobalObject* globalObject, JSString* string, std::span<const CharType> characters, const WTF::BitSet<256>& doNotUnescape, bool strict)
 {
+    // Only an escape sequence changes, and each starts with '%'. The code units before the first
+    // one are copied as they are.
+    size_t k = WTF::find(characters, static_cast<CharType>('%'));
+    if (k == WTF::notFound)
+        return unchanged(globalObject, string, characters);
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     StringBuilder builder(OverflowPolicy::RecordOverflow);
-    size_t k = 0;
+    if constexpr (sizeof(CharType) == 1)
+        builder.append(characters.first(k));
+    else {
+        // A bulk append of 16-bit code units makes the builder 16-bit. One at a time, it stays
+        // 8-bit while it can.
+        k = 0;
+    }
     char16_t u = 0;
     while (k < characters.size()) {
         const CharType* p = characters.data() + k;
@@ -224,10 +317,8 @@ static JSValue decode(JSGlobalObject* globalObject, std::span<const CharType> ch
 
 static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF::BitSet<256>& doNotUnescape, bool strict)
 {
-    return toStringView(globalObject, argument, [&] (StringView view) {
-        if (view.is8Bit())
-            return decode(globalObject, view.span8(), doNotUnescape, strict);
-        return decode(globalObject, view.span16(), doNotUnescape, strict);
+    return withStringArgument(globalObject, argument, [&](JSString* string, auto characters) {
+        return decode(globalObject, string, characters, doNotUnescape, strict);
     });
 }
 
@@ -615,103 +706,116 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEncodeURIComponent, (JSGlobalObject* globalOb
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncEscape, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(toStringView(globalObject, callFrame->argument(0), [&] (StringView view) -> JSString* {
-        static constexpr auto doNotEscape = makeLatin1CharacterBitSet(
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "abcdefghijklmnopqrstuvwxyz"
-            "0123456789"
-            "*+-./@_"_s
-        );
+    static constexpr auto doNotEscape = makeLatin1CharacterBitSet(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789"
+        "*+-./@_"_s
+    );
+
+    return JSValue::encode(withStringArgument(globalObject, callFrame->argument(0), [&](JSString* string, auto characters) -> JSValue {
+        using CharacterType = typename decltype(characters)::value_type;
 
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        StringBuilder builder(OverflowPolicy::RecordOverflow);
-        if (view.is8Bit()) {
-            for (auto character : view.span8()) {
-                if (doNotEscape.get(character))
-                    builder.append(character);
-                else
-                    builder.append('%', hex(character, 2));
-            }
-        } else {
-            for (auto character : view.span16()) {
-                if (character >= doNotEscape.size())
-                    builder.append("%u"_s, hex(static_cast<uint8_t>(character >> 8), 2), hex(static_cast<uint8_t>(character), 2));
-                else if (doNotEscape.get(static_cast<Latin1Character>(character)))
-                    builder.append(character);
-                else
-                    builder.append('%', hex(character, 2));
-            }
+        auto isUnescaped = [](CharacterType character) {
+            return character < doNotEscape.size() && doNotEscape.get(character);
+        };
+
+        size_t prefixLength = 0;
+        while (prefixLength < characters.size() && isUnescaped(characters[prefixLength]))
+            ++prefixLength;
+        if (prefixLength == characters.size())
+            RELEASE_AND_RETURN(scope, unchanged(globalObject, string, characters));
+
+        // A code unit below 0x100 becomes "%XY", any other "%uWXYZ".
+        uint64_t outputLength = prefixLength;
+        for (auto character : characters.subspan(prefixLength)) {
+            if (isUnescaped(character))
+                ++outputLength;
+            else
+                outputLength += character < 0x100 ? 3 : 6;
         }
 
-        if (builder.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return { };
+        if (outputLength > StringImpl::MaxLength) [[unlikely]]
+            return throwOutOfMemoryError(globalObject, scope);
+        std::span<Latin1Character> output;
+        auto impl = StringImpl::tryCreateUninitialized(static_cast<size_t>(outputLength), output);
+        if (!impl) [[unlikely]]
+            return throwOutOfMemoryError(globalObject, scope);
+
+        StringImpl::copyCharacters(output.first(prefixLength), characters.first(prefixLength));
+        auto* out = output.data() + prefixLength;
+        for (auto character : characters.subspan(prefixLength)) {
+            if (isUnescaped(character)) {
+                *out++ = static_cast<Latin1Character>(character);
+                continue;
+            }
+            unsigned code = character;
+            *out++ = '%';
+            if (code >= 0x100) {
+                *out++ = 'u';
+                *out++ = upperNibbleToASCIIHexDigit(static_cast<uint8_t>(code >> 8));
+                *out++ = lowerNibbleToASCIIHexDigit(static_cast<uint8_t>(code >> 8));
+            }
+            *out++ = upperNibbleToASCIIHexDigit(static_cast<uint8_t>(code));
+            *out++ = lowerNibbleToASCIIHexDigit(static_cast<uint8_t>(code));
         }
-        return jsString(vm, builder.toString());
+        ASSERT(out == std::to_address(output.end()));
+
+        return jsString(vm, impl.releaseNonNull());
     }));
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncUnescape, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(toStringView(globalObject, callFrame->argument(0), [&] (StringView view) -> JSString* {
-        // We use int for k and length intentionally since we would like to evaluate
-        // the condition `k <= length -6` even if length is less than 6.
-        int k = 0;
-        int length = view.length();
+    return JSValue::encode(withStringArgument(globalObject, callFrame->argument(0), [&](JSString* string, auto characters) -> JSValue {
+        using CharacterType = typename decltype(characters)::value_type;
+
+        // Only an escape sequence changes, and each starts with '%'. The code units before the
+        // first one are copied as they are.
+        size_t firstEscape = WTF::find(characters, static_cast<CharacterType>('%'));
+        if (firstEscape == WTF::notFound)
+            return unchanged(globalObject, string, characters);
 
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+        // We use int for k and length intentionally since we would like to evaluate
+        // the condition `k <= length -6` even if length is less than 6.
+        int k = static_cast<int>(firstEscape);
+        int length = static_cast<int>(characters.size());
+
         StringBuilder builder(OverflowPolicy::RecordOverflow);
         builder.reserveCapacity(length);
-
-        if (view.is8Bit()) {
-            auto characters = view.span8();
-            Latin1Character converted;
-            while (k < length) {
-                auto c = characters.subspan(k);
-                if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
-                    if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
-                        builder.append(convertUnicode(c[2], c[3], c[4], c[5]));
-                        k += 6;
-                        continue;
-                    }
-                } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    converted = Latin1Character(convertHex(c[1], c[2]));
-                    c = span(converted);
-                    k += 2;
-                }
-                builder.append(c.front());
-                ++k;
-            }
-        } else {
-            auto characters = view.span16();
-
-            while (k < length) {
-                auto c = characters.subspan(k);
-                char16_t converted;
-                if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
-                    if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
-                        converted = convertUnicode(c[2], c[3], c[4], c[5]);
-                        c = span(converted);
-                        k += 5;
-                    }
-                } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
-                    converted = char16_t(convertHex(c[1], c[2]));
-                    c = span(converted);
-                    k += 2;
-                }
-                ++k;
-                builder.append(c.front());
-            }
+        if constexpr (sizeof(CharacterType) == 1)
+            builder.append(characters.first(firstEscape));
+        else {
+            // A bulk append of 16-bit code units makes the builder 16-bit. One at a time, it stays
+            // 8-bit while it can.
+            k = 0;
         }
 
-        if (builder.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return { };
+        while (k < length) {
+            auto c = characters.subspan(k);
+            if (c[0] == '%' && k <= length - 6 && c[1] == 'u') {
+                if (isASCIIHexDigit(c[2]) && isASCIIHexDigit(c[3]) && isASCIIHexDigit(c[4]) && isASCIIHexDigit(c[5])) {
+                    builder.append(convertUnicode(c[2], c[3], c[4], c[5]));
+                    k += 6;
+                    continue;
+                }
+            } else if (c[0] == '%' && k <= length - 3 && isASCIIHexDigit(c[1]) && isASCIIHexDigit(c[2])) {
+                builder.append(static_cast<Latin1Character>(convertHex(c[1], c[2])));
+                k += 3;
+                continue;
+            }
+            builder.append(c[0]);
+            ++k;
         }
+
+        if (builder.hasOverflowed()) [[unlikely]]
+            return throwOutOfMemoryError(globalObject, scope);
         return jsString(vm, builder.toString());
     }));
 }
