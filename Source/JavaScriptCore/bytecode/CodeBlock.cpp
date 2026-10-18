@@ -4010,18 +4010,6 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         auto bytecode = bytecodeAt(i);
         int basicBlockStartOffset = bytecode.m_textOffset;
         int basicBlockEndOffset = bytecode.m_textEndOffset ? bytecode.m_textEndOffset - 1 : sourceOffset() + ownerExecutable()->source().length() - 1;
-        if (bytecode.m_isAfterStatement) {
-            // It ends where what is after a later one of the same statements starts.
-            for (size_t next = i + 1; next < offsetsLength; next++) {
-                auto nextBytecode = bytecodeAt(next);
-                if (nextBytecode.m_textOffset <= basicBlockStartOffset || nextBytecode.m_textOffset > basicBlockEndOffset)
-                    break;
-                if (nextBytecode.m_isAfterStatement && nextBytecode.m_textEndOffset == bytecode.m_textEndOffset) {
-                    basicBlockEndOffset = nextBytecode.m_textOffset - 1;
-                    break;
-                }
-            }
-        }
         return BasicBlockLocation::Gap { basicBlockStartOffset, basicBlockEndOffset };
     });
     auto sortedBasicBlocks = basicBlocks;

@@ -460,7 +460,6 @@ op :profile_control_flow,
     args: {
         textOffset: int,
         textEndOffset: int,
-        isAfterStatement: bool,
     },
     metadata: {
         basicBlockLocation: BasicBlockLocation.*,
