@@ -423,6 +423,12 @@ void MarkedBlock::noteMarkedSlow()
     directory->setIsMarkingRetired(&handle(), true);
 }
 
+NEVER_INLINE void MarkedBlock::Handle::noteNeedsDestructionSlow()
+{
+    Locker locker { m_directory->bitvectorLock() };
+    m_directory->setIsDestructible(this, true);
+}
+
 void MarkedBlock::Handle::removeFromDirectory()
 {
     if (!m_directory)

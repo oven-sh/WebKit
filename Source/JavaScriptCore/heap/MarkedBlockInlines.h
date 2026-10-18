@@ -506,11 +506,17 @@ inline bool MarkedBlock::Handle::isEmpty()
     return m_directory->isEmpty(this);
 }
 
-inline void MarkedBlock::Handle::setIsDestructible(bool value)
+inline void MarkedBlock::Handle::noteNeedsDestruction()
 {
-    Locker locker { m_directory->bitvectorLock() };
+    // The bit stays set until a sweep finds the block empty, so only the first notification in a block has
+    // something to write. The read takes no lock. That is sound while a directory has one mutator: only the
+    // mutator resizes the bits, and this bit is written by the mutator or while the mutator is stopped. A
+    // directory with several mutators must lock here.
+    // This deviates from upstream, which declined the read (WebKit/WebKit#76031) and locks on every call.
+    // When upstream's body of this function is merged, that body belongs in noteNeedsDestructionSlow().
     m_directory->assertIsMutatorOrMutatorIsStopped();
-    return m_directory->setIsDestructible(this, value);
+    if (!m_directory->isDestructible(this)) [[unlikely]]
+        noteNeedsDestructionSlow();
 }
 
 inline MarkedBlock::Handle::EmptyMode MarkedBlock::Handle::emptyMode()
