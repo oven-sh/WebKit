@@ -185,6 +185,7 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
+    bool m_hookGaveNoStack : 1;
     JSValue stackWithHeader(VM&, String&& frames);
 #endif
 };

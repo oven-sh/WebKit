@@ -62,6 +62,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #endif // ENABLE(WEBASSEMBLY)
 #if USE(BUN_JSC_ADDITIONS)
     , m_stackStringIsFramesOnly(false)
+    , m_hookGaveNoStack(false)
 #endif
 {
 }
@@ -477,7 +478,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
     auto& fn = vm.onComputeErrorInfoJSValue();
     // The hook's stack begins with "name: message", so one captured with Error.stackTraceLimit = 0 is not empty.
-    if (fn && m_stackTrace) {
+    if (fn && m_stackTrace && (!m_stackTrace->isEmpty() || !m_hookGaveNoStack)) {
         m_errorInfoMaterialized = true;
         bool hasFrames = !m_stackTrace->isEmpty();
         DeferGCForAWhile deferGC(vm);
@@ -510,7 +511,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             return true;
         }
 
-        // The hook gave an error with no frames no stack: what follows is as if it had not been asked.
+        // The hook gave an error with no frames no stack. It is not asked again, and what follows is as if it had not been asked.
+        m_hookGaveNoStack = true;
         m_errorInfoMaterialized = false;
     }
 
