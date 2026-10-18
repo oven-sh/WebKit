@@ -316,7 +316,7 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
     // (An array whose elements stay in copy-on-write storage goes to JSObject's implementation, which refuses for it and serves
     // another receiver. Not for length, which JSObject's implementation does not know this array has: the branch below does both.)
-    if (!hasTypedContiguous(thisObject->indexingMode()) && !thisObject->tryMakeWritable(vm) && propertyName != vm.propertyNames->length) [[unlikely]]
+    if (!thisObject->tryMakeWritable(vm) && propertyName != vm.propertyNames->length) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
 
     if (propertyName == vm.propertyNames->length) {
@@ -559,22 +559,6 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     storage->setLength(newLength);
 
     return true;
-}
-
-JSArray* JSArray::tryCreateWithTypedContiguous(VM& vm, Structure* structure, unsigned length, unsigned minCapacity)
-{
-    RELEASE_ASSERT(structure->indexingMode() == ArrayWithTypedContiguous && !structure->outOfLineCapacity());
-    if (std::max(length, minCapacity) > MAX_STORAGE_VECTOR_LENGTH)
-        return nullptr;
-    unsigned capacity = typedContiguousCapacityFor(std::max(length, minCapacity));
-    void* base = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(uint32_t)), nullptr, AllocationFailureMode::ReturnNull);
-    if (!base)
-        return nullptr;
-    Butterfly* butterfly = Butterfly::fromBase(base, 0, 0);
-    butterfly->setVectorLength(capacity);
-    butterfly->setPublicLength(length);
-    memset(butterfly->indexingPayload<uint32_t>(), 0, capacity * sizeof(uint32_t));
-    return createWithButterfly(vm, nullptr, structure, butterfly);
 }
 
 bool JSArray::fastFill(VM& vm, unsigned startIndex, unsigned endIndex, JSValue value)
@@ -1371,23 +1355,6 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (hasTypedContiguous(indexingMode())) [[unlikely]] {
-        Butterfly* typedButterfly = this->butterfly();
-        unsigned typedLength = typedButterfly->publicLength();
-        if (newLength <= typedLength) {
-            auto* words = typedButterfly->indexingPayload<volatile uint32_t>();
-            for (unsigned i = newLength; i < typedLength; ++i)
-                words[i] = 0;
-            typedButterfly->setPublicLength(newLength);
-            return true;
-        }
-        if (newLength < MIN_SPARSE_ARRAY_INDEX && tryGrowTypedContiguous(vm, newLength)) {
-            this->butterfly()->setPublicLength(newLength);
-            return true;
-        }
-        convertTypedContiguousToContiguous(vm);
-    }
-
     Butterfly* butterfly = this->butterfly();
     switch (indexingMode()) {
     case ArrayClass:
@@ -1478,20 +1445,6 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (hasTypedContiguous(indexingMode())) [[unlikely]] {
-        Butterfly* typedButterfly = this->butterfly();
-        unsigned typedLength = typedButterfly->publicLength();
-        if (!typedLength)
-            return jsUndefined();
-        uint32_t& word = typedButterfly->indexingPayload<uint32_t>()[typedLength - 1];
-        if (word) {
-            JSValue element = decodeTypedElement(word);
-            word = 0;
-            typedButterfly->setPublicLength(typedLength - 1);
-            return element;
-        }
-    }
 
     if (!tryMakeWritable(vm)) [[unlikely]] {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
@@ -2145,8 +2098,7 @@ void JSArray::fillArgList(JSGlobalObject* globalObject, MarkedArgumentBuffer& ar
     case ArrayClass:
         return;
 
-    case ArrayWithUndecided:
-    case ArrayWithTypedContiguous: {
+    case ArrayWithUndecided: {
         vector = nullptr;
         vectorEnd = 0;
         break;
@@ -2221,8 +2173,7 @@ void JSArray::copyToArguments(JSGlobalObject* globalObject, JSValue* firstElemen
     case ArrayClass:
         return;
         
-    case ArrayWithUndecided:
-    case ArrayWithTypedContiguous: {
+    case ArrayWithUndecided: {
         vector = nullptr;
         vectorEnd = 0;
         break;
@@ -2428,7 +2379,7 @@ JSArray* tryCloneArrayFromFast(JSGlobalObject* globalObject, JSValue arrayValue)
         return nullptr;
 
     IndexingType sourceType = array->indexingType();
-    if (shouldUseSlowPut(sourceType) || sourceType == ArrayClass || hasTypedContiguous(sourceType)) [[unlikely]]
+    if (shouldUseSlowPut(sourceType) || sourceType == ArrayClass) [[unlikely]]
         return nullptr;
 
     Butterfly* butterfly= array->butterfly();

@@ -1188,19 +1188,19 @@ public:
 
     void prepare(Code& code)
     {
-        m_ends[GP] = Tmp::absoluteIndexEnd(code, GP);
-        m_ends[FP] = Tmp::absoluteIndexEnd(code, FP);
-        counts.fill(0, m_ends[GP] + m_ends[FP]);
-        defKinds.fill(0, m_ends[GP] + m_ends[FP]);
-        gpConstants.grow(m_ends[GP]);
-        fpConstants.grow(m_ends[FP]);
-        fpConstantWidths.grow(m_ends[FP]);
+        m_absoluteIndexEnds[GP] = Tmp::absoluteIndexEnd(code, GP);
+        m_absoluteIndexEnds[FP] = Tmp::absoluteIndexEnd(code, FP);
+        counts.fill(0, m_absoluteIndexEnds[GP] + m_absoluteIndexEnds[FP]);
+        defKinds.fill(0, m_absoluteIndexEnds[GP] + m_absoluteIndexEnds[FP]);
+        gpConstants.grow(m_absoluteIndexEnds[GP]);
+        fpConstants.grow(m_absoluteIndexEnds[FP]);
+        fpConstantWidths.grow(m_absoluteIndexEnds[FP]);
     }
 
     template<Bank bank>
     bool isConstDef(unsigned absoluteIndex) const
     {
-        if (absoluteIndex >= m_ends[bank])
+        if (absoluteIndex >= m_absoluteIndexEnds[bank])
             return false;
         return defKinds[linearIndex<bank>(absoluteIndex)] == hasConstDef;
     }
@@ -1237,10 +1237,10 @@ private:
     template<Bank bank>
     unsigned linearIndex(unsigned absoluteIndex) const
     {
-        return bank == GP ? absoluteIndex : m_ends[GP] + absoluteIndex;
+        return bank == GP ? absoluteIndex : m_absoluteIndexEnds[GP] + absoluteIndex;
     }
 
-    std::array<unsigned, numBanks> m_ends { };
+    std::array<unsigned, numBanks> m_absoluteIndexEnds { };
 };
 
 class TmpDataMap {
@@ -5881,8 +5881,6 @@ private:
                     Reg away = spilled ? Reg() : assignedReg(gapTmp);
                     m_movesAroundClobbers.append({ block->index(), precedingIndex, false, home, away });
                     m_movesAroundClobbers.append({ block->index(), instIndex + 1, true, away, home });
-                    if (Options::airGreedyRegAllocRecordsFalseMoveForTesting() && away)
-                        m_movesAroundClobbers.append({ block->index(), precedingIndex, false, away, home });
                 }
                 insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #else

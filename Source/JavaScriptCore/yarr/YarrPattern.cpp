@@ -2812,16 +2812,16 @@ public:
         }
 #if USE(BUN_JSC_ADDITIONS)
 
-        m_characterSpans.append(CharacterSpans());
+        m_characterRanges.append(CharacterRanges());
         for (auto& alternative : m_pattern.m_body->m_alternatives)
             markPossessiveTerms(*alternative, nullptr);
-        m_characterSpans.clear();
+        m_characterRanges.clear();
         m_characterSpansIndexes.clear();
 #endif
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    using CharacterSpans = Vector<std::pair<char32_t, char32_t>, 4>;
+    using CharacterRanges = Vector<std::pair<char32_t, char32_t>, 4>;
 
     struct FirstCharacterSet {
         Vector<unsigned, 8> spanIndexes;
@@ -2845,7 +2845,7 @@ public:
     static constexpr unsigned maxSpansSweptForDeterminism = 8192;
     static constexpr unsigned maxFixedPrefixCompared = 32;
 
-    static bool buildCharacterSpans(const PatternTerm& term, CharacterSpans& spans)
+    static bool buildCharacterSpans(const PatternTerm& term, CharacterRanges& spans)
     {
         constexpr char32_t lastCodePoint = 0x10ffff;
         if (term.type == PatternTerm::Type::PatternCharacter) {
@@ -2865,7 +2865,7 @@ public:
         const CharacterClass& characterClass = *term.characterClass;
         if (characterClass.hasStrings())
             return false;
-        CharacterSpans members;
+        CharacterRanges members;
         if (characterClass.m_anyCharacter)
             members.append({ 0, lastCodePoint });
         else if (!characterClass.hasSingleCharacters()) {
@@ -2911,10 +2911,10 @@ public:
             : static_cast<uint64_t>(std::bit_cast<uintptr_t>(term.characterClass)) << 1 | term.invert();
         auto result = m_characterSpansIndexes.add(key, unknownCharacterSpans);
         if (result.isNewEntry) {
-            CharacterSpans spans;
+            CharacterRanges spans;
             if (buildCharacterSpans(term, spans)) {
-                result.iterator->value = m_characterSpans.size();
-                m_characterSpans.append(WTF::move(spans));
+                result.iterator->value = m_characterRanges.size();
+                m_characterRanges.append(WTF::move(spans));
             }
         }
         return result.iterator->value;
@@ -2926,10 +2926,10 @@ public:
         return characterSpansIndex(lineTerminator);
     }
 
-    static bool spansOverlap(const CharacterSpans& one, const CharacterSpans& other)
+    static bool spansOverlap(const CharacterRanges& one, const CharacterRanges& other)
     {
-        const CharacterSpans& shorter = one.size() <= other.size() ? one : other;
-        const CharacterSpans& longer = one.size() <= other.size() ? other : one;
+        const CharacterRanges& shorter = one.size() <= other.size() ? one : other;
+        const CharacterRanges& longer = one.size() <= other.size() ? other : one;
         for (auto [begin, end] : shorter) {
             auto found = std::lower_bound(longer.begin(), longer.end(), begin, [](const auto& span, char32_t value) {
                 return span.second < value;
@@ -2946,7 +2946,7 @@ public:
             return true;
         for (unsigned index : one.spanIndexes) {
             for (unsigned otherIndex : other.spanIndexes) {
-                if (index == otherIndex || spansOverlap(m_characterSpans[index], m_characterSpans[otherIndex]))
+                if (index == otherIndex || spansOverlap(m_characterRanges[index], m_characterRanges[otherIndex]))
                     return true;
             }
         }
@@ -2962,7 +2962,7 @@ public:
     {
         unsigned index = characterSpansIndex(term);
         unsigned otherSide = characterSpansIndex(PatternTerm(wordClass, matchesWordCharacters, m_flags));
-        return index != unknownCharacterSpans && otherSide != unknownCharacterSpans && !spansOverlap(m_characterSpans[index], m_characterSpans[otherSide]);
+        return index != unknownCharacterSpans && otherSide != unknownCharacterSpans && !spansOverlap(m_characterRanges[index], m_characterRanges[otherSide]);
     }
 
     static bool isFixedCharacterTerm(const PatternTerm& term)
@@ -3096,7 +3096,7 @@ public:
             unsigned otherSpans = characterSpansIndex(otherTerm);
             if (spans == unknownCharacterSpans || otherSpans == unknownCharacterSpans)
                 return false;
-            if (spans != otherSpans && !spansOverlap(m_characterSpans[spans], m_characterSpans[otherSpans]))
+            if (spans != otherSpans && !spansOverlap(m_characterRanges[spans], m_characterRanges[otherSpans]))
                 return true;
             if (term.quantityMaxCount == ++taken) {
                 ++index;
@@ -3214,7 +3214,7 @@ public:
                     continue;
                 }
                 for (unsigned index : firstCharacters[i]->spanIndexes) {
-                    for (auto [begin, end] : m_characterSpans[index])
+                    for (auto [begin, end] : m_characterRanges[index])
                         spans.append({ begin, end, i });
                 }
                 if (spans.size() > maxSpansSweptForDeterminism)
@@ -3329,7 +3329,7 @@ public:
         return isDeterministic;
     }
 
-    Vector<CharacterSpans> m_characterSpans;
+    Vector<CharacterRanges> m_characterRanges;
     HashMap<uint64_t, unsigned> m_characterSpansIndexes;
 #endif
 

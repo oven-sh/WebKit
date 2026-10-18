@@ -63,8 +63,4 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncEntries);
 
-JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGet);
-JSC_DECLARE_HOST_FUNCTION(mapProtoFuncHas);
-JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSet);
-
 } // namespace JSC

@@ -819,7 +819,6 @@ void Options::notifyOptionsChanged()
     if (Options::useAOT()) {
         Options::useImmutableIntrinsics() = true;
         Options::useJIT() = false;
-        Options::useMiniVMModeWithoutJIT() = false;
         if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
             Options::heapGrowthMaxIncrease() = 1;
         Options::sizeClassProgression() = sizeClassProgressionWithAOT();

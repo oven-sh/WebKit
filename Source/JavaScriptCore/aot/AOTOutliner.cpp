@@ -99,7 +99,7 @@ struct Family {
     bool allAreIdentical;
 };
 
-void sortByHashAndUnit(std::span<Window> windows, std::span<Window> room)
+void sortByHashAndUnit(std::span<Window> windows, std::span<Window> scratch)
 {
     constexpr unsigned numberOfParts = 256;
     auto isAhead = [](const Window& a, const Window& b) {
@@ -119,10 +119,10 @@ void sortByHashAndUnit(std::span<Window> windows, std::span<Window> room)
         starts[part + 1] += starts[part];
     auto next = starts;
     for (auto& window : windows)
-        room[next[partOf(window)]++] = window;
+        scratch[next[partOf(window)]++] = window;
     for (unsigned part = 0; part < numberOfParts; ++part)
-        std::ranges::sort(room.subspan(starts[part], starts[part + 1] - starts[part]), isAhead);
-    memcpySpan(windows, room);
+        std::ranges::sort(scratch.subspan(starts[part], starts[part + 1] - starts[part]), isAhead);
+    memcpySpan(windows, scratch);
 }
 
 void zeroOnPool(std::span<uint8_t> bytes)
@@ -149,7 +149,7 @@ void fillWithZeroesOnPool(Vector<T>& vector, size_t size)
 }
 
 template<typename T, typename IsAhead>
-void sortOnPool(Vector<T>& list, const IsAhead& isAhead)
+void parallelSort(Vector<T>& list, const IsAhead& isAhead)
 {
     constexpr size_t numberOfRuns = 16;
     constexpr size_t fewestForPool = 1 << 13;
@@ -192,7 +192,7 @@ public:
             for (unsigned length = longestWindow; length >= shortestWindow; --length)
                 selectWindowsOf(length);
         }
-        sortOnPool(m_chosenLocations, [](const ChosenLocation& a, const ChosenLocation& b) {
+        parallelSort(m_chosenLocations, [](const ChosenLocation& a, const ChosenLocation& b) {
             return a.function != b.function ? a.function < b.function : a.place.offset < b.place.offset;
         });
         Vector<uint32_t> functionFirstLocations;
@@ -204,13 +204,13 @@ public:
             uint32_t first = functionFirstLocations[number];
             uint32_t end = number + 1 < functionFirstLocations.size() ? functionFirstLocations[number + 1] : m_chosenLocations.size();
             m_result.places[m_chosenLocations[first].function] = Vector<OutlinedSite>(end - first, [&](size_t i) {
-                OutlinedSite place = m_chosenLocations[first + i].place;
-                place.offset = m_offsets[place.offset];
-                return place;
+                OutlinedSite site = m_chosenLocations[first + i].place;
+                site.offset = m_offsets[site.offset];
+                return site;
             });
         });
         report();
-        Typed::destroyOnHelperThread(std::tuple { WTF::move(m_firstUnit), WTF::move(m_decoded), WTF::move(m_sums), WTF::move(m_offsets), WTF::move(m_lengths), WTF::move(m_flags), WTF::move(m_runs), WTF::move(m_longestRepeatCandidate), WTF::move(m_active), WTF::move(m_stillActive), WTF::move(m_found), WTF::move(m_windows) });
+        Typed::destroyOnHelperThread(std::tuple { WTF::move(m_firstUnit), WTF::move(m_decoded), WTF::move(m_prefixHashes), WTF::move(m_offsets), WTF::move(m_lengths), WTF::move(m_flags), WTF::move(m_runs), WTF::move(m_longestRepeatCandidate), WTF::move(m_active), WTF::move(m_stillActive), WTF::move(m_found), WTF::move(m_windows) });
         return WTF::move(m_result);
     }
 
@@ -278,7 +278,7 @@ private:
         m_firstUnit.append(safeCast<uint32_t>(total));
         m_numberOfUnits = safeCast<uint32_t>(total);
         m_numberOfCopies = codeSize / stubCallReach + 1;
-        fillWithZeroesOnPool(m_sums, total + 1);
+        fillWithZeroesOnPool(m_prefixHashes, total + 1);
         fillWithZeroesOnPool(m_offsets, total);
         fillWithZeroesOnPool(m_lengths, total);
         fillWithZeroesOnPool(m_flags, total);
@@ -297,8 +297,8 @@ private:
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
             uint64_t sum = 0;
             forEachUnitIn(chunk, [&](size_t unit) {
-                sum = m_sums[unit + 1] + sum * sumsBase;
-                m_sums[unit + 1] = sum;
+                sum = m_prefixHashes[unit + 1] + sum * sumsBase;
+                m_prefixHashes[unit + 1] = sum;
             });
         });
         uint64_t chunkPower = 1;
@@ -309,13 +309,13 @@ private:
         for (unsigned chunk = 0; chunk < numberOfChunks; ++chunk) {
             chunkPrefixSums[chunk] = prefixSum;
             if (chunk + 1 < numberOfChunks)
-                prefixSum = m_sums[static_cast<size_t>(chunk + 1) * unitsInChunk] + prefixSum * chunkPower;
+                prefixSum = m_prefixHashes[static_cast<size_t>(chunk + 1) * unitsInChunk] + prefixSum * chunkPower;
         }
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
             uint64_t carried = chunkPrefixSums[chunk];
             forEachUnitIn(chunk, [&](size_t unit) {
                 carried *= sumsBase;
-                m_sums[unit + 1] += carried;
+                m_prefixHashes[unit + 1] += carried;
             });
         });
         m_powers[0] = 1;
@@ -386,7 +386,7 @@ private:
                 if (!isGathered)
                     break;
                 m_flags[unit] = MayBeInWindow;
-                m_sums[unit + 1] = numberOf(code.bytes.span().subspan(instruction.offset, instruction.length));
+                m_prefixHashes[unit + 1] = numberOf(code.bytes.span().subspan(instruction.offset, instruction.length));
                 break;
             case InstructionInCode::Kind::StubCall: {
                 auto& call = info.stubCalls[instruction.target];
@@ -396,7 +396,7 @@ private:
                 if (!isGathered || call.isTailCall || (isARM64() && (call.function != StubCall::noFunction || call.firstReadSite != StubCall::noCallSite)))
                     break;
                 m_flags[unit] = MayBeInWindow | IsCall;
-                m_sums[unit + 1] = numberOf(info, call);
+                m_prefixHashes[unit + 1] = numberOf(info, call);
                 break;
             }
             case InstructionInCode::Kind::Jump:
@@ -517,10 +517,10 @@ private:
                 unchangedCount += left.size();
                 candidates[chunk] = WTF::move(left);
             });
-            size_t held = 0;
+            size_t allocatedBytes = 0;
             for (auto& some : candidates)
-                held += some.capacity() * sizeof(uint32_t);
-            m_peak = std::max(m_peak, unitsSize() + held);
+                allocatedBytes += some.capacity() * sizeof(uint32_t);
+            m_peak = std::max(m_peak, unitsSize() + allocatedBytes);
             if (!unchangedCount)
                 break;
             numberOfCandidates = unchangedCount;
@@ -559,20 +559,20 @@ private:
 
     size_t unitsSize() const
     {
-        return m_sums.capacity() * sizeof(uint64_t) + (m_offsets.capacity() + m_firstUnit.capacity()) * sizeof(uint32_t) + m_lengths.capacity() + m_flags.capacity() + m_runs.capacity() + m_longestRepeatCandidate.capacity() + (m_slotMask + 1) / 4;
+        return m_prefixHashes.capacity() * sizeof(uint64_t) + (m_offsets.capacity() + m_firstUnit.capacity()) * sizeof(uint32_t) + m_lengths.capacity() + m_flags.capacity() + m_runs.capacity() + m_longestRepeatCandidate.capacity() + (m_slotMask + 1) / 4;
     }
 
-    ALWAYS_INLINE uint64_t hashOf(uint32_t unit, unsigned length) const { return mix(m_sums[unit + length] - m_sums[unit] * m_powers[length]); }
+    ALWAYS_INLINE uint64_t hashOf(uint32_t unit, unsigned length) const { return mix(m_prefixHashes[unit + length] - m_prefixHashes[unit] * m_powers[length]); }
     ALWAYS_INLINE uint32_t bytesOf(uint32_t unit, unsigned length) const { return m_offsets[unit + length - 1] + m_lengths[unit + length - 1] - m_offsets[unit]; }
     ALWAYS_INLINE bool isFree(uint32_t unit, unsigned length) const { return !((m_flags[unit] | m_flags[unit + length - 1]) & IsTaken); }
     unsigned functionOf(uint32_t unit) const { return std::ranges::upper_bound(m_firstUnit, unit) - m_firstUnit.begin() - 1; }
 
-    int64_t savingsOf(uint64_t places, uint64_t bytes, bool endsInCall) const
+    int64_t savingsOf(uint64_t numberOfSites, uint64_t bytes, bool endsInCall) const
     {
-        if (places < 2)
+        if (numberOfSites < 2)
             return 0;
         int64_t bodySize = static_cast<int64_t>(bytes) + (endsInCall ? 0 : returnSize);
-        return static_cast<int64_t>(places) * (static_cast<int64_t>(bytes) - static_cast<int64_t>(sizeOfNearCall)) - static_cast<int64_t>(m_numberOfCopies) * bodySize;
+        return static_cast<int64_t>(numberOfSites) * (static_cast<int64_t>(bytes) - static_cast<int64_t>(sizeOfNearCall)) - static_cast<int64_t>(m_numberOfCopies) * bodySize;
     }
 
     bool isIdentical(uint32_t first, unsigned firstFunction, uint32_t second, unsigned secondFunction, unsigned length) const
@@ -606,21 +606,21 @@ private:
         unsigned numberOfChunks = (m_active.size() + unitsInChunk - 1) / unitsInChunk;
         auto forEachLocationIn = [&](unsigned chunk, const auto& functor) {
             size_t end = std::min<size_t>(m_active.size(), static_cast<size_t>(chunk + 1) * unitsInChunk);
-            for (size_t place = static_cast<size_t>(chunk) * unitsInChunk; place < end; ++place)
-                functor(place);
+            for (size_t location = static_cast<size_t>(chunk) * unitsInChunk; location < end; ++location)
+                functor(location);
         };
         m_found.resize(m_active.size());
         Vector<uint32_t> starts;
         starts.fill(0, static_cast<size_t>(numberOfChunks) * numberOfShards);
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
-            forEachLocationIn(chunk, [&](size_t place) {
-                uint32_t unit = m_active[place];
+            forEachLocationIn(chunk, [&](size_t location) {
+                uint32_t unit = m_active[location];
                 if (!isFree(unit, length)) {
-                    m_found[place] = { 0, std::numeric_limits<uint32_t>::max(), 0 };
+                    m_found[location] = { 0, std::numeric_limits<uint32_t>::max(), 0 };
                     return;
                 }
                 uint64_t hash = hashOf(unit, length);
-                m_found[place] = { hash, unit, 0 };
+                m_found[location] = { hash, unit, 0 };
                 ++starts[static_cast<size_t>(chunk) * numberOfShards + (hash >> 56)];
             });
         });
@@ -638,8 +638,8 @@ private:
         shardStart[numberOfShards] = total;
         m_windows.resize(total);
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
-            forEachLocationIn(chunk, [&](size_t place) {
-                auto& window = m_found[place];
+            forEachLocationIn(chunk, [&](size_t location) {
+                auto& window = m_found[location];
                 if (window.unit != std::numeric_limits<uint32_t>::max())
                     m_windows[starts[static_cast<size_t>(chunk) * numberOfShards + (window.hash >> 56)]++] = window;
             });
@@ -652,16 +652,16 @@ private:
                 size_t end = begin + 1;
                 while (end < windows.size() && windows[end].hash == windows[begin].hash)
                     ++end;
-                uint64_t places = 0;
+                uint64_t numberOfSites = 0;
                 uint32_t afterLast = 0;
                 for (size_t i = begin; i < end; ++i) {
-                    if (places && windows[i].unit < afterLast)
+                    if (numberOfSites && windows[i].unit < afterLast)
                         continue;
-                    ++places;
+                    ++numberOfSites;
                     afterLast = windows[i].unit + length;
                 }
                 uint32_t first = windows[begin].unit;
-                if (int64_t saving = savingsOf(places, bytesOf(first, length), m_flags[first + length - 1] & IsCall); saving >= minSavings) {
+                if (int64_t saving = savingsOf(numberOfSites, bytesOf(first, length), m_flags[first + length - 1] & IsCall); saving >= minSavings) {
                     bool allAreIdentical = true;
                     for (size_t i = begin; i < end; ++i) {
                         windows[i].function = functionOf(windows[i].unit);
@@ -675,7 +675,7 @@ private:
         Vector<Family> families;
         for (auto& some : shardFamilies)
             families.appendVector(some);
-        sortOnPool(families, [](const Family& a, const Family& b) {
+        parallelSort(families, [](const Family& a, const Family& b) {
             return a.saving != b.saving ? a.saving > b.saving : a.firstUnit < b.firstUnit;
         });
         size_t waiting = 0;
@@ -736,8 +736,8 @@ private:
         Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
             size_t start = static_cast<size_t>(chunk) * unitsInChunk;
             size_t end = start;
-            forEachLocationIn(chunk, [&](size_t place) {
-                uint32_t unit = m_active[place];
+            forEachLocationIn(chunk, [&](size_t location) {
+                uint32_t unit = m_active[location];
                 if (!(m_flags[unit] & IsTaken))
                     m_active[end++] = unit;
             });
@@ -760,20 +760,20 @@ private:
     void report() const
     {
         int64_t saved = 0;
-        uint64_t places = 0;
+        uint64_t numberOfSites = 0;
         uint64_t bodiesSize = 0;
         uint64_t withOneCaller = 0;
         if (!Options::verboseAOTCompilation())
             return;
         for (unsigned length = 0; length <= longestWindow; ++length) {
             saved += m_saved[length];
-            places += m_places[length];
+            numberOfSites += m_places[length];
         }
         for (auto& body : m_result.bodies) {
             bodiesSize += body.length + (body.endsInCall ? 0 : returnSize);
             withOneCaller += body.singleCaller != Outlining::none;
         }
-        dataLogLn("AOT: outlining: ", m_numberOfUnits, " instructions in ", m_numberOfFunctions, " of ", m_functions.size(), " functions: ", m_result.bodies.size(), " bodies of ", bodiesSize, " bytes, ", withOneCaller, " of them called by one function, ", places, " places, ", saved, " bytes saved");
+        dataLogLn("AOT: outlining: ", m_numberOfUnits, " instructions in ", m_numberOfFunctions, " of ", m_functions.size(), " functions: ", m_result.bodies.size(), " bodies of ", bodiesSize, " bytes, ", withOneCaller, " of them called by one function, ", numberOfSites, " places, ", saved, " bytes saved");
         dataLogLn("AOT: outlining: ", m_undecodedFunctionCount, " functions of the region, ", m_undecodedBytes, " bytes, could not be walked and are left alone; the search held at most ", m_peak, " bytes");
         uint64_t eligibleCount = 0;
         uint64_t eligibleBytes = 0;
@@ -799,7 +799,7 @@ private:
     Outlining m_result;
     Vector<uint32_t> m_firstUnit;
     Vector<Walked> m_decoded;
-    Vector<uint64_t> m_sums;
+    Vector<uint64_t> m_prefixHashes;
     Vector<uint32_t> m_offsets;
     Vector<uint8_t> m_lengths;
     Vector<uint8_t> m_flags;

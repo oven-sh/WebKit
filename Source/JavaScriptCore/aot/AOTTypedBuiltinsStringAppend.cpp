@@ -70,8 +70,8 @@ static void updateStringAppenderLimit(Instance* instance)
         instance->stringAppenderLimit = 0;
         return;
     }
-    uint64_t room = appender.capacity - stringAppenderOffset(instance);
-    instance->stringAppenderLimit = std::min(instance->stringAppenderLength + room, appender.frames.last().base + maxStringLength);
+    uint64_t remainingCapacity = appender.capacity - stringAppenderOffset(instance);
+    instance->stringAppenderLimit = std::min(instance->stringAppenderLength + remainingCapacity, appender.frames.last().base + maxStringLength);
 }
 
 static void popStringAppenderFrame(Instance* instance)
@@ -82,7 +82,7 @@ static void popStringAppenderFrame(Instance* instance)
     instance->stringAppenderStartsTop = appender.starts + frame.firstStart;
     instance->stringAppenderLength = frame.base;
     instance->stringAppenderOrigin = appender.start + frame.offset - frame.base;
-    instance->stringAppenderOwner = appender.frames.isEmpty() ? std::numeric_limits<uint64_t>::max() : appender.frames.last().owner;
+    instance->stringAppenderOwnerFrame = appender.frames.isEmpty() ? std::numeric_limits<uint64_t>::max() : appender.frames.last().owner;
     if (appender.frames.isEmpty() && appender.capacity > maxRetainedStringAppenderCapacity) {
         fastFree(appender.start);
         appender.start = nullptr;
@@ -95,13 +95,13 @@ static void popStringAppenderFrame(Instance* instance)
 
 static NEVER_INLINE void popAbandonedStringAppenderFrames(Instance* instance, uint64_t frame)
 {
-    while (instance->stringAppenderOwner < frame)
+    while (instance->stringAppenderOwnerFrame < frame)
         popStringAppenderFrame(instance);
 }
 
 static ALWAYS_INLINE void syncStringAppender(Instance* instance, uint64_t frame)
 {
-    if (instance->stringAppenderOwner < frame) [[unlikely]]
+    if (instance->stringAppenderOwnerFrame < frame) [[unlikely]]
         popAbandonedStringAppenderFrames(instance, frame);
 }
 
@@ -316,12 +316,12 @@ static ALWAYS_INLINE void ensureStringAppender(Instance* instance)
     if (instance->stringAppender) [[likely]]
         return;
     instance->stringAppender = new StringAppender;
-    instance->stringAppenderOwner = std::numeric_limits<uint64_t>::max();
+    instance->stringAppenderOwnerFrame = std::numeric_limits<uint64_t>::max();
 }
 
 static ALWAYS_INLINE bool hasStringAppenderFrame(Instance* instance, uint64_t frame, uint32_t region)
 {
-    return instance->stringAppenderOwner == frame && instance->stringAppender->frames.last().region == region;
+    return instance->stringAppenderOwnerFrame == frame && instance->stringAppender->frames.last().region == region;
 }
 
 static NEVER_INLINE Appended pushStringAppenderFrame(Instance* instance, uint64_t frame, uint32_t region, EncodedJSValue* firstPiece)
@@ -329,7 +329,7 @@ static NEVER_INLINE Appended pushStringAppenderFrame(Instance* instance, uint64_
     auto& appender = *instance->stringAppender;
     size_t offset = stringAppenderOffset(instance);
     appender.frames.constructAndAppend(frame, instance->stringAppenderLength, offset, static_cast<uint32_t>(appender.segments.size()), static_cast<uint32_t>(instance->stringAppenderStartsTop - appender.starts), region, false);
-    instance->stringAppenderOwner = frame;
+    instance->stringAppenderOwnerFrame = frame;
     instance->stringAppenderLimit = instance->stringAppenderLength + std::min<uint64_t>(appender.capacity - offset, maxStringLength);
     JSValue first = JSValue::decode(std::exchange(*firstPiece, 0));
     return first ? appendString(instance, frame, asString(first)) : Appended::Yes;
@@ -340,7 +340,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringAppendBegin, void, (Instance* in
     ensureStringAppender(instance);
     syncStringAppender(instance, frame);
     if (region >> 31) {
-        while (instance->stringAppenderOwner == frame) [[unlikely]]
+        while (instance->stringAppenderOwnerFrame == frame) [[unlikely]]
             popStringAppenderFrame(instance);
         region &= std::numeric_limits<int32_t>::max();
     }
@@ -352,7 +352,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringAppendBegin, void, (Instance* in
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringAppendReset, void, (Instance* instance, uint64_t frame, uint32_t isNested))
 {
     ensureStringAppender(instance);
-    while (instance->stringAppenderOwner < frame || (!isNested && instance->stringAppenderOwner == frame))
+    while (instance->stringAppenderOwnerFrame < frame || (!isNested && instance->stringAppenderOwnerFrame == frame))
         popStringAppenderFrame(instance);
 }
 
@@ -1166,14 +1166,14 @@ std::optional<Operand> Lowering::lowerInlineStringAppend(InlineBuiltin which, Va
     m_out.branch(m_out.above(owner(), frame.value()), unsure(isNotOpen), unsure(isOpen));
     m_out.appendTo(isNotOpen);
     LValue first = m_out.load64(m_out.address(m_heaps.AOTTyped_argumentBuffer, firstPiece, 0));
-    ValueFromBlock kept = m_out.anchor(m_out.select(m_out.isZero64(first), emptyString(), first));
+    ValueFromBlock unchangedResult = m_out.anchor(m_out.select(m_out.isZero64(first), emptyString(), first));
     m_out.jump(continuation);
     m_out.appendTo(isOpen);
     CellPointer finished = AOT_TYPED_OPERATION(StringAppendFinish, frame, word32(region), Pointer(firstPiece));
-    ValueFromBlock made = m_out.anchor(finished.value());
+    ValueFromBlock newResult = m_out.anchor(finished.value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-    return ensure(CellPointer(m_out.phi(pointerType(), kept, made)), m_program.at(m_program.types.string), type);
+    return ensure(CellPointer(m_out.phi(pointerType(), unchangedResult, newResult)), m_program.at(m_program.types.string), type);
 }
 
 } } } // namespace JSC::AOT::Typed

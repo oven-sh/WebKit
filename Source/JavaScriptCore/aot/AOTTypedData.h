@@ -102,7 +102,6 @@ static constexpr unsigned numberBoxShift = 3;
 inline bool refersToNumberBox(int32_t word) { return word > nullInt32 && word < minInlineInt32; }
 
 static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
-static constexpr bool cell32IsPointer = false;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t unmaterializedClosureCell32 = 1;
 static constexpr uint32_t nullCell32 = 2;
@@ -579,7 +578,7 @@ struct Data {
     uint32_t firstClosureFunction;
     uint32_t endOfClosureFunctions;
     uint32_t omittedClosureWordCount;
-    uint32_t closureCountsOffset; // For each from firstClosureFunction to endOfClosureFunctions two bytes: of its closures, how many words the collector follows, which come first, and how many words there are. The offset is of where those of function 0 would stand.
+    uint32_t closureWordCountsOffset; // For each from firstClosureFunction to endOfClosureFunctions two bytes: of its closures, how many words the collector follows, which come first, and how many words there are. The offset is of where those of function 0 would stand.
     uint32_t numberOfEntryPoints;
     uint32_t entryPointsOffset;
     uint32_t entryPointsInOrderOffset;
@@ -702,7 +701,7 @@ struct Data {
     uint32_t stringSize(uint32_t index) const { return stringOffsetAndSize(index)[1]; }
     JS_EXPORT_PRIVATE std::span<const uint8_t> encodedBytesOfDecodedString(uint32_t index) const;
     bool isAtomString(uint32_t index) const { return at<uint32_t>(atomStringsOffset)[index / 32] >> index % 32 & 1; }
-    uint32_t stringFacts(uint32_t index) const { return at<uint32_t>(stringFactsOffset)[index]; }
+    uint32_t stringHashAndFlags(uint32_t index) const { return at<uint32_t>(stringFactsOffset)[index]; }
     uint32_t identifierStringPlusOne(uint32_t identifier) const { return identifier < numberOfIdentifierStrings ? at<uint32_t>(identifierStringsOffset)[identifier] : 0; }
     uint32_t identifierHash(uint32_t identifier) const { return at<uint32_t>(identifierHashesOffset)[identifier]; }
     uint32_t literalStringID(uint32_t number) const { return at<uint32_t>(literalStringsOffset)[number] - 1; }

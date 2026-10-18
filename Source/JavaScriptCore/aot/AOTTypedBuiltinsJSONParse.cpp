@@ -1064,8 +1064,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONExtraMembersAt, EncodedJS
         instance->jsonParserGaveUp = 1;
         return encodedExtra;
     }
-    JSValue given = JSValue::decode(encodedExtra);
-    JSObject* extra = given.isCell() ? asObject(given) : createExtraProperties(instance, vm, globalObject, declaredNames);
+    JSValue extraValue = JSValue::decode(encodedExtra);
+    JSObject* extra = extraValue.isCell() ? asObject(extraValue) : createExtraProperties(instance, vm, globalObject, declaredNames);
     auto& orders = *instance->jsonKeyOrders;
     Structure* structure = extra->structure();
     EncodedJSValue values[maxExtraMembersAddedAtOnce];
@@ -1154,8 +1154,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONExtraMembersAt, EncodedJS
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONAddExtraMember, EncodedJSValue, (Instance* instance, EncodedJSValue encodedExtra, JSCell* nameCell, EncodedJSValue encodedValue, uint64_t markBits, uint64_t sequence))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue given = JSValue::decode(encodedExtra);
-    JSObject* extra = given.isCell() ? asObject(given) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    JSValue extraValue = JSValue::decode(encodedExtra);
+    JSObject* extra = extraValue.isCell() ? asObject(extraValue) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     addExtraProperty(instance, vm, globalObject, extra, uncheckedDowncast<JSString>(nameCell)->toIdentifier(globalObject).impl(), JSValue::decode(encodedValue), std::bit_cast<const uint64_t*>(markBits), sequence);
     recordKeySequence(instance, sequence);
     return JSValue::encode(extra);
@@ -1200,13 +1200,13 @@ static NEVER_INLINE void learnKeyOrder(Instance* instance, CallFrame* callFrame,
         else
             appendSequence(entry);
     }
-    auto order = object->keyOrderAtBirth(vm, keys.span(), extra);
+    auto order = object->initialKeyOrder(vm, keys.span(), extra);
     if (!order)
         return;
     instance->jsonParserGaveUp = 0;
     if (extra && extra->structure()->outOfLineCapacity())
         widenExtraProperties(instance, vm, declaredNames, numberOfPropertiesOf(extra->structure()));
-    object->setKeyOrderAtBirth(vm, *order, extra);
+    object->setInitialKeyOrder(vm, *order, extra);
     if (state.isCounting() || (extra && extra->structure()->isDictionary()))
         return;
     auto& orders = instance->jsonKeyOrders->known;
@@ -1240,8 +1240,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONApplyKeyOrder, void, (Ins
     if (instance->jsonParserGaveUp) [[unlikely]]
         return;
     auto* object = uncheckedDowncast<Typed::Object>(cell);
-    JSValue given = JSValue::decode(encodedExtra);
-    JSObject* extra = given.isCell() ? asObject(given) : nullptr;
+    JSValue extraValue = JSValue::decode(encodedExtra);
+    JSObject* extra = extraValue.isCell() ? asObject(extraValue) : nullptr;
     StructureID ofExtraProperties = extra ? extra->structureID() : StructureID();
     uint64_t hash = std::bit_cast<uintptr_t>(declaredNames) ^ static_cast<uint64_t>(ofExtraProperties.bits()) << 32;
     for (uint64_t entry : recorded)
@@ -1253,7 +1253,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedJSONApplyKeyOrder, void, (Ins
         if (known.declaredNames == declaredNames && known.shape == object->shape() && known.extraProperties == ofExtraProperties && equalSpans(known.recorded.span(), recorded) && !object->hasFlagsInOrderWord()) [[likely]] {
             known.isUsedSinceFullCollection = true;
             uint64_t wordsAtBirth = orderAndShapeWordsOf(object);
-            object->setKeyOrderAtBirth(*instance->vm, { known.orderAndCount, known.withExtraProperties.get() }, extra);
+            object->setInitialKeyOrder(*instance->vm, { known.orderAndCount, known.withExtraProperties.get() }, extra);
             if (isWholeOrder && !extra) {
                 uint64_t index = (sequence ^ std::bit_cast<uintptr_t>(declaredNames)) * multiplierOfKeySequenceHash >> (64 - bitsOfKnownKeySequenceIndex);
                 instance->jsonKeyOrders->sequences[index] = { sequence, declaredNames, wordsAtBirth, static_cast<uint32_t>(orderAndShapeWordsOf(object)) };
@@ -1488,8 +1488,8 @@ static NEVER_INLINE JSONShapeTable* makeJSONShapeTable(Instance* instance, VM& v
         return number;
     };
     while (at < characters.size()) {
-        auto made = makeUnique<JSONShape>();
-        JSONShape& shape = *made;
+        auto newShape = makeUnique<JSONShape>();
+        JSONShape& shape = *newShape;
         switch (characters[at++]) {
         case '*':
             break;
@@ -1524,7 +1524,7 @@ static NEVER_INLINE JSONShapeTable* makeJSONShapeTable(Instance* instance, VM& v
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
-        table->shapes.append(WTF::move(made));
+        table->shapes.append(WTF::move(newShape));
         RELEASE_ASSERT(at == characters.size() || characters[at] == ';');
         ++at;
     }
@@ -1726,33 +1726,33 @@ private:
         return false;
     }
 
-    JSONShape* learnAlternative(unsigned& place, JSONShape::Kind kind)
+    JSONShape* learnAlternative(unsigned& shapeIndex, JSONShape::Kind kind)
     {
-        JSONShape& current = shapeAt(place);
+        JSONShape& current = shapeAt(shapeIndex);
         if (current.kind == JSONShape::Kind::Anything) {
             if (!canLearnShapes(1))
                 return nullptr;
-            place = learnShape(kind);
-            return &shapeAt(place);
+            shapeIndex = learnShape(kind);
+            return &shapeAt(shapeIndex);
         }
         if (current.kind != JSONShape::Kind::OneOf) {
             if (!canLearnShapes(2))
                 return nullptr;
-            unsigned former = place;
-            place = learnShape(JSONShape::Kind::OneOf);
-            shapeAt(place).alternatives.append(former);
+            unsigned former = shapeIndex;
+            shapeIndex = learnShape(JSONShape::Kind::OneOf);
+            shapeAt(shapeIndex).alternatives.append(former);
         } else if (current.alternatives.size() >= maxAlternativesPerShape || !canLearnShapes(1))
             return nullptr;
-        unsigned learned = learnShape(kind);
-        shapeAt(place).alternatives.append(learned);
-        return &shapeAt(learned);
+        unsigned newShapeIndex = learnShape(kind);
+        shapeAt(shapeIndex).alternatives.append(newShapeIndex);
+        return &shapeAt(newShapeIndex);
     }
 
     static bool holdsMembers(const JSONShape& shape) { return shape.kind == JSONShape::Kind::Object || shape.kind == JSONShape::Kind::Dictionary; }
 
-    NEVER_INLINE JSONShape* objectShapeFor(unsigned& place, Cursor firstName)
+    NEVER_INLINE JSONShape* objectShapeFor(unsigned& shapeIndex, Cursor firstName)
     {
-        JSONShape& current = shapeAt(place);
+        JSONShape& current = shapeAt(shapeIndex);
         if (current.kind == JSONShape::Kind::Dictionary)
             return &current;
         JSONShape* fallback = nullptr;
@@ -1775,18 +1775,18 @@ private:
                     return &candidate;
             }
         }
-        if (JSONShape* learned = learnAlternative(place, JSONShape::Kind::Object))
-            return learned;
+        if (JSONShape* newShape = learnAlternative(shapeIndex, JSONShape::Kind::Object))
+            return newShape;
         return fallback;
     }
 
-    NEVER_INLINE JSONShape* arrayShapeFor(unsigned& place)
+    NEVER_INLINE JSONShape* arrayShapeFor(unsigned& shapeIndex)
     {
-        for (unsigned alternative : shapeAt(place).alternatives) {
+        for (unsigned alternative : shapeAt(shapeIndex).alternatives) {
             if (shapeAt(alternative).kind == JSONShape::Kind::Array)
                 return &shapeAt(alternative);
         }
-        return learnAlternative(place, JSONShape::Kind::Array);
+        return learnAlternative(shapeIndex, JSONShape::Kind::Array);
     }
 
     struct FoundMember {
@@ -1835,7 +1835,7 @@ private:
         return true;
     }
 
-    Parsed parseObject(Cursor brace, unsigned& place)
+    Parsed parseObject(Cursor brace, unsigned& shapeIndex)
     {
         if (!m_vm.isSafeToRecurse()) [[unlikely]]
             return noAnswer;
@@ -1845,9 +1845,9 @@ private:
         EncodedJSValue values[JSFinalObject::maxInlineCapacity];
         for (unsigned i = 0; i < JSFinalObject::defaultInlineCapacity; ++i)
             values[i] = JSValue::encode(JSValue());
-        JSONShape* shape = &shapeAt(place);
+        JSONShape* shape = &shapeAt(shapeIndex);
         if (shape->kind != JSONShape::Kind::Object) [[unlikely]] {
-            shape = objectShapeFor(place, cursor);
+            shape = objectShapeFor(shapeIndex, cursor);
             if (!shape)
                 return parseWithoutShape(brace);
             if (shape->kind == JSONShape::Kind::Dictionary)
@@ -1862,7 +1862,7 @@ private:
             while (at < size && !isAtNameAndColon(cursor, members[at]))
                 ++at;
             if (at == size) [[unlikely]]
-                return parseMembersInAnyOrder(shape, place, cursor, values, present, count);
+                return parseMembersInAnyOrder(shape, shapeIndex, cursor, values, present, count);
             Parsed parsed = parseCommonValue(cursor + members[at].size, members[at].shape);
             if (!parsed.value) [[unlikely]]
                 return noAnswer;
@@ -1924,7 +1924,7 @@ private:
         return { JSValue::encode(makeObjectWithStructure(structure, values, count)), end };
     }
 
-    NEVER_INLINE Parsed parseMembersInAnyOrder(JSONShape* shape, unsigned& place, Cursor cursor, EncodedJSValue* values, uint64_t present, unsigned count)
+    NEVER_INLINE Parsed parseMembersInAnyOrder(JSONShape* shape, unsigned& shapeIndex, Cursor cursor, EncodedJSValue* values, uint64_t present, unsigned count)
     {
         uint8_t order[maxShapedMembers];
         listInDeclaredOrder(present, order);
@@ -1942,7 +1942,7 @@ private:
             else {
                 auto found = findMemberOutOfTurn(*shape, cursor, present);
                 if (!found && !count && shape->isLearned && *cursor == '"') {
-                    if (JSONShape* other = learnAlternative(place, JSONShape::Kind::Object)) {
+                    if (JSONShape* other = learnAlternative(shapeIndex, JSONShape::Kind::Object)) {
                         shape = other;
                         found = findMemberOutOfTurn(*shape, cursor, present);
                     }
@@ -2109,13 +2109,13 @@ private:
         }
     }
 
-    Parsed parseArray(Cursor bracket, unsigned& place)
+    Parsed parseArray(Cursor bracket, unsigned& shapeIndex)
     {
         if (!m_vm.isSafeToRecurse()) [[unlikely]]
             return noAnswer;
-        JSONShape* shape = &shapeAt(place);
+        JSONShape* shape = &shapeAt(shapeIndex);
         if (shape->kind != JSONShape::Kind::Array) [[unlikely]] {
-            shape = arrayShapeFor(place);
+            shape = arrayShapeFor(shapeIndex);
             if (!shape)
                 return parseWithoutShape(bracket);
         }
@@ -2651,7 +2651,7 @@ std::optional<Operand> Lowering::lowerInlineJSONParse(InlineBuiltin which, Value
         LBasicBlock isOutOfStack = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock yes = m_out.anchor(m_out.constInt32(1));
-        m_out.branch(m_out.aboveOrEqual(m_out.sub(m_out.framePointer(), m_out.constInt64(stackReservedForJSONParsers)), changing64(Instance::offsetOfSoftStackLimit())), usually(continuation), rarely(isOutOfStack));
+        m_out.branch(m_out.aboveOrEqual(m_out.sub(m_out.framePointer(), m_out.constInt64(stackReservedForJSONParsers)), loadMutable64(Instance::offsetOfSoftStackLimit())), usually(continuation), rarely(isOutOfStack));
         m_out.appendTo(isOutOfStack);
         m_out.store32(m_out.constInt32(1), m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfJSONParserGaveUp()));
         ValueFromBlock no = m_out.anchor(m_out.constInt32(0));

@@ -276,8 +276,7 @@ EOF
             template.line_comment = "#"
             template.body = [:trampoline, :bytecode, :webAssembly].map { |section|
                 members = opcodes.each_with_index.select { |opcode, _| opcode.asm_section == section }
-                predecoded = members.select { |opcode, _| opcode.is_bytecode? }.flat_map { |opcode, id| [opcode.set_entry_address_predecoded(id), opcode.set_entry_address_predecoded_registers(id)] }
-                lines = members.map { |opcode, id| opcode.set_entry_address(id) } + members.map { |opcode, id| opcode.set_entry_address_wide16(id) } + members.map { |opcode, id| opcode.set_entry_address_wide32(id) } + predecoded
+                lines = members.map { |opcode, id| opcode.set_entry_address(id) } + members.map { |opcode, id| opcode.set_entry_address_wide16(id) } + members.map { |opcode, id| opcode.set_entry_address_wide32(id) }
                 "#{section}Entries(macro ()\n#{lines.join("\n")}\nend)"
             }.join("\n")
         end

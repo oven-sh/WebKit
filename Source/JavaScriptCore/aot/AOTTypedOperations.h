@@ -46,7 +46,6 @@ struct Slot;
     v(operationAOTTypedHasName) \
     v(operationAOTTypedDeleteByName) \
     v(operationAOTTypedGetByKey) \
-    v(operationAOTTypedSetByKey) \
     v(operationAOTTypedHasKey) \
     v(operationAOTTypedElementOrEmpty) \
     v(operationAOTTypedDeleteByKey) \
@@ -82,33 +81,15 @@ struct Slot;
     v(operationAOTTypedConstructSuper) \
     v(operationAOTTypedConstructWith) \
     v(operationAOTTypedDefineAccessors) \
-    v(operationAOTTypedAdd) \
     v(operationAOTTypedAddNumberAndValueAsNumber) \
     v(operationAOTTypedSubNumberAndValueAsNumber) \
     v(operationAOTTypedMulNumberAndValueAsNumber) \
     v(operationAOTTypedDivNumberAndValueAsNumber) \
-    v(operationAOTTypedSub) \
-    v(operationAOTTypedMul) \
-    v(operationAOTTypedDiv) \
-    v(operationAOTTypedMod) \
     v(operationAOTTypedExp) \
-    v(operationAOTTypedBitAnd) \
-    v(operationAOTTypedBitOr) \
-    v(operationAOTTypedBitXor) \
-    v(operationAOTTypedShl) \
-    v(operationAOTTypedShr) \
-    v(operationAOTTypedUshr) \
     v(operationAOTTypedNeg) \
     v(operationAOTTypedBitNot) \
     v(operationAOTTypedToNumber) \
     v(operationAOTTypedToNumeric) \
-    v(operationAOTTypedLess) \
-    v(operationAOTTypedLessEq) \
-    v(operationAOTTypedGreater) \
-    v(operationAOTTypedGreaterEq) \
-    v(operationAOTTypedStrictEq) \
-    v(operationAOTTypedLooseEq) \
-    v(operationAOTTypedTruthy) \
     v(operationAOTTypedTypeOf) \
     v(operationAOTTypedTypeOfObject) \
     v(operationAOTTypedIsCallable) \
@@ -178,7 +159,6 @@ struct Slot;
     v(operationAOTTypedFactViolated) \
     v(operationAOTTypedCountBranch) \
     v(operationAOTTypedCheckKnownSlot) \
-    v(operationAOTTypedThrowStackOverflow) \
     v(operationAOTTypedNewObject) \
     v(operationAOTTypedNewObjectForKeys) \
     v(operationAOTTypedNewObjectWithCapacity) \
@@ -269,7 +249,6 @@ struct Slot;
     v(operationAOTTypedMoveTableToHeap) \
     v(operationAOTTypedIterOpen) \
     v(operationAOTTypedIterHas) \
-    v(operationAOTTypedIterGet) \
     v(operationAOTTypedIterClose) \
     v(operationAOTTypedIterCloseForThrow) \
     v(operationAOTTypedIterOpenInFrame) \
@@ -338,7 +317,6 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineOwnPropertyAtSite, Heap, void
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasName, Heap, size_t, (Instance*, EncodedJSValue, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDeleteByName, Heap, size_t, (Instance*, EncodedJSValue, uint32_t));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByKey, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByKey, Heap, void, (Instance*, EncodedJSValue, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHasKey, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedElementOrEmpty, Heap, EncodedJSValue, (Instance*, EncodedJSValue, int64_t index, EncodedJSValue ifAbsent));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDeleteByKey, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -400,36 +378,18 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstruct, Heap, EncodedJSValue, (I
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstructSuper, Heap, EncodedJSValue, (Instance*, EncodedJSValue classObject, EncodedJSValue newTarget, EncodedJSValue list, EncodedJSValue parentIfKnown));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedConstructWith, Heap, EncodedJSValue, (Instance*, EncodedJSValue callee, JSCell* object, uint32_t, const EncodedJSValue*));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineAccessors, Heap, void, (Instance*, JSCell* object, uint32_t, const EncodedJSValue*));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAdd, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAddNumberAndValueAsNumber, Heap, double, (Instance*, EncodedJSValue value, uint32_t typeAndWhetherNumberIsOnRight, double number));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSubNumberAndValueAsNumber, Heap, double, (Instance*, EncodedJSValue value, uint32_t typeAndWhetherNumberIsOnRight, double number));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMulNumberAndValueAsNumber, Heap, double, (Instance*, EncodedJSValue value, uint32_t typeAndWhetherNumberIsOnRight, double number));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDivNumberAndValueAsNumber, Heap, double, (Instance*, EncodedJSValue value, uint32_t typeAndWhetherNumberIsOnRight, double number));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSub, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMul, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDiv, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedMod, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedExp, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedBitAnd, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedBitOr, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedBitXor, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedShl, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedShr, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedUshr, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNeg, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedBitNot, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToNumber, Heap, double, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedToNumeric, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedLess, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedLessEq, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGreater, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGreaterEq, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedStrictEq, RuntimeState, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedLooseEq, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOf, Heap, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOfClass, Heap, size_t, (Instance*, EncodedJSValue, uint32_t ofClass));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedInstanceOfEngineClass, Heap, size_t, (Instance*, EncodedJSValue, uint32_t numberOfClass));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTruthy, RuntimeState, size_t, (Instance*, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTypeOf, Nothing, JSCell*, (Instance*, EncodedJSValue));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTypeOfObject, Nothing, size_t, (Instance*, JSCell*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIsCallable, Nothing, size_t, (Instance*, JSCell*));
@@ -497,7 +457,6 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowReachedUnreachable, Nothing, v
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFactViolated, Nothing, void, (Instance*, EncodedJSValue, uint32_t function, uint32_t value));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCountBranch, Nothing, void, (Instance*, uint32_t module, uint32_t positionAndSide));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCheckKnownSlot, Nothing, size_t, (Instance*, EncodedJSValue, uint32_t name, uint32_t placeAndFlags, uint32_t function, uint32_t value));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowStackOverflow, Nothing, void, (Instance*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObject, RuntimeState, JSCell*, (Instance*));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObjectForKeys, RuntimeState, JSCell*, (Instance*, uint32_t hasNullPrototype));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObjectWithCapacity, RuntimeState, JSCell*, (Instance*, uint32_t inlineCapacity));
@@ -591,7 +550,6 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewMapInImage, RuntimeStat
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedMoveTableToHeap, RuntimeState, JSCell*, (Instance*, JSCell* collection));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpen, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterHas, Heap, size_t, (Instance*, EncodedJSValue));
-AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedIterGet, Heap, EncodedJSValue, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterClose, Heap, void, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterCloseForThrow, Heap, void, (Instance*, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedIterOpenInFrame, Heap, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue*));

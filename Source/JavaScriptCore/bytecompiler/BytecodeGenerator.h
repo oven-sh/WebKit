@@ -1302,7 +1302,7 @@ namespace JSC {
         void emitParameterAudits(const AuditSites&, FunctionParameters&);
         unsigned m_auditCost { 0 };
         std::array<JSTextPosition, 3> m_lastExpressionInfo;
-        RefPtr<RegisterID> m_auditsAreOff;
+        RefPtr<RegisterID> m_auditsDisabledRegister;
         std::optional<uint32_t> m_auditedTailCall;
         std::optional<uint32_t> m_auditedElementRead;
         std::optional<StoredValueAudit> m_storedValueAudit;

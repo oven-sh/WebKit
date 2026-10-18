@@ -63,7 +63,7 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
     if (which == InlineBuiltin::DateNow)
         return numberResult(AOT_TYPED_OPERATION(DateNow), type);
 
-    CellPointer date = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+    CellPointer date = nonNullish(value.child(0), m_program.stringOf(builtin.nameID));
     auto field = [&](ptrdiff_t offset) {
         return m_out.address(m_heaps.AOTTyped_runtimeState, date.value(), offset);
     };
@@ -75,8 +75,8 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
         return numberResult(sub(time, mul(floor(div(time, number(msPerSecond))), number(msPerSecond))), type);
     }
     case InlineBuiltin::DateSetTime: {
-        Number given = in<Number>(value.arguments[0]);
-        Number time = select(lessThanOrEqual(abs(given), number(WTF::maxECMAScriptTime)), add(trunc(given), number(0)), number(PNaN));
+        Number unclippedTime = in<Number>(value.arguments[0]);
+        Number time = select(lessThanOrEqual(abs(unclippedTime), number(WTF::maxECMAScriptTime)), add(trunc(unclippedTime), number(0)), number(PNaN));
         m_out.storeDouble(time.value(), field(DateInstance::offsetOfInternalNumber()));
         LValue stale = m_out.constInt64(PlainGregorianDateTime::staleMarker().payload());
         m_out.store64(stale, field(DateInstance::offsetOfCachedGregorianDateTime()));
@@ -89,7 +89,7 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
         LBasicBlock isInvalid = newBlockForGenericCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         Number timeValue(m_out.loadDouble(field(DateInstance::offsetOfInternalNumber())));
-        orElse(equal(timeValue, timeValue), isInvalid);
+        branchUnless(equal(timeValue, timeValue), isInvalid);
         join.add(ensure(AOT_TYPED_OPERATION(DateToISOString, timeValue), m_program.at(m_program.types.string), type));
         if (!isSharedGenericPath(isInvalid)) {
             m_out.appendTo(isInvalid);
@@ -138,7 +138,7 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
     LBasicBlock isNotComputed = newBlockForGenericCall(value);
     Join join(m_out, rep, b3TypeOf(rep));
     LValue payload = m_out.load64(field(isUTC ? DateInstance::offsetOfCachedGregorianDateTimeUTC() : DateInstance::offsetOfCachedGregorianDateTime()));
-    orElse(Word32(m_out.testNonZero64(payload, integer(DateTime::validityMask).value())), isNotComputed);
+    branchUnless(Word32(m_out.testNonZero64(payload, integer(DateTime::validityMask).value())), isNotComputed);
     LValue bits = part->isSigned
         ? m_out.aShr(m_out.shl(payload, m_out.constInt32(64 - part->width - part->offset)), m_out.constInt32(64 - part->width))
         : m_out.bitAnd(m_out.lShr(payload, m_out.constInt32(part->offset)), m_out.constInt64((1ULL << part->width) - 1));

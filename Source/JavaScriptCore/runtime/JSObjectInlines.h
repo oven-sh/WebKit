@@ -28,7 +28,6 @@
 #include "ButterflyInlines.h"
 #include "Error.h"
 #include "JSArrayInlines.h"
-#include "MarkedBlockCage.h"
 #include "JSFunctionInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "JSGlobalProxy.h"
@@ -1154,8 +1153,7 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, NOESCAPE 
 
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
-    case ALL_DOUBLE_INDEXING_TYPES:
-    case ArrayWithTypedContiguous: {
+    case ALL_DOUBLE_INDEXING_TYPES: {
         unsigned usedLength = butterfly()->publicLength();
         for (unsigned i = 0; i < usedLength; ++i) {
             JSValue value = getDirectIndex(globalObject, i);
@@ -1333,7 +1331,6 @@ inline bool JSObject::canHaveExistingOwnIndexedGetterSetterProperties()
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
-    case ArrayWithTypedContiguous:
         return false;
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get();
@@ -1358,7 +1355,6 @@ inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const
     case ALL_INT32_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
-    case ArrayWithTypedContiguous:
         return butterfly()->publicLength();
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         auto* storage = butterfly()->arrayStorage();
@@ -1424,26 +1420,10 @@ inline bool JSObject::ensureLength(VM& vm, unsigned length)
     return true;
 }
 
-ALWAYS_INLINE JSValue JSObject::decodeTypedElement(uint32_t word)
-{
-    return word <= static_cast<uint32_t>(JSValue::ValueUndefined) ? JSValue::decode(word) : JSValue(MarkedBlockCage::decode(word));
-}
-
-ALWAYS_INLINE std::optional<uint32_t> JSObject::tryEncodeTypedElement(JSValue value)
-{
-    if (!value || value.isUndefinedOrNull())
-        return static_cast<uint32_t>(JSValue::encode(value));
-    if (!value.isCell() || !MarkedBlockCage::contains(value.asCell()))
-        return std::nullopt;
-    return MarkedBlockCage::encode(value.asCell());
-}
-
 inline bool JSObject::canGetIndexQuickly(unsigned i) const
 {
     const Butterfly* butterfly = this->butterfly();
     switch (indexingType()) {
-    case ArrayWithTypedContiguous:
-        return i < butterfly->vectorLength() && butterfly->indexingPayload<uint32_t>()[i];
     case ALL_BLANK_INDEXING_TYPES:
         return canGetIndexQuicklyForTypedArray(i);
     case ALL_UNDECIDED_INDEXING_TYPES:
@@ -1483,9 +1463,6 @@ inline JSValue JSObject::getIndexQuickly(unsigned i) const
         return jsNumber(butterfly->contiguous().at(this, i).get().asInt32());
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         return butterfly->contiguous().at(this, i).get();
-    case ArrayWithTypedContiguous:
-        RELEASE_ASSERT(i < butterfly->vectorLength());
-        return decodeTypedElement(butterfly->indexingPayload<uint32_t>()[i]);
     case ALL_DOUBLE_INDEXING_TYPES:
         return JSValue(JSValue::EncodeAsDouble, butterfly->contiguousDouble().at(this, i));
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
@@ -1518,10 +1495,6 @@ inline JSValue JSObject::tryGetIndexQuickly(unsigned i, ArrayProfile* arrayProfi
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         if (i < butterfly->publicLength())
             return butterfly->contiguous().at(this, i).get();
-        break;
-    case ArrayWithTypedContiguous:
-        if (i < butterfly->publicLength())
-            return decodeTypedElement(butterfly->indexingPayload<uint32_t>()[i]);
         break;
     case ALL_DOUBLE_INDEXING_TYPES: {
         if (i >= butterfly->publicLength())
@@ -1575,8 +1548,6 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
         return trySetIndexQuicklyForTypedArray(i, v, arrayProfile);
     case ALL_UNDECIDED_INDEXING_TYPES:
         return false;
-    case ArrayWithTypedContiguous:
-        return tryPutTypedContiguousIndex(vm, i, v);
     case ALL_WRITABLE_INT32_INDEXING_TYPES: {
         if (i >= butterfly->vectorLength())
             return false;
@@ -1642,11 +1613,6 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
 
 inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
 {
-    if (hasTypedContiguous(indexingType())) [[unlikely]] {
-        if (tryPutTypedContiguousIndex(vm, i, v))
-            return;
-        convertTypedContiguousToContiguous(vm);
-    }
     Butterfly* butterfly = this->butterfly();
     ASSERT(!isCopyOnWrite(indexingMode()));
     switch (indexingType()) {
@@ -1719,7 +1685,6 @@ inline bool JSObject::putDirectIndex(JSGlobalObject* globalObject, unsigned prop
         switch (indexingMode()) {
         case ALL_BLANK_INDEXING_TYPES:
         case ALL_UNDECIDED_INDEXING_TYPES:
-        case ArrayWithTypedContiguous:
             return false;
         case ALL_WRITABLE_INT32_INDEXING_TYPES:
         case ALL_WRITABLE_DOUBLE_INDEXING_TYPES:
@@ -1760,8 +1725,7 @@ inline void JSObject::ensureWritable(VM& vm)
             moveFrozenElementsToSparseMap(vm);
         else
             convertFromCopyOnWrite(vm);
-    } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
-        convertTypedContiguousToContiguous(vm);
+    }
 }
 
 inline bool JSObject::tryMakeWritable(VM& vm)
@@ -1773,8 +1737,7 @@ inline bool JSObject::tryMakeWritable(VM& vm)
             moveFrozenElementsToSparseMap(vm);
         else
             convertFromCopyOnWrite(vm);
-    } else if (hasTypedContiguous(indexingMode())) [[unlikely]]
-        convertTypedContiguousToContiguous(vm);
+    }
     return true;
 }
 

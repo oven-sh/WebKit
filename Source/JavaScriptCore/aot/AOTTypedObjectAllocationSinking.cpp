@@ -96,20 +96,15 @@ private:
         uint64_t speculativelyLoadableFields { 0 };
         uint64_t fieldsLoadedWhileMaybeMaterialized { 0 };
         bool allowsMaybeMaterialized { true };
-        ASCIILiteral maybeMaterializedRejection;
         BitVector liveAtHead;
         unsigned materializationCount { 0 };
         bool diesVirtual { false };
-        bool isMaterializedOutsideAllocationBlock { false };
         bool isMaterializedForMerge { false };
-        bool isMaterializedForParameter { false };
         unsigned mergeBlock { UINT_MAX };
         Vector<ValueID> singleStoredValue;
         uint64_t multiplyStoredFields { 0 };
         bool isAbandoned { false };
-        ValueID escapeSite;
-        ASCIILiteral escapeReason;
-        ASCIILiteral abandonReason;
+        bool mustBeAbandoned { false };
     };
 
     struct Edge {
@@ -201,17 +196,17 @@ private:
             return object;
         };
         auto flow = [&](ValueID from, ValueID to) {
-            uint32_t given = origin[from.index()];
-            if (given == none)
+            uint32_t fromOrigin = origin[from.index()];
+            if (fromOrigin == none)
                 return false;
-            uint32_t& held = origin[to.index()];
-            if (held == none) {
-                held = given;
+            uint32_t& toOrigin = origin[to.index()];
+            if (toOrigin == none) {
+                toOrigin = fromOrigin;
                 return true;
             }
-            if (classOf(held) == classOf(given))
+            if (classOf(toOrigin) == classOf(fromOrigin))
                 return false;
-            parent[classOf(held)] = classOf(given);
+            parent[classOf(toOrigin)] = classOf(fromOrigin);
             return true;
         };
         for (bool changed = true; changed;) {
@@ -247,13 +242,13 @@ private:
                 }
             }
         }
-        unsigned kept = 0;
+        unsigned newSize = 0;
         for (unsigned i = 0; i < found.size(); ++i) {
             if (!escapes.get(classOf(i)))
-                found[kept++] = found[i];
+                found[newSize++] = found[i];
         }
-        found.shrink(kept);
-        return kept;
+        found.shrink(newSize);
+        return newSize;
     }
 
     bool collectCandidates()
@@ -359,13 +354,13 @@ private:
                 stack.append({ target, 0u });
         }
         m_blockOrder.reverse();
-        Vector<unsigned> place(FillWith { }, numberOfBlocks, UINT_MAX);
+        Vector<unsigned> orderIndex(FillWith { }, numberOfBlocks, UINT_MAX);
         for (unsigned k = 0; k < m_blockOrder.size(); ++k)
-            place[m_blockOrder[k]] = k;
+            orderIndex[m_blockOrder[k]] = k;
         m_isBackEdgeTarget.ensureSize(numberOfBlocks);
         for (unsigned b : m_blockOrder) {
             for (auto& edge : m_predecessors[b]) {
-                if (place[edge.from] >= place[b])
+                if (orderIndex[edge.from] >= orderIndex[b])
                     m_isBackEdgeTarget.quickSet(b);
             }
         }
@@ -437,17 +432,17 @@ private:
         m_mode = Mode::Analyze;
         for (unsigned b : m_blockOrder)
             processBlock(b);
-        Vector<Candidate> kept;
+        Vector<Candidate> remainingCandidates;
         for (unsigned i = 0; i < m_candidates.size(); ++i) {
             auto& object = m_candidates[i];
             auto* entry = find(m_tail[object.block], i);
             m_candidateForValue[object.allocation.index()] = none;
             if (!entry || entry->state.status != Status::Virtual)
                 continue;
-            m_candidateForValue[object.allocation.index()] = kept.size();
-            kept.append(WTF::move(object));
+            m_candidateForValue[object.allocation.index()] = remainingCandidates.size();
+            remainingCandidates.append(WTF::move(object));
         }
-        m_candidates = WTF::move(kept);
+        m_candidates = WTF::move(remainingCandidates);
         return !m_candidates.isEmpty();
     }
 
@@ -545,8 +540,8 @@ private:
                 auto& value = m_function.at(id);
                 if (value.opcode == Opcode::PutField || value.opcode == Opcode::PutById) {
                     for (uint32_t holder : mayAlias[value.child(0).index()]) {
-                        for (uint32_t held : mayAlias[value.child(1).index()])
-                            join(holder, held);
+                        for (uint32_t storedCandidate : mayAlias[value.child(1).index()])
+                            join(holder, storedCandidate);
                     }
                 }
                 if (uint32_t closure = m_candidateForValue[id.index()]; closure != none && m_candidates[closure].isClosure) {
@@ -565,7 +560,6 @@ private:
             if (object.group == none)
                 continue;
             object.allowsMaybeMaterialized = false;
-            object.maybeMaterializedRejection = "every path, with what it references or what references it"_s;
         }
         Vector<unsigned> worklist;
         auto use = [&](unsigned b, ValueID operand) {
@@ -779,11 +773,7 @@ private:
             object.materializationCount = 0;
             object.fieldsLoadedWhileMaybeMaterialized = 0;
             object.diesVirtual = false;
-            object.isMaterializedOutsideAllocationBlock = false;
             object.isMaterializedForMerge = false;
-            object.isMaterializedForParameter = false;
-            object.escapeSite = { };
-            object.escapeReason = { };
         }
         for (unsigned b : m_blockOrder) {
             if (!m_isReached.get(b))
@@ -809,33 +799,12 @@ private:
             auto& object = m_candidates[i];
             if (object.isAbandoned)
                 continue;
-            if (object.abandonReason.isNull()) {
-                if (object.materializationCount > maxMaterializations)
-                    object.abandonReason = "more than 2 sites"_s;
-                else if (object.materializationCount && !object.diesVirtual)
-                    object.abandonReason = object.isMaterializedForMerge ? object.maybeMaterializedRejection : object.isMaterializedForParameter ? "every path, one for a block parameter"_s : "every path"_s;
-                else if (object.materializationCount && m_policy == AllocationSinkingPolicy::EliminateOnly)
-                    object.abandonReason = "not yet"_s;
-                else
-                    continue;
-            }
+            if (!object.mustBeAbandoned && !(object.materializationCount > maxMaterializations || (object.materializationCount && (!object.diesVirtual || m_policy == AllocationSinkingPolicy::EliminateOnly))))
+                continue;
             object.isAbandoned = true;
             any = true;
-            if (m_policy == AllocationSinkingPolicy::EliminateOnly || !object.isMaterializedOutsideAllocationBlock || m_isSpeculating)
-                continue;
-            recordAllocation(m_program, m_function, m_function.at(object.allocation), AllocationOutcome::Unchanged, 0, object.escapeSite ? &m_function.at(object.escapeSite) : nullptr, object.abandonReason);
         }
         return any;
-    }
-
-    void didMaterialize(uint32_t object, ValueID escapeSite, ASCIILiteral escapeReason, bool isInBlock = true)
-    {
-        auto& counted = m_candidates[object];
-        counted.isMaterializedOutsideAllocationBlock |= !isInBlock || m_currentBlock != counted.block;
-        if (!counted.materializationCount++) {
-            counted.escapeSite = escapeSite;
-            counted.escapeReason = escapeReason;
-        }
     }
 
     ValueID append(Value&& value)
@@ -864,11 +833,11 @@ private:
 
     ValueID fieldValue(uint32_t holder, unsigned field) const
     {
-        uint32_t held = candidateInField(holder, field);
-        if (held == none)
+        uint32_t storedCandidate = candidateInField(holder, field);
+        if (storedCandidate == none)
             return m_fieldValues[holder][field];
-        RELEASE_ASSERT(m_state[held].status == Status::Materialized);
-        return m_materialized[held];
+        RELEASE_ASSERT(m_state[storedCandidate].status == Status::Materialized);
+        return m_materialized[storedCandidate];
     }
 
     static Vector<unsigned, 4> createdFieldsInOrder(uint64_t created)
@@ -964,8 +933,8 @@ private:
             return;
         }
         for (unsigned field = 0; field < candidate.singleStoredValue.size(); ++field) {
-            if (uint32_t held = candidateInField(index, field); m_state[index].stored & 1ull << field && isVirtual(held))
-                collectVirtualReferences(held, members);
+            if (uint32_t storedCandidate = candidateInField(index, field); m_state[index].stored & 1ull << field && isVirtual(storedCandidate))
+                collectVirtualReferences(storedCandidate, members);
         }
     }
 
@@ -986,16 +955,16 @@ private:
         m_state[index] = { Status::Materialized, 0 };
     }
 
-    void materialize(uint32_t root, ValueID escapeSite, ASCIILiteral escapeReason, Vector<ValueID>& out, bool isInBlock)
+    void materialize(uint32_t root, Vector<ValueID>& out)
     {
         Vector<uint32_t, 4> members;
         collectVirtualReferences(root, members);
         Vector<std::pair<uint32_t, Vector<unsigned, 4>>, 2> deferredStores;
         for (uint32_t index : members) {
             if (m_mode == Mode::Count) {
-                didMaterialize(index, escapeSite, escapeReason, isInBlock);
+                ++m_candidates[index].materializationCount;
                 if (m_isOnHandlerEdge)
-                    m_candidates[index].abandonReason = "materialized on a path to a handler"_s;
+                    m_candidates[index].mustBeAbandoned = true;
             }
             if (m_candidates[index].isClosure)
                 continue;
@@ -1014,17 +983,16 @@ private:
         }
     }
 
-    void escape(uint32_t object, ValueID escapeSite, ASCIILiteral escapeReason = { })
+    void escape(uint32_t object)
     {
-        materialize(object, escapeSite, escapeReason, m_newValues, true);
+        materialize(object, m_newValues);
     }
 
-    void disallowMaybeMaterialized(uint32_t object, ASCIILiteral escapeReason)
+    void disallowMaybeMaterialized(uint32_t object)
     {
         if (m_mode != Mode::Count || !m_candidates[object].allowsMaybeMaterialized)
             return;
         m_candidates[object].allowsMaybeMaterialized = false;
-        m_candidates[object].maybeMaterializedRejection = escapeReason;
         m_didDisallowMaybeMaterialized = true;
     }
 
@@ -1066,9 +1034,9 @@ private:
         });
         for (ValueID operand : operands) {
             if (isVirtual(aliasOf(operand)))
-                escape(aliasOf(operand), id);
+                escape(aliasOf(operand));
             else if (isMaybeMaterialized(aliasOf(operand)))
-                disallowMaybeMaterialized(aliasOf(operand), "every path, needed after a merge"_s);
+                disallowMaybeMaterialized(aliasOf(operand));
         }
         if (m_mode != Mode::Rewrite)
             return;
@@ -1184,7 +1152,7 @@ private:
                     return false;
             }
             if (isVirtual(aliasOf(second)) && !canHoldVirtually(aliasOf(first), m_function.at(id)))
-                escape(aliasOf(second), id);
+                escape(aliasOf(second));
             if (uint32_t object = aliasOf(first); isVirtual(object)) {
                 auto field = accessedField(object, m_function.at(id));
                 bool creates = field && !((m_candidates[object].initialFields | m_state[object].stored) & 1ull << *field);
@@ -1197,11 +1165,11 @@ private:
                     return false;
                 }
                 if (isVirtual(aliasOf(second)))
-                    escape(aliasOf(second), id);
+                    escape(aliasOf(second));
                 if (m_mode == Mode::Count)
-                    m_candidates[object].abandonReason = "an unsupported store"_s;
+                    m_candidates[object].mustBeAbandoned = true;
             } else if (isMaybeMaterialized(object))
-                disallowMaybeMaterialized(object, "every path, stored to after a merge"_s);
+                disallowMaybeMaterialized(object);
             break;
         case Opcode::GetField:
         case Opcode::GetById:
@@ -1224,7 +1192,7 @@ private:
                     return false;
                 }
                 if (isMaybeMaterialized(object) && field && !(m_state[object].stored & 1ull << *field))
-                    disallowMaybeMaterialized(object, m_candidates[object].speculativelyLoadableFields & 1ull << *field ? "every path, read after a merge and a write"_s : "every path, read after a merge of a field that cannot be read early"_s);
+                    disallowMaybeMaterialized(object);
                 if (field && m_state[object].stored & 1ull << *field && !(isVirtual(object) && isVirtual(candidateInField(object, *field))) && m_program.at(fieldType(m_candidates[object], *field)).isSubsetOf(m_program.at(m_function.at(id).type), m_program)) {
                     if (isMaybeMaterialized(object))
                         m_candidates[object].fieldsLoadedWhileMaybeMaterialized |= 1ull << *field;
@@ -1365,9 +1333,9 @@ private:
         m_isHandlerEdgeDead.set(b, isHandlerEdgeDead);
         TerminatorKind kind = m_function.blocks[b].terminator.kind;
         if (ValueID value = m_function.blocks[b].terminator.value; isVirtual(aliasOf(value)))
-            escape(aliasOf(value), ValueID(), kind == TerminatorKind::Return ? "Return"_s : kind == TerminatorKind::Throw ? "Throw"_s : "a condition"_s);
+            escape(aliasOf(value));
         else if (isMaybeMaterialized(aliasOf(value)))
-            disallowMaybeMaterialized(aliasOf(value), "every path, needed after a merge"_s);
+            disallowMaybeMaterialized(aliasOf(value));
         m_deadTarget[b] = noTarget;
         if (ValueID condition = m_function.blocks[b].terminator.value; kind == TerminatorKind::Branch && condition.index() < m_knownBoolean.size() && m_knownBoolean[condition.index()] != KnownBoolean::Unknown)
             m_deadTarget[b] = m_knownBoolean[condition.index()] == KnownBoolean::True;
@@ -1418,11 +1386,12 @@ private:
     }
 
     const CompactList<ValueID>& parametersOf(unsigned b) const { return m_function.blocks[b].parameters; }
-    static ASCIILiteral edgeMaterializationReason(const EdgeMaterialization& one) { return one.isForParameter ? "a block parameter"_s : "a merge"_s; }
     void didMaterializeOnEdge(const EdgeMaterialization& one, unsigned to)
     {
-        (one.isForParameter ? m_candidates[one.object].isMaterializedForParameter : m_candidates[one.object].isMaterializedForMerge) = true;
-        if (!one.isForParameter && m_candidates[one.object].mergeBlock == UINT_MAX)
+        if (one.isForParameter)
+            return;
+        m_candidates[one.object].isMaterializedForMerge = true;
+        if (m_candidates[one.object].mergeBlock == UINT_MAX)
             m_candidates[one.object].mergeBlock = to;
     }
 
@@ -1465,26 +1434,26 @@ private:
                     copy(id);
             }
         }
-        auto inCopy = [&](ValueID id) {
+        auto remapToCopy = [&](ValueID id) {
             return id && valueCopy[id.index()] != none ? ValueID(valueCopy[id.index()]) : id;
         };
         for (unsigned b : rest) {
             Block block;
             for (ValueID id : m_function.blocks[b].parameters) {
-                m_function.at(inCopy(id)).immediates = { blockCopy[b], static_cast<uint32_t>(block.parameters.size()) };
-                block.parameters.append(inCopy(id));
+                m_function.at(remapToCopy(id)).immediates = { blockCopy[b], static_cast<uint32_t>(block.parameters.size()) };
+                block.parameters.append(remapToCopy(id));
             }
             for (ValueID id : m_function.blocks[b].values) {
                 if (valueCopy[id.index()] == none)
                     continue;
-                m_function.at(inCopy(id)).forEachChild([&](ValueID& child) {
-                    child = inCopy(child);
+                m_function.at(remapToCopy(id)).forEachChild([&](ValueID& child) {
+                    child = remapToCopy(child);
                 });
-                block.values.append(inCopy(id));
+                block.values.append(remapToCopy(id));
             }
             block.terminator = m_function.blocks[b].terminator;
             block.terminator.forEachChild([&](ValueID& child) {
-                child = inCopy(child);
+                child = remapToCopy(child);
             });
             for (auto& target : block.terminator.targets)
                 target.block = BlockID(blockCopy[target.block.index()]);
@@ -1514,11 +1483,10 @@ private:
             for (unsigned j = 0; j < m_candidates.size(); ++j) {
                 m_candidates[j].isAbandoned = j != i && (group == none || m_candidates[j].group != group);
                 if (!m_candidates[j].isAbandoned)
-                    m_candidates[j].abandonReason = { };
+                    m_candidates[j].mustBeAbandoned = false;
             }
             auto& object = m_candidates[i];
             object.allowsMaybeMaterialized = false;
-            m_isSpeculating = true;
             analyze();
             Vector<Edge> built;
             bool hasVirtualPredecessor = false;
@@ -1545,7 +1513,6 @@ private:
                 m_ignoredEdges.clear();
                 m_ignoredEdgeSet.clear();
             }
-            m_isSpeculating = false;
             m_candidates = WTF::move(saved);
             if (pays) {
                 duplicateTail(*rest, built);
@@ -1583,7 +1550,7 @@ private:
             }
             for (auto& one : everywhere) {
                 didMaterializeOnEdge(one, m_function.blocks[b].terminator.targets[0].block.index());
-                escape(one.object, ValueID(), edgeMaterializationReason(one));
+                escape(one.object);
             }
         }
         for (unsigned t = 0; t < numberOfTargets; ++t) {
@@ -1597,7 +1564,7 @@ private:
                 for (auto& one : materializations) {
                     didMaterializeOnEdge(one, to);
                     if (isVirtual(one.object))
-                        materialize(one.object, ValueID(), edgeMaterializationReason(one), m_newValues, numberOfTargets == 1);
+                        materialize(one.object, m_newValues);
                 }
                 m_isOnHandlerEdge = false;
                 for (uint32_t object : m_tracked) {
@@ -1607,11 +1574,11 @@ private:
                 auto& target = m_function.blocks[b].terminator.targets[t];
                 for (unsigned i = 0; i < target.arguments.size() && i < parametersOf(to).size(); ++i) {
                     if (uint32_t object = aliasOf(target.arguments[i]); isMaybeMaterialized(object) && m_alias[parametersOf(to)[i].index()] != object)
-                        disallowMaybeMaterialized(object, "every path, needed after a merge"_s);
+                        disallowMaybeMaterialized(object);
                 }
                 for (auto& entry : m_head[to]) {
                     if (entry.state.status == Status::MaybeMaterialized && m_state[entry.object].status == Status::Materialized && kind == TerminatorKind::Invoke && t)
-                        disallowMaybeMaterialized(entry.object, "every path, read on a path to a handler"_s);
+                        disallowMaybeMaterialized(entry.object);
                 }
                 restoreState(before);
                 continue;
@@ -1619,7 +1586,7 @@ private:
             Vector<ValueID> onEdge;
             for (auto& one : materializations) {
                 if (isVirtual(one.object))
-                    materialize(one.object, ValueID(), { }, numberOfTargets == 1 ? m_newValues : onEdge, true);
+                    materialize(one.object, numberOfTargets == 1 ? m_newValues : onEdge);
             }
             Arguments arguments;
             {
@@ -1680,11 +1647,6 @@ private:
 
     void rewrite()
     {
-        for (auto& object : m_candidates) {
-            if (object.isAbandoned)
-                continue;
-            recordAllocation(m_program, m_function, m_function.at(object.allocation), object.materializationCount ? AllocationOutcome::BuiltLate : AllocationOutcome::Removed, object.materializationCount, object.escapeSite ? &m_function.at(object.escapeSite) : nullptr, object.escapeReason);
-        }
         m_mode = Mode::Rewrite;
         m_fieldValues.grow(m_candidates.size());
         m_materialized.fill(ValueID(), m_candidates.size());
@@ -1769,7 +1731,6 @@ private:
     Vector<ValueID> m_loadedValue;
     bool m_didDisallowMaybeMaterialized { false };
     bool m_isOnHandlerEdge { false };
-    bool m_isSpeculating { false };
     Vector<Vector<ValueID>> m_fieldValues;
     Vector<ValueID> m_materialized;
     Vector<Vector<ValueID>> m_headParameters;

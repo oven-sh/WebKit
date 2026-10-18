@@ -355,8 +355,8 @@ static Slot* findFillableEntry(Data* data, PolymorphicSlots* several, Structure*
     uint32_t attemptsSoFar = static_cast<uint32_t>(several->shouldRefillEarly) << Slot::attemptsShift;
     if (several->remainingBulkFillAttempts)
         several->remainingBulkFillAttempts--;
-    if (Slot* held = several->slotOf(structure->id()))
-        return held;
+    if (Slot* existingSlot = several->slotOf(structure->id()))
+        return existingSlot;
     unsigned index = PolymorphicSlots::indexFor(structure->id());
     for (Slot* free : { &several->slots[index], &several->slots[index ^ 1] }) {
         if (free->structureID || (free->offset & Slot::attemptsMask) == Slot::attemptsMask)
@@ -388,7 +388,7 @@ static void cacheGetterShortcut(GetterSetter*, JSFunction* getter);
 
 enum class ExtraProperty : uint8_t { Accessor, Value, Absent };
 
-static std::optional<uint64_t> cacheExtraProperty(VM& vm, Instance& instance, Typed::Object* object, const Identifier& ident, ExtraProperty wanted)
+static std::optional<uint64_t> cacheExtraProperty(VM& vm, Instance& instance, Typed::Object* object, const Identifier& ident, ExtraProperty expectedKind)
 {
     JSObject* extra = object->extraProperties();
     if (!extra || &object->state() != instance.typed || instance.typed->isCounting() || extra->structure()->isDictionary() || parseIndex(ident) || ident.isPrivateName())
@@ -398,7 +398,7 @@ static std::optional<uint64_t> cacheExtraProperty(VM& vm, Instance& instance, Ty
     uint32_t offsetAndKind = Slot::extraPropertyIsAbsent;
     if (isValidOffset(offset)) {
         bool isAccessor = attributes & PropertyAttribute::Accessor;
-        if (wanted != (isAccessor ? ExtraProperty::Accessor : ExtraProperty::Value) || (!isAccessor && attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        if (expectedKind != (isAccessor ? ExtraProperty::Accessor : ExtraProperty::Value) || (!isAccessor && attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return std::nullopt;
         if (isInlineOffset(offset))
             offsetAndKind = JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue);
@@ -406,7 +406,7 @@ static std::optional<uint64_t> cacheExtraProperty(VM& vm, Instance& instance, Ty
             offsetAndKind = Slot::extraPropertyIsOutOfLine | static_cast<uint32_t>(-offsetInButterfly(offset) * static_cast<int32_t>(sizeof(EncodedJSValue)));
         if (!isAccessor)
             offsetAndKind |= Slot::extraPropertyIsValue;
-    } else if (wanted != ExtraProperty::Absent)
+    } else if (expectedKind != ExtraProperty::Absent)
         return std::nullopt;
     return Slot::extraPropertyAt(extra->structureID().bits(), offsetAndKind);
 }
@@ -418,7 +418,7 @@ static uint64_t lazyClosureOf(Typed::Object* object, const Typed::FieldData& fie
     static_assert(Typed::numberOfSlimClosureKinds == 2);
     uint32_t function = field.literalsOffset() & ~Typed::lazyClosureCapturesObject;
     return Slot::fieldHoldsLazyClosure | static_cast<uint64_t>(function) << Slot::fieldClosureShift
-        | static_cast<uint64_t>(Typed::slimClosureKindOf(object->state().kindAndDeclarationOf(function))) << Slot::fieldClosureKindShift
+        | static_cast<uint64_t>(Typed::slimClosureKindOf(object->state().functionKindByte(function))) << Slot::fieldClosureKindShift
         | (field.literalsOffset() & Typed::lazyClosureCapturesObject ? Slot::fieldClosureCapturesHolder : 0);
 }
 
@@ -488,14 +488,14 @@ static void cacheExportForAllSites(JSGlobalObject* globalObject, JSCell* base, S
 {
     VM& vm = globalObject->vm();
     ScopeOffset offset(namespaceSlot.scopeOffset);
-    size_t place = (JSLexicalEnvironment::offsetOfVariable(offset) - JSObject::offsetOfInlineStorage()) / sizeof(EncodedJSValue);
-    if (base->structure() != structureBefore || structureBefore == globalObject->moduleNamespaceObjectStructure() || place >= static_cast<size_t>(firstOutOfLineOffset))
+    size_t propertyOffset = (JSLexicalEnvironment::offsetOfVariable(offset) - JSObject::offsetOfInlineStorage()) / sizeof(EncodedJSValue);
+    if (base->structure() != structureBefore || structureBefore == globalObject->moduleNamespaceObjectStructure() || propertyOffset >= static_cast<size_t>(firstOutOfLineOffset))
         return;
     if (!canUseMegamorphicCacheForGet(vm, ident.impl()) || !namespaceSlot.environment->variableAt(offset).get())
         return;
     MegamorphicCache& cache = vm.ensureMegamorphicCache();
     if (!cache.findLoad(structureBefore->id(), ident.impl()))
-        cache.initAsPermanentHit(structureBefore->id(), ident.impl(), namespaceSlot.environment, place);
+        cache.initAsPermanentHit(structureBefore->id(), ident.impl(), namespaceSlot.environment, propertyOffset);
 }
 
 void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache, bool mayBePolymorphic)
@@ -790,6 +790,7 @@ void cacheKeyedCompiledFieldRead(JSGlobalObject* globalObject, Instance::KeyedRe
     if (isPermanentlyAbsentFromPrototypeChain(globalObject, base->structure(), ident))
         description |= Slot::absentFieldIsUndefined;
     read.holder = std::bit_cast<JSCell*>(description);
+    read.fieldMayBeUnlisted = !!(field->flags & Typed::fieldMayBeUnlisted);
     read.slot.offset = Instance::keyIsCompiledField;
 }
 
@@ -907,14 +908,14 @@ static NEVER_INLINE bool cacheLookUp(JSGlobalObject* globalObject, Data* data, S
         }
         count |= Slot::countIsValidated;
     }
-    uint64_t said = Slot::isLookedUp;
+    uint64_t slotPayload = Slot::isLookedUp;
     JSObject* prototype = globalObject->objectPrototype();
     if (slot.isUnset() && !structure->isUncacheableDictionary() && structure->hasMonoProto() && structure->storedPrototype() == JSValue(prototype) && !structure->typeInfo().overridesGetOwnPropertySlot()
         && hasNonExtensibleObjectPrototype(globalObject, globalObject->objectStructureForObjectConstructor()) && !isValidOffset(prototype->structure()->get(vm, ident.impl())))
-        said = Slot::isAbsentWhileCountUnchanged | static_cast<uint64_t>(count) << Slot::countShift;
-    if (said >> Slot::fieldReadShift != static_cast<uint64_t>(Slot::FieldRead::NoField))
-        said = Slot::isLookedUp;
-    fill(vm, data, entry, structure, Slot::compiledFieldFlags, std::bit_cast<void*>(said));
+        slotPayload = Slot::isAbsentWhileCountUnchanged | static_cast<uint64_t>(count) << Slot::countShift;
+    if (slotPayload >> Slot::fieldReadShift != static_cast<uint64_t>(Slot::FieldRead::NoField))
+        slotPayload = Slot::isLookedUp;
+    fill(vm, data, entry, structure, Slot::compiledFieldFlags, std::bit_cast<void*>(slotPayload));
     return true;
 }
 
@@ -1304,20 +1305,20 @@ bool hasOnlyNamedOutOfLineStorage(Structure* before, Structure* after)
     return !before->isDictionary() && !after->isDictionary() && before->typeInfoBlob() == after->typeInfoBlob() && !before->couldHaveIndexingHeader();
 }
 
-StorageAfterAddition storageAfterAddition(Structure* before, Structure* after, PropertyOffset offset)
+OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset offset)
 {
     if (before->isDictionary() || after->isDictionary() || after->previousID() != before || before->typeInfoBlob() != after->typeInfoBlob())
-        return StorageAfterAddition::Unsupported;
+        return OutOfLineStorageChange::Unsupported;
     unsigned capacityBefore = before->outOfLineCapacity();
     unsigned capacityAfter = after->outOfLineCapacity();
     if (capacityAfter == capacityBefore)
-        return StorageAfterAddition::Stays;
+        return OutOfLineStorageChange::Stays;
     if (!hasOnlyNamedOutOfLineStorage(before, after) || offset != firstOutOfLineOffset + static_cast<PropertyOffset>(capacityBefore))
-        return StorageAfterAddition::Unsupported;
+        return OutOfLineStorageChange::Unsupported;
     if (!capacityBefore)
-        return capacityAfter == initialOutOfLineCapacity ? StorageAfterAddition::IsFirst : StorageAfterAddition::Unsupported;
+        return capacityAfter == initialOutOfLineCapacity ? OutOfLineStorageChange::IsFirst : OutOfLineStorageChange::Unsupported;
     bool doublesCapacity = capacityBefore >= initialOutOfLineCapacity && capacityAfter == 2 * capacityBefore && capacityAfter * sizeof(EncodedJSValue) <= MarkedSpace::largeCutoff;
-    return doublesCapacity ? StorageAfterAddition::Doubled : StorageAfterAddition::Unsupported;
+    return doublesCapacity ? OutOfLineStorageChange::Doubled : OutOfLineStorageChange::Unsupported;
 }
 
 void cacheKeyedDefinition(Instance* instance, VM& vm, Structure* before, Structure* after, JSCell* key, UniquedStringImpl* uid, unsigned definedAttributes, uintptr_t keyTagBits)
@@ -1348,14 +1349,14 @@ void cacheKeyedDefinition(Instance* instance, VM& vm, Structure* before, Structu
         entry.holderValueCount = completesPair ? Instance::keyedAdditionCompletesAccessorPair : 1;
         return;
     }
-    StorageAfterAddition storage = storageAfterAddition(before, after, offset);
-    if (storage == StorageAfterAddition::Unsupported)
+    OutOfLineStorageChange storage = outOfLineStorageChange(before, after, offset);
+    if (storage == OutOfLineStorageChange::Unsupported)
         return;
     auto& entry = instance->keyedAdditionFor(before->id(), key);
     cacheKeyedAccess(entry.slot, before, key, offset);
     entry.newStructureID = after->id();
     entry.epoch = MegamorphicCache::invalidEpoch;
-    entry.newStorageCapacity = storage == StorageAfterAddition::Stays ? 0 : after->outOfLineCapacity();
+    entry.newStorageCapacity = storage == OutOfLineStorageChange::Stays ? 0 : after->outOfLineCapacity();
     entry.holderValueCount = !!keyTagBits;
 }
 
@@ -1366,7 +1367,7 @@ void cachePrivateNameTransition(VM& vm, Data* data, Slot* cache, JSObject* base,
     Structure* newStructure = base->structure();
     if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype() || !newStructure->propertyAccessesAreCacheable() || newStructure->isDictionary())
         return;
-    if (storageAfterAddition(oldStructure, newStructure, offset.value_or(0)) != StorageAfterAddition::Stays)
+    if (outOfLineStorageChange(oldStructure, newStructure, offset.value_or(0)) != OutOfLineStorageChange::Stays)
         return;
     auto location = propertyLocation(offset.value_or(0));
     if (!location || !mayReplace(cache, oldStructure))
@@ -1411,7 +1412,7 @@ void cacheKeyedDeletion(Instance* instance, Structure* before, Structure* after,
     PropertyOffset offset = 0;
     if (!isAbsentFromLayout && slot.isDeleteHit()) {
         offset = slot.cachedOffset();
-        if (storageAfterAddition(before, after, offset) != StorageAfterAddition::Stays)
+        if (outOfLineStorageChange(before, after, offset) != OutOfLineStorageChange::Stays)
             return;
     } else if (!isAbsentFromLayout && (!slot.isConfigurableDeleteMiss() || before != after))
         return;
@@ -1567,7 +1568,7 @@ bool storeCompiledObjectExtraProperty(JSCell* cell, int offset, JSValue value)
 std::optional<std::pair<uint32_t, uint32_t>> fieldStoreOffsetAndKindForInterpreter(VM& vm, JSCell* cell, const Identifier& ident)
 {
     using FieldWrite = Slot::FieldWrite;
-    static_assert(putByIdOffsetOfOrderWord == offsetOfOrderWord && putByIdOrderWordIsFrozen == orderWordIsFrozen && putByIdAbsentDouble == absentDouble && !cell32IsPointer && getByIdCell32Shift == cell32Shift && FieldWrite::offsetBits == putByIdCompiledFieldKindShift);
+    static_assert(putByIdOffsetOfOrderWord == offsetOfOrderWord && putByIdOrderWordIsFrozen == orderWordIsFrozen && putByIdAbsentDouble == absentDouble && getByIdCell32Shift == cell32Shift && FieldWrite::offsetBits == putByIdCompiledFieldKindShift);
     const LayoutData* layout = cell->structure()->compiledLayout();
     if (!layout || !isObjectLayout(layout->kind))
         return std::nullopt;
@@ -1814,7 +1815,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         return true;
     }
 
-    if (storageAfterAddition(oldStructure, newStructure, slot.cachedOffset()) != StorageAfterAddition::Stays)
+    if (outOfLineStorageChange(oldStructure, newStructure, slot.cachedOffset()) != OutOfLineStorageChange::Stays)
         return abandon(cache);
 
     if (isDirect)
@@ -1944,7 +1945,7 @@ void cacheDefinedProperty(JSGlobalObject* globalObject, Data* data, Slot* cache,
     if (isReplaced)
         before->didCachePropertyReplacement(vm, offset);
     else if (isAdded) {
-        if (!isSingleAddTransition || offset != structure->maxOffset() || storageAfterAddition(before, structure, offset) != StorageAfterAddition::Stays)
+        if (!isSingleAddTransition || offset != structure->maxOffset() || outOfLineStorageChange(before, structure, offset) != OutOfLineStorageChange::Stays)
             return countFailure(cache);
     } else if (!(attributes & PropertyAttribute::DontDelete))
         return countFailure(cache);
@@ -2329,7 +2330,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
         return;
     uint8_t reallocating = 0;
     if (newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity()) {
-        bool allocatesInitialStorage = storageAfterAddition(oldStructure, newStructure, slot.cachedOffset()) == StorageAfterAddition::IsFirst && oldStructure->typeInfo().type() == FinalObjectType;
+        bool allocatesInitialStorage = outOfLineStorageChange(oldStructure, newStructure, slot.cachedOffset()) == OutOfLineStorageChange::IsFirst && oldStructure->typeInfo().type() == FinalObjectType;
         reallocating = allocatesInitialStorage ? MegamorphicCache::StoreEntry::allocatesInitialOutOfLineStorage : MegamorphicCache::StoreEntry::reallocates;
     }
     cache.initAsTransition(oldStructure->id(), newStructure->id(), uid, slot.cachedOffset(), reallocating);
@@ -2379,13 +2380,13 @@ bool cacheReplacementPropertyRun(VM& vm, Data* data, Slot* cache, Structure* str
         cache[i].clearAndResetAttempts();
     WTF::storeStoreFence();
     for (size_t i = 0; i < numberOfSlots; ++i) {
-        uint64_t places = 0;
+        uint64_t packedOffsets = 0;
         for (size_t k = i * sizeof(void*); k < std::min(offsets.size(), (i + 1) * sizeof(void*)); ++k) {
             structure->didCachePropertyReplacement(vm, offsets[k]);
-            places |= static_cast<uint64_t>(offsets[k] + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue)) << (k % sizeof(void*) * 8);
+            packedOffsets |= static_cast<uint64_t>(offsets[k] + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue)) << (k % sizeof(void*) * 8);
         }
         cache[i].offset |= Slot::pointerIsNotCell;
-        cache[i].pointer = std::bit_cast<void*>(places);
+        cache[i].pointer = std::bit_cast<void*>(packedOffsets);
     }
     WTF::storeStoreFence();
     for (size_t i = numberOfSlots; i--;)
@@ -2410,14 +2411,14 @@ bool cachePropertyRunByOffsets(JSGlobalObject* globalObject, Data* data, Slot* c
         return false;
     WTF::storeStoreFence();
     for (size_t i = 0; i < numberOfSlots; ++i) {
-        uint64_t places = 0;
+        uint64_t packedOffsets = 0;
         for (size_t k = i * sizeof(void*); k < std::min(offsets.size(), (i + 1) * sizeof(void*)); ++k) {
             if (offsets[k] <= before->maxOffset())
                 before->didCachePropertyReplacement(vm, offsets[k]);
-            places |= static_cast<uint64_t>(offsets[k] + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue)) << (k % sizeof(void*) * 8);
+            packedOffsets |= static_cast<uint64_t>(offsets[k] + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue)) << (k % sizeof(void*) * 8);
         }
         cache[1 + i].offset |= Slot::pointerIsNotCell;
-        cache[1 + i].pointer = std::bit_cast<void*>(places);
+        cache[1 + i].pointer = std::bit_cast<void*>(packedOffsets);
     }
     cache->offset |= Slot::isIndirect;
     cache->newStructureID = after->id();
@@ -2650,7 +2651,7 @@ Data* PropertyLookupTable::dataFor(Instance* instance)
     return m_data;
 }
 
-uint32_t PropertyLookupTable::baseOf(Structure* structure) const
+uint32_t PropertyLookupTable::rowBaseFor(Structure* structure) const
 {
     return static_cast<uint32_t>(reinterpret_cast<const Cell*>(structure->lookupTableRow()) - reinterpret_cast<const Cell*>(emptyRowEntries()));
 }
@@ -2669,7 +2670,7 @@ bool PropertyLookupTable::usesPayloadDirectly(Kind kind)
 
 uint32_t PropertyLookupTable::findIndex(Structure* structure, uint32_t name) const
 {
-    uint32_t base = baseOf(structure);
+    uint32_t base = rowBaseFor(structure);
     if (!base)
         return 0;
     uint32_t index = indexOf(base, name);
@@ -2681,9 +2682,9 @@ uint32_t PropertyLookupTable::findIndexOfSlots(Structure* structure, uint32_t na
     uint32_t index = findIndex(structure, name);
     if (!index || !hasOwnOffsetInWord(entryAt(index)))
         return index;
-    if (entryAt(baseOf(structure)) != baseMarkerWithOverflowNames)
+    if (entryAt(rowBaseFor(structure)) != baseMarkerWithOverflowNames)
         return 0;
-    index = indexOfRowName(baseOf(structure), static_cast<uint16_t>(name | isInOverflow));
+    index = indexOfRowName(rowBaseFor(structure), static_cast<uint16_t>(name | isInOverflow));
     return isEntryFor(entryAt(index), name) ? index : 0;
 }
 
@@ -2732,7 +2733,7 @@ uint32_t PropertyLookupTable::createRow(Structure* structure, uint32_t name)
     RecentRow& last = m_recentRows[name % m_recentRows.size()];
     uint32_t preferredBase = 0;
     if (last.name == listed && last.row < m_rows.size() && m_rows[last.row].owner) {
-        preferredBase = baseOf(m_rows[last.row].owner) + 1;
+        preferredBase = rowBaseFor(m_rows[last.row].owner) + 1;
         for (uint16_t other : m_rows[last.row].names) {
             if (other != listed && !(other & isInOverflow) && expected.size() < maxNamesExpected)
                 expected.append(other);
@@ -2794,7 +2795,7 @@ uint32_t PropertyLookupTable::moveRow(uint32_t base, std::optional<uint16_t> nam
 uint32_t PropertyLookupTable::ensureIndex(Structure* structure, uint32_t name)
 {
     ASSERT(name <= maxName);
-    uint32_t base = baseOf(structure);
+    uint32_t base = rowBaseFor(structure);
     if (!base)
         return createRow(structure, name);
     uint16_t listed = static_cast<uint16_t>(name);
@@ -2818,7 +2819,7 @@ uint32_t PropertyLookupTable::ensureIndex(Structure* structure, uint32_t name)
 
 uint32_t PropertyLookupTable::ensureIndexInOverflow(Structure* structure, uint32_t name)
 {
-    uint32_t base = baseOf(structure);
+    uint32_t base = rowBaseFor(structure);
     ASSERT(base);
     uint16_t listed = static_cast<uint16_t>(name | isInOverflow);
     uint32_t index = indexOfRowName(base, listed);
@@ -2838,8 +2839,8 @@ uint32_t PropertyLookupTable::ensureIndexInOverflow(Structure* structure, uint32
 static std::optional<uint32_t> codeForInlineOrOutOfLineOffset(PropertyOffset offset)
 {
     if (isInlineOffset(offset)) {
-        uint32_t place = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
-        return place < PropertyLookupTable::firstCodeOutOfLine ? std::optional(place) : std::nullopt;
+        uint32_t offsetCode = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+        return offsetCode < PropertyLookupTable::firstCodeOutOfLine ? std::optional(offsetCode) : std::nullopt;
     }
     uint32_t code = PropertyLookupTable::firstCodeOutOfLine + (offset - firstOutOfLineOffset);
     return code <= UINT8_MAX ? std::optional(code) : std::nullopt;
@@ -2929,7 +2930,7 @@ bool PropertyLookupTable::setOwnOffset(Structure* structure, uint32_t name, Prop
         uint32_t inOverflow = ensureIndexInOverflow(structure, name);
         if (!inOverflow || payload(inOverflow))
             return false;
-        index = indexOf(baseOf(structure), name);
+        index = indexOf(rowBaseFor(structure), name);
         setPayload(index, 0);
         setPayload(inOverflow, slots);
     }
@@ -2973,8 +2974,8 @@ bool PropertyLookupTable::setInherited(Structure* structure, uint32_t name, JSCe
     if (!MarkedBlockCage::contains(holder))
         return false;
     if (isInlineOffset(offset)) {
-        uint32_t place = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
-        return place <= INT8_MAX && setEntryWithKind(structure, name, Kind::InheritedInline, place, MarkedBlockCage::encode(holder), uid);
+        uint32_t offsetCode = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+        return offsetCode <= INT8_MAX && setEntryWithKind(structure, name, Kind::InheritedInline, offsetCode, MarkedBlockCage::encode(holder), uid);
     }
     if (offset - firstOutOfLineOffset > maxOutOfLineIndex)
         return setInheritedFarOutOfLine(structure, name, holder, offset - firstOutOfLineOffset, uid);
@@ -2999,9 +3000,9 @@ bool PropertyLookupTable::setInstanceOf(Structure* structure, Kind kind, Propert
     return setEntryWithKind(structure, instanceOfName, kind, code, holderOrNull ? MarkedBlockCage::encode(holderOrNull) : 0, kind == ownHasInstanceKind ? nullptr : hasInstanceUID);
 }
 
-bool PropertyLookupTable::setInheritedFarOutOfLine(Structure* structure, uint32_t name, JSCell* holder, uint32_t place, UniquedStringImpl* uid)
+bool PropertyLookupTable::setInheritedFarOutOfLine(Structure* structure, uint32_t name, JSCell* holder, uint32_t outOfLineIndex, UniquedStringImpl* uid)
 {
-    if (place > maxOwnOutOfLineIndex)
+    if (outOfLineIndex > maxOwnOutOfLineIndex)
         return false;
     uint32_t index = ensureIndex(structure, name);
     if (!index || payload(index) & payloadIsSlots)
@@ -3009,7 +3010,7 @@ bool PropertyLookupTable::setInheritedFarOutOfLine(Structure* structure, uint32_
     uint32_t inOverflow = ensureIndexInOverflow(structure, name);
     if (!inOverflow || payload(inOverflow) & payloadIsSlots)
         return false;
-    setPayload(inOverflow, wordForOwnOutOfLineIndex(place));
+    setPayload(inOverflow, wordForOwnOutOfLineIndex(outOfLineIndex));
     return setEntryWithKind(structure, name, Kind::Unknown, farInheritedCode, MarkedBlockCage::encode(holder), uid);
 }
 
@@ -3037,11 +3038,11 @@ static std::optional<uint32_t> extraPropertyCode(Structure* structure, PropertyO
     if (!layout || !structure->extraPropertiesStructureID())
         return std::nullopt;
     if (!isInlineOffset(offset)) {
-        uint32_t place = PropertyLookupTable::firstOutOfLineExtraPropertyCode + (offset - firstOutOfLineOffset);
-        return place < PropertyLookupTable::onlyDefinitionAddsExtraProperty ? std::optional(place) : std::nullopt;
+        uint32_t offsetCode = PropertyLookupTable::firstOutOfLineExtraPropertyCode + (offset - firstOutOfLineOffset);
+        return offsetCode < PropertyLookupTable::onlyDefinitionAddsExtraProperty ? std::optional(offsetCode) : std::nullopt;
     }
-    uint32_t place = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
-    return place < PropertyLookupTable::firstOutOfLineExtraPropertyCode ? std::optional(place) : std::nullopt;
+    uint32_t offsetCode = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+    return offsetCode < PropertyLookupTable::firstOutOfLineExtraPropertyCode ? std::optional(offsetCode) : std::nullopt;
 }
 
 static bool stubsCanAddExtraProperty(Structure* before, Structure* after, PropertyOffset offset, bool createsExtraProperties)
@@ -3052,16 +3053,16 @@ static bool stubsCanAddExtraProperty(Structure* before, Structure* after, Proper
         return false;
     if (isInlineOffset(offset))
         return true;
-    StorageAfterAddition storage = storageAfterAddition(before->extraPropertiesStructureID().decode(), after->extraPropertiesStructureID().decode(), offset);
-    return storage == StorageAfterAddition::Stays || storage == StorageAfterAddition::IsFirst;
+    OutOfLineStorageChange storage = outOfLineStorageChange(before->extraPropertiesStructureID().decode(), after->extraPropertiesStructureID().decode(), offset);
+    return storage == OutOfLineStorageChange::Stays || storage == OutOfLineStorageChange::IsFirst;
 }
 
 void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Structure* after, JSCell* key, PropertyOffset offset, bool createsExtraProperties)
 {
     static_assert(OBJECT_OFFSETOF(Instance::KeyedAddition, holderValueCount) - OBJECT_OFFSETOF(Instance::KeyedAddition, newStorageCapacity) == PropertyLookupTable::offsetOfCodeInEntry - PropertyLookupTable::offsetOfPayloads);
-    auto place = extraPropertyCode(after, offset);
+    auto offsetCode = extraPropertyCode(after, offset);
     MegamorphicCache* cache = instance->vm->megamorphicCache();
-    if (!place || !cache || !stubsCanAddExtraProperty(before, after, offset, createsExtraProperties))
+    if (!offsetCode || !cache || !stubsCanAddExtraProperty(before, after, offset, createsExtraProperties))
         return;
     auto* addition = instance->freeKeyedAdditionEntry(before->id(), key);
     if (!addition)
@@ -3072,7 +3073,7 @@ void cacheKeyedExtraPropertyAddition(Instance* instance, Structure* before, Stru
     addition->newStructureID = after->id();
     addition->epoch = Instance::keyedAdditionIsExtraProperty;
     addition->newStorageCapacity = after->id().bits() | (createsExtraProperties ? PropertyLookupTable::storeCreatesExtraProperties : 0);
-    addition->holderValueCount = *place | PropertyLookupTable::storeAddsExtraProperty | static_cast<uint32_t>(cache->epoch()) << Instance::keyedExtraPropertyEpochShift;
+    addition->holderValueCount = *offsetCode | PropertyLookupTable::storeAddsExtraProperty | static_cast<uint32_t>(cache->epoch()) << Instance::keyedExtraPropertyEpochShift;
     addition->slot.structureID = before->id();
 }
 
@@ -3090,15 +3091,15 @@ void recordKeyedExtraPropertyAddition(Instance::KeyedAddition& addition, Structu
 
 bool PropertyLookupTable::setExtraProperty(Structure* structure, uint32_t name, PropertyOffset offset, bool isAccessor, bool isStoredTo, bool hasDefaultAttributes)
 {
-    auto place = extraPropertyCode(structure, offset);
+    auto offsetCode = extraPropertyCode(structure, offset);
     if (isAccessor && !isInlineOffset(offset))
         return false;
-    uint32_t index = place ? ensureIndex(structure, name) : 0;
+    uint32_t index = offsetCode ? ensureIndex(structure, name) : 0;
     if (!index || !releaseSlotsUnlessUsedByStores(index))
         return false;
     uint32_t before = entryAt(index);
     uint32_t inlineOffsetOfExtraProperties = structure->compiledLayout()->offsetOfExtraProperties();
-    uint32_t code = *place | (inlineOffsetOfExtraProperties ? 0 : extraPropertyUsesHandle);
+    uint32_t code = *offsetCode | (inlineOffsetOfExtraProperties ? 0 : extraPropertyUsesHandle);
     if (before & hasKindAndCode && kindOf(before) == Kind::ExtraProperty && codeOf(before) == code) {
         isStoredTo |= !!(payload(index) & extraPropertyIsWritten);
         hasDefaultAttributes |= !!(payload(index) & extraPropertyHasDefaultAttributes);
@@ -3109,8 +3110,8 @@ bool PropertyLookupTable::setExtraProperty(Structure* structure, uint32_t name, 
 
 bool PropertyLookupTable::setExtraPropertyAdded(Structure* structure, uint32_t name, Structure* after, PropertyOffset offset, bool createsExtraProperties, UniquedStringImpl* uid, bool isDefinition)
 {
-    auto place = extraPropertyCode(after, offset);
-    if (!place || !stubsCanAddExtraProperty(structure, after, offset, createsExtraProperties))
+    auto offsetCode = extraPropertyCode(after, offset);
+    if (!offsetCode || !stubsCanAddExtraProperty(structure, after, offset, createsExtraProperties))
         return false;
     uint32_t index = ensureIndex(structure, name);
     if (!index || !releaseSlotsUnlessUsedByStores(index) || !(entryAt(index) & hasKindAndCode) || isFarInherited(entryAt(index)))
@@ -3122,7 +3123,7 @@ bool PropertyLookupTable::setExtraPropertyAdded(Structure* structure, uint32_t n
     ASSERT(!(after->id().bits() & (newStructureFlags | payloadIsSlots)));
     if (isDefinition && addsExtraProperty(before) && !(codeOf(before) & onlyDefinitionAddsExtraProperty))
         return true;
-    setEntryAt(index, entryWithKind(name, Kind::ExtraProperty, *place | storeAddsExtraProperty | (isDefinition ? onlyDefinitionAddsExtraProperty : 0)));
+    setEntryAt(index, entryWithKind(name, Kind::ExtraProperty, *offsetCode | storeAddsExtraProperty | (isDefinition ? onlyDefinitionAddsExtraProperty : 0)));
     setPayload(index, after->id().bits() | (isKnownToBeAbsent ? extraPropertyIsKnownToBeAbsent : 0) | (createsExtraProperties ? storeCreatesExtraProperties : 0));
     m_newAdditionIndices.append(index);
     if (!isKnownToBeAbsent && !isDefinition)
@@ -3237,8 +3238,8 @@ bool PropertyLookupTable::setArrayLength(Structure* structure, uint32_t name, bo
 
 bool PropertyLookupTable::setAdded(Structure* structure, uint32_t name, Access access, Structure* after, PropertyOffset offset, uint32_t flags, UniquedStringImpl* uid)
 {
-    StorageAfterAddition storage = storageAfterAddition(structure, after, offset);
-    RELEASE_ASSERT(storage == (flags & growsStorage ? StorageAfterAddition::Doubled : flags & needsFirstStorage ? StorageAfterAddition::IsFirst : StorageAfterAddition::Stays));
+    OutOfLineStorageChange storage = outOfLineStorageChange(structure, after, offset);
+    RELEASE_ASSERT(storage == (flags & growsStorage ? OutOfLineStorageChange::Doubled : flags & needsFirstStorage ? OutOfLineStorageChange::IsFirst : OutOfLineStorageChange::Stays));
     AddedStorage where = flags ? AddedStorage::InNewStorage : isInlineOffset(offset) ? AddedStorage::Inline : AddedStorage::OutOfLine;
     uint32_t code = isInlineOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : offset - firstOutOfLineOffset;
     if (code > (where == AddedStorage::Inline ? INT8_MAX : UINT8_MAX))
@@ -3330,7 +3331,7 @@ auto PropertyLookupTable::entriesReferencing(UniquedStringImpl* uid, JSCell* hol
     if (name == m_nameByUID.end())
         return result;
     result.name = name->value;
-    uint32_t place = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+    uint32_t offsetCode = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
     forEachIndexInNameList(result.name, [&](uint32_t index) {
         uint32_t entry = entryAt(index);
         if (!isKindEntryFor(entry, result.name) || !m_dependsOnPrototypes.get(bitOf(index)) || (kindOf(entry) != Kind::InheritedInline && kindOf(entry) != Kind::Accessor))
@@ -3339,7 +3340,7 @@ auto PropertyLookupTable::entriesReferencing(UniquedStringImpl* uid, JSCell* hol
             JSValue member = asObject(holder)->getDirect(offset);
             if (!member.isCell() || !MarkedBlockCage::contains(member.asCell()) || payload(index) != MarkedBlockCage::encode(member.asCell()))
                 return;
-        } else if (codeOf(entry) != place || payload(index) != MarkedBlockCage::encode(holder))
+        } else if (codeOf(entry) != offsetCode || payload(index) != MarkedBlockCage::encode(holder))
             return;
         result.owners.append(m_rows[entryRow(index, result.name)].owner);
     });
@@ -3493,14 +3494,14 @@ void PropertyLookupTable::finalizeUnconditionally(VM& vm, bool isEdenCollection)
             if (vm.heap.isMarked(structure))
                 continue;
             structureDidDie(structure);
-            if (uint32_t base = baseOf(structure))
+            if (uint32_t base = rowBaseFor(structure))
                 release(base);
         }
     } else {
         for (unsigned i = 0; i < m_rows.size(); ++i) {
             if (Structure* owner = m_rows[i].owner; owner && !vm.heap.isMarked(owner)) {
                 structureDidDie(owner);
-                release(baseOf(owner));
+                release(rowBaseFor(owner));
             }
         }
     }
@@ -3545,7 +3546,7 @@ void PropertyLookupTable::clear()
 {
     for (unsigned i = 0; i < m_rows.size(); ++i) {
         if (Structure* owner = m_rows[i].owner) {
-            release(baseOf(owner));
+            release(rowBaseFor(owner));
             owner->setLookupTableRow(emptyRowEntries());
         }
     }

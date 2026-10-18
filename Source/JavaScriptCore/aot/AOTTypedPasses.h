@@ -128,11 +128,6 @@ bool removeDeadCountedLoops(const Program&, Function&);
 bool sinkToBooleanIntoPredecessors(const Program&, Function&);
 void convertAllocationAssertions(Program&, Vector<String>& findings);
 void reportAllocationAssertions(const Program&, Vector<String>& findings);
-void recordAllocation(const Program&, Function&, const Value& site, AllocationOutcome, unsigned builtAt = 0, const Value* forcedBy = nullptr, ASCIILiteral why = { });
-void recordAllocationSites(const Program&, Function&);
-void finalizeAllocationNotes(const Program&, Function&);
-void printAllocationRemarks(const Program&, PrintStream&);
-void printAllocationUses(const Program&, PrintStream&);
 
 static constexpr unsigned stringBuilderCapacity = 128;
 static constexpr unsigned maxStringBuilderAppendRun = 64;
@@ -142,7 +137,7 @@ struct StringBuilderAnalysis {
     static constexpr uint32_t invalidBuilder = UINT32_MAX;
     using Operands = Vector<ValueID, 8>;
 
-    bool isState(ValueID id) const { return id.index() < builderForValue.size() && builderForValue[id.index()] != invalidBuilder; }
+    bool hasBuilder(ValueID id) const { return id.index() < builderForValue.size() && builderForValue[id.index()] != invalidBuilder; }
 
     Vector<uint32_t> builderForValue;
     BitVector isFinalState;
@@ -173,7 +168,7 @@ using MatchesOnlyTakenApart = UncheckedKeyHashMap<uint32_t, unsigned, IntHash<ui
 enum class MatchProperty : uint8_t { Index, Input };
 std::optional<MatchProperty> matchPropertyRead(const Program&, const Value&);
 MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program&, const Function&);
-ValueID matchBehindCasts(const Function&, ValueID);
+ValueID lookThroughCasts(const Function&, ValueID);
 enum class DescriptorProperty : uint8_t { Value, Writable, Enumerable, Configurable, Get, Set };
 std::optional<DescriptorProperty> descriptorPropertyRead(const Program&, const Value&);
 BitVector findDescriptorsOnlyTakenApart(const Program&, const Function&);
@@ -360,7 +355,7 @@ KeyedAccess keyedAccessOf(const Program&, const Function&, const Value&);
 bool isNumericOperand(const Type&);
 Writes writesOfArithmetic(const Type&, const Type*);
 Type elementTypeOf(TypedArrayType);
-BuiltinID applicableEntry(BuiltinID first, std::span<const Type> arguments);
+BuiltinID resolveBuiltinOverload(BuiltinID first, std::span<const Type> arguments);
 
 Rep resultRepOf(const Program&, FunctionID);
 uint8_t kindByteOf(const Program&, const Function&);

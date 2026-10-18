@@ -448,7 +448,7 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
                     return true;
                 if (!slot.isStrictMode() && slot.context() == PutPropertySlot::ReflectSet)
                     return false;
-                throwTypeError(globalObject, scope, withAOTErrorNote(makeString("Cannot replace 'prototype' of generator function '"_s, thisObject->jsExecutable()->ecmaName().string(), "': it is fixed when the program is compiled"_s)));
+                throwTypeError(globalObject, scope, withAOTTypeCheckNote(makeString("Cannot replace 'prototype' of generator function '"_s, thisObject->jsExecutable()->ecmaName().string(), "': it is fixed when the program is compiled"_s)));
                 return false;
             }
         }

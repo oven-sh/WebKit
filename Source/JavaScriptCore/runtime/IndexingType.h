@@ -73,7 +73,6 @@ static const IndexingType DoubleShape                     = 0x06;
 static const IndexingType ContiguousShape                 = 0x08;
 static const IndexingType ArrayStorageShape               = 0x0A;
 static const IndexingType SlowPutArrayStorageShape        = 0x0C;
-static const IndexingType TypedContiguousShape            = 0x0E;
 
 static const IndexingType IndexingShapeMask               = 0x0E;
 static const IndexingType IndexingShapeShift              = 1;
@@ -112,7 +111,6 @@ static const IndexingType ArrayWithDouble                 = IsArray | DoubleShap
 static const IndexingType ArrayWithContiguous             = IsArray | ContiguousShape;
 static const IndexingType ArrayWithArrayStorage           = IsArray | ArrayStorageShape;
 static const IndexingType ArrayWithSlowPutArrayStorage    = IsArray | SlowPutArrayStorageShape;
-static const IndexingType ArrayWithTypedContiguous        = IsArray | TypedContiguousShape;
 static const IndexingType CopyOnWriteArrayWithInt32       = IsArray | Int32Shape | CopyOnWrite;
 static const IndexingType CopyOnWriteArrayWithDouble      = IsArray | DoubleShape | CopyOnWrite;
 static const IndexingType CopyOnWriteArrayWithContiguous  = IsArray | ContiguousShape | CopyOnWrite;
@@ -182,11 +180,6 @@ inline bool hasContiguous(IndexingType indexingType)
     return (indexingType & IndexingShapeMask) == ContiguousShape;
 }
 
-inline bool hasTypedContiguous(IndexingType indexingType)
-{
-    return (indexingType & IndexingShapeMask) == TypedContiguousShape;
-}
-
 inline bool hasArrayStorage(IndexingType indexingType)
 {
     return (indexingType & IndexingShapeMask) == ArrayStorageShape;
@@ -194,7 +187,7 @@ inline bool hasArrayStorage(IndexingType indexingType)
 
 inline bool hasAnyArrayStorage(IndexingType indexingType)
 {
-    return static_cast<uint8_t>((indexingType & IndexingShapeMask) - ArrayStorageShape) <= SlowPutArrayStorageShape - ArrayStorageShape;
+    return static_cast<uint8_t>(indexingType & IndexingShapeMask) >= ArrayStorageShape;
 }
 
 inline bool hasSlowPutArrayStorage(IndexingType indexingType)

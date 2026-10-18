@@ -1617,7 +1617,7 @@ class YarrGenerator final : public YarrJITInfo {
         case TableOwnership::OwnedBitPlane:
             return YarrCodeForImage::OwnedTableKind::BitPlane;
         case TableOwnership::OwnedClassTable:
-            return YarrCodeForImage::OwnedTableKind::ClassTable;
+            return YarrCodeForImage::OwnedTableKind::CharacterClassTable;
         case TableOwnership::OwnedClassTableForRoutine:
             return YarrCodeForImage::OwnedTableKind::ClassTableForRoutine;
         case TableOwnership::OwnedByPattern:
@@ -1770,7 +1770,7 @@ class YarrGenerator final : public YarrJITInfo {
         return branchTestTable(condition, character, table, CharacterClass::tableSize, TableOwnership::Shared);
     }
 
-    struct ClassTable {
+    struct CharacterClassTable {
         Vector<char32_t> matches8;
         Vector<CharacterRange> ranges8;
         Vector<char32_t> matches32;
@@ -1793,7 +1793,7 @@ class YarrGenerator final : public YarrJITInfo {
     static constexpr unsigned classTableFirstBlockOffset = ClassTableLayout::firstBlockOffset;
     static constexpr unsigned classTableUpperIndexOffset = ClassTableLayout::upperIndexOffset;
 
-    const ClassTable* classTableFor(const CharacterClass& charClass, bool isForRoutine = false)
+    const CharacterClassTable* classTableFor(const CharacterClass& charClass, bool isForRoutine = false)
     {
         constexpr size_t mostEntriesWithoutTable = 7;
         if (!m_forImage || m_charSize == CharSize::Char8 || charClass.m_matches32.size() + charClass.m_ranges32.size() <= mostEntriesWithoutTable)
@@ -1802,7 +1802,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (table->matches32 == charClass.m_matches32 && table->ranges32 == charClass.m_ranges32 && table->matches8 == charClass.m_matches8 && table->ranges8 == charClass.m_ranges8 && table->isForRoutine == isForRoutine)
                 return table->bytes.isEmpty() ? nullptr : table.get();
         }
-        m_classTables.append(makeUniqueWithoutFastMallocCheck<ClassTable>());
+        m_classTables.append(makeUniqueWithoutFastMallocCheck<CharacterClassTable>());
         auto& result = *m_classTables.last();
         result.matches8 = charClass.m_matches8;
         result.ranges8 = charClass.m_ranges8;
@@ -1931,7 +1931,7 @@ class YarrGenerator final : public YarrJITInfo {
         return &result;
     }
 
-    MacroAssembler::Jump branchTestClassTable(MacroAssembler::ResultCondition condition, MacroAssembler::RegisterID character, MacroAssembler::RegisterID scratch, const ClassTable& table)
+    MacroAssembler::Jump branchTestClassTable(MacroAssembler::ResultCondition condition, MacroAssembler::RegisterID character, MacroAssembler::RegisterID scratch, const CharacterClassTable& table)
     {
 #if CPU(ARM64)
         constexpr MacroAssembler::RegisterID address = MacroAssembler::dataTempRegister;
@@ -2127,7 +2127,7 @@ class YarrGenerator final : public YarrJITInfo {
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (const ClassTable* table = classTableFor(*charClass)) {
+        if (const CharacterClassTable* table = classTableFor(*charClass)) {
             MacroAssembler::JumpList isDecided;
             bool checksLimit = m_decodeSurrogatePairs || table->limit < 0x10000;
             RELEASE_ASSERT(m_forImage && character != scratch);
@@ -2284,10 +2284,10 @@ class YarrGenerator final : public YarrJITInfo {
         return true;
     }
 
-    enum class PairAdvance : uint8_t { ByCaller, ClaimsSecondUnit, ClaimsSecondUnitBeforeCallerAdvances };
+    enum class SurrogatePairAdvance : uint8_t { ByCaller, ClaimsSecondUnit, ClaimsSecondUnitBeforeCallerAdvances };
     enum class InputCheck : uint8_t { DoneByCaller, FailsIfIndexIsAboveLength, FailsIfIndexIsLength };
 
-    const ClassTable* tableForMatchingByRoutine(const PatternTerm& term)
+    const CharacterClassTable* tableForMatchingByRoutine(const PatternTerm& term)
     {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && (CPU(X86_64) || CPU(ARM64))
         if (m_forImage && m_decodeSurrogatePairs && m_direction == Forward && !term.characterClass->m_anyCharacter)
@@ -2298,11 +2298,11 @@ class YarrGenerator final : public YarrJITInfo {
         return nullptr;
     }
 
-    bool readAndMatchCharacterClassTerm(PatternTerm* term, Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID indexReg, MacroAssembler::JumpList& failures, const MacroAssembler::RegisterID character, const MacroAssembler::RegisterID scratch, PairAdvance pairAdvance = PairAdvance::ByCaller, InputCheck inputCheck = InputCheck::DoneByCaller)
+    bool readAndMatchCharacterClassTerm(PatternTerm* term, Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID indexReg, MacroAssembler::JumpList& failures, const MacroAssembler::RegisterID character, const MacroAssembler::RegisterID scratch, SurrogatePairAdvance pairAdvance = SurrogatePairAdvance::ByCaller, InputCheck inputCheck = InputCheck::DoneByCaller)
     {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && (CPU(X86_64) || CPU(ARM64))
         {
-            if (const ClassTable* table = tableForMatchingByRoutine(*term)) {
+            if (const CharacterClassTable* table = tableForMatchingByRoutine(*term)) {
                 RELEASE_ASSERT(character == m_regs.regT0);
                 MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, character, indexReg);
                 verifySubjectRead(address, 2, __LINE__);
@@ -2324,7 +2324,7 @@ class YarrGenerator final : public YarrJITInfo {
                 (void)m_jit.label();
                 failures.append(m_jit.branchTest32(isInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, m_regs.unicodeAndSubpatternIdTemp, MacroAssembler::TrustedImm32(1)));
 #endif
-                return pairAdvance != PairAdvance::ByCaller;
+                return pairAdvance != SurrogatePairAdvance::ByCaller;
             }
         }
 #endif
@@ -2338,7 +2338,7 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && (CPU(X86_64) || CPU(ARM64))
-    void generateCodePointClassTableMatcher(bool isInverted, PairAdvance pairAdvance, InputCheck inputCheck)
+    void generateCodePointClassTableMatcher(bool isInverted, SurrogatePairAdvance pairAdvance, InputCheck inputCheck)
     {
         const MacroAssembler::RegisterID character = m_regs.regT0;
         const MacroAssembler::RegisterID unitAddress = m_regs.regUnicodeInputAndTrail;
@@ -2463,9 +2463,9 @@ class YarrGenerator final : public YarrJITInfo {
         if (!isInverted)
             termFails.append(m_jit.jump());
         termMatches.link(&m_jit);
-        if (pairAdvance != PairAdvance::ByCaller) {
+        if (pairAdvance != SurrogatePairAdvance::ByCaller) {
             MacroAssembler::Jump isSingleUnit = m_jit.branch32(MacroAssembler::Below, character, MacroAssembler::TrustedImm32(0x10000));
-            if (pairAdvance == PairAdvance::ClaimsSecondUnit)
+            if (pairAdvance == SurrogatePairAdvance::ClaimsSecondUnit)
                 termFails.append(m_jit.branch32(MacroAssembler::Equal, m_regs.index, m_regs.length));
             else {
                 m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index, temp);
@@ -5378,7 +5378,7 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if USE(BUN_JSC_ADDITIONS)
         bool mayConsumeUncheckedSecondUnit = !term->characterClass->hasOneCharacterSize() || term->invert();
-        if (readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, op.m_jumps, character, scratch, mayConsumeUncheckedSecondUnit ? PairAdvance::ClaimsSecondUnit : PairAdvance::ByCaller, checksInputInRoutine ? InputCheck::FailsIfIndexIsAboveLength : InputCheck::DoneByCaller))
+        if (readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, op.m_jumps, character, scratch, mayConsumeUncheckedSecondUnit ? SurrogatePairAdvance::ClaimsSecondUnit : SurrogatePairAdvance::ByCaller, checksInputInRoutine ? InputCheck::FailsIfIndexIsAboveLength : InputCheck::DoneByCaller))
             return;
 #else
         readCharacter(op.m_checkedOffset - term->inputPosition, character);
@@ -5578,9 +5578,9 @@ class YarrGenerator final : public YarrJITInfo {
         m_backtrackingState.fallthrough();
     }
 
-    using CharacterSpans = Vector<std::pair<char32_t, char32_t>, 16>;
+    using CharacterRanges = Vector<std::pair<char32_t, char32_t>, 16>;
 
-    static bool findCharacterSpans(const PatternTerm& term, CharacterSpans& spans)
+    static bool findCharacterSpans(const PatternTerm& term, CharacterRanges& spans)
     {
         constexpr char32_t last = 0x10ffff;
         if (term.type == PatternTerm::Type::PatternCharacter) {
@@ -5617,7 +5617,7 @@ class YarrGenerator final : public YarrJITInfo {
         }
         if (!term.invert())
             return true;
-        CharacterSpans others;
+        CharacterRanges others;
         char32_t next = 0;
         bool reachedLast = false;
         for (auto [begin, end] : spans) {
@@ -5637,8 +5637,8 @@ class YarrGenerator final : public YarrJITInfo {
 
     static bool matchNoCharacterInCommon(const PatternTerm& one, const PatternTerm& other)
     {
-        CharacterSpans firstSpans;
-        CharacterSpans secondSpans;
+        CharacterRanges firstSpans;
+        CharacterRanges secondSpans;
         if (!findCharacterSpans(one, firstSpans) || !findCharacterSpans(other, secondSpans))
             return false;
         for (auto [begin, end] : firstSpans) {
@@ -5997,7 +5997,7 @@ class YarrGenerator final : public YarrJITInfo {
             bool checksInputInRoutine = tableForMatchingByRoutine(*term);
             if (!checksInputInRoutine)
                 endsRun.append(atEndOfInput());
-            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, endsRun, character, scratch, PairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
+            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, endsRun, character, scratch, SurrogatePairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
             if (m_decodeSurrogatePairs && !hasClaimedSecondUnit)
                 advanceIndexAfterCharacterClassTermMatch(term, endsRunAfterOneUnit, character);
@@ -6089,7 +6089,7 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
         {
 #if USE(BUN_JSC_ADDITIONS)
-            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, failures, character, scratch, PairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
+            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, failures, character, scratch, SurrogatePairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
 #else
             constexpr bool hasClaimedSecondUnit = false;
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
@@ -6277,7 +6277,7 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
         {
 #if USE(BUN_JSC_ADDITIONS)
-            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, nonGreedyFailures, character, scratch, PairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
+            bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, nonGreedyFailures, character, scratch, SurrogatePairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
 #else
             constexpr bool hasClaimedSecondUnit = false;
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
@@ -12910,7 +12910,7 @@ public:
         bool readsCodePoint { false };
         bool matchesCodePointAgainstTable { false };
         bool isInverted { false };
-        PairAdvance pairAdvance { PairAdvance::ByCaller };
+        SurrogatePairAdvance pairAdvance { SurrogatePairAdvance::ByCaller };
         InputCheck inputCheck { InputCheck::DoneByCaller };
         bool clearsSubpatterns { false };
         bool searchesForOneClass { false };
@@ -12919,7 +12919,7 @@ public:
         ClassWords classWords { ClassWords::Low };
     };
     Vector<ClassRoutine> m_classRoutines;
-    Vector<std::unique_ptr<ClassTable>> m_classTables;
+    Vector<std::unique_ptr<CharacterClassTable>> m_classTables;
     Vector<MacroAssembler::Call> m_ownTryReadUnicodeCharSlowPathCalls;
     Vector<MacroAssembler::Call> m_ownAreCanonicallyEquivalentCalls;
 private:
@@ -13208,11 +13208,11 @@ std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern& pattern, StringV
 }
 
 #if CPU(X86_64) || CPU(ARM64)
-enum class NamedByBody : uint8_t { Table, OwnedTable, Routine, Literal };
+enum class BodyReferenceKind : uint8_t { Table, OwnedTable, Routine, Literal };
 struct BodyReference {
     uint32_t offset;
     uint64_t identity;
-    NamedByBody names;
+    BodyReferenceKind names;
     uint32_t index;
     uint8_t size;
     bool usesRegistersOnly { false };
@@ -13232,15 +13232,15 @@ static Vector<BodyReference> referencesOf(const YarrCodeForImage& code)
     auto tableIdentities = identitiesOf(code.ownedTables, 7);
     auto routineIdentities = identitiesOf(code.routines, 9);
     for (uint32_t i = 0; i < code.tables.size(); ++i)
-        references.append(BodyReference { code.tables[i].offset, static_cast<uint64_t>(std::bit_cast<uintptr_t>(code.tables[i].table.data())) ^ static_cast<uint64_t>(code.tables[i].reg) << 56, NamedByBody::Table, i, static_cast<uint8_t>(isX86_64() ? 7 : 8) });
+        references.append(BodyReference { code.tables[i].offset, static_cast<uint64_t>(std::bit_cast<uintptr_t>(code.tables[i].table.data())) ^ static_cast<uint64_t>(code.tables[i].reg) << 56, BodyReferenceKind::Table, i, static_cast<uint8_t>(isX86_64() ? 7 : 8) });
     for (uint32_t i = 0; i < code.ownedTableReferences.size(); ++i)
-        references.append(BodyReference { code.ownedTableReferences[i].offset, tableIdentities[code.ownedTableReferences[i].table] ^ static_cast<uint64_t>(code.ownedTableReferences[i].reg) << 56, NamedByBody::OwnedTable, i, static_cast<uint8_t>(isX86_64() ? 7 : code.ownedTableReferences[i].isFar ? 8 : 4) });
+        references.append(BodyReference { code.ownedTableReferences[i].offset, tableIdentities[code.ownedTableReferences[i].table] ^ static_cast<uint64_t>(code.ownedTableReferences[i].reg) << 56, BodyReferenceKind::OwnedTable, i, static_cast<uint8_t>(isX86_64() ? 7 : code.ownedTableReferences[i].isFar ? 8 : 4) });
     for (uint32_t i = 0; i < code.routineCalls.size(); ++i)
-        references.append(BodyReference { code.routineCalls[i].offset, routineIdentities[code.routineCalls[i].routine], NamedByBody::Routine, i, static_cast<uint8_t>(isX86_64() ? 5 : 4), code.routineCalls[i].usesRegistersOnly });
+        references.append(BodyReference { code.routineCalls[i].offset, routineIdentities[code.routineCalls[i].routine], BodyReferenceKind::Routine, i, static_cast<uint8_t>(isX86_64() ? 5 : 4), code.routineCalls[i].usesRegistersOnly });
     for (uint32_t i = 0; i < code.literalLoads.size(); ++i) {
         uint32_t instruction;
         memcpy(&instruction, code.bytes.span().data() + code.literalLoads[i].offset, sizeof(instruction));
-        references.append(BodyReference { code.literalLoads[i].offset, ImageBody::contentHash(reinterpret_cast<const uint8_t*>(&code.literalLoads[i].value), sizeof(uint64_t), instruction), NamedByBody::Literal, i, sizeof(instruction) });
+        references.append(BodyReference { code.literalLoads[i].offset, ImageBody::contentHash(reinterpret_cast<const uint8_t*>(&code.literalLoads[i].value), sizeof(uint64_t), instruction), BodyReferenceKind::Literal, i, sizeof(instruction) });
     }
     std::ranges::sort(references, { }, &BodyReference::offset);
     return references;
@@ -13300,19 +13300,19 @@ void tidyBodyForImage(YarrCodeForImage& code)
     for (auto& placed : tidied.references) {
         auto& reference = references[placed.index];
         switch (reference.names) {
-        case NamedByBody::Table:
+        case BodyReferenceKind::Table:
             tables.append(code.tables[reference.index]);
             tables.last().offset = placed.offset;
             break;
-        case NamedByBody::OwnedTable:
+        case BodyReferenceKind::OwnedTable:
             ownedTableReferences.append(code.ownedTableReferences[reference.index]);
             ownedTableReferences.last().offset = placed.offset;
             break;
-        case NamedByBody::Routine:
+        case BodyReferenceKind::Routine:
             routineCalls.append(code.routineCalls[reference.index]);
             routineCalls.last().offset = placed.offset;
             break;
-        case NamedByBody::Literal:
+        case BodyReferenceKind::Literal:
             literalLoads.append({ placed.offset, code.literalLoads[reference.index].value });
             break;
         }

@@ -190,7 +190,7 @@ public:
         };
         std::array<Pass, 2> passes;
         unsigned pass = 0;
-        auto counted = [&](unsigned given, const auto& walk) {
+        auto counted = [&](unsigned stepBudget, const auto& walk) {
             if (!m_remarks) [[likely]] {
                 walk();
                 return;
@@ -199,7 +199,7 @@ public:
             MonotonicTime from = MonotonicTime::now();
             walk();
             auto& current = passes[pass];
-            unsigned spent = given - m_stepsLeft - m_stepsInReserve;
+            unsigned spent = stepBudget - m_stepsLeft - m_stepsInReserve;
             unsigned handedOver = m_numberOfExpressions + m_numberOfExpressionsWithoutCode - reportedBefore;
             current.time += MonotonicTime::now() - from;
             ++current.walks;
@@ -950,7 +950,7 @@ private:
         });
     }
 
-    std::optional<Vector<JSValue>> elementsOf(JSValue iterable)
+    std::optional<Vector<JSValue>> elementHeapFor(JSValue iterable)
     {
         Vector<JSValue> result;
         if (!iterable)
@@ -1150,7 +1150,7 @@ private:
             return jsBoolean(false);
         if (is(Operations::AppendSpread)) {
             auto* array = argument(0) ? dynamicDowncast<JSArray>(argument(0)) : nullptr;
-            auto elements = array ? elementsOf(argument(1)) : std::nullopt;
+            auto elements = array ? elementHeapFor(argument(1)) : std::nullopt;
             if (!elements)
                 return { };
             return attempt([&](TopExceptionScope& scope) -> JSValue {
@@ -1163,13 +1163,13 @@ private:
             });
         }
         if (is(Operations::Apply) || is(Operations::CallWithSpread)) {
-            auto elements = elementsOf(argument(2));
+            auto elements = elementHeapFor(argument(2));
             return elements ? call(argument(0), argument(1), elements->span()) : JSValue();
         }
         if (is(Operations::Call) || is(Operations::CallNoInline))
             return arguments.size() >= 2 ? call(arguments[0], arguments[1], arguments.subspan(2)) : JSValue();
         if (is(Operations::ConstructWithArray)) {
-            auto elements = elementsOf(argument(1));
+            auto elements = elementHeapFor(argument(1));
             return elements ? construct(argument(0), elements->span()) : JSValue();
         }
         if (is(Operations::CopyDataProperties))

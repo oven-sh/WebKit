@@ -275,7 +275,7 @@ private:
             terminator.targets.append(*handler);
     }
 
-    Cut cutAt(Site site)
+    Cut splitAt(Site site)
     {
         Cut cut;
         if (site.index + 1 == at(site.block).values.size() && at(site.block).terminator.kind == TerminatorKind::Invoke) {
@@ -311,7 +311,7 @@ private:
     {
         Site site = siteOf(m_frame);
         Value call = at(m_frame);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         ValueID notStarted = appendInteger(site.block, 0, m_program.types.int32, call);
         Value allocation = make(Opcode::NewObjectWithShape, ramp.at(frame.allocation).type, call);
         allocation.immediates = { m_layout.index(), m_function.allocationOf(Allocation(ramp.allocations[ramp.at(frame.allocation).allocation()])) };
@@ -334,7 +334,7 @@ private:
     {
         Site site = siteOf(hasNext);
         Value like = at(hasNext);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         ValueID returnedValue = appendResume(site.block, resumeModeNext, like);
         BlockID resumed = addBlock();
         jump(site.block, Target { resumed, { } }, cut.handler);
@@ -352,7 +352,7 @@ private:
     {
         Site site = siteOf(id);
         Value like = at(id);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         ValueID state = appendState(site.block, like);
         ValueID isSuspended = appendCompare(site.block, Opcode::Greater, state, appendInteger(site.block, 0, m_program.types.int32, like), like);
         BlockID returns = addBlock();
@@ -467,7 +467,7 @@ private:
     {
         Site site = siteOf(call);
         Value like = at(call);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         BlockID runs = addBlock();
         BlockID resumed = addBlock();
         BlockID isOver = addBlock();
@@ -626,7 +626,7 @@ private:
             remove(aliases[i]);
         Site site = siteOf(spread);
         Value like = at(spread);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         BlockID header = addBlock();
         BlockID resumed = addBlock();
         BlockID pushes = addBlock();
@@ -842,7 +842,7 @@ private:
         if (step.method) {
             Site site = siteOf(step.method);
             Value like = at(step.method);
-            Cut cut = cutAt(site);
+            Cut cut = splitAt(site);
             BlockID reads = addBlock();
             BlockID isKnown = addBlock();
             BlockID found = addBlock();
@@ -862,9 +862,9 @@ private:
         static constexpr Generator::ResumeMode modes[] = { Generator::ResumeMode::Next, Generator::ResumeMode::Return, Generator::ResumeMode::Throw };
         Site site = siteOf(step.call);
         Value like = at(step.call);
-        Cut cut = cutAt(site);
+        Cut cut = splitAt(site);
         BlockID steps = step.method ? addBlock() : site.block;
-        BlockID asks = addBlock();
+        BlockID statusCheck = addBlock();
         BlockID wasStepped = addBlock();
         BlockID calls = addBlock();
         BlockID stepped = addBlock();
@@ -878,17 +878,17 @@ private:
         ValueID mode = appendInteger(steps, static_cast<int64_t>(modes[step.mode]), m_program.types.int32, like);
         ValueID check = appendInteger(steps, static_cast<int64_t>(step.method ? Generator::StepCheck::None : isCreatedGenerator(step.generator) ? Generator::StepCheck::IsUnmodified : Generator::StepCheck::IsUnmodifiedGenerator), m_program.types.int32, like);
         ValueID value = appendOperation(steps, Operations::StepGenerator, m_program.types.anything, like, { step.generator, mode, sent, check });
-        jump(steps, Target { asks, { } }, cut.handler);
+        jump(steps, Target { statusCheck, { } }, cut.handler);
 
-        ValueID status = appendOperation(asks, Operations::GeneratorStepStatus, m_program.types.int32, like, { value });
-        ValueID wasNotStepped = appendCompare(asks, Opcode::StrictEq, status, appendInteger(asks, Generator::wasNotStepped, m_program.types.int32, like), like);
+        ValueID status = appendOperation(statusCheck, Operations::GeneratorStepStatus, m_program.types.int32, like, { value });
+        ValueID wasNotStepped = appendCompare(statusCheck, Opcode::StrictEq, status, appendInteger(statusCheck, Generator::wasNotStepped, m_program.types.int32, like), like);
         BlockID otherwise = calls;
         if (step.method) {
             otherwise = addBlock();
             ValueID modeInEngine = appendInteger(otherwise, step.mode, m_program.types.int32, like);
             jump(otherwise, Target { stepped, { appendOperation(otherwise, Operations::ResumeGenerator, like.type, like, { step.generator, modeInEngine, sent }) } }, cut.handler);
         }
-        branch(asks, wasNotStepped, otherwise, wasStepped);
+        branch(statusCheck, wasNotStepped, otherwise, wasStepped);
 
         ValueID isDone = appendCompare(wasStepped, Opcode::StrictEq, status, appendInteger(wasStepped, Generator::didComplete, m_program.types.int32, like), like);
         jump(wasStepped, Target { stepped, { appendOperation(wasStepped, Operations::MakeIteratorResult, m_program.types.object, like, { value, isDone }) } });
@@ -1051,30 +1051,30 @@ private:
                 Value like = at(id);
                 at(id).type = m_program.types.anything;
                 at(id).rep = repOf(m_program.at(m_program.types.anything));
-                ResultParts held { id, addParameter(BlockID(b), m_program.types.anything, like), addParameter(BlockID(b), m_program.types.boolean, like), { } };
+                ResultParts resultParts { id, addParameter(BlockID(b), m_program.types.anything, like), addParameter(BlockID(b), m_program.types.boolean, like), { } };
                 if (mergesWithObjects.get(groupOf(id)))
-                    held.isInParts = addParameter(BlockID(b), m_program.types.boolean, like);
-                parts.add(id.index(), held);
+                    resultParts.isInParts = addParameter(BlockID(b), m_program.types.boolean, like);
+                parts.add(id.index(), resultParts);
             }
         }
         for (ValueID id : results) {
             Value like = at(id);
             if (like.opcode != Opcode::Parameter && like.opcode != Opcode::Cast) {
                 Site site = siteOf(id);
-                ResultParts held { id, { }, { }, { } };
+                ResultParts resultParts { id, { }, { }, { } };
                 if (like.opcode == Opcode::NewObject) {
                     Literal literal = literals.get(id.index());
-                    held.value = literal.value;
-                    held.isDone = literal.isDone;
+                    resultParts.value = literal.value;
+                    resultParts.isDone = literal.isDone;
                     remove(literal.definesValue);
                     remove(literal.definesDone);
                 } else {
-                    held.value = like.arguments[0];
-                    held.isDone = like.arguments[1];
+                    resultParts.value = like.arguments[0];
+                    resultParts.isDone = like.arguments[1];
                 }
                 if (mergesWithObjects.get(groupOf(id)))
-                    held.isInParts = prepend(site.block, makeBoolean(true, like));
-                parts.add(id.index(), held);
+                    resultParts.isInParts = prepend(site.block, makeBoolean(true, like));
+                parts.add(id.index(), resultParts);
                 at(id) = make(Opcode::Undefined, m_program.types.undefined, like);
             }
         }
@@ -1093,75 +1093,75 @@ private:
                         continue;
                     ValueID argument = m_function.blocks[b].terminator.targets[t].arguments[i];
                     bool isAlsoInParts = isResult.get(argument.index()) && !escapes.get(groupOf(argument));
-                    ResultParts held;
+                    ResultParts resultParts;
                     if (isAlsoInParts)
-                        held = partsOf(argument);
+                        resultParts = partsOf(argument);
                     else {
                         Value like = at(argument);
-                        held = { argument, prepend(BlockID(b), make(Opcode::Undefined, m_program.types.undefined, like)), prepend(BlockID(b), makeBoolean(false, like)), prepend(BlockID(b), makeBoolean(false, like)) };
+                        resultParts = { argument, prepend(BlockID(b), make(Opcode::Undefined, m_program.types.undefined, like)), prepend(BlockID(b), makeBoolean(false, like)), prepend(BlockID(b), makeBoolean(false, like)) };
                     }
                     auto& arguments = m_function.blocks[b].terminator.targets[t].arguments;
-                    arguments[i] = held.object;
-                    arguments.append(held.value);
-                    arguments.append(held.isDone);
+                    arguments[i] = resultParts.object;
+                    arguments.append(resultParts.value);
+                    arguments.append(resultParts.isDone);
                     if (parts.get(parameter.index()).isInParts)
-                        arguments.append(held.isInParts);
+                        arguments.append(resultParts.isInParts);
                 }
             }
         }
         auto replaceRead = [&](ValueID read, ValueID with) {
             replaceUses(read, with);
-            for (auto& held : parts.values()) {
-                if (held.value == read)
-                    held.value = with;
+            for (auto& resultParts : parts.values()) {
+                if (resultParts.value == read)
+                    resultParts.value = with;
             }
         };
         for (ValueID read : reads) {
-            ResultParts held = partsOf(at(read).child(0));
+            ResultParts resultParts = partsOf(at(read).child(0));
             Value like = at(read);
             bool readsDone = like.string() == *done;
             auto claim = [&] {
                 Value cast = make(Opcode::Cast, like.type, like);
-                cast.children[0] = held.value;
+                cast.children[0] = resultParts.value;
                 cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
                 cast.copyPredictionFrom(like);
                 return cast;
             };
-            if (!held.isInParts) {
+            if (!resultParts.isInParts) {
                 if (readsDone) {
-                    replaceRead(read, held.isDone);
+                    replaceRead(read, resultParts.isDone);
                     remove(read);
                 } else
                     at(read) = claim();
                 continue;
             }
             Site site = siteOf(read);
-            Cut cut = cutAt(site);
+            Cut cut = splitAt(site);
             BlockID isHeldInParts = addBlock();
             BlockID isObject = addBlock();
             BlockID wasRead = addBlock();
-            branch(site.block, held.isInParts, isHeldInParts, isObject);
+            branch(site.block, resultParts.isInParts, isHeldInParts, isObject);
             ValueID merged = addParameter(wasRead, like.type, like);
             at(merged).copyPredictionFrom(like);
             replaceRead(read, merged);
-            jump(isHeldInParts, Target { wasRead, { readsDone ? held.isDone : append(isHeldInParts, claim()) } });
-            at(read).children[0] = held.object;
+            jump(isHeldInParts, Target { wasRead, { readsDone ? resultParts.isDone : append(isHeldInParts, claim()) } });
+            at(read).children[0] = resultParts.object;
             at(isObject).values.append(read);
             jump(isObject, Target { wasRead, { read } }, cut.handler);
             jump(wasRead, cut.after);
         }
         for (ValueID check : checks) {
-            ResultParts held = partsOf(at(check).arguments[0]);
-            if (!held.isInParts) {
+            ResultParts resultParts = partsOf(at(check).arguments[0]);
+            if (!resultParts.isInParts) {
                 remove(check);
                 continue;
             }
             Site site = siteOf(check);
-            Cut cut = cutAt(site);
+            Cut cut = splitAt(site);
             BlockID isObject = addBlock();
             BlockID wasChecked = addBlock();
-            branch(site.block, held.isInParts, wasChecked, isObject);
-            at(check).arguments[0] = held.object;
+            branch(site.block, resultParts.isInParts, wasChecked, isObject);
+            at(check).arguments[0] = resultParts.object;
             at(isObject).values.append(check);
             jump(isObject, Target { wasChecked, { } }, cut.handler);
             jump(wasChecked, cut.after);

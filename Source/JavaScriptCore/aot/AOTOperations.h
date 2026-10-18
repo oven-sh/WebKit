@@ -24,7 +24,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTValueSub, EncodedJSValue, (Instance*, Enco
 JSC_DECLARE_JIT_OPERATION(operationAOTValueMul, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueDiv, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueMod, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTValuePow, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueBitAnd, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueBitOr, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTValueBitXor, EncodedJSValue, (Instance*, EncodedJSValue, EncodedJSValue));

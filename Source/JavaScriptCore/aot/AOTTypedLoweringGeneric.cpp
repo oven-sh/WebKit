@@ -28,8 +28,8 @@ LValue Lowering::loadICData()
     data->effects = Effects::none();
     m_heaps.decoratePatchpointRead(&m_heaps.AOTTyped_collectorState, data);
     if (!m_context.slotBlockFetchGenerator) {
-        m_context.slotBlockFetchGenerator = createSharedTask<StackmapGeneratorFunction>([indexReferences = &m_context.indexReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            indexReferences->load16(jit, instanceGPR, params[0].gpr(), Instance::offsetOfStates(), sizeof(uint16_t));
+        m_context.slotBlockFetchGenerator = createSharedTask<StackmapGeneratorFunction>([indexRelocations = &m_context.indexRelocations](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            indexRelocations->load16(jit, instanceGPR, params[0].gpr(), Instance::offsetOfStates(), sizeof(uint16_t));
             jit.loadPtr(CCallHelpers::BaseIndex(instanceGPR, params[0].gpr(), CCallHelpers::TimesEight), params[0].gpr());
         });
     }
@@ -98,7 +98,7 @@ public:
     void dump(PrintStream& out) const { m_proc.dump(out); }
 
 private:
-    void cutAt(BasicBlock* block)
+    void splitAt(BasicBlock* block)
     {
         if (m_isCut[block])
             return;
@@ -138,7 +138,7 @@ private:
                 continue;
             if (!hasFetchBeforeCut)
                 cut = header;
-            cutAt(cut);
+            splitAt(cut);
             if (cut != header)
                 m_loopCutBelowHeader[header] = &loop;
         }
@@ -174,7 +174,7 @@ private:
                 if (!m_component[successor])
                     lowest[block] = std::min(lowest[block], number[successor]);
                 if (isBeingVisited[successor])
-                    cutAt(successor);
+                    splitAt(successor);
                 if (successor == block)
                     m_isOnCycle[block] = true;
                 continue;
@@ -373,21 +373,21 @@ void placeSlotBlockFetches(Procedure& proc, LoweringContext& context)
         fetchLocationFor[block] = isFetchLocation[block] || !parent ? block : fetchLocationFor[parent];
     }
     for (BasicBlock* block : proc) {
-        BasicBlock* place = fetchLocationFor[block];
-        if (!place)
+        BasicBlock* fetchBlock = fetchLocationFor[block];
+        if (!fetchBlock)
             continue;
         for (unsigned index = 0; index < block->size(); ++index) {
             B3::Value* value = block->at(index);
-            if (!isFetch(value) || value == fetchAt[place])
+            if (!isFetch(value) || value == fetchAt[fetchBlock])
                 continue;
-            if (fetchAt[place]) {
-                value->replaceWithIdentity(fetchAt[place]);
+            if (fetchAt[fetchBlock]) {
+                value->replaceWithIdentity(fetchAt[fetchBlock]);
                 continue;
             }
-            RELEASE_ASSERT(place != block);
+            RELEASE_ASSERT(fetchBlock != block);
             block->at(index) = proc.add<B3::Value>(Nop, Void, value->origin());
-            place->appendNonTerminal(value);
-            fetchAt[place] = value;
+            fetchBlock->appendNonTerminal(value);
+            fetchAt[fetchBlock] = value;
         }
     }
 }
@@ -453,7 +453,7 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     }
     if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    bool mayThrow = stub != Stub::ToBoolean && stub != Stub::TryGetByNameAndStructure && stub != Stub::TryPutByNameAndStructure && stub != Stub::PutPropertiesWithStorage;
+    bool mayThrow = stub != Stub::ToBoolean && stub != Stub::TryGetByNameAndStructure && stub != Stub::PutPropertiesWithStorage;
     CallSite site;
     if (mayThrow)
         site.bits = nextSite();
@@ -524,20 +524,20 @@ Boxed Lowering::emitGetLength(Boxed base)
     LBasicBlock testsType = m_out.newBlock();
     LBasicBlock isArray = m_out.newBlock();
     LBasicBlock fits = m_out.newBlock();
-    LBasicBlock general = newColdBlock();
+    LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(isCell(base).value(), usually(testsType), rarely(general));
+    m_out.branch(isCell(base).value(), usually(testsType), rarely(slowPath));
     m_out.appendTo(testsType);
     CellPointer array = asCell(base);
-    m_out.branch(isPlainArray(array).value(), usually(isArray), rarely(general));
+    m_out.branch(isPlainArray(array).value(), usually(isArray), rarely(slowPath));
     m_out.appendTo(isArray);
     Integer length = arrayLength(array);
-    m_out.branch(below(length, integer(1ll << 31)).value(), usually(fits), rarely(general));
+    m_out.branch(below(length, integer(1ll << 31)).value(), usually(fits), rarely(slowPath));
     m_out.appendTo(fits);
     ValueFromBlock fast = m_out.anchor(boxInt32(low32(length)).value());
     m_out.jump(continuation);
     ValueFromBlock slow;
-    inColdBlock(general, [&] {
+    inColdBlock(slowPath, [&] {
         slow = m_out.anchor(emitGetLengthByStub(base).value());
         m_out.jump(continuation);
     });
@@ -611,9 +611,9 @@ Boxed Lowering::getAtKnownSlot(const Value& access, Boxed base)
     if (!Options::validateAOTTypedFacts()) [[likely]]
         return Boxed(m_out.load64(knownSlotIn(receiverAtKnownSlot(access, base), access)));
     LValue found = checkedKnownSlot(access, base);
-    Boxed general = emitGetById(base, access.string());
-    reportUnlessAtKnownSlot(found, general.value(), base);
-    return general;
+    Boxed genericResult = emitGetById(base, access.string());
+    reportUnlessAtKnownSlot(found, genericResult.value(), base);
+    return genericResult;
 }
 
 bool Lowering::hasInitialStructureStill(const Value& store)
@@ -669,17 +669,17 @@ void Lowering::assignThisStructure(const Value& store, Boxed self)
     };
     LBasicBlock isObject = m_out.newBlock();
     LBasicBlock isKnown = m_out.newBlock();
-    LBasicBlock asks = newColdBlock();
+    LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(isCell(self).value(), usually(isObject), rarely(asks));
+    m_out.branch(isCell(self).value(), usually(isObject), rarely(slowPath));
     m_out.appendTo(isObject);
     CellPointer cell = asCell(self);
-    m_out.branch(m_out.equal(m_out.load32(cell.value(), m_heaps.JSCell_structureID), m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, structureID)))), usually(isKnown), rarely(asks));
+    m_out.branch(m_out.equal(m_out.load32(cell.value(), m_heaps.JSCell_structureID), m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, structureID)))), usually(isKnown), rarely(slowPath));
     m_out.appendTo(isKnown);
     didEmitWrite(Writes::Heap);
     m_out.store32(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, newStructureID))), cell.value(), m_heaps.JSCell_structureID);
     m_out.jump(continuation);
-    m_out.appendTo(asks);
+    m_out.appendTo(slowPath);
     AOT_TYPED_OPERATION(AssignThisStructure, cache, self, count, names, word32(row.number + 1));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
@@ -781,17 +781,17 @@ LValue Lowering::slotFromAccessRun(const AccessRun& run, Boxed base, StringID na
         return m_out.add(base.value(), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + run.places[index] * sizeof(EncodedJSValue)));
     }
     Pointer header = slotAddress(run.header, follows ? SlotAddressUse::ColdBlock : SlotAddressUse::FastPath);
-    LValue learned = m_out.load32(TypedPointer(m_heaps.root, m_out.add(header.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
+    LValue cachedStructureID = m_out.load32(TypedPointer(m_heaps.root, m_out.add(header.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
     LValue structureID = m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))));
     LBasicBlock isAnother = learns ? newColdBlock() : own;
-    m_out.branch(m_out.equal(learned, structureID), usually(hasPassed), rarely(isAnother));
+    m_out.branch(m_out.equal(cachedStructureID, structureID), usually(hasPassed), rarely(isAnother));
     if (learns) {
-        LBasicBlock asks = newColdBlock();
+        LBasicBlock slowPath = newColdBlock();
         m_out.appendTo(isAnother);
         Pointer headerAgain = slotAddress(run.header, SlotAddressUse::ColdBlock);
         LValue attempts = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(headerAgain.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(AOT::Slot::attemptsMask));
-        m_out.branch(m_out.equal(attempts, m_out.constInt32(AOT::Slot::attemptsMask)), unsure(own), unsure(asks));
-        m_out.appendTo(asks);
+        m_out.branch(m_out.equal(attempts, m_out.constInt32(AOT::Slot::attemptsMask)), unsure(own), unsure(slowPath));
+        m_out.appendTo(slowPath);
         std::array<uint64_t, 2> numbers { };
         for (unsigned i = 0; i < 6; ++i) {
             uint64_t number = i < run.names.size() && run.names[i].index() < 0x1fffff ? run.names[i].index() : 0x1fffff;
@@ -826,15 +826,15 @@ LValue Lowering::slotFromAccessRun(const AccessRun& run, Boxed base, StringID na
     m_out.branch(knownSlotValue, usually(isCovered), rarely(hasNoSlot));
     m_out.appendTo(hasNoSlot);
     Pointer slotsHeader = slotAddress(run.header, SlotAddressUse::ColdBlock);
-    LValue asked = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(slotsHeader.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(1u << index));
-    m_out.branch(asked, unsure(own), unsure(requestsSlot));
+    LValue wasRequested = m_out.bitAnd(m_out.load32(TypedPointer(m_heaps.root, m_out.add(slotsHeader.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, offset))))), m_out.constInt32(1u << index));
+    m_out.branch(wasRequested, unsure(own), unsure(requestsSlot));
     m_out.appendTo(requestsSlot);
     Word32 cachedSlot = AOT_TYPED_OPERATION(CachePropertyLocation, slotsHeader, base, word32(index | (run.stored >> index & 1) << 8), word32(name.index()));
     ValueFromBlock populatedNow = m_out.anchor(cachedSlot.value());
     m_out.branch(cachedSlot.value(), unsure(isCovered), unsure(own));
     m_out.appendTo(isCovered);
-    LValue place = m_out.phi(Int32, known, populatedNow);
-    return m_out.add(base.value(), m_out.shl(m_out.zeroExtPtr(place), m_out.constInt32(3)));
+    LValue location = m_out.phi(Int32, known, populatedNow);
+    return m_out.add(base.value(), m_out.shl(m_out.zeroExtPtr(location), m_out.constInt32(3)));
 }
 
 Boxed Lowering::emitCachedGetById(Boxed base, StringID name, bool isCalled)
@@ -893,7 +893,7 @@ bool Lowering::receiverMayBeHostObject(StringID name) const
     if ((access.opcode != Opcode::GetById && access.opcode != Opcode::PutById) || access.string() != name)
         return true;
     auto& receiver = typeOf(access.child(0));
-    return receiver.anyObject || !receiver.engineClasses.isEmpty() || receiver.acceptsUntypedObjects(m_program);
+    return receiver.anyObject || !receiver.builtinClasses.isEmpty() || receiver.acceptsUntypedObjects(m_program);
 }
 
 Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
@@ -929,8 +929,8 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
         GPRReg receiver = params[1].gpr();
         CCallHelpers::Label start = jit.label();
         CCallHelpers::Jump hasAnotherStructure;
-        CCallHelpers::JumpList missesInLine = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
-        IndexReferences::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
+        CCallHelpers::JumpList missesInLine = context->indexRelocations.loadSiteCacheUnlessStructureDiffers(jit, receiver, cached, holder, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
+        IndexRelocations::loadFromCachedLocation(jit, receiver, cached, holder, GPRInfo::returnValueGPR);
         CCallHelpers::Label done = jit.label();
         context->rangesKeptInline.append({ start, done });
         RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
@@ -944,8 +944,8 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
                 CCallHelpers::Label startOfProbe = jit.label();
                 hasAnotherStructure.link(&jit);
                 misses.append(jit.branchTest64(CCallHelpers::Zero, cached));
-                misses.append(IndexReferences::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
-                CCallHelpers::JumpList needsHandlerOfKind = IndexReferences::loadOwnInlineValueByLookupTable(jit, receiver, name, GPRInfo::returnValueGPR);
+                misses.append(IndexRelocations::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
+                CCallHelpers::JumpList needsHandlerOfKind = IndexRelocations::loadOwnInlineValueByLookupTable(jit, receiver, name, GPRInfo::returnValueGPR);
                 jit.jump().linkTo(done, &jit);
                 context->rangesKeptInline.append({ startOfProbe, jit.label() });
                 needsHandlerOfKind.link(&jit);
@@ -957,7 +957,7 @@ Boxed Lowering::getByNameThroughSiteCache(Boxed base, uint32_t name)
             misses.link(&jit);
             jit.move(receiver, firstStubOperandGPR);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, readSiteCacheGPR, word);
+            context->indexRelocations.getAddressOfSiteCacheWordAfterMiss(jit, readSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });
@@ -993,7 +993,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::Label start = jit.label();
         CCallHelpers::Jump hasAnotherStructure;
-        CCallHelpers::JumpList missesInLine = context->indexReferences.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
+        CCallHelpers::JumpList missesInLine = context->indexRelocations.loadSiteCacheUnlessStructureDiffers(jit, firstStubOperandGPR, cached, structureAfterStore, word, meetsManyObjects ? &hasAnotherStructure : nullptr);
         jit.urshift64(CCallHelpers::TrustedImm32(SiteCaches::offsetShift), cached);
         jit.store64(GPRInfo::argumentGPR1, CCallHelpers::BaseIndex(firstStubOperandGPR, cached, CCallHelpers::TimesOne));
         jit.store32(structureAfterStore, CCallHelpers::Address(firstStubOperandGPR, JSCell::structureIDOffset()));
@@ -1015,8 +1015,8 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
                 CCallHelpers::Label startOfProbe = jit.label();
                 hasAnotherStructure.link(&jit);
                 misses.append(jit.branchTest64(CCallHelpers::Zero, cached));
-                misses.append(IndexReferences::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
-                CCallHelpers::JumpList needsHandlerOfKind = IndexReferences::storeOwnInlineValueByLookupTable(jit, firstStubOperandGPR, name, GPRInfo::argumentGPR1);
+                misses.append(IndexRelocations::countMissAndBranchIfSiteIsFilledAnew(jit, cached));
+                CCallHelpers::JumpList needsHandlerOfKind = IndexRelocations::storeOwnInlineValueByLookupTable(jit, firstStubOperandGPR, name, GPRInfo::argumentGPR1);
                 context->rangesKeptInline.append({ startOfProbe, jit.label() });
                 jit.jump().linkTo(isStored, &jit);
                 needsHandlerOfKind.link(&jit);
@@ -1026,7 +1026,7 @@ void Lowering::putByNameThroughSiteCache(bool isSloppy, Boxed base, uint32_t nam
             }
             misses.link(&jit);
             jit.move(CCallHelpers::TrustedImm32(name), stubImmediateGPR);
-            context->indexReferences.getAddressOfSiteCacheWordAfterMiss(jit, storeSiteCacheGPR, word);
+            context->indexRelocations.getAddressOfSiteCacheWordAfterMiss(jit, storeSiteCacheGPR, word);
             context->stubCalls.call(jit, stub, site);
             jit.jump().linkTo(done, &jit);
         });
@@ -1086,14 +1086,14 @@ std::optional<Stub> Lowering::getByNameStubForType(const Type& type) const
     if (rest == m_program.at(m_program.types.boolean))
         return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsBoolean) + variant);
     static_assert(static_cast<unsigned>(Stub::GetByIdAsArray) + 1 == static_cast<unsigned>(Stub::GetByIdAsArrayOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsArray) + 2 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNull) && static_cast<unsigned>(Stub::GetByIdAsArray) + 3 == static_cast<unsigned>(Stub::GetByIdAsArrayOrNullish));
-    if (auto* engineClass = rest.primitives ? nullptr : rest.singleEngineClass(); engineClass && engineClass->type == ArrayType)
+    if (auto* engineClass = rest.primitives ? nullptr : rest.singleBuiltinClass(); engineClass && engineClass->type == ArrayType)
         return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsArray) + variant);
     return std::nullopt;
 }
 
-std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name, TypeID held, std::optional<size_t> castIndex)
+std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name, TypeID typeID, std::optional<size_t> castIndex)
 {
-    auto& type = m_program.at(held);
+    auto& type = m_program.at(typeID);
     auto stub = getByNameStubForType(type);
     if (stub && type.hasObjects()) {
         SetForScope currentIndex(m_currentIndexInBlock, castIndex.value_or(m_currentIndexInBlock));
@@ -1120,7 +1120,7 @@ std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name,
         patchpoint->clobberLate(changed);
         patchpoint->resultConstraints = { b3TypeOf(rep) == Double ? ValueRep::reg(FPRInfo::fpRegT0) : ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSiteWithCastItem(castIndex) };
-        patchpoint->setGenerator([context = &m_context, byTable, number = *number, site, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), held.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([context = &m_context, byTable, number = *number, site, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), typeID.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             bool keepsTwoIntegers = stubVariantPreserving(Stub::GetByName, RegisterSet::registersToSaveForCCall(params.usedRegisters())) != Stub::GetByName;
             jit.move(CCallHelpers::TrustedImm32(number), stubImmediateGPR);
@@ -1151,7 +1151,7 @@ std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name,
     patchpoint->resultConstraints = { b3TypeOf(rep) == Double ? ValueRep::reg(FPRInfo::fpRegT0) : ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSiteWithCastItem(castIndex) };
     int32_t offsetOfSlot = static_cast<int32_t>(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + *slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias);
-    patchpoint->setGenerator([context = &m_context, stub = *stub, site, offsetOfSlot, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), held.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([context = &m_context, stub = *stub, site, offsetOfSlot, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), typeID.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[2].gpr(), GPRInfo::argumentGPR1);
         context->callThrowSites.append({ jit.labelIgnoringWatchpoints(), words });
@@ -1165,9 +1165,9 @@ std::optional<Operand> Lowering::getByIdWithTypeCheck(Boxed base, StringID name,
 
 Operand Lowering::getByIdAndCheckType(Boxed base, StringID name, const Type& type, const Function* definedAs)
 {
-    if (TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type; given && &m_program.at(given) == &type) {
-        if (auto held = getByIdWithTypeCheck(base, name, given))
-            return *held;
+    if (TypeID typeID = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type; typeID && &m_program.at(typeID) == &type) {
+        if (auto checkedValue = getByIdWithTypeCheck(base, name, typeID))
+            return *checkedValue;
     }
     return ensure(emitGetById(base, name, false, definedAs), type);
 }
@@ -1183,10 +1183,10 @@ std::optional<Operand> Lowering::getByNameForFollowingCast(ValueID result, const
         return std::nullopt;
     if (cast.castReason() != CastReason::As && cast.castReason() != CastReason::Claim && cast.castReason() != CastReason::Store && cast.castReason() != CastReason::Flow)
         return std::nullopt;
-    auto held = getByIdWithTypeCheck(in<Boxed>(read.child(0)), read.string(), cast.type, next);
-    if (!held)
+    auto checkedValue = getByIdWithTypeCheck(in<Boxed>(read.child(0)), read.string(), cast.type, next);
+    if (!checkedValue)
         return std::nullopt;
-    m_castFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, *held };
+    m_castFusedIntoRead = CastFusedIntoRead { m_currentBlock, next, *checkedValue };
     return placeholder(read.rep);
 }
 
@@ -1713,18 +1713,18 @@ Operand Lowering::speculateOrElse(const Expectation& expectation, LBasicBlock ot
     if (operand.rep == Rep::JSValue) {
         Boxed boxed = operand.as<Boxed>();
         if (type.isInteger() && type.integers == Range::int32()) {
-            orElse(isInt32(boxed), otherwise);
+            branchUnless(isInt32(boxed), otherwise);
             return signExtended(low32(boxed));
         }
-        if (expectation.hasOriginalStructure && type.singleEngineClass()) {
-            orElse(isCell(boxed), otherwise);
-            orElse(hasOriginalStructure(asCell(boxed), *type.singleEngineClass()), otherwise);
+        if (expectation.hasOriginalStructure && type.singleBuiltinClass()) {
+            branchUnless(isCell(boxed), otherwise);
+            branchUnless(hasOriginalStructure(asCell(boxed), *type.singleBuiltinClass()), otherwise);
             return asCell(boxed);
         }
     }
     Operand fitted = narrowOrElse(operand, typeOf(expectation.value), type, otherwise);
-    if (expectation.hasOriginalStructure && type.singleEngineClass())
-        orElse(hasOriginalStructure(fitted.as<CellPointer>(), *type.singleEngineClass()), otherwise);
+    if (expectation.hasOriginalStructure && type.singleBuiltinClass())
+        branchUnless(hasOriginalStructure(fitted.as<CellPointer>(), *type.singleBuiltinClass()), otherwise);
     return fitted;
 }
 

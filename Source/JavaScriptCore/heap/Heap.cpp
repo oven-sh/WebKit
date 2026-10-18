@@ -707,7 +707,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
             if (!isMarked(instance->loader()))
                 return true;
-            if (!instance->loaderWasCleared() || isMarked(AOT::tokenOf(instance)))
+            if (!instance->loaderWasCleared() || isMarked(AOT::livenessToken(instance)))
                 return false;
             instance->loader()->setAOTInstance(nullptr);
             vm().m_aotInstancesToDestroy.append(instance);
@@ -3195,7 +3195,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                 if (auto* program = vm().m_aotProgram.get())
                     program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
-                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))) {
+                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::livenessToken(instance)))) {
                         instance->visit(visitor, newOnly);
                         if (instance->typed && (!instance->typed->realmIsLocked || instance->globalObject->aotInstance() != instance))
                             instance->typed->visit(visitor);
@@ -3217,7 +3217,7 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                     instance->visitCompiledCodeRoots(visitor);
                     if (!instance->typed || !instance->typed->realmIsLocked)
                         continue;
-                    if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))))
+                    if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::livenessToken(instance)))))
                         instance->typed->visit(visitor);
                 }
             })),

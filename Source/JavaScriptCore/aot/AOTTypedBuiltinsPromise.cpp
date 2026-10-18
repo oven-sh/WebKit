@@ -189,7 +189,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetIteratorNext, EncodedJSValue, (Inst
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue iterator = JSValue::decode(encodedIterator);
-    if (auto* generator = dynamicDowncast<Typed::Generator>(iterator); generator && generator->hasUnmodifiedIteration(globalObject))
+    if (auto* generator = dynamicDowncast<Typed::Generator>(iterator); generator && generator->hasUnmodifiedIteratorProtocol(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     OPERATION_RETURN(scope, JSValue::encode(iterator.get(globalObject, vm.propertyNames->next)));
 }
@@ -199,7 +199,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGeneratorResume, EncodedJSValue, (Inst
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto* inner = uncheckedDowncast<Typed::Generator>(generator);
     auto resumeMode = static_cast<Typed::Generator::ResumeMode>(JSValue::decode(mode).asInt32());
-    if (resumeMode != Typed::Generator::ResumeMode::Next && !inner->hasUnmodifiedIteration(globalObject))
+    if (resumeMode != Typed::Generator::ResumeMode::Next && !inner->hasUnmodifiedIteratorProtocol(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     bool isDone;
     OPERATION_RETURN(scope, JSValue::encode(inner->resume(globalObject, resumeMode, JSValue::decode(value), isDone)));
@@ -211,7 +211,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetAsyncIteratorNext, EncodedJSValue, 
     JSValue iterator = JSValue::decode(encodedIterator);
     if (iterator.isCell() && iterator.asCell()->type() == JSAsyncFromSyncIteratorType)
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
-    if (auto* generator = dynamicDowncast<Typed::AsyncGenerator>(iterator); generator && generator->hasUnmodifiedIteration(globalObject))
+    if (auto* generator = dynamicDowncast<Typed::AsyncGenerator>(iterator); generator && generator->hasUnmodifiedIteratorProtocol(globalObject))
         OPERATION_RETURN(scope, JSValue::encode(vm.fastAsyncGeneratorSentinel()));
     JSValue next = iterator.get(globalObject, vm.propertyNames->next);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -280,7 +280,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
 bool Lowering::isNotThenableWithoutExtraProperties(const Type& type) const
 {
     auto then = m_program.find(asBytes("then"_s.span8()));
-    return then && !type.anyObject && !type.anyFunction && type.engineClasses.isEmpty() && !type.objectLayouts.isEmpty() && std::ranges::all_of(type.objectLayouts, [&](LayoutID view) {
+    return then && !type.anyObject && !type.anyFunction && type.builtinClasses.isEmpty() && !type.objectLayouts.isEmpty() && std::ranges::all_of(type.objectLayouts, [&](LayoutID view) {
         return isObjectLayout(m_program.at(view).kind) && isOnlyInExtraProperties(m_program, view, *then);
     });
 }
@@ -295,10 +295,10 @@ bool Lowering::isAwaitMayContinue(const Value& value) const
 
 bool Lowering::isOnlyAwaited(ValueID awaited)
 {
-    auto& made = m_function.at(awaited);
-    if (made.opcode != Opcode::CallDirect || made.isJumpToContinuation())
+    auto& awaitedCall = m_function.at(awaited);
+    if (awaitedCall.opcode != Opcode::CallDirect || awaitedCall.isJumpToContinuation())
         return false;
-    auto& callee = m_program.at(made.function());
+    auto& callee = m_program.at(awaitedCall.function());
     if (!callee.resumeFunction || (callee.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsAsync)
         return false;
     if (!m_didFindNonAwaitUses) {
@@ -362,9 +362,9 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     Rep rep = get(awaited).rep;
     if (!Options::validateAOTTypedFacts() && (rep == Rep::Cell || rep == Rep::JSValue) && numberOfPredecessorsOf(goesOn) == 1 && !m_isInLoop && !m_program.isHotOutsideLoops(m_id)) {
         static_assert(static_cast<unsigned>(Stub::AwaitMayContinue) + 1 == static_cast<unsigned>(Stub::LeafAwaitMayContinue));
-        LValue answer = callAllocationStub(Stub::AwaitMayContinue, { { in<Boxed>(awaited).value(), GPRInfo::argumentGPR1 }, { in<Integer>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, { Writes::RuntimeState, false }, false);
-        m_inlineAwaitedValues.set(&m_function.at(goesOn), std::pair { awaited, answer });
-        m_out.branch(m_out.notZero64(answer), unsure(mayContinue), unsure(mustSuspend));
+        LValue stubResult = callAllocationStub(Stub::AwaitMayContinue, { { in<Boxed>(awaited).value(), GPRInfo::argumentGPR1 }, { in<Integer>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, { Writes::RuntimeState, false }, false);
+        m_inlineAwaitedValues.set(&m_function.at(goesOn), std::pair { awaited, stubResult });
+        m_out.branch(m_out.notZero64(stubResult), unsure(mayContinue), unsure(mustSuspend));
         return;
     }
     auto require = [&](LValue condition) {
@@ -380,8 +380,8 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     require(m_out.equal(m_out.load64(stateAt(queue, MicrotaskQueue::offsetOfStart())), m_out.load64(stateAt(queue, MicrotaskQueue::offsetOfEnd()))));
     require(m_out.isZero32(m_out.load8ZeroExt32(stateAt(m_instance, Instance::offsetOfAwaitMustSuspend()))));
     if (Options::validateAOTTypedFacts()) [[unlikely]] {
-        LValue globalObject = fixedPointer(Instance::offsetOfGlobalObject());
-        LValue mustSuspendByFlags = m_out.bitOr(m_out.isZero32(m_out.load8ZeroExt32(stateAt(globalObject, JSGlobalObject::offsetOfCanFastQueueMicrotask()))), m_out.notZero32(m_out.load8ZeroExt32(stateAt(fixedPointer(Instance::offsetOfVM()), VM::offsetOfHostObservesMicrotaskBoundaries()))));
+        LValue globalObject = loadImmutablePointer(Instance::offsetOfGlobalObject());
+        LValue mustSuspendByFlags = m_out.bitOr(m_out.isZero32(m_out.load8ZeroExt32(stateAt(globalObject, JSGlobalObject::offsetOfCanFastQueueMicrotask()))), m_out.notZero32(m_out.load8ZeroExt32(stateAt(loadImmutablePointer(Instance::offsetOfVM()), VM::offsetOfHostObservesMicrotaskBoundaries()))));
         LBasicBlock doesNotHold = newColdBlock();
         LBasicBlock holds = m_out.newBlock();
         m_out.branch(m_out.bitAnd(m_out.isZero32(mustSuspendByFlags), m_out.equal(queue, m_out.loadPtr(stateAt(globalObject, JSGlobalObject::offsetOfMicrotaskQueue())))), usually(holds), rarely(doesNotHold));
@@ -397,7 +397,7 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     bool carriesValue = numberOfPredecessorsOf(goesOn) == 1;
     LBasicBlock notObject = carriesValue ? m_out.newBlock() : mayContinue;
     CellPointer promise = awaitedObjectOrElse(awaited, notObject);
-    if (typeOf(awaited).singleEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
+    if (typeOf(awaited).singleBuiltinClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
         require(equal(loadField<Word32>(promise, m_heaps.JSCell_structureID), Word32(fixed32(Instance::offsetOfHeaderFor(Instance::InlineAllocation::Promise)))).value());
     LValue packed = m_out.load64(promise.value(), m_heaps.JSPromise_packed);
     static_assert(!static_cast<unsigned>(JSPromise::Status::Pending) && static_cast<unsigned>(JSPromise::Status::Fulfilled) == 1 && static_cast<unsigned>(JSPromise::Status::Rejected) == 2 && JSPromise::stateMask == 3);
@@ -439,19 +439,19 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         m_context.emitsCalls = true;
         m_context.savesFrameOnSuspend = true;
         Boxed awaited = in<Boxed>(value.arguments[0]);
-        Vector<LValue, 16> kept;
-        kept.append(in<CellPointer>(value.arguments[1]).value());
+        Vector<LValue, 16> liveCells;
+        liveCells.append(in<CellPointer>(value.arguments[1]).value());
         for (unsigned i = 2; i < value.arguments.size(); ++i) {
             Operand operand = get(value.arguments[i]);
             if (holdsCells(operand.rep))
-                kept.append(operand.value);
+                liveCells.append(operand.value);
         }
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         applyEffects(patchpoint, { Writes::Heap, true });
         patchpoint->effects.writes = HeapRange::top();
         bool awaitsCallWithoutPromise = m_function.at(value.arguments[0]).isAwaitedWithoutPromise;
         patchpoint->append(ConstrainedValue(awaited.value(), ValueRep::reg(awaitsCallWithoutPromise ? GPRInfo::returnValueGPR : GPRInfo::argumentGPR1)));
-        for (LValue cell : kept)
+        for (LValue cell : liveCells)
             patchpoint->append(ConstrainedValue(cell, ValueRep::LateColdAny));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet { callMarkerGPR });
@@ -462,15 +462,15 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         CallSite site { nextSite() };
         Stub stub = awaitsCallWithoutPromise ? Stub::AwaitCallBySavingFrame : Stub::AwaitBySavingFrame;
-        patchpoint->setGenerator([context = &m_context, site, stub, keptCount = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([context = &m_context, site, stub, keptCount = liveCells.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            Vector<uint32_t, 8> places { 0u };
+            Vector<uint32_t, 8> locationBitmap { 0u };
             uint32_t promiseLocation = 0;
             for (unsigned i = 0; i < keptCount; ++i) {
                 const ValueRep& rep = params[2 + i];
-                uint32_t place = SavedFrame::locationInRegister;
+                uint32_t location = SavedFrame::locationInRegister;
                 if (rep.isStack())
-                    place = SavedFrame::locationInFrame(rep.offsetFromFP());
+                    location = SavedFrame::locationInFrame(rep.offsetFromFP());
                 else if (rep.isGPR()) {
                     if (rep.gpr() == GPRInfo::numberTagRegister || rep.gpr() == GPRInfo::notCellMaskRegister)
                         continue;
@@ -480,22 +480,22 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                     continue;
                 }
                 if (!i)
-                    promiseLocation = place;
-                while (places.size() <= 1 + place / 32)
-                    places.append(0);
-                places[1 + place / 32] |= 1u << (place % 32);
+                    promiseLocation = location;
+                while (locationBitmap.size() <= 1 + location / 32)
+                    locationBitmap.append(0);
+                locationBitmap[1 + location / 32] |= 1u << (location % 32);
             }
-            places[0] = places.size() - 1;
+            locationBitmap[0] = locationBitmap.size() - 1;
             uint32_t row = context->plans.size();
             for (uint32_t earlier : context->savedFramePlanOffsets) {
-                if (equalSpans(context->plans.subspan(earlier, std::min<size_t>(places.size(), context->plans.size() - earlier)), places.span())) {
+                if (equalSpans(context->plans.subspan(earlier, std::min<size_t>(locationBitmap.size(), context->plans.size() - earlier)), locationBitmap.span())) {
                     row = earlier;
                     break;
                 }
             }
             if (row == context->plans.size()) {
                 context->savedFramePlanOffsets.append(row);
-                context->plans.appendVector(places);
+                context->plans.appendVector(locationBitmap);
             }
             RegisterAtOffsetList saves = params.code().calleeSaveRegisterAtOffsetList();
 #if CPU(ARM64)
@@ -531,16 +531,16 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         return ensure(Boxed(patchpoint), type);
     }
     if (which == InlineBuiltin::SuspendAsyncFunction && m_currentIndexInBlock >= 2 && isResumeClosureCreatedAtSuspend(m_currentIndexInBlock - 2)) {
-        auto& made = m_function.at(value.arguments[0]);
-        auto& resume = m_program.at(made.function());
+        auto& resumeClosure = m_function.at(value.arguments[0]);
+        auto& resume = m_program.at(resumeClosure.function());
         auto& store = m_function.at(m_currentBlock->values[m_currentIndexInBlock - 1]);
         auto& field = m_program.at(store.layout()).fields[store.field()];
         unsigned executable = FunctionTables::executableKind(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false);
         uint32_t allocation = m_program.closureAllocation(1);
         if (isResumeClosureCreatedByStub(m_currentIndexInBlock - 2))
-            callICStub(Stub::SuspendAtFirstAwait, Void, { { in<CellPointer>(made.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::pair { stubImmediateGPR, ResumeClosureRequest::encodeForStub(made.function().index(), allocation) }, builtinCallEffects(value));
+            callICStub(Stub::SuspendAtFirstAwait, Void, { { in<CellPointer>(resumeClosure.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::pair { stubImmediateGPR, ResumeClosureRequest::encodeForStub(resumeClosure.function().index(), allocation) }, builtinCallEffects(value));
         else
-            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAtFirstAwait, builtinCallEffects(value), in<CellPointer>(made.arguments[0]), in<Boxed>(value.arguments[1]), integer(static_cast<int64_t>(ResumeClosureRequest::encode(made.function().index(), executable, allocation, field.offset / sizeof(uint64_t)))));
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAtFirstAwait, builtinCallEffects(value), in<CellPointer>(resumeClosure.arguments[0]), in<Boxed>(value.arguments[1]), integer(static_cast<int64_t>(ResumeClosureRequest::encode(resumeClosure.function().index(), executable, allocation, field.offset / sizeof(uint64_t)))));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
     if (which == InlineBuiltin::SuspendAsyncFunction) {
@@ -609,7 +609,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     };
     Type promiseType = Type::engineClass(m_builtins.promiseClass());
     if (which == InlineBuiltin::PromiseThen) {
-        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
         Boxed onFulfilled = argumentOrUndefined(0);
         Boxed onRejected = argumentOrUndefined(1);
         CellPointer derived = lowerNewPromise();
@@ -617,7 +617,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         return ensure(derived, promiseType, type);
     }
     if (which == InlineBuiltin::PromiseCatch) {
-        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer promise = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
         return ensure(AOT_TYPED_OPERATION(PromiseCatch, promise, argumentOrUndefined(0)), promiseType, type);
     }
     if (which == InlineBuiltin::PromiseResolve) {
@@ -683,7 +683,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         require(m_out.isZero32(m_out.load8ZeroExt32(stateAt(m_instance, Instance::offsetOfAwaitMustSuspend()))));
         if (mayBeCell) {
             CellPointer object = objectOrElse(mayContinue);
-            if (typeOf(awaited).singleEngineClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
+            if (typeOf(awaited).singleBuiltinClass() != &m_builtins.promiseClass() || !isOnlyAwaited(awaited))
                 require(equal(loadField<Word32>(object, m_heaps.JSCell_structureID), Word32(fixed32(Instance::offsetOfHeaderFor(Instance::InlineAllocation::Promise)))).value());
             LValue flags = m_out.lShr(m_out.load64(object.value(), m_heaps.JSPromise_packed), m_out.constInt32(flagsShift));
             require(m_out.equal(m_out.bitAnd(flags, m_out.constInt64(JSPromise::stateMask)), m_out.constInt64(static_cast<int64_t>(JSPromise::Status::Fulfilled))));

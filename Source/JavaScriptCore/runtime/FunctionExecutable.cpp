@@ -209,7 +209,7 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
 
 #if USE(BUN_JSC_ADDITIONS)
-    if ((isClass() ? classSource().provider() : source().provider())->hasNoSourceText() || (Options::hideFunctionSourceForTesting() && !isBuiltinFunction())) [[unlikely]] {
+    if ((isClass() ? classSource().provider() : source().provider())->hasNoSourceText()) [[unlikely]] {
         if (isClass())
             return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
         ASCIILiteral before = "function "_s;

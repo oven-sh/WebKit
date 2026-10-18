@@ -36,7 +36,6 @@ namespace JSC::B3 {
 
 #if ENABLE(AOT)
 #define FOR_EACH_AOT_ABSTRACT_FIELD(macro) \
-    macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
     macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
@@ -62,7 +61,6 @@ namespace JSC::B3 {
     macro(AOTTyped_slots) \
     macro(AOTTyped_variables)
 #define FOR_EACH_AOT_INDEXED_ABSTRACT_HEAP(macro) \
-    macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t)) \
     macro(AOTTypedSlimClosure_captures, AOT::Typed::SlimClosure::offsetOfCaptures(), sizeof(uint64_t))
 #else

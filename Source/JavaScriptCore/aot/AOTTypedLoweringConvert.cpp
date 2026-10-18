@@ -234,7 +234,7 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
     }
     if (plain(to) == to && to != Rep::JSValue) {
         if (!result)
-            return failWith("a conversion of a non-number to a number"_s);
+            return failWith("internal error: a conversion of a non-number to a number"_s);
         return *result;
     }
     bool mayBeMarker = plain(from) != from || from == Rep::JSValue;
@@ -301,7 +301,7 @@ Operand Lowering::convertLiteralString(Operand operand, const Type& type, Rep to
 {
     if (to == Rep::LiteralString) {
         if (operand.rep != Rep::Cell && operand.rep != Rep::JSValue)
-            return failWith("a conversion of a non-string to a string"_s);
+            return failWith("internal error: a conversion of a non-string to a string"_s);
         return literalStringOf(operand, type);
     }
     Boxed boxed = boxLiteralString(operand.as<LiteralStringWord>());
@@ -309,7 +309,7 @@ Operand Lowering::convertLiteralString(Operand operand, const Type& type, Rep to
         return boxed;
     if (to == Rep::Cell)
         return asCell(boxed);
-    return failWith("a conversion of a string to a non-string"_s);
+    return failWith("internal error: a conversion of a string to a non-string"_s);
 }
 
 Operand Lowering::convert(Operand operand, const Type& type, Rep to)
@@ -400,7 +400,7 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
     default:
         break;
     }
-    return failWith("a conversion between these representations"_s);
+    return failWith("internal error: an unsupported conversion between value representations"_s);
 }
 
 Word32 Lowering::toInt32(Number value)
@@ -435,7 +435,7 @@ Word32 Lowering::toInt32OrElse(ValueID id, LBasicBlock otherwise)
     return either<Word32>(isInt32(boxed), [&] {
         return low32(boxed);
     }, [&] {
-        orElse(isNumber(boxed), otherwise);
+        branchUnless(isNumber(boxed), otherwise);
         return toInt32(unboxedDouble(boxed));
     });
 }

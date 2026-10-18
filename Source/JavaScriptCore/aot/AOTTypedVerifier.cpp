@@ -101,14 +101,14 @@ private:
     {
         StringPrintStream out;
         out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": b", block, " ", what);
-        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
+        m_findings.append(makeString(out.toString(), "; please report it"_s));
     }
 
     void fail(ValueID id, ASCIILiteral what)
     {
         StringPrintStream out;
         out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " ", nameOf(m_function.at(id).opcode), " ", what);
-        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
+        m_findings.append(makeString(out.toString(), "; please report it"_s));
     }
 
     void fail(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
@@ -120,7 +120,7 @@ private:
         m_program.dump(out, needed);
         if (user)
             out.print(" by v", user.index(), " ", nameOf(m_function.at(user).opcode));
-        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
+        m_findings.append(makeString(out.toString(), "; please report it"_s));
     }
 
     void need(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
@@ -154,7 +154,7 @@ private:
         while (m_function.at(created).opcode == Opcode::Cast)
             created = m_function.at(created).child(0);
         if (m_function.at(created).opcode != Opcode::NewObjectWithShape || (m_function.at(created).layout() != value.layout() && !std::ranges::binary_search(layout.subtypes, m_function.at(created).layout())))
-            fail(id, "names a field of a value that may not have the layout"_s);
+            fail(id, "names a field of a value that might not have the layout"_s);
     }
 
     void verifyInitialStores(const BitVector& isReached)
@@ -211,7 +211,7 @@ private:
             out.print("v", user.index(), " ", nameOf(m_function.at(user).opcode), " in b", block);
         else
             out.print("the end of b", block);
-        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
+        m_findings.append(makeString(out.toString(), "; please report it"_s));
     }
 
     void verifyDefinitions(const BitVector& isReached)
@@ -255,8 +255,8 @@ private:
                 stack.append({ successor, 0u });
         }
         order.reverse();
-        Vector<unsigned> place;
-        place.fill(none, numberOfNodes);
+        Vector<unsigned> orderIndex;
+        orderIndex.fill(none, numberOfNodes);
         struct Predecessors {
             std::span<const unsigned> operator[](unsigned node) const { return all.span().subspan(first[node], first[node + 1] - first[node]); }
             Vector<unsigned> first;
@@ -264,7 +264,7 @@ private:
         } predecessors;
         predecessors.first.fill(0, numberOfNodes + 2);
         for (unsigned i = 0; i < order.size(); ++i) {
-            place[order[i]] = i;
+            orderIndex[order[i]] = i;
             for (unsigned k = 0; k < numberOfSuccessors(order[i]); ++k)
                 ++predecessors.first[successorAt(order[i], k) + 2];
         }
@@ -291,9 +291,9 @@ private:
                         continue;
                     }
                     while (found != other) {
-                        while (place[other] > place[found])
+                        while (orderIndex[other] > orderIndex[found])
                             other = dominator[other];
-                        while (place[found] > place[other])
+                        while (orderIndex[found] > orderIndex[other])
                             found = dominator[found];
                     }
                 }
@@ -425,7 +425,7 @@ private:
             break;
         case Opcode::IsInstanceOfClass:
             if (m_program.at(value.layout()).kind != LayoutKind::Instance)
-                fail(id, "requests the instances of a layout that is not a class"_s);
+                fail(id, "names a layout that is not a class"_s);
             requireSingleClassObject(id, value.layout());
             break;
         case Opcode::FunctionReference:
@@ -531,10 +531,10 @@ private:
             Vector<Type, 4> arguments;
             for (ValueID argument : value.arguments)
                 arguments.append(typeOf(argument));
-            if (!applicableEntry(m_program.operationOf(value), arguments.span())) {
+            if (!resolveBuiltinOverload(m_program.operationOf(value), arguments.span())) {
                 StringPrintStream out;
                 out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " Operation ", Builtins::singleton().at(value.builtin()).name, ": the built-ins table has no entry for its ", value.arguments.size(), " arguments");
-                m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
+                m_findings.append(makeString(out.toString(), "; please report it"_s));
             }
             if (m_program.operationOf(value) == Operations::NewObjectOfClass) {
                 LayoutID created = m_program.at(value.assertedType() ? value.assertedType() : value.type).singleLayout();

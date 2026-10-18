@@ -240,12 +240,12 @@ std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& va
     auto found = m_likelyIntegerNumbers.find(numberOperand.index());
     if (found == m_likelyIntegerNumbers.end() || get(numberOperand).value != found->value.number)
         return std::nullopt;
-    Integer kept(found->value.integer);
+    Integer savedInteger(found->value.integer);
     bool savedIsNonNegative = found->value.minimum >= 0;
     bool neitherIsNegative = savedIsNonNegative && typeOf(integerOperand).integers.minimum >= 0;
-    return either<Word32>(savedIsNonNegative ? greaterThanOrEqual(kept, integer(0)) : greaterThan(kept, integer(INT64_MIN)), [&] {
-        Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
-        Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
+    return either<Word32>(savedIsNonNegative ? greaterThanOrEqual(savedInteger, integer(0)) : greaterThan(savedInteger, integer(INT64_MIN)), [&] {
+        Integer x = integerIsFirst ? in<Integer>(integerOperand) : savedInteger;
+        Integer y = integerIsFirst ? savedInteger : in<Integer>(integerOperand);
         switch (value.opcode) {
         case Opcode::Less:
             return neitherIsNegative ? below(x, y) : lessThan(x, y);
@@ -304,19 +304,19 @@ std::optional<Word32> Lowering::lowerRelationalWithOptionalInteger(const Value& 
     Operand optional = get(optionalOperand);
     if (optional.rep != Rep::OptionalInt64)
         return std::nullopt;
-    Integer kept = assumedInteger(optional.as<OptionalInteger>());
+    Integer rawInteger = assumedInteger(optional.as<OptionalInteger>());
     bool neitherIsNegative = optionalType.integers.minimum >= 0 && typeOf(integerOperand).integers.minimum >= 0;
     static_assert(undefinedInteger > maxExactInteger);
     bool asksWhetherOptionalIsSmaller = integerIsFirst ? value.opcode == Opcode::Greater || value.opcode == Opcode::GreaterEq : value.opcode == Opcode::Less || value.opcode == Opcode::LessEq;
     if (asksWhetherOptionalIsSmaller && typeOf(integerOperand).integers.maximum <= maxExactInteger) {
         Integer bound = in<Integer>(integerOperand);
         if (value.opcode == Opcode::Less || value.opcode == Opcode::Greater)
-            return neitherIsNegative ? below(kept, bound) : lessThan(kept, bound);
-        return neitherIsNegative ? belowOrEqual(kept, bound) : lessThanOrEqual(kept, bound);
+            return neitherIsNegative ? below(rawInteger, bound) : lessThan(rawInteger, bound);
+        return neitherIsNegative ? belowOrEqual(rawInteger, bound) : lessThanOrEqual(rawInteger, bound);
     }
-    return either<Word32>(lessThan(kept, integer(undefinedInteger)), [&] {
-        Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
-        Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
+    return either<Word32>(lessThan(rawInteger, integer(undefinedInteger)), [&] {
+        Integer x = integerIsFirst ? in<Integer>(integerOperand) : rawInteger;
+        Integer y = integerIsFirst ? rawInteger : in<Integer>(integerOperand);
         switch (value.opcode) {
         case Opcode::Less:
             return neitherIsNegative ? below(x, y) : lessThan(x, y);
@@ -354,14 +354,14 @@ std::optional<Word32> Lowering::sumToInt32(ValueID id)
         if (type.isInteger())
             return in<Integer>(operand);
         if (auto found = m_numbersAsIntegers.find(operand.index()); found != m_numbersAsIntegers.end() && found->value.minimum && *found->value.minimum >= 0 && get(operand).value == found->value.number) {
-            Integer kept(found->value.integer);
-            orElse(below(kept, integer(1ll << 31)), otherwise);
-            savedWithNumber[operand == b] = kept;
-            return kept;
+            Integer savedInteger(found->value.integer);
+            branchUnless(below(savedInteger, integer(1ll << 31)), otherwise);
+            savedWithNumber[operand == b] = savedInteger;
+            return savedInteger;
         }
         Number number = asNumericOperand(operand);
         Word32 low = low32(truncateToInteger(number));
-        orElse(equal(toNumber(low), number), otherwise);
+        branchUnless(equal(toNumber(low), number), otherwise);
         return signExtended(low);
     };
     Integer x = asInteger(a, left);
@@ -372,16 +372,16 @@ std::optional<Word32> Lowering::sumToInt32(ValueID id)
     Int128 maximum = isAdd ? static_cast<Int128>(leftRange.maximum) + rightRange.maximum : static_cast<Int128>(leftRange.maximum) - rightRange.minimum;
     Integer result = isAdd ? add(x, y) : sub(x, y);
     if (maximum > maxExactInteger)
-        orElse(lessThanOrEqual(result, integer(maxExactInteger)), otherwise);
+        branchUnless(lessThanOrEqual(result, integer(maxExactInteger)), otherwise);
     if (minimum < -maxExactInteger || maximum >= static_cast<Int128>(1) << 63)
-        orElse(greaterThanOrEqual(result, integer(-maxExactInteger)), otherwise);
+        branchUnless(greaterThanOrEqual(result, integer(-maxExactInteger)), otherwise);
     join.add(low32(result));
 
     m_out.appendTo(otherwise);
-    auto asNumber = [&](ValueID operand, Integer kept) {
-        if (!kept)
+    auto asNumber = [&](ValueID operand, Integer savedInteger) {
+        if (!savedInteger)
             return asNumericOperand(operand);
-        return select(equal(kept, integer(INT64_MIN)), number(PNaN), toNumber(kept));
+        return select(equal(savedInteger, integer(INT64_MIN)), number(PNaN), toNumber(savedInteger));
     };
     Number p = asNumber(a, a == b ? Integer() : savedWithNumber[0]);
     Number q = asNumber(b, savedWithNumber[1]);

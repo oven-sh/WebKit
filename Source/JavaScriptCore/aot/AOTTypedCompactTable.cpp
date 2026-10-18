@@ -90,7 +90,7 @@ CompactTable* CompactTable::create(VM& vm, Structure* structure, Width key, Widt
     CompactTable* table = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, structure);
     table->m_capacity = capacity;
     table->m_indexBits = indexBitsFor(capacity);
-    table->m_keysShift = (table->hasTags() ? keysShiftWithTags : table->m_indexBits + !table->hasShortSlots()) | (key == Width::Wide ? keysAreWide : 0);
+    table->m_keysShiftAndFlags = (table->hasTags() ? keysShiftWithTags : table->m_indexBits + !table->hasShortSlots()) | (key == Width::Wide ? keysAreWide : 0);
     table->m_valueWidth = value;
     size_t keys = table->offsetOfKeys();
     memsetSpan(std::span { table->at<uint8_t>(offsetOfIndex()), keys - offsetOfIndex() }, table->hasTags() ? 0 : 0xff);
@@ -106,7 +106,7 @@ CompactTable* CompactTable::createInImage(VM& vm, Structure* structure, const Ta
     table->m_alive = entries.count;
     table->m_capacity = entries.capacity | capacityIsInImage;
     table->m_indexBits = entries.indexBits | indexIsInImage;
-    table->m_keysShift = entries.keysShift | keysAreInImage;
+    table->m_keysShiftAndFlags = entries.keysShift | keysAreInImage;
     table->m_valueWidth = entries.hasValues ? Width::InImage : Width::None;
     *table->at<const TableInImage*>(offsetOfIndex()) = &entries;
     if (entries.hasValues)
@@ -467,7 +467,7 @@ CompactTable* CompactTable::copy(VM& vm) const
     CompactTable* copy = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, structure());
     copy->m_capacity = m_capacity;
     copy->m_indexBits = m_indexBits;
-    copy->m_keysShift = m_keysShift;
+    copy->m_keysShiftAndFlags = m_keysShiftAndFlags;
     copy->m_valueWidth = m_valueWidth;
     memcpy(copy->at<uint8_t>(offsetOfIndex()), at<uint8_t>(offsetOfIndex()), used - offsetOfIndex());
     zeroSpan(std::span { copy->at<uint8_t>(used), size - used });
@@ -624,7 +624,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
             CompactTable* larger = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, table->structure());
             larger->m_capacity = capacity;
             larger->m_indexBits = indexBits;
-            larger->m_keysShift = indexBits ? indexBits : keysShiftWithTags;
+            larger->m_keysShiftAndFlags = indexBits ? indexBits : keysShiftWithTags;
             larger->m_valueWidth = valueWidth;
             constexpr size_t maxWordsInLine = 8;
             auto copyWords = [](uint64_t*& to, const uint64_t* from, size_t words) ALWAYS_INLINE_LAMBDA {
@@ -740,7 +740,7 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
         if (!larger)
             return false;
         if (knownGrowth && larger->m_capacity <= maxCapacityWithShortSlots)
-            knownGrowth->store(larger->m_capacity | static_cast<uint64_t>(larger->m_indexBits) << 32 | static_cast<uint64_t>(larger->m_keysShift) << 40 | static_cast<uint64_t>(larger->m_valueWidth) << 48
+            knownGrowth->store(larger->m_capacity | static_cast<uint64_t>(larger->m_indexBits) << 32 | static_cast<uint64_t>(larger->m_keysShiftAndFlags) << 40 | static_cast<uint64_t>(larger->m_valueWidth) << 48
                 | static_cast<uint64_t>(MarkedSpace::sizeClassToIndex(MarkedSpace::optimalSizeFor(allocationSize(larger->m_capacity, Width::Narrow, larger->m_valueWidth)))) << knownGrowthSizeStepShift, std::memory_order_relaxed);
         replaceBy(larger, canStoreValue ? "grown"_s : "widened"_s);
     }
@@ -865,7 +865,7 @@ OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES CompactTable::newSetOfStri
         table->m_used = used;
         table->m_alive = used;
         table->m_capacity = isInitialSize ? initialCapacity : maxCapacityWithTags;
-        table->m_keysShift = keysShiftWithTags;
+        table->m_keysShiftAndFlags = keysShiftWithTags;
         table->m_valueWidth = Width::None;
         *table->at<uint64_t>(offsetOfIndex()) = tags;
         memcpy(table->at<uint8_t>(offsetOfIndex() + maxCapacityWithTags), keys, initialCapacity * sizeof(uint32_t));
@@ -1093,7 +1093,7 @@ static ALWAYS_INLINE auto tryOpenWith(JSGlobalObject* globalObject, JSValue iter
         break;
     case ObjectType: {
         auto* generator = dynamicDowncast<Generator>(cell);
-        if (!generator || generator->realm() != globalObject || !generator->hasUnmodifiedIteration(globalObject))
+        if (!generator || generator->realm() != globalObject || !generator->hasUnmodifiedIteratorProtocol(globalObject))
             return nullptr;
         mode = iteratesGenerator;
         break;
@@ -1131,7 +1131,7 @@ JSCellButterfly* CollectionIteration::tryOpen(JSGlobalObject* globalObject, JSVa
     });
 }
 
-bool CollectionIteration::tryOpen(JSGlobalObject* globalObject, JSValue iterable, InFrame* record)
+bool CollectionIteration::tryOpen(JSGlobalObject* globalObject, JSValue iterable, StackRecord* record)
 {
     return tryOpenWith(globalObject, iterable, [&](JSCell* cell, int32_t mode) {
         return fill(globalObject->vm(), record, cell, mode);
@@ -1144,7 +1144,7 @@ static ALWAYS_INLINE void storeRecordWord(VM& vm, JSCellButterfly* record, unsig
     record->toButterfly()->contiguous().atUnsafe(word).set(vm, record, value);
 }
 
-static ALWAYS_INLINE void storeRecordWord(VM& vm, CollectionIteration::InFrame* record, unsigned word, JSValue value)
+static ALWAYS_INLINE void storeRecordWord(VM& vm, CollectionIteration::StackRecord* record, unsigned word, JSValue value)
 {
     record->setIndex(vm, word, value);
 }
@@ -1212,7 +1212,7 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
         if (static_cast<IterationKind>(mode & iterationKindMask) == IterationKind::Entries) {
             JSValue element = array->getIndex(globalObject, index);
             RETURN_IF_EXCEPTION(scope, false);
-            if constexpr (std::is_same_v<Record, CollectionIteration::InFrame>) {
+            if constexpr (std::is_same_v<Record, CollectionIteration::StackRecord>) {
                 if (mode & CollectionIteration::takesPairsApart) {
                     storeRecordWord(vm, record, CollectionIteration::firstPartWord, value);
                     storeRecordWord(vm, record, CollectionIteration::firstPartWord + 1, element);
@@ -1238,7 +1238,7 @@ static ALWAYS_INLINE bool stepThrough(JSGlobalObject* globalObject, Record* reco
         JSValue second = mode & iteratesSet ? position.key : position.value;
         value = kind == IterationKind::Values ? second : position.key;
         if (kind == IterationKind::Entries) {
-            if constexpr (std::is_same_v<Record, CollectionIteration::InFrame>) {
+            if constexpr (std::is_same_v<Record, CollectionIteration::StackRecord>) {
                 if (mode & CollectionIteration::takesPairsApart) {
                     storeRecordWord(vm, record, CollectionIteration::firstPartWord, position.key);
                     storeRecordWord(vm, record, CollectionIteration::firstPartWord + 1, second);
@@ -1259,7 +1259,7 @@ bool CollectionIteration::step(JSGlobalObject* globalObject, JSCellButterfly* re
     return stepThrough(globalObject, record);
 }
 
-bool CollectionIteration::step(JSGlobalObject* globalObject, InFrame* record)
+bool CollectionIteration::step(JSGlobalObject* globalObject, StackRecord* record)
 {
     return stepThrough(globalObject, record);
 }
@@ -1380,7 +1380,7 @@ static ALWAYS_INLINE void closeRecord(JSGlobalObject* globalObject, Record* reco
     if (!(mode & iteratesGenerator))
         return;
     auto* generator = uncheckedDowncast<Generator>(record->get(0).asCell());
-    if (!generator->hasUnmodifiedIteration(globalObject)) {
+    if (!generator->hasUnmodifiedIteratorProtocol(globalObject)) {
         iteratorClose(globalObject, generator);
         return;
     }
@@ -1393,7 +1393,7 @@ void CollectionIteration::close(JSGlobalObject* globalObject, JSCellButterfly* r
     closeRecord(globalObject, record);
 }
 
-void CollectionIteration::close(JSGlobalObject* globalObject, InFrame* record)
+void CollectionIteration::close(JSGlobalObject* globalObject, StackRecord* record)
 {
     closeRecord(globalObject, record);
 }

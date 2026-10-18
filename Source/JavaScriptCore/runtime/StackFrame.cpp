@@ -101,7 +101,7 @@ void StackFrame::appendTypedFrames(VM& vm, JSCell* owner, JSCell* instanceToken,
 void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
 {
 #if ENABLE(AOT)
-    JSCell* instanceToken = AOT::tokenOf(trace.instance);
+    JSCell* instanceToken = AOT::livenessToken(trace.instance);
     bool isAtTheTop = !trace.hasHostFunctionFrameOnTop && !trace.omittedFrameCount;
     unsigned framesToOmit = trace.omittedFrameCount;
     results.reserveCapacity(std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses + trace.hasHostFunctionFrameOnTop));

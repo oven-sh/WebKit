@@ -100,7 +100,7 @@ inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType
     if (!(type & IsArray && other & IsArray))
         return NonArray;
 
-    if (hasAnyArrayStorage(type) || hasAnyArrayStorage(other) || hasTypedContiguous(type) || hasTypedContiguous(other))
+    if (hasAnyArrayStorage(type) || hasAnyArrayStorage(other))
         return NonArray;
 
     if (type == ArrayWithUndecided)
@@ -150,7 +150,7 @@ ALWAYS_INLINE bool JSArray::holesMustForwardToPrototype() const
 
 inline bool JSArray::canFastCopy(JSArray* otherArray) const
 {
-    if (hasAnyArrayStorage(indexingType()) || hasAnyArrayStorage(otherArray->indexingType()) || hasTypedContiguous(indexingType()) || hasTypedContiguous(otherArray->indexingType()))
+    if (hasAnyArrayStorage(indexingType()) || hasAnyArrayStorage(otherArray->indexingType()))
         return false;
     if (holesMustForwardToPrototype() || otherArray->holesMustForwardToPrototype())
         return false;
@@ -235,9 +235,6 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (hasTypedContiguous(indexingMode()) && tryPutTypedContiguousIndex(vm, this->butterfly()->publicLength(), value)) [[unlikely]]
-        return;
 
     if (!tryMakeWritable(vm)) [[unlikely]] {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);

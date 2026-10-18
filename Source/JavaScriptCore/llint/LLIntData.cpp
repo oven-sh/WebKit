@@ -64,20 +64,20 @@ alignas(CeilingOnPageSize) uint8_t LLINT_OPCODE_CONFIG_SECTION os_script_config_
 static_assert(sizeof(OpcodeConfig) <= OpcodeConfigSizeToProtect);
 
 #if !ENABLE(C_LOOP)
-extern "C" void SYSV_ABI llint_entry(void*, void*, void*, void*);
-extern "C" void SYSV_ABI llint_bytecode_entry(void*, void*, void*, void*);
-extern "C" void SYSV_ABI llint_webassembly_entry(void*, void*, void*, void*);
+extern "C" void SYSV_ABI llint_entry(void*, void*, void*);
+extern "C" void SYSV_ABI llint_bytecode_entry(void*, void*, void*);
+extern "C" void SYSV_ABI llint_webassembly_entry(void*, void*, void*);
 
 static NEVER_INLINE void installBytecodeInterpreter(JSC::Opcode* opcodeMap, JSC::Opcode* opcodeMapWide16, JSC::Opcode* opcodeMapWide32)
 {
-    llint_bytecode_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32, g_opcodeConfig.opcodeMapPredecoded);
+    llint_bytecode_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
     g_opcodeConfig.bytecodePCRangeStart = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintBytecodePCRangeStart);
     g_opcodeConfig.bytecodePCRangeEnd = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintBytecodePCRangeEnd);
 }
 
 static NEVER_INLINE void installWebAssemblyInterpreter(JSC::Opcode* opcodeMap, JSC::Opcode* opcodeMapWide16, JSC::Opcode* opcodeMapWide32)
 {
-    llint_webassembly_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32, g_opcodeConfig.opcodeMapPredecoded);
+    llint_webassembly_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 #if ENABLE(WEBASSEMBLY)
     g_opcodeConfig.wasmIPIntPCRangeStart = untagCodePtr<uintptr_t, CFunctionPtrTag>(wasmIPIntPCRangeStart);
     g_opcodeConfig.wasmIPIntPCRangeEnd = untagCodePtr<uintptr_t, CFunctionPtrTag>(wasmIPIntPCRangeEnd);
@@ -185,7 +185,7 @@ void initialize()
 #endif
 
     // Step 1: fill in opcodeMaps.
-    llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32, g_opcodeConfig.opcodeMapPredecoded);
+    llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
     installBytecodeInterpreter(opcodeMap, opcodeMapWide16, opcodeMapWide32);
     installWebAssemblyInterpreter(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 

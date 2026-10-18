@@ -38,7 +38,7 @@ OperationEffects Lowering::builtinCallEffects(const Value& value)
 CellPointer Lowering::builtinCell(unsigned index)
 {
     if (std::ranges::contains(m_builtins.eagerCells(), index) || m_program.comparedBuiltinCells.get(index))
-        return CellPointer(m_out.load64(m_out.address(m_heaps.AOTInstance_fixedFields, fixedPointer(Instance::offsetOfTypedBuiltins()), static_cast<ptrdiff_t>(index) * sizeof(void*))));
+        return CellPointer(m_out.load64(m_out.address(m_heaps.AOTInstance_fixedFields, loadImmutablePointer(Instance::offsetOfTypedBuiltins()), static_cast<ptrdiff_t>(index) * sizeof(void*))));
     return lazilyInitialized<CellPointer>(Stub::TypedBuiltinCell, Instance::offsetOfTypedBuiltins(), index, [&] {
         return AOT_TYPED_OPERATION(BuiltinCell, word32(index));
     });
@@ -64,7 +64,7 @@ static std::optional<Receiver> receiverWithStructureID(JSType type)
     }
 }
 
-Word32 Lowering::hasOriginalStructure(CellPointer cell, const EngineClass& engineClass)
+Word32 Lowering::hasOriginalStructure(CellPointer cell, const BuiltinClass& engineClass)
 {
     if (engineClass.type == ArrayType)
         return isPlainArray(cell);
@@ -102,7 +102,7 @@ void Lowering::validateReceiverHasOriginalStructure(Word32 holds, CellPointer re
 
 bool Lowering::isReceiverGuard(const Value& value) const
 {
-    return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.hasOriginalStructureOperation() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts();
+    return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.originalStructureCheckOperation() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts();
 }
 
 ValueID Lowering::receiverWithoutCasts(ValueID id) const
@@ -145,7 +145,7 @@ void Lowering::branchOnOriginalStructure(const Value& value, const Terminator& t
     }
 }
 
-std::optional<bool> Lowering::resultOfDominatingGuard(ValueID receiver, const EngineClass& engineClass, GuardKind requested)
+std::optional<bool> Lowering::resultOfDominatingGuard(ValueID receiver, const BuiltinClass& engineClass, GuardKind requested)
 {
     if (m_checkedReceivers.isEmpty() || !m_currentBlock)
         return std::nullopt;
@@ -180,14 +180,14 @@ bool Lowering::createsStringKeyedTable(const Value& value)
     if (value.hasStringKeysByType)
         return true;
     auto arrayElements = [&](const Type& type) -> const Type* {
-        auto* engineClass = type.singleEngineClass();
+        auto* engineClass = type.singleBuiltinClass();
         return engineClass && engineClass->type == ArrayType && type.elements ? &m_program.at(type.elements) : nullptr;
     };
     auto isStringOrNullish = [](const Type& type) {
         return type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
     };
-    ValueID given = value.arguments[0];
-    auto& list = m_function.at(originOf(given));
+    ValueID firstArgument = value.arguments[0];
+    auto& list = m_function.at(underlyingValue(firstArgument));
     if (list.opcode == Opcode::NewArray && !list.arguments.isEmpty()) {
         for (ValueID item : list.arguments) {
             if (created == JSSetType) {
@@ -195,13 +195,13 @@ bool Lowering::createsStringKeyedTable(const Value& value)
                     return false;
                 continue;
             }
-            auto& pair = m_function.at(originOf(item));
+            auto& pair = m_function.at(underlyingValue(item));
             if (pair.opcode != Opcode::NewArray || pair.arguments.size() < 2 || !isStringOrNullish(typeOf(pair.arguments[0])))
                 return false;
         }
         return true;
     }
-    for (TypeID type : { m_function.at(given).type, m_function.at(given).prediction(), list.prediction() }) {
+    for (TypeID type : { m_function.at(firstArgument).type, m_function.at(firstArgument).prediction(), list.prediction() }) {
         auto* elements = type ? arrayElements(m_program.at(type)) : nullptr;
         if (created == JSMapType && elements)
             elements = arrayElements(*elements);
@@ -273,9 +273,9 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
             Boxed object = in<Boxed>(value.arguments[0]);
             LBasicBlock genericPath = newUnlikelyBlock();
             Join join(m_out, Rep::JSValue, Int64);
-            orElse(isCell(object, type), genericPath);
+            branchUnless(isCell(object, type), genericPath);
             Word32 word = orderWordOf(asCell(object));
-            orElse(below(word, word32(orderWordHasExtraProperties)), genericPath);
+            branchUnless(below(word, word32(orderWordHasExtraProperties)), genericPath);
             static_assert(orderWordHasExtraProperties < orderWordIsFrozen && orderWordIsFrozen < orderWordIsSealed && orderWordIsSealed < orderWordIsNotExtensible);
             storeField(asCell(object), m_heaps.AOTTypedObject_orderWord, bitOr(word, frozen));
             join.add(object);
@@ -290,11 +290,11 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
         Boxed list = in<Boxed>(value.arguments[2]);
         LBasicBlock genericPath = newUnlikelyBlock();
         Join join(m_out, Rep::JSValue, Int64);
-        orElse(isCell(function), genericPath);
-        orElse(hasTypeOfFunctionFlag(asCell(function)), genericPath);
-        orElse(isCell(list), genericPath);
-        orElse(isPlainArray(asCell(list)), genericPath);
-        orElse(belowOrEqual(publicLength(butterflyOf(asCell(list))), integer(numberOfArgumentGPRs)), genericPath);
+        branchUnless(isCell(function), genericPath);
+        branchUnless(hasTypeOfFunctionFlag(asCell(function)), genericPath);
+        branchUnless(isCell(list), genericPath);
+        branchUnless(isPlainArray(asCell(list)), genericPath);
+        branchUnless(belowOrEqual(publicLength(butterflyOf(asCell(list))), integer(numberOfArgumentGPRs)), genericPath);
         join.add(callValueWithArray(Stub::ApplyArray, function, in<Boxed>(value.arguments[1]), list));
         m_out.appendTo(genericPath);
         SetForScope isApplyingGenerically(m_isApplyingGenerically, true);
@@ -305,12 +305,12 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
         Boxed length = in<Boxed>(value.arguments[0]);
         LBasicBlock genericPath = newUnlikelyBlock();
         Join join(m_out, Rep::JSValue, Int64);
-        orElse(isInt32(length), genericPath);
+        branchUnless(isInt32(length), genericPath);
         Integer count = zeroExtended(low32(length));
-        orElse(below(count, integer(maxNumberArrayCapacity)), genericPath);
-        LValue room = m_out.shl(m_out.bitOr(count.value(), m_out.constInt64(1)), m_out.constInt32(numberArrayCapacityShift));
-        LValue created = callAllocationStub(Stub::NewArrayWithContiguous, { { room, stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewNumberArray>(), true);
-        orElse(m_out.notZero64(created), genericPath);
+        branchUnless(below(count, integer(maxNumberArrayCapacity)), genericPath);
+        LValue encodedCapacity = m_out.shl(m_out.bitOr(count.value(), m_out.constInt64(1)), m_out.constInt32(numberArrayCapacityShift));
+        LValue created = callAllocationStub(Stub::NewArrayWithContiguous, { { encodedCapacity, stubTemporaryGPRs[0] } }, effectsForOperation<operationAOTTypedNewNumberArray>(), true);
+        branchUnless(m_out.notZero64(created), genericPath);
         m_out.store32(low32(length).value(), butterflyOf(CellPointer(created)).value(), m_heaps.Butterfly_publicLength);
         join.add(box(CellPointer(created)));
         m_out.appendTo(genericPath);
@@ -334,7 +334,7 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
         if (calledOn)
             thisValue = *calledOn;
         else if (typeOf(value.child(0)).hasCells())
-            thisValue = box(nonNullish(value.child(0), m_program.stringOf(builtin.nameName)));
+            thisValue = box(nonNullish(value.child(0), m_program.stringOf(builtin.nameID)));
         else
             thisValue = in<Boxed>(value.child(0));
         break;
@@ -343,10 +343,10 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
         thisValue = calledOn ? *calledOn : value.child(0) ? in<Boxed>(value.child(0)) : globalOr(builtin.holderName);
         break;
     case BuiltinKind::Function:
-        callee = globalOr(builtin.nameName);
+        callee = globalOr(builtin.nameID);
         break;
     case BuiltinKind::Constructor:
-        callee = globalOr(builtin.nameName);
+        callee = globalOr(builtin.nameID);
         thisValue = callee;
         break;
     case BuiltinKind::Constant:
@@ -398,7 +398,7 @@ bool Lowering::needsOnlyMethod(const Value& value) const
 Operand Lowering::lowerGenericFallback(const Value& value, CellPointer receiver, const Type& type, bool methodWasFound)
 {
     auto& builtin = m_builtins.at(value.builtin());
-    StringID name = m_program.stringOf(builtin.nameName);
+    StringID name = m_program.stringOf(builtin.nameID);
     Boxed returnedValue;
     switch (builtin.kind) {
     case BuiltinKind::Getter:
@@ -437,7 +437,7 @@ Operand Lowering::lowerGenericFallback(const Value& value, CellPointer receiver,
 
 Boxed Lowering::lowerMethodGetById(const Value& value)
 {
-    if (value.predictedReceiverClassPlusOne && !typeOf(value.child(0)).singleEngineClass()) {
+    if (value.predictedReceiverClassPlusOne && !typeOf(value.child(0)).singleBuiltinClass()) {
         auto& engineClass = m_builtins.classes()[value.predictedReceiverClassPlusOne - 1];
         Type expected = &engineClass == &m_builtins.stringClass() ? m_program.at(m_program.types.string) : Type::engineClass(engineClass);
         return ifPredictionHolds({ Expectation { value.child(0), &expected, true } }, Rep::JSValue, [&](LBasicBlock) {
@@ -447,7 +447,7 @@ Boxed Lowering::lowerMethodGetById(const Value& value)
         }).as<Boxed>();
     }
     CellPointer receiver = nonNullish(value.child(0), value.string());
-    return either<Boxed>(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleEngineClass()), [&] {
+    return either<Boxed>(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleBuiltinClass()), [&] {
         return boxedConstant(JSValue());
     }, [&] {
         return emitGetById(box(receiver), value.string());
@@ -478,28 +478,28 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
             return ifPredictionHolds({ { value.child(0), &withoutNullish } }, rep, [&](LBasicBlock) {
                 return lowerResolvedBuiltin(result, value);
             }, [&] {
-                throwAt(ThrowKind::NullishRead, Operand(thrownNullish(in<Boxed>(value.child(0)))), m_program.stringOf(builtin.nameName).index());
+                throwAt(ThrowKind::NullishRead, Operand(thrownNullish(in<Boxed>(value.child(0)))), m_program.stringOf(builtin.nameID).index());
                 return placeholder(rep);
             });
         }
     }
     if (value.receiverHasOriginalStructure && value.child(0) && Options::validateAOTTypedFacts()) [[unlikely]] {
-        CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
-        validateReceiverHasOriginalStructure(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleEngineClass()), receiver, result);
+        CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
+        validateReceiverHasOriginalStructure(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleBuiltinClass()), receiver, result);
     }
     if (!hasGenericFallback(m_program, m_function, value))
         return didLookUpInTable(result, lowerResolvedBuiltin(result, value));
-    auto answer = value.receiverHasOriginalStructure ? std::optional<bool>(true) : resultOfDominatingGuard(value.child(0), *typeOf(value.child(0)).singleEngineClass(), GuardKind::Structure);
-    if (answer.value_or(true)) {
+    auto guardResult = value.receiverHasOriginalStructure ? std::optional<bool>(true) : resultOfDominatingGuard(value.child(0), *typeOf(value.child(0)).singleBuiltinClass(), GuardKind::Structure);
+    if (guardResult.value_or(true)) {
         if (auto searched = lowerArraySearchAsSingleCall(result, value))
             return *searched;
     }
-    if (answer.value_or(false))
+    if (guardResult.value_or(false))
         return didLookUpInTable(result, lowerResolvedBuiltin(result, value));
     auto& type = typeOf(result);
     Rep rep = repOf(type);
-    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
-    if (answer)
+    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
+    if (guardResult)
         return lowerGenericFallback(value, receiver, type);
     if (tableStubChecksReceiver(result, value)) {
         SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
@@ -512,7 +512,7 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
         LBasicBlock isOriginal = m_out.newBlock();
         LBasicBlock hasChanged = newColdBlock();
         Join join(m_out, Rep::JSValue, Int64);
-        m_out.branch(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleEngineClass()).value(), usually(isOriginal), rarely(hasChanged));
+        m_out.branch(hasOriginalStructure(receiver, *typeOf(value.child(0)).singleBuiltinClass()).value(), usually(isOriginal), rarely(hasChanged));
         m_out.appendTo(isOriginal);
         {
             SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
@@ -528,7 +528,7 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
     LBasicBlock hasChanged = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     bool methodWasFound = value.methodGetById() && needsOnlyMethod(value);
-    m_out.branch((methodWasFound ? isEmpty(in<Boxed>(value.methodGetById())) : hasOriginalStructure(receiver, *typeOf(value.child(0)).singleEngineClass())).value(), usually(isOriginal), rarely(hasChanged));
+    m_out.branch((methodWasFound ? isEmpty(in<Boxed>(value.methodGetById())) : hasOriginalStructure(receiver, *typeOf(value.child(0)).singleBuiltinClass())).value(), usually(isOriginal), rarely(hasChanged));
     m_out.appendTo(isOriginal);
     SetForScope isOnConditionalPath(m_isOnConditionalPath, true);
     Operand resolved;
@@ -548,9 +548,9 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
     ValueFromBlock inlineInteger = m_out.anchor(m_lastIntegerConvertedToNumber.integer);
     join.add(resolved);
     m_out.appendTo(hasChanged);
-    Operand general = lowerGenericFallback(value, receiver, type, methodWasFound);
+    Operand genericResult = lowerGenericFallback(value, receiver, type, methodWasFound);
     ValueFromBlock notInteger = m_out.anchor(integer(INT64_MIN).value());
-    join.add(general);
+    join.add(genericResult);
     Operand joined = join.finish();
     m_likelyIntegerNumbers.add(result.index(), IntegerConvertedToNumber { joined.value, m_out.phi(Int64, inlineInteger, notInteger), minimum });
     return joined;
@@ -598,7 +598,7 @@ Operand Lowering::lowerResolvedBuiltin(ValueID result, const Value& value)
         expected.arguments.append(WTF::move(type));
     }
     if (builtin.implementation.kind == BuiltinImplementation::Call && !builtin.hasReceiver()) {
-        BuiltinID sibling = applicableEntry(m_builtins.find(builtin.kind, builtin.holderName, builtin.nameName), expected.arguments.span());
+        BuiltinID sibling = resolveBuiltinOverload(m_builtins.find(builtin.kind, builtin.holderName, builtin.nameID), expected.arguments.span());
         if (sibling && m_builtins.at(sibling).implementation.kind == BuiltinImplementation::Inline)
             expected.call.immediates[0] = sibling.index();
     }
@@ -640,7 +640,7 @@ std::optional<Lowering::PredictedBuiltin> Lowering::predictedBuiltin(BuiltinKind
         expected.arguments.append(predictedTypeOf(argument));
     }
     BuiltinID first;
-    const EngineClass* engineClass = nullptr;
+    const BuiltinClass* engineClass = nullptr;
     ValueID thisValue;
     if (kind == BuiltinKind::Function) {
         first = m_builtins.find(kind, { }, name);
@@ -654,7 +654,7 @@ std::optional<Lowering::PredictedBuiltin> Lowering::predictedBuiltin(BuiltinKind
         auto prediction = predictionOf(receiver);
         if (!prediction)
             return std::nullopt;
-        engineClass = prediction->isString() ? &m_builtins.stringClass() : prediction->singleEngineClass();
+        engineClass = prediction->isString() ? &m_builtins.stringClass() : prediction->singleBuiltinClass();
         if (!engineClass || !(prediction->isString() || engineClass->canCheckOriginalStructure()))
             return std::nullopt;
         first = m_builtins.findForInstance(kind, *engineClass, name);
@@ -664,7 +664,7 @@ std::optional<Lowering::PredictedBuiltin> Lowering::predictedBuiltin(BuiltinKind
     }
     if (!usesPredictions)
         return std::nullopt;
-    BuiltinID entry = applicableEntry(first, expected.arguments.span());
+    BuiltinID entry = resolveBuiltinOverload(first, expected.arguments.span());
     if (!entry)
         return std::nullopt;
     expected.call.opcode = Opcode::CallBuiltin;
@@ -688,7 +688,7 @@ std::optional<Operand> Lowering::lowerBuiltinFunctionCall(ValueID result, ValueI
     bool isMethod = builtin.kind == BuiltinKind::Method;
     if ((!isMethod && builtin.kind != BuiltinKind::StaticFunction) || builtin.implementation.callee == BuiltinCallee::None)
         return std::nullopt;
-    const EngineClass* engineClass = m_builtins.classNamed(builtin.holderName);
+    const BuiltinClass* engineClass = m_builtins.classNamed(builtin.holderName);
     PredictedBuiltin expected;
     expected.isFunctionCalledAsValue = true;
     expected.call.opcode = Opcode::CallBuiltin;
@@ -697,7 +697,7 @@ std::optional<Operand> Lowering::lowerBuiltinFunctionCall(ValueID result, ValueI
     auto genericPath = [&, direct = expected.call] {
         return ensure(callBuiltinFunction(direct, OperationEffects { Writes::Heap, true }, thisValue ? in<Boxed>(thisValue) : undefined()), typeOf(result));
     };
-    if (first == m_builtins.hasOwnProperty(builtin.nameName) && thisValue && arguments.size() == 1) {
+    if (first == m_builtins.hasOwnProperty(builtin.nameID) && thisValue && arguments.size() == 1) {
         auto& type = typeOf(result);
         auto& keyType = typeOf(arguments[0]);
         if (!keyType.hasObjects())
@@ -709,7 +709,7 @@ std::optional<Operand> Lowering::lowerBuiltinFunctionCall(ValueID result, ValueI
         Boxed key = in<Boxed>(arguments[0]);
         m_out.branch(isCell(key, keyType).value(), unsure(keyIsCell), unsure(keyIsPrimitive));
         m_out.appendTo(keyIsCell);
-        orElse(below(loadCellType(asCell(key)), word32(ObjectType)), keyIsObject);
+        branchUnless(below(loadCellType(asCell(key)), word32(ObjectType)), keyIsObject);
         m_out.jump(keyIsPrimitive);
         m_out.appendTo(keyIsPrimitive);
         join.add(booleanResult(lowerHasOwnProperty(thisValue, arguments[0]), type));
@@ -722,13 +722,13 @@ std::optional<Operand> Lowering::lowerBuiltinFunctionCall(ValueID result, ValueI
         LBasicBlock isNotRetained = newColdBlock();
         Join join(m_out, repOf(type), b3TypeOf(repOf(type)));
         CellPointer object = objectOrElse(thisValue, isNotRetained);
-        LValue previousOrRareData = m_out.loadPtr(structureOf(object.value()), m_heaps.Structure_previousOrRareData);
-        orElse(m_out.notNull(previousOrRareData), isNotRetained);
-        orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), isNotRetained);
+        LValue previousOrRareData = m_out.loadPtr(loadStructure(object.value()), m_heaps.Structure_previousOrRareData);
+        branchUnless(m_out.notNull(previousOrRareData), isNotRetained);
+        branchUnless(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), isNotRetained);
         LValue cache = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_specialPropertyCache);
-        orElse(m_out.notNull(cache), isNotRetained);
+        branchUnless(m_out.notNull(cache), isNotRetained);
         LValue text = m_out.loadPtr(cache, m_heaps.SpecialPropertyCache_cachedToStringTagValue);
-        orElse(m_out.above(text, m_out.constIntPtr(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()))), isNotRetained);
+        branchUnless(m_out.above(text, m_out.constIntPtr(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()))), isNotRetained);
         join.add(ensure(CellPointer(text), m_program.at(m_program.types.string), type));
         m_out.appendTo(isNotRetained);
         join.add(genericPath());
@@ -755,7 +755,7 @@ std::optional<Operand> Lowering::lowerBuiltinFunctionCall(ValueID result, ValueI
     }
     if (isMethod && engineClass->type == RegExpObjectType && expected.arguments.size() == 1 && expected.arguments[0].primitives & Primitive::String && !expected.arguments[0].isString())
         expected.arguments[0] = m_program.at(m_program.types.string);
-    BuiltinID entry = applicableEntry(first, expected.arguments.span());
+    BuiltinID entry = resolveBuiltinOverload(first, expected.arguments.span());
     if (!entry || m_builtins.at(entry).implementation.kind != BuiltinImplementation::Inline)
         return genericPath();
     expected.call.immediates[0] = entry.index();

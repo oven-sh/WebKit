@@ -38,10 +38,10 @@ Type Type::forLayout(LayoutID layout)
     return type;
 }
 
-Type Type::engineClass(const EngineClass& engineClass)
+Type Type::engineClass(const BuiltinClass& engineClass)
 {
     Type type;
-    type.engineClasses.append(engineClass.index);
+    type.builtinClasses.append(engineClass.index);
     return type;
 }
 
@@ -70,16 +70,16 @@ Type Type::anything()
 
 LayoutID Type::singleLayout() const
 {
-    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !engineClasses.isEmpty() || objectLayouts.size() != 1)
+    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !builtinClasses.isEmpty() || objectLayouts.size() != 1)
         return { };
     return objectLayouts[0];
 }
 
-const EngineClass* Type::singleEngineClass() const
+const BuiltinClass* Type::singleBuiltinClass() const
 {
-    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !objectLayouts.isEmpty() || engineClasses.size() != 1)
+    if (primitives & ~Primitive::UndefinedOrNull || anyObject || anyFunction || !objectLayouts.isEmpty() || builtinClasses.size() != 1)
         return nullptr;
-    return &Builtins::singleton().classes()[engineClasses[0]];
+    return &Builtins::singleton().classes()[builtinClasses[0]];
 }
 
 Type Type::withoutPrimitives(uint16_t removed) const
@@ -147,8 +147,8 @@ bool Type::isSubsetOf(const Type& other, const Program& program, bool untypedObj
         return true;
     if (anyObject || (anyFunction && !other.anyFunction))
         return false;
-    for (uint16_t engineClass : engineClasses) {
-        if (!other.engineClasses.contains(engineClass))
+    for (uint16_t engineClass : builtinClasses) {
+        if (!other.builtinClasses.contains(engineClass))
             return false;
     }
     for (LayoutID supertype : objectLayouts) {
@@ -170,7 +170,7 @@ void add(Hasher& hasher, const Type& type)
     add(hasher, type.primitives, type.integers.minimum, type.integers.maximum, type.anyObject, type.anyFunction, type.elements);
     for (LayoutID supertype : type.objectLayouts)
         add(hasher, supertype);
-    for (uint16_t engineClass : type.engineClasses)
+    for (uint16_t engineClass : type.builtinClasses)
         add(hasher, engineClass);
 }
 
@@ -275,53 +275,6 @@ ASCIILiteral nameOf(Rep rep)
         return "val"_s;
     case Rep::LiteralString:
         return "lit"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-ASCIILiteral nameOf(Store store)
-{
-    switch (store) {
-    case Store::Uint8:
-        return "u8"_s;
-    case Store::Int8:
-        return "i8"_s;
-    case Store::Uint16:
-        return "u16"_s;
-    case Store::Int16:
-        return "i16"_s;
-    case Store::Int32:
-        return "i32"_s;
-    case Store::Uint32:
-        return "u32"_s;
-    case Store::Int64:
-        return "i64"_s;
-    case Store::Float:
-        return "f32"_s;
-    case Store::Double:
-        return "f64"_s;
-    case Store::Cell:
-        return "ref"_s;
-    case Store::JSValue:
-        return "val"_s;
-    case Store::OptionalInt64:
-        return "i64?"_s;
-    case Store::OptionalDouble:
-        return "f64?"_s;
-    case Store::Boolean:
-        return "bool"_s;
-    case Store::Int32OrNumberBox:
-        return "i32|"_s;
-    case Store::Cell32:
-        return "ref32"_s;
-    case Store::OptionalCell32:
-        return "ref32?"_s;
-    case Store::OptionalBoolean:
-        return "bool?"_s;
-    case Store::LiteralString:
-        return "lit"_s;
-    case Store::LiteralString32:
-        return "lit32"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

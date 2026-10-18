@@ -219,14 +219,14 @@ static void findFieldsHoldingConvertibleRecords(Program& program)
         }
     }
     UncheckedKeyHashMap<uint64_t, bool> cache;
-    auto mayHoldConvertible = [&](TypeID held, TypeID own) {
-        return cache.ensure((static_cast<uint64_t>(held.index()) << 32 | own.index()) + 1, [&] {
+    auto mayHoldConvertible = [&](TypeID convertibleType, TypeID own) {
+        return cache.ensure((static_cast<uint64_t>(convertibleType.index()) << 32 | own.index()) + 1, [&] {
             BitVector isSubtypeOfOwnType(program.layouts.size());
             for (LayoutID supertype : program.at(own).objectLayouts) {
                 for (LayoutID subtype : program.at(supertype).subtypes)
                     isSubtypeOfOwnType.set(subtype.index());
             }
-            for (LayoutID supertype : program.at(held).objectLayouts) {
+            for (LayoutID supertype : program.at(convertibleType).objectLayouts) {
                 if (!hasConvertibleSubtype.get(supertype.index()))
                     continue;
                 for (LayoutID layout : program.at(supertype).subtypes) {
@@ -244,9 +244,9 @@ static void findFieldsHoldingConvertibleRecords(Program& program)
         for (LayoutID subtype : supertype.subtypes) {
             if (subtype.index() == i)
                 continue;
-            for (auto [name, held] : convertibleFields[subtype.index()]) {
+            for (auto [name, convertibleType] : convertibleFields[subtype.index()]) {
                 for (auto& field : supertype.fields) {
-                    if (field.name == name && !field.isAnyObjectInSomeSubtype && field.type && field.type != held && !program.at(field.type).objectLayouts.isEmpty() && mayHoldConvertible(held, field.type))
+                    if (field.name == name && !field.isAnyObjectInSomeSubtype && field.type && field.type != convertibleType && !program.at(field.type).objectLayouts.isEmpty() && mayHoldConvertible(convertibleType, field.type))
                         field.isAnyObjectInSomeSubtype = true;
                 }
             }
@@ -548,7 +548,7 @@ static bool hasObjects(std::span<const Type> types)
 
 static bool isArrayBufferView(const Type* receiver)
 {
-    auto* engineClass = receiver ? receiver->singleEngineClass() : nullptr;
+    auto* engineClass = receiver ? receiver->singleBuiltinClass() : nullptr;
     return engineClass && (engineClass->typedArrayType != NotTypedArray || engineClass->type == DataViewType);
 }
 
@@ -560,7 +560,7 @@ static Writes writesOf(const Builtin& builtin, const Type* receiver, std::span<c
         return Writes::Heap;
     if ((builtin.effects & Effect::ReadsArguments && hasObjects(arguments)) || convertsObjects(builtin, arguments))
         return Writes::Heap;
-    if (builtin.effects & Effect::ReadsReceiver && receiver && receiver->hasObjects() && !receiver->singleEngineClass())
+    if (builtin.effects & Effect::ReadsReceiver && receiver && receiver->hasObjects() && !receiver->singleBuiltinClass())
         return Writes::Heap;
     if (builtin.effects & Effect::WritesReceiver)
         return Writes::TypedArrayProperties;

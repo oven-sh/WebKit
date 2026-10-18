@@ -241,11 +241,11 @@ struct Builtin {
     ASCIILiteral holder;
     ASCIILiteral name;
     BuiltinName holderName;
-    BuiltinName nameName;
+    BuiltinName nameID;
     BuiltinParameters parameters;
     BuiltinResult result;
     uint16_t effects;
-    uint16_t thisUses;
+    uint16_t receiverUses;
     BuiltinImplementation implementation;
     bool hasPrivateAlias { false };
 
@@ -273,7 +273,7 @@ private:
     uint16_t m_index { UINT16_MAX };
 };
 
-struct EngineClass {
+struct BuiltinClass {
     ASCIILiteral text;
     uint16_t index;
     BuiltinName name;
@@ -319,7 +319,7 @@ namespace Operations {
 FOR_EACH_AOT_TYPED_IR_OPERATION(AOT_TYPED_DEFINE_OPERATION)
 #undef AOT_TYPED_DEFINE_OPERATION
 }
-extern const EngineClass engineClasses[numberOfEngineClasses];
+extern const BuiltinClass builtinClasses[numberOfEngineClasses];
 
 class Builtins {
     WTF_MAKE_NONCOPYABLE(Builtins);
@@ -339,15 +339,15 @@ public:
     bool isReplaceable(BuiltinName global) const { return global && builtinNames[global.index()].isReplaceable; }
     bool mayBeExtended(BuiltinName global) const { return global && builtinNames[global.index()].mayBeExtended; }
     BuiltinID findStatic(BuiltinKind, BuiltinName global, BuiltinName name) const;
-    BuiltinID findForInstance(BuiltinKind, const EngineClass&, BuiltinName) const;
+    BuiltinID findForInstance(BuiltinKind, const BuiltinClass&, BuiltinName) const;
     BuiltinID findConstructor(BuiltinName global) const;
-    const EngineClass* classNamed(BuiltinName) const;
-    const EngineClass* classWithFixedPrototypeNamed(BuiltinName name) const
+    const BuiltinClass* classNamed(BuiltinName) const;
+    const BuiltinClass* classWithFixedPrototypeNamed(BuiltinName name) const
     {
-        const EngineClass* engineClass = classNamed(name);
+        const BuiltinClass* engineClass = classNamed(name);
         return engineClass && engineClass->type != ErrorInstanceType ? engineClass : nullptr;
     }
-    std::span<const EngineClass> classes() const { return engineClasses; }
+    std::span<const BuiltinClass> classes() const { return builtinClasses; }
     GlobalInterface interfaceNamed(BuiltinName) const;
     BuiltinName prototypeName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_prototype); }
     BuiltinName callName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_call); }
@@ -357,12 +357,12 @@ public:
     BuiltinID hasOwn() const { return findStatic(BuiltinKind::StaticFunction, objectClass().name, BuiltinName(AOT_TYPED_BUILTIN_NAME_hasOwn)); }
     BuiltinID propertyIsEnumerable(BuiltinName name) const { return name == BuiltinName(AOT_TYPED_BUILTIN_NAME_propertyIsEnumerable) ? find(BuiltinKind::Method, objectClass().name, name) : BuiltinID(); }
     BuiltinID propertyIsEnumerableOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_PropertyIsEnumerable); }
-    const EngineClass* classSpeculatedFor(BuiltinName method) const;
+    const BuiltinClass* classSpeculatedFor(BuiltinName method) const;
     std::optional<PreludeFunction> preludeFunctionNamed(std::span<const uint8_t>) const;
     BuiltinID entryImplementedBy(PreludeFunction) const;
     bool isHostFunctionInEngine(BuiltinID) const;
     BuiltinID operationNamed(BuiltinName name) const { return name ? BuiltinID(builtinNames[name.index()].operation) : BuiltinID(); }
-    BuiltinID hasOriginalStructureOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_HasOriginalStructure); }
+    BuiltinID originalStructureCheckOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_HasOriginalStructure); }
     BuiltinID callIntrinsic() const { return BuiltinID(AOT_TYPED_BUILTIN_Call); }
 
     static constexpr unsigned numberOfCells() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures + numberOfEngineClasses; }
@@ -373,7 +373,7 @@ public:
     unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
     unsigned originalStructureCell(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }
     static constexpr unsigned firstPrototypeCell() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures; }
-    unsigned prototypeCell(const EngineClass& engineClass) const { return firstPrototypeCell() + engineClass.index; }
+    unsigned prototypeCell(const BuiltinClass& engineClass) const { return firstPrototypeCell() + engineClass.index; }
     JSCell* findCell(JSGlobalObject*, unsigned) const;
     unsigned globalCell(ASCIILiteral) const;
     unsigned staticFunctionCell(ASCIILiteral global, ASCIILiteral name) const;
@@ -392,7 +392,7 @@ public:
     v(bigInt, BigInt) \
     v(function, Function) \
     v(object, Object)
-#define AOT_TYPED_DECLARE_CLASS_GETTER(lower, upper) const EngineClass& lower ## Class() const { return engineClasses[AOT_TYPED_ENGINE_CLASS_ ## upper]; }
+#define AOT_TYPED_DECLARE_CLASS_GETTER(lower, upper) const BuiltinClass& lower ## Class() const { return builtinClasses[AOT_TYPED_ENGINE_CLASS_ ## upper]; }
     FOR_EACH_AOT_TYPED_WELL_KNOWN_CLASS(AOT_TYPED_DECLARE_CLASS_GETTER)
 #undef AOT_TYPED_DECLARE_CLASS_GETTER
 

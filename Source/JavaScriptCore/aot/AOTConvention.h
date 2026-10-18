@@ -56,18 +56,6 @@ constexpr GPRReg operationArgumentGPR(unsigned index)
         return GPRInfo::toArgumentRegister(index);
     return index == GPRInfo::numberOfArgumentRegisters ? seventhOperationArgumentGPR : eighthOperationArgumentGPR;
 }
-#else
-static constexpr unsigned numberOfArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
-static constexpr GPRReg thisGPR = InvalidGPRReg;
-static constexpr GPRReg countGPR = InvalidGPRReg;
-static constexpr GPRReg calleeGPR = InvalidGPRReg;
-static constexpr GPRReg callMarkerGPR = InvalidGPRReg;
-static constexpr bool hasFramelessFunctionStubs = false;
-static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
-static constexpr GPRReg copyEndOffsetGPR = InvalidGPRReg;
-static constexpr GPRReg lazyConstantKeyGPR = InvalidGPRReg;
-static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
-constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #endif
 #if CPU(X86_64)
 static constexpr unsigned numberOfDirectArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
@@ -101,11 +89,6 @@ static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
 static constexpr GPRReg pairedNamesGPR = stubImmediateGPR;
 static constexpr GPRReg secondReceiverGPR = ARM64Registers::x1;
 static constexpr GPRReg firstOfTwoResultsGPR = ARM64Registers::x2;
-static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
-#else
-static constexpr GPRReg pairedNamesGPR = InvalidGPRReg;
-static constexpr GPRReg secondReceiverGPR = InvalidGPRReg;
-static constexpr GPRReg firstOfTwoResultsGPR = InvalidGPRReg;
 static constexpr GPRReg literalOfComparedReadGPR = secondReceiverGPR;
 #endif
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);

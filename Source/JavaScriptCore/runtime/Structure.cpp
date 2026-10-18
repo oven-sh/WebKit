@@ -1697,7 +1697,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     if (thisObject->aotFieldsOrEmpty().aotInstance) [[unlikely]] {
         visitor.appendUnbarriered(AOT::ownerOf(thisObject->aotFieldsOrEmpty().aotInstance));
-        visitor.appendUnbarriered(AOT::tokenOf(thisObject->aotFieldsOrEmpty().aotInstance));
+        visitor.appendUnbarriered(AOT::livenessToken(thisObject->aotFieldsOrEmpty().aotInstance));
         if (StructureID ofExtraProperties = thisObject->compiledLayout() ? thisObject->extraPropertiesStructureID() : StructureID())
             visitor.appendUnbarriered(ofExtraProperties.decode());
     }
@@ -2108,9 +2108,6 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::BecomeDerivedArray:
         kindName = "BecomeDerivedArray";
-        break;
-    case TransitionKind::AllocateTypedContiguous:
-        kindName = "AllocateTypedContiguous";
         break;
     case TransitionKind::BecomePrototype:
         kindName = "BecomePrototype";

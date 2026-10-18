@@ -238,9 +238,10 @@ protected:
             m_pc = callerPC;
             return;
         }
-        void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
+        auto* record = reinterpret_cast<const CallerFrameAndPC*>(m_callFrame);
+        void* pc = removeCodePtrTag(record->returnPC);
         if (m_pcInfo.kind == AOT::ImageAddressInfo::Function || m_pcInfo.kind == AOT::ImageAddressInfo::Stub) {
-            m_callFrame = m_callFrame->callerFrame();
+            m_callFrame = record->callerFrame;
             m_pc = pc;
             return;
         }
@@ -480,9 +481,6 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             wasmCalleesLocker.emplace(NativeCalleeRegistry::singleton().getLock());
 #endif
 
-#if ENABLE(AOT)
-        const bool losesCallerForTesting = Options::aotProfileBreakForTesting() && StringView::fromLatin1(byteCast<char>(Options::aotProfileBreakForTesting())) == "caller"_s;
-#endif
         ThreadSuspendLocker threadSuspendLocker;
         auto didSuspend = m_jscExecutionThread->suspend(threadSuspendLocker);
         if (didSuspend) {
@@ -558,7 +556,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     framePC = m_jscExecutionThread->stack().contains(machineFrame) ? AOT::returnAddressForFrame(callFrame, machineFrame) : nullptr;
             }
             void* framelessTopCallerPC = nullptr;
-            if (!losesCallerForTesting && AOT::hasCode() && callFrame == machineFrame && framePC == machinePC) {
+            if (AOT::hasCode() && callFrame == machineFrame && framePC == machinePC) {
                 if (void* callerPC = AOT::returnAddressOfFramelessTop(machineFrame, machinePC, machineLinkRegister, machineStackPointer, m_jscExecutionThread->stack())) {
                     if (AOT::addressKind(machinePC) == AOT::ImageAddressInfo::Function)
                         framelessTopCallerPC = callerPC;

@@ -41,43 +41,43 @@ public:
         if (m_needsFrame.get(0))
             return false;
 
-        Vector<unsigned> cuts;
+        Vector<unsigned> splitPoints;
         for (unsigned block : reachableFrom(0, m_needsFrame)) {
             for (auto& target : m_function.blocks[block].terminator.targets) {
-                if (m_needsFrame.get(target.block.index()) && !cuts.contains(target.block.index()))
-                    cuts.append(target.block.index());
+                if (m_needsFrame.get(target.block.index()) && !splitPoints.contains(target.block.index()))
+                    splitPoints.append(target.block.index());
             }
         }
-        std::ranges::sort(cuts);
-        Vector<BitVector> reachedFrom(cuts.size());
-        Vector<BitVector> cutTargets(cuts.size());
-        if (cuts.size() <= Value::maxContinuations && !usesFrameStorage()) {
-            for (unsigned i = 0; i < cuts.size(); ++i)
-                reachedFrom[i] = reachableFrom(cuts[i], { });
-            for (unsigned i = 0; i < cuts.size(); ++i) {
-                for (unsigned k = 0; k < cuts.size(); ++k) {
-                    if (i != k && m_isUnreachable.get(cuts[k]) && reachedFrom[i].get(cuts[k]) && !reachedFrom[k].get(cuts[i]))
-                        cutTargets[i].set(cuts[k]);
+        std::ranges::sort(splitPoints);
+        Vector<BitVector> reachedFrom(splitPoints.size());
+        Vector<BitVector> cutTargets(splitPoints.size());
+        if (splitPoints.size() <= Value::maxContinuations && !usesFrameStorage()) {
+            for (unsigned i = 0; i < splitPoints.size(); ++i)
+                reachedFrom[i] = reachableFrom(splitPoints[i], { });
+            for (unsigned i = 0; i < splitPoints.size(); ++i) {
+                for (unsigned k = 0; k < splitPoints.size(); ++k) {
+                    if (i != k && m_isUnreachable.get(splitPoints[k]) && reachedFrom[i].get(splitPoints[k]) && !reachedFrom[k].get(splitPoints[i]))
+                        cutTargets[i].set(splitPoints[k]);
                 }
             }
         }
         size_t copiedSize = 0;
         size_t maxCopiedValues = 3 * sizeOf(isReachable) / 2;
-        for (unsigned i = 0; i < cuts.size() && copiedSize <= maxCopiedValues; ++i)
-            copiedSize += sizeOf(reachableFrom(cuts[i], cutTargets[i]));
-        if (copiedSize > maxCopiedValues || cuts.size() > Value::maxContinuations) {
-            unsigned cut = nearestCommonDominator(isReachable);
-            while (cut && isInCycleWith(cut, reachableFrom(0, only(cut))))
-                cut = m_dominator[cut];
-            if (!cut)
+        for (unsigned i = 0; i < splitPoints.size() && copiedSize <= maxCopiedValues; ++i)
+            copiedSize += sizeOf(reachableFrom(splitPoints[i], cutTargets[i]));
+        if (copiedSize > maxCopiedValues || splitPoints.size() > Value::maxContinuations) {
+            unsigned splitPoint = nearestCommonDominator(isReachable);
+            while (splitPoint && isInCycleWith(splitPoint, reachableFrom(0, only(splitPoint))))
+                splitPoint = m_dominator[splitPoint];
+            if (!splitPoint)
                 return false;
-            cuts = { cut };
-            reachedFrom = { reachableFrom(cut, { }) };
+            splitPoints = { splitPoint };
+            reachedFrom = { reachableFrom(splitPoint, { }) };
             cutTargets = { BitVector() };
         }
         BitVector isCut(m_numberOfBlocks);
-        for (unsigned cut : cuts)
-            isCut.set(cut);
+        for (unsigned splitPoint : splitPoints)
+            isCut.set(splitPoint);
         BitVector staysInEntry = reachableFrom(0, isCut);
         bool returns = false;
         for (unsigned block : staysInEntry)
@@ -86,21 +86,21 @@ public:
             return false;
 
         Vector<unsigned> order;
-        for (unsigned i = 0; i < cuts.size(); ++i)
+        for (unsigned i = 0; i < splitPoints.size(); ++i)
             order.append(i);
         std::ranges::sort(order, [&](unsigned a, unsigned b) {
             return reachedFrom[a].bitCount() < reachedFrom[b].bitCount();
         });
-        Vector<Arguments> liveInto(cuts.size());
-        result.continuations.grow(cuts.size());
+        Vector<Arguments> liveInto(splitPoints.size());
+        result.continuations.grow(splitPoints.size());
         for (unsigned which : order) {
-            result.continuations[which] = makeContinuation(cuts, which, cutTargets[which], liveInto);
+            result.continuations[which] = makeContinuation(splitPoints, which, cutTargets[which], liveInto);
             if (!fitsInRegisters(result.continuations[which])) {
                 result.continuations.clear();
                 return false;
             }
         }
-        result.entry = makeEntry(staysInEntry, cuts, liveInto);
+        result.entry = makeEntry(staysInEntry, splitPoints, liveInto);
         return true;
     }
 
@@ -324,9 +324,9 @@ private:
         return parameter;
     }
 
-    Function makeContinuation(const Vector<unsigned>& cuts, unsigned which, const BitVector& cutTargets, Vector<Arguments>& liveInto) const
+    Function makeContinuation(const Vector<unsigned>& splitPoints, unsigned which, const BitVector& cutTargets, Vector<Arguments>& liveInto) const
     {
-        unsigned cut = cuts[which];
+        unsigned splitPoint = splitPoints[which];
         Arguments& live = liveInto[which];
         Function result;
         result.name = m_function.name;
@@ -349,7 +349,7 @@ private:
         result.copiedArgumentCaptureCount = m_function.copiedArgumentCaptureCount;
         result.blocks.grow(m_numberOfBlocks);
 
-        BitVector blocks = reachableFrom(cut, cutTargets);
+        BitVector blocks = reachableFrom(splitPoint, cutTargets);
         BitVector isDefined(m_function.values.size());
         for (unsigned block : blocks) {
             result.blocks[block] = m_function.blocks[block];
@@ -362,7 +362,7 @@ private:
             for (unsigned i = 0; i < result.blocks[block].terminator.targets.size(); ++i) {
                 if (!cutTargets.get(result.blocks[block].terminator.targets[i].block.index()))
                     continue;
-                jumpToContinuation(result, block, i, cuts, liveInto);
+                jumpToContinuation(result, block, i, splitPoints, liveInto);
                 blocks.set(result.blocks.size() - 1);
                 for (ValueID value : result.blocks.last().values)
                     isDefined.set(value.index());
@@ -398,8 +398,8 @@ private:
             entry.parameters.append(id);
             live.append(id);
         }
-        Target target { BlockID(cut), { } };
-        for (ValueID parameter : m_function.blocks[cut].parameters) {
+        Target target { BlockID(splitPoint), { } };
+        for (ValueID parameter : m_function.blocks[splitPoint].parameters) {
             result.values.append(parameterLike(m_function.at(parameter), entry.parameters.size()));
             ValueID id(result.values.size() - 1);
             entry.parameters.append(id);
@@ -423,7 +423,7 @@ private:
         return numberOfGPRs <= numberOfDirectArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
     }
 
-    Function makeEntry(const BitVector& staysInEntry, const Vector<unsigned>& cuts, const Vector<Arguments>& liveInto) const
+    Function makeEntry(const BitVector& staysInEntry, const Vector<unsigned>& splitPoints, const Vector<Arguments>& liveInto) const
     {
         Function result = m_function;
         for (unsigned block = 0; block < m_numberOfBlocks; ++block) {
@@ -432,16 +432,16 @@ private:
                 continue;
             }
             for (unsigned i = 0; i < result.blocks[block].terminator.targets.size(); ++i) {
-                if (cuts.contains(result.blocks[block].terminator.targets[i].block.index()))
-                    jumpToContinuation(result, block, i, cuts, liveInto);
+                if (splitPoints.contains(result.blocks[block].terminator.targets[i].block.index()))
+                    jumpToContinuation(result, block, i, splitPoints, liveInto);
             }
         }
         return result;
     }
 
-    void jumpToContinuation(Function& result, unsigned block, unsigned target, const Vector<unsigned>& cuts, const Vector<Arguments>& liveInto) const
+    void jumpToContinuation(Function& result, unsigned block, unsigned target, const Vector<unsigned>& splitPoints, const Vector<Arguments>& liveInto) const
     {
-        size_t which = cuts.find(result.blocks[block].terminator.targets[target].block.index());
+        size_t which = splitPoints.find(result.blocks[block].terminator.targets[target].block.index());
         TypeID resultType = m_function.resultType ? m_function.resultType : m_program.types.anything;
         Value jump;
         jump.opcode = Opcode::CallDirect;
@@ -451,7 +451,7 @@ private:
         jump.immediates = { m_id.index(), Value::jumpsToContinuation + static_cast<uint32_t>(which) };
         jump.arguments = liveInto[which];
         Block leaving;
-        auto& parameters = m_function.blocks[cuts[which]].parameters;
+        auto& parameters = m_function.blocks[splitPoints[which]].parameters;
         Arguments passed = result.blocks[block].terminator.targets[target].arguments;
         for (unsigned k = 0; k < passed.size(); ++k) {
             auto& parameter = m_function.at(parameters[k]);

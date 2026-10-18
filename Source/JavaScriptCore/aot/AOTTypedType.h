@@ -73,21 +73,21 @@ struct Type {
     bool anyObject { false };
     bool anyFunction { false };
     Vector<LayoutID, 1> objectLayouts;
-    Vector<uint16_t, 1> engineClasses;
+    Vector<uint16_t, 1> builtinClasses;
     TypeID elements;
 
     static Type never() { return { }; }
     static Type fromPrimitives(uint16_t);
     static Type integer(Range);
     static Type forLayout(LayoutID);
-    static Type engineClass(const EngineClass&);
+    static Type engineClass(const BuiltinClass&);
     static Type function();
     static Type object();
     static Type anything();
 
     bool isNever() const { return !primitives && !hasObjects(); }
     bool isAnything() const { return (primitives & Primitive::All) == Primitive::All && anyObject && anyFunction; }
-    bool hasObjects() const { return anyObject || anyFunction || !objectLayouts.isEmpty() || !engineClasses.isEmpty(); }
+    bool hasObjects() const { return anyObject || anyFunction || !objectLayouts.isEmpty() || !builtinClasses.isEmpty(); }
     bool hasCells() const { return hasObjects() || primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::LiteralString); }
     bool hasOnlyPrimitives(uint16_t allowed) const { return !(primitives & ~allowed) && !hasObjects(); }
     bool isNumber() const { return !isNever() && hasOnlyPrimitives(Primitive::Number); }
@@ -100,7 +100,7 @@ struct Type {
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
 
     LayoutID singleLayout() const;
-    const EngineClass* singleEngineClass() const;
+    const BuiltinClass* singleBuiltinClass() const;
     Type withoutPrimitives(uint16_t) const;
     Type withLiteralStringWidened() const;
     void normalizeLiteralString();
@@ -164,7 +164,6 @@ enum class Rep : uint8_t {
 Rep repOf(const Type&);
 Store storeOf(const Type&);
 ASCIILiteral nameOf(Rep);
-ASCIILiteral nameOf(Store);
 unsigned sizeOf(Store);
 Rep repOf(Store);
 inline bool holdsCells(Rep rep) { return rep == Rep::Cell || rep == Rep::JSValue || rep == Rep::LiteralString; }

@@ -348,8 +348,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     IndexSet<BasicBlock*> done;
 #if USE(BUN_JSC_ADDITIONS)
     constexpr unsigned gapRange = 24;
-    static const char* const requestedForTesting = byteCast<char>(Options::airBlockOrderFaultForTesting());
-    const bool placesInGaps = code.placesRareBlocksInGaps() && !(requestedForTesting && !strcmp(requestedForTesting, "off"));
+    const bool placesInGaps = code.placesRareBlocksInGaps();
     IndexSet<BasicBlock*> placedInGaps;
     Vector<std::pair<BasicBlock*, unsigned>, 8> waitingForGap;
     unsigned placedInstCount = 0;
@@ -462,17 +461,6 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
                 placedInGaps.add(rare);
                 blocksInOrder.append(rare);
                 placedInstCount += rare->size();
-                for (BasicBlock* successor : rare->successorBlocks())
-                    sortedSlowSuccessors.append(successor);
-            }
-        }
-        static const bool breaksForTesting = requestedForTesting && !strcmp(requestedForTesting, "1");
-        if (breaksForTesting && !waitingForGap.isEmpty()) {
-            BasicBlock* rare = waitingForGap.takeLast().first;
-            if (!done.contains(rare) && rare->size() <= 16 && hasOnlyRarePredecessors(rare)) {
-                done.add(rare);
-                placedInGaps.add(rare);
-                blocksInOrder.append(rare);
                 for (BasicBlock* successor : rare->successorBlocks())
                     sortedSlowSuccessors.append(successor);
             }

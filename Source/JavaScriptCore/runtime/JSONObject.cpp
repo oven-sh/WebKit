@@ -674,7 +674,7 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 std::span<const Latin1Character> keyAsJSON;
                 if (stringifier.m_usingArrayReplacer) {
                     propertyName = stringifier.m_arrayReplacerPropertyNames.data()->propertyNameVector()[index];
-                    value = AOT::Typed::Object::tryGetOwnData(vm, m_object, propertyName);
+                    value = AOT::Typed::Object::tryGetOwnDataProperty(vm, m_object, propertyName);
                 } else {
                     auto& walk = stringifier.m_typedObjectWalks.last();
                     auto& property = walk.fields[index];

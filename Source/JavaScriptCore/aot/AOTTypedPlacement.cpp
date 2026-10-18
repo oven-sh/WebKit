@@ -653,10 +653,10 @@ private:
     size_t indexOf(const Function& function) const { return &function - std::as_const(m_program).functions.begin(); }
 
     template<typename Found>
-    void forEachFunctionInOrder(const Invocable<Found(Function&)> auto& find, const Invocable<void(Found&&)> auto& take, uint8_t held = 0)
+    void forEachFunctionInOrder(const Invocable<Found(Function&)> auto& find, const Invocable<void(Found&&)> auto& take, uint8_t contentFlags = 0)
     {
         auto found = collectInParallel<Found>(m_program.functions.size(), [&](unsigned i, Vector<Found>& collected) {
-            if (held && !(m_referencedByFunction[i] & held))
+            if (contentFlags && !(m_referencedByFunction[i] & contentFlags))
                 return;
             Found inFunction = find(m_program.functions.atKeepingValueIndex(i));
             if (!isEmpty(inFunction))
@@ -670,7 +670,7 @@ private:
     {
         for (auto& layout : m_program.layouts) {
             for (auto& field : layout.fields)
-                field.storedInSlot = field.stored;
+                field.slotType = field.stored;
         }
         Vector<TypeID> typesWithoutAbsent;
         unsigned numberOfFields = 0;
@@ -678,9 +678,9 @@ private:
             if (!isObjectLayout(layout.kind) || layout.subtypes.isEmpty())
                 continue;
             for (auto& field : layout.fields) {
-                if (!exists(field) || !field.storedInSlot || field.isOutOfLine || field.isMissingInSomeSubtype || field.hasOtherOffsetInSomeSubtype)
+                if (!exists(field) || !field.slotType || field.isOutOfLine || field.isMissingInSomeSubtype || field.hasOtherOffsetInSomeSubtype)
                     continue;
-                if (!(m_program.at(field.storedInSlot).primitives & Primitive::Absent))
+                if (!(m_program.at(field.slotType).primitives & Primitive::Absent))
                     continue;
                 bool isInEverySubtype = std::ranges::all_of(layout.subtypes, [&](LayoutID subtype) {
                     auto& fields = std::as_const(m_program).at(subtype).fields;
@@ -689,11 +689,11 @@ private:
                 });
                 if (!isInEverySubtype)
                     continue;
-                uint32_t index = field.storedInSlot.index();
+                uint32_t index = field.slotType.index();
                 if (typesWithoutAbsent.size() <= index)
                     typesWithoutAbsent.grow(index + 1);
                 if (!typesWithoutAbsent[index])
-                    typesWithoutAbsent[index] = m_program.types.intern(m_program.at(field.storedInSlot).withoutPrimitives(Primitive::Absent));
+                    typesWithoutAbsent[index] = m_program.types.intern(m_program.at(field.slotType).withoutPrimitives(Primitive::Absent));
                 field.stored = typesWithoutAbsent[index];
                 ++numberOfFields;
             }
@@ -1455,31 +1455,31 @@ private:
             return NamedFieldTable { Vector<uint32_t>(FillWith { }, m_program.layouts.size(), none), { } };
         }, [&](NamedFieldTable& table, unsigned index) {
             auto fields = m_fieldsByName.span().subspan(m_names[index].first, m_names[index].count);
-            for (uint32_t place = 0; place < fields.size(); ++place)
-                table.layoutIndex[fields[place].layout] = place;
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex)
+                table.layoutIndex[fields[fieldIndex].layout] = fieldIndex;
             functor(table, fields);
             for (auto& field : fields)
                 table.layoutIndex[field.layout] = none;
         });
     }
 
-    void forEachWithField(const NamedFieldTable& table, std::span<const NamedField> fields, const Vector<LayoutID>& layouts, const Invocable<void(uint32_t place)> auto& functor)
+    void forEachWithField(const NamedFieldTable& table, std::span<const NamedField> fields, const Vector<LayoutID>& layouts, const Invocable<void(uint32_t fieldIndex)> auto& functor)
     {
         static constexpr unsigned searchCost = 16;
         if (fields.size() * searchCost < layouts.size()) {
-            for (uint32_t place = 0; place < fields.size(); ++place) {
-                if (std::ranges::binary_search(layouts, LayoutID(fields[place].layout)))
-                    functor(place);
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
+                if (std::ranges::binary_search(layouts, LayoutID(fields[fieldIndex].layout)))
+                    functor(fieldIndex);
             }
             return;
         }
         for (LayoutID layout : layouts) {
-            if (uint32_t place = table.layoutIndex[layout.index()]; place != none)
-                functor(place);
+            if (uint32_t fieldIndex = table.layoutIndex[layout.index()]; fieldIndex != none)
+                functor(fieldIndex);
         }
     }
 
-    void forEachSubtypeWithField(const NamedFieldTable& table, std::span<const NamedField> fields, const Layout& supertype, const Invocable<void(uint32_t place)> auto& functor)
+    void forEachSubtypeWithField(const NamedFieldTable& table, std::span<const NamedField> fields, const Layout& supertype, const Invocable<void(uint32_t fieldIndex)> auto& functor)
     {
         forEachWithField(table, fields, supertype.subtypes, functor);
     }
@@ -1711,7 +1711,7 @@ private:
         forEachFunctionInOrder<Vector<uint32_t>>([&](Function& function) {
             ImmutableFunctionScope immutableFunctionScope;
             Vector<uint32_t> accessed;
-            uint8_t held = 0;
+            uint8_t contentFlags = 0;
             static constexpr OpcodeSet flaggedOpcodes = [] {
                 OpcodeSet result;
                 for (unsigned opcode = 0; opcode <= std::numeric_limits<uint8_t>::max(); ++opcode) {
@@ -1724,7 +1724,7 @@ private:
             std::as_const(m_program).functions.forEachIndexedValueWithBlock(indexOf(function), accessesAndFlaggedOpcodes, [&](unsigned blockIndex, unsigned index, ValueID id) {
                 auto& block = function.blocks[blockIndex];
                 auto& value = function.at(id);
-                held |= contentFlagFor(value.opcode);
+                contentFlags |= contentFlagFor(value.opcode);
                 switch (value.opcode) {
                 case Opcode::PutById:
                     if (isInitializingStore(m_program, function, block, index))
@@ -1762,7 +1762,7 @@ private:
                     break;
                 }
             });
-            m_referencedByFunction[&function - &std::as_const(m_program.functions)[0]] = held;
+            m_referencedByFunction[&function - &std::as_const(m_program.functions)[0]] = contentFlags;
             return accessed;
         }, [&](Vector<uint32_t>&& accessed) {
             for (uint32_t field : accessed) {
@@ -1785,17 +1785,17 @@ private:
         forEachName([&](NamedFieldTable& table, std::span<const NamedField> fields) {
             auto& representative = table.representative;
             representative.shrink(0);
-            for (uint32_t place = 0; place < fields.size(); ++place)
-                representative.append(place);
-            auto representativeOf = [&](uint32_t place) {
-                while (representative[place] != place) {
-                    representative[place] = representative[representative[place]];
-                    place = representative[place];
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex)
+                representative.append(fieldIndex);
+            auto representativeOf = [&](uint32_t fieldIndex) {
+                while (representative[fieldIndex] != fieldIndex) {
+                    representative[fieldIndex] = representative[representative[fieldIndex]];
+                    fieldIndex = representative[fieldIndex];
                 }
-                return place;
+                return fieldIndex;
             };
-            for (uint32_t place = 0; place < fields.size(); ++place) {
-                uint32_t own = representativeOf(place);
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
+                uint32_t own = representativeOf(fieldIndex);
                 auto share = [&](uint32_t other) {
                     other = representativeOf(other);
                     if (other == own)
@@ -1803,35 +1803,35 @@ private:
                     representative[std::max(own, other)] = std::min(own, other);
                     own = std::min(own, other);
                 };
-                if (m_isAccessed.quickGet(fields[place].field)) {
-                    auto& supertype = layouts[fields[place].layout];
-                    bool mayPart = !supertype.structuralSubtypes.isEmpty() && !m_isStoredThrough.quickGet(fields[place].field);
+                if (m_isAccessed.quickGet(fields[fieldIndex].field)) {
+                    auto& supertype = layouts[fields[fieldIndex].layout];
+                    bool mayPart = !supertype.structuralSubtypes.isEmpty() && !m_isStoredThrough.quickGet(fields[fieldIndex].field);
                     forEachSubtypeWithField(table, fields, supertype, [&](uint32_t other) {
-                        auto& forSupertype = fieldAt(fields[place]);
+                        auto& forSupertype = fieldAt(fields[fieldIndex]);
                         auto& own = fieldAt(fields[other]);
                         bool isEquivalent = own.type == forSupertype.type && !((own.flags ^ forSupertype.flags) & fieldIsOptional);
                         if (!mayPart || isEquivalent || !std::ranges::binary_search(supertype.structuralSubtypes, LayoutID(fields[other].layout)))
                             share(other);
                     });
                 }
-                forEachWithField(table, fields, layouts[fields[place].layout].specializations, share);
+                forEachWithField(table, fields, layouts[fields[fieldIndex].layout].specializations, share);
             }
-            for (uint32_t place = 0; place < fields.size(); ++place) {
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex) {
                 Fingerprint subtypesWithField;
-                if (m_isAccessed.quickGet(fields[place].field)) {
-                    forEachSubtypeWithField(table, fields, layouts[fields[place].layout], [&](uint32_t other) {
+                if (m_isAccessed.quickGet(fields[fieldIndex].field)) {
+                    forEachSubtypeWithField(table, fields, layouts[fields[fieldIndex].layout], [&](uint32_t other) {
                         if (fieldAt(fields[other]).placeholderFor)
                             return;
-                        if (representativeOf(other) == representativeOf(place))
+                        if (representativeOf(other) == representativeOf(fieldIndex))
                             subtypesWithField.add(m_layoutHashes[fields[other].layout]);
                         else
-                            fieldAt(fields[place]).hasOtherOffsetInSomeSubtype = true;
+                            fieldAt(fields[fieldIndex]).hasOtherOffsetInSomeSubtype = true;
                     });
                 }
-                m_subtypesWith[fields[place].field] = subtypesWithField;
+                m_subtypesWith[fields[fieldIndex].field] = subtypesWithField;
             }
-            for (uint32_t place = 0; place < fields.size(); ++place)
-                fieldRepresentative[fields[place].field] = fields[representativeOf(place)].field;
+            for (uint32_t fieldIndex = 0; fieldIndex < fields.size(); ++fieldIndex)
+                fieldRepresentative[fields[fieldIndex].field] = fields[representativeOf(fieldIndex)].field;
         });
         Vector<uint32_t> representativeSlot(FillWith { }, numberOfFields, none);
         for (unsigned i = 0; i < layouts.size(); ++i) {
@@ -1919,9 +1919,9 @@ private:
                 if (missingFields == none || m_subtypeSets[m_missingFields[missingFields].subtypesWithField].listedFor != missingFields)
                     continue;
                 uint32_t next = m_subtypeSets[m_missingFields[missingFields].subtypesWithField].firstMember;
-                forEachSubtypeWithField(table, fields, layouts[field.layout], [&](uint32_t place) {
-                    if (!fieldAt(fields[place]).placeholderFor && fieldAt(fields[place]).slot == fieldAt(field).slot)
-                        m_listedSubtypes[next++] = fields[place].layout;
+                forEachSubtypeWithField(table, fields, layouts[field.layout], [&](uint32_t fieldIndex) {
+                    if (!fieldAt(fields[fieldIndex]).placeholderFor && fieldAt(fields[fieldIndex]).slot == fieldAt(field).slot)
+                        m_listedSubtypes[next++] = fields[fieldIndex].layout;
                 });
                 auto& listed = m_subtypeSets[m_missingFields[missingFields].subtypesWithField];
                 RELEASE_ASSERT(next == listed.firstMember + listed.subtypeCount);
@@ -2072,7 +2072,7 @@ private:
                         continue;
                     for (LayoutID specialization : specializations) {
                         if (!std::ranges::binary_search(layouts[supertype].subtypes, specialization))
-                            fail("layout ", layout, " ", nameOf(layouts[layout]), " is a subtype of supertype ", supertype, " ", nameOf(layouts[supertype]), ", its specialization ", specialization.index(), " ", nameOf(m_program.at(specialization)), " is not");
+                            fail("layout ", layout, " ", nameOf(layouts[layout]), " is a subtype of supertype ", supertype, " ", nameOf(layouts[supertype]), ", but its specialization ", specialization.index(), " ", nameOf(m_program.at(specialization)), " is not");
                     }
                 }
             }
@@ -2216,23 +2216,23 @@ private:
 
     NumberUse numberUseBy(const Function& function, const Value& user, ValueID used, const SlotsReadFrom& slotsReadFrom) const
     {
-        auto isFraction = [&](const Type& type) {
+        auto isNonIntegerNumber = [&](const Type& type) {
             return type.isNumber() && !type.isInteger();
         };
         auto withOther = [&](NumberUse ifInteger) {
             ValueID other = user.child(0) == used ? user.child(1) : user.child(0);
             if (slotsReadFrom.contains(other.index()) || m_program.typeOf(function, other).isInteger())
                 return ifInteger;
-            return isFraction(m_program.typeOf(function, other)) ? NumberUse::AsDouble : NumberUse::AsInteger;
+            return isNonIntegerNumber(m_program.typeOf(function, other)) ? NumberUse::AsDouble : NumberUse::AsInteger;
         };
         auto heldBy = [&](const Field& field) {
-            return exists(field) && !m_isPredictedInt32.quickGet(field.slot.index()) && field.type && isFraction(m_program.at(field.type)) ? NumberUse::AsDouble : NumberUse::AsInteger;
+            return exists(field) && !m_isPredictedInt32.quickGet(field.slot.index()) && field.type && isNonIntegerNumber(m_program.at(field.type)) ? NumberUse::AsDouble : NumberUse::AsInteger;
         };
         switch (user.opcode) {
         case Opcode::Add:
         case Opcode::Sub:
         case Opcode::Mul:
-            return isFraction(m_program.at(user.type)) ? withOther(NumberUse::PassedOn) : NumberUse::AsInteger;
+            return isNonIntegerNumber(m_program.at(user.type)) ? withOther(NumberUse::PassedOn) : NumberUse::AsInteger;
         case Opcode::Div:
         case Opcode::Pow:
             return m_program.typeOf(function, user.child(0)).isNumber() && m_program.typeOf(function, user.child(1)).isNumber() ? NumberUse::AsDouble : NumberUse::AsInteger;
@@ -2246,9 +2246,9 @@ private:
         case Opcode::ToNumber:
         case Opcode::ToNumeric:
         case Opcode::Cast:
-            return isFraction(m_program.at(user.type)) ? NumberUse::PassedOn : NumberUse::AsInteger;
+            return isNonIntegerNumber(m_program.at(user.type)) ? NumberUse::PassedOn : NumberUse::AsInteger;
         case Opcode::PutModuleVariable:
-            return m_program.variables[user.variable().index()].type && isFraction(m_program.at(m_program.variables[user.variable().index()].type)) ? NumberUse::AsDouble : NumberUse::AsInteger;
+            return m_program.variables[user.variable().index()].type && isNonIntegerNumber(m_program.at(m_program.variables[user.variable().index()].type)) ? NumberUse::AsDouble : NumberUse::AsInteger;
         case Opcode::PutField:
             return user.child(1) == used ? heldBy(m_program.at(user.layout()).fields[user.field()]) : NumberUse::AsInteger;
         case Opcode::PutById:
@@ -2262,7 +2262,7 @@ private:
             if (callee.blocks.isEmpty() || callee.blocks[0].parameters.size() != user.arguments.size())
                 return NumberUse::AsInteger;
             for (unsigned i = 0; i < user.arguments.size(); ++i) {
-                if (user.arguments[i] == used && !isFraction(m_program.typeOf(callee, callee.blocks[0].parameters[i])))
+                if (user.arguments[i] == used && !isNonIntegerNumber(m_program.typeOf(callee, callee.blocks[0].parameters[i])))
                     return NumberUse::AsInteger;
             }
             return std::ranges::find(user.children, used) != user.children.end() ? NumberUse::AsInteger : NumberUse::AsDouble;
@@ -2288,7 +2288,7 @@ private:
             }
             return changed;
         };
-        auto isFraction = [&](TypeID type) {
+        auto isNonIntegerNumber = [&](TypeID type) {
             return type && m_program.at(type).isNumber() && !m_program.at(type).isInteger();
         };
         auto forEachUse = [&](const auto& functor) {
@@ -2302,12 +2302,12 @@ private:
                 }
                 auto& terminator = block.terminator;
                 if (terminator.value && slotsReadFrom.contains(terminator.value.index()))
-                    functor(terminator.value, terminator.kind == TerminatorKind::Return && isFraction(function.resultType) ? NumberUse::AsDouble : NumberUse::AsInteger, ValueID());
+                    functor(terminator.value, terminator.kind == TerminatorKind::Return && isNonIntegerNumber(function.resultType) ? NumberUse::AsDouble : NumberUse::AsInteger, ValueID());
                 for (auto& target : terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
                     for (unsigned i = 0; i < target.arguments.size(); ++i) {
                         if (slotsReadFrom.contains(target.arguments[i].index()))
-                            functor(target.arguments[i], isFraction(function.at(parameters[i]).type) ? NumberUse::PassedOn : NumberUse::AsInteger, parameters[i]);
+                            functor(target.arguments[i], isNonIntegerNumber(function.at(parameters[i]).type) ? NumberUse::PassedOn : NumberUse::AsInteger, parameters[i]);
                     }
                 }
             }
@@ -2651,8 +2651,8 @@ private:
     void include(Type& type, const Type& other)
     {
         uint16_t arrayClass = Builtins::singleton().arrayClass().index;
-        if (other.engineClasses.contains(arrayClass)) {
-            if (!type.engineClasses.contains(arrayClass))
+        if (other.builtinClasses.contains(arrayClass)) {
+            if (!type.builtinClasses.contains(arrayClass))
                 type.elements = other.elements;
             else if (type.elements != other.elements)
                 type.elements = type.elements && other.elements ? unionOfTypes(type.elements, other.elements) : TypeID();
@@ -2662,7 +2662,7 @@ private:
         type.anyObject |= other.anyObject;
         type.anyFunction |= other.anyFunction;
         type.objectLayouts.appendVector(other.objectLayouts);
-        type.engineClasses.appendVector(other.engineClasses);
+        type.builtinClasses.appendVector(other.builtinClasses);
     }
 
     void normalize(Type& type)
@@ -2671,12 +2671,12 @@ private:
         if (type.anyObject) {
             type.anyFunction = true;
             type.objectLayouts.clear();
-            type.engineClasses.clear();
+            type.builtinClasses.clear();
             type.elements = { };
             return;
         }
-        std::ranges::sort(type.engineClasses);
-        type.engineClasses.shrink(std::unique(type.engineClasses.begin(), type.engineClasses.end()) - type.engineClasses.begin());
+        std::ranges::sort(type.builtinClasses);
+        type.builtinClasses.shrink(std::unique(type.builtinClasses.begin(), type.builtinClasses.end()) - type.builtinClasses.begin());
         std::ranges::sort(type.objectLayouts);
         type.objectLayouts.shrink(std::unique(type.objectLayouts.begin(), type.objectLayouts.end()) - type.objectLayouts.begin());
         if (type.objectLayouts.size() < 2)
@@ -2684,16 +2684,16 @@ private:
         std::ranges::stable_sort(type.objectLayouts, [&](LayoutID a, LayoutID b) {
             return m_program.at(a).subtypes.size() > m_program.at(b).subtypes.size();
         });
-        Vector<LayoutID, 1> kept;
+        Vector<LayoutID, 1> uncoveredLayouts;
         for (LayoutID supertype : type.objectLayouts) {
             bool isCovered = false;
-            for (unsigned i = 0; i < kept.size() && !isCovered; ++i)
-                isCovered = m_program.isUpcast(supertype, kept[i]);
+            for (unsigned i = 0; i < uncoveredLayouts.size() && !isCovered; ++i)
+                isCovered = m_program.isUpcast(supertype, uncoveredLayouts[i]);
             if (!isCovered)
-                kept.append(supertype);
+                uncoveredLayouts.append(supertype);
         }
-        std::ranges::sort(kept);
-        type.objectLayouts = WTF::move(kept);
+        std::ranges::sort(uncoveredLayouts);
+        type.objectLayouts = WTF::move(uncoveredLayouts);
     }
 
     TypeID unionOfTypes(TypeID a, TypeID b)
@@ -2836,10 +2836,10 @@ private:
     static uint64_t roomIn(uint64_t occupied, unsigned logSize)
     {
         static constexpr uint64_t aligned[] = { UINT64_MAX, 0x5555555555555555ull, 0x1111111111111111ull, 0x0101010101010101ull };
-        uint64_t room = ~occupied;
+        uint64_t freeBits = ~occupied;
         for (unsigned i = 0; i < logSize; ++i)
-            room &= room >> (1u << i);
-        return room & aligned[logSize];
+            freeBits &= freeBits >> (1u << i);
+        return freeBits & aligned[logSize];
     }
 
     void placeObjects()
@@ -3050,7 +3050,7 @@ private:
             uint32_t slot = order[index];
             return PlacementOrderKey { scoreOf(slot), uses[slot].numberOfLayouts, uses[slot].deadline, slot, static_cast<uint8_t>(sizeOf(slots[slot].store)), mayBeOutOfLine.quickGet(slot), mayBeOutOfLine.quickGet(slot) && isOnlyReachedByTransition.quickGet(slot) };
         });
-        sortOnPool(ordered.mutableSpan(), [](const PlacementOrderKey& a, const PlacementOrderKey& b) {
+        parallelSort(ordered.mutableSpan(), [](const PlacementOrderKey& a, const PlacementOrderKey& b) {
             if (a.mayBeOutOfLine != b.mayBeOutOfLine)
                 return !a.mayBeOutOfLine;
             if (a.isOnlyReachedByTransition != b.isOnlyReachedByTransition)
@@ -3162,7 +3162,7 @@ private:
             uint32_t cap = UINT32_MAX;
             for (uint32_t layout : layoutsWithSlot)
                 cap = std::min(cap, m_inlineCap[layout]);
-            uint64_t room = 0;
+            uint64_t freeBits = 0;
             auto* space = &occupancies;
             for (;; ++word) {
                 uint64_t occupied = 0;
@@ -3171,10 +3171,10 @@ private:
                     if (word < words.size())
                         occupied |= words[word];
                 }
-                room = roomIn(occupied, logSize);
-                if (!room)
+                freeBits = roomIn(occupied, logSize);
+                if (!freeBits)
                     continue;
-                if (isOutOfLine || !mayBeOutOfLine.quickGet(index) || (!prepared.isOnlyReachedByTransition.quickGet(index) && word * 64 + WTF::ctz(room) + size <= cap))
+                if (isOutOfLine || !mayBeOutOfLine.quickGet(index) || (!prepared.isOnlyReachedByTransition.quickGet(index) && word * 64 + WTF::ctz(freeBits) + size <= cap))
                     break;
                 isOutOfLine = true;
                 Type type = m_program.at(slot.type);
@@ -3186,7 +3186,7 @@ private:
                 space = &extensions;
                 word = findFirstWordWithRoom(extensions) - 1;
             }
-            unsigned bit = WTF::ctz(room);
+            unsigned bit = WTF::ctz(freeBits);
             placed.offsets[index] = word * 64 + bit;
             for (uint32_t layout : layoutsWithSlot) {
                 auto& words = (*space)[layout].words;
@@ -3394,10 +3394,10 @@ private:
                     best = k;
             }
             if (best != notFound) {
-                auto [at, room] = holes[best];
+                auto [at, holeSize] = holes[best];
                 holes.removeAt(best);
                 offsets[i] = at;
-                for (uint32_t piece = size; piece < room; piece *= 2)
+                for (uint32_t piece = size; piece < holeSize; piece *= 2)
                     holes.append({ at + piece, piece });
                 continue;
             }
@@ -3590,17 +3590,17 @@ private:
                     return std::nullopt;
                 if (!(occupied[use.second][beside / 64] & bytesAt(beside, narrow)))
                     continue;
-                uint32_t held = none;
+                uint32_t slotIndex = none;
                 for (auto& field : layouts[use.second].fields) {
                     bool isElsewhereNow = alreadyMoved.containsIf([&](auto& moved) {
                         return moved.first == field.slot.index();
                     });
                     if (exists(field) && !field.isOutOfLine && !isElsewhereNow && slots[field.slot.index()].offset == beside && sizeOf(slots[field.slot.index()].store) == narrow)
-                        held = field.slot.index();
+                        slotIndex = field.slot.index();
                 }
-                if (held == none || (neighbor != none && neighbor != held))
+                if (slotIndex == none || (neighbor != none && neighbor != slotIndex))
                     return std::nullopt;
-                neighbor = held;
+                neighbor = slotIndex;
             }
             if (neighbor == none)
                 return std::nullopt;
@@ -3714,25 +3714,25 @@ private:
                 group[other] = minimum;
             }
         }
-        struct Room {
+        struct Occupancy {
             uint32_t end { LayoutData::extraPropertiesOffsetLimit };
             std::array<uint64_t, LayoutData::extraPropertiesOffsetLimit / 64> occupied { };
         };
-        Vector<Room> rooms(layouts.size());
-        auto occupy = [](Room& room, uint32_t first, uint32_t end) {
+        Vector<Occupancy> rooms(layouts.size());
+        auto occupy = [](Occupancy& occupancy, uint32_t first, uint32_t end) {
             for (uint32_t byte = first; byte < std::min(end, LayoutData::extraPropertiesOffsetLimit); ++byte)
-                room.occupied[byte / 64] |= 1ull << byte % 64;
+                occupancy.occupied[byte / 64] |= 1ull << byte % 64;
         };
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
             if (!hasObjects(layout))
                 continue;
-            Room& room = rooms[find(i)];
-            room.end = std::min<uint32_t>(room.end, cellSizeFor(layout.size));
-            occupy(room, 0, offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0));
+            Occupancy& occupancy = rooms[find(i)];
+            occupancy.end = std::min<uint32_t>(occupancy.end, cellSizeFor(layout.size));
+            occupy(occupancy, 0, offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0));
             for (auto& field : layout.fields) {
                 if (exists(field) && !field.isOutOfLine)
-                    occupy(room, field.offset, field.offset + sizeOf(field.store));
+                    occupy(occupancy, field.offset, field.offset + sizeOf(field.store));
             }
         }
         unsigned numberOfLayouts = 0;
@@ -3742,9 +3742,9 @@ private:
             if (!hasObjects(layout))
                 continue;
             ++numberOfLayouts;
-            Room& room = rooms[find(i)];
-            for (uint32_t offset = offsetOfFirstField; offset + sizeOfExtraPropertiesWord <= room.end && !layout.offsetOfExtraProperties; offset += sizeOfExtraPropertiesWord) {
-                if (!(room.occupied[offset / 64] >> offset % 64 & ((1ull << sizeOfExtraPropertiesWord) - 1)))
+            Occupancy& occupancy = rooms[find(i)];
+            for (uint32_t offset = offsetOfFirstField; offset + sizeOfExtraPropertiesWord <= occupancy.end && !layout.offsetOfExtraProperties; offset += sizeOfExtraPropertiesWord) {
+                if (!(occupancy.occupied[offset / 64] >> offset % 64 & ((1ull << sizeOfExtraPropertiesWord) - 1)))
                     layout.offsetOfExtraProperties = offset;
             }
             numberOfLayoutsWithRoom += !!layout.offsetOfExtraProperties;
@@ -3764,10 +3764,10 @@ private:
             didChange = false;
             for (Layout* layout : specialized) {
                 for (LayoutID specialization : layout->specializations) {
-                    uint32_t room = m_program.at(specialization).sizeWithSpecializationCapacity;
-                    if (room <= layout->sizeWithSpecializationCapacity)
+                    uint32_t requiredSize = m_program.at(specialization).sizeWithSpecializationCapacity;
+                    if (requiredSize <= layout->sizeWithSpecializationCapacity)
                         continue;
-                    layout->sizeWithSpecializationCapacity = room;
+                    layout->sizeWithSpecializationCapacity = requiredSize;
                     didChange = true;
                 }
             }
@@ -4723,10 +4723,10 @@ private:
             auto& objectLayouts = m_program.at(TypeID(i)).objectLayouts;
             if (objectLayouts.size() < 2)
                 continue;
-            for (ShapeTestKind asked : { ShapeTestKind::Members, ShapeTestKind::SubtypesKeptByCast, ShapeTestKind::RetagSources }) {
-                if (!(asked == ShapeTestKind::RetagSources ? m_coercionsToType[i] : m_typeTests[i]))
+            for (ShapeTestKind testKind : { ShapeTestKind::Members, ShapeTestKind::SubtypesKeptByCast, ShapeTestKind::RetagSources }) {
+                if (!(testKind == ShapeTestKind::RetagSources ? m_coercionsToType[i] : m_typeTests[i]))
                     continue;
-                uint64_t key = Program::multiLayoutShapeTestKey(objectLayouts, asked);
+                uint64_t key = Program::multiLayoutShapeTestKey(objectLayouts, testKind);
                 if (m_program.multiLayoutShapeTests.contains(key))
                     continue;
                 unsigned oneByOne = 0;
@@ -4734,12 +4734,12 @@ private:
                 passing.shrink(0);
                 for (LayoutID supertype : objectLayouts) {
                     auto& layout = layouts[supertype.index()];
-                    auto& test = asked == ShapeTestKind::Members ? layout.test : asked == ShapeTestKind::SubtypesKeptByCast ? layout.castTest : layout.retagSources;
+                    auto& test = testKind == ShapeTestKind::Members ? layout.test : testKind == ShapeTestKind::SubtypesKeptByCast ? layout.castTest : layout.retagSources;
                     if (test.neverPasses())
                         continue;
                     oneByOne += instructionsOf(test);
                     hasSubtypeWithoutShape |= !test.first;
-                    if (asked == ShapeTestKind::RetagSources) {
+                    if (testKind == ShapeTestKind::RetagSources) {
                         for (uint32_t source : retagSourcesOf(supertype.index())) {
                             if (uint32_t shape = layouts[source].shape)
                                 passing.append(shape);
@@ -5037,7 +5037,7 @@ private:
         };
         constexpr unsigned numberOfPlaces = moduleEvaluationErrorsOffset + 1;
         std::array<unsigned, numberOfPlaces> nextInChain { };
-        Vector<uint8_t> places(variables.size(), [&](size_t index) {
+        Vector<uint8_t> groupIndices(variables.size(), [&](size_t index) {
             unsigned place = placeOf(index);
             RELEASE_ASSERT(place < numberOfPlaces);
             ++nextInChain[place];
@@ -5048,11 +5048,11 @@ private:
             precedingCount += std::exchange(next, precedingCount);
         Vector<unsigned> order(FillWith { }, variables.size(), 0u);
         for (unsigned index = 0; index < variables.size(); ++index)
-            order[nextInChain[places[index]]++] = index;
+            order[nextInChain[groupIndices[index]]++] = index;
         uint32_t offset = 0;
         auto place = [&](bool isLateInitialized) {
             for (unsigned i : order) {
-                if ((places[i] < filledGroupCount) != isLateInitialized)
+                if ((groupIndices[i] < filledGroupCount) != isLateInitialized)
                     continue;
                 offset = static_cast<uint32_t>(WTF::roundUpToMultipleOf(sizeOf(variables[i].store), offset));
                 variables[i].offset = offset;
@@ -5150,7 +5150,7 @@ private:
             auto [constantLiterals, pushedLiterals, literalElements, unsharedLiterals, unsharedLiteralElements] = Literals { };
             BitVector isStoredTo;
             BitVector isPushedTo;
-            auto originOf = [&](ValueID id) {
+            auto underlyingValue = [&](ValueID id) {
                 while (function.at(id).opcode == Opcode::Cast)
                     id = function.at(id).child(0);
                 return id;
@@ -5159,20 +5159,20 @@ private:
             std::as_const(m_program).functions.forEachIndexedValue(indexOf(function), writers, [&](ValueID id) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::PutByVal) {
-                    isStoredTo.set(originOf(value.child(0)).index());
+                    isStoredTo.set(underlyingValue(value.child(0)).index());
                     return;
                 }
                 auto& builtin = builtins.at(value.builtin());
                 if (builtin.effects & Effect::WritesArguments) {
                     for (ValueID argument : value.arguments)
-                        isStoredTo.set(originOf(argument).index());
+                        isStoredTo.set(underlyingValue(argument).index());
                 }
                 if (!builtin.hasReceiver() || !value.child(0))
                     return;
                 if (builtin.effects & Effect::WritesReceiver)
-                    isStoredTo.set(originOf(value.child(0)).index());
+                    isStoredTo.set(underlyingValue(value.child(0)).index());
                 if (builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::ArrayPush)
-                    isPushedTo.set(originOf(value.child(0)).index());
+                    isPushedTo.set(underlyingValue(value.child(0)).index());
             });
             for (bool changed = !isPushedTo.isEmpty(); changed;) {
                 changed = false;
@@ -5181,7 +5181,7 @@ private:
                         auto& parameters = function.at(target.block).parameters;
                         for (size_t i = 0; i < parameters.size() && i < target.arguments.size(); ++i) {
                             if (isPushedTo.get(parameters[i].index()))
-                                changed |= !isPushedTo.set(originOf(target.arguments[i]).index());
+                                changed |= !isPushedTo.set(underlyingValue(target.arguments[i]).index());
                         }
                     }
                 }
@@ -5405,7 +5405,7 @@ private:
             for (auto& field : layout.fields) {
                 if (!isNeverObservedAbsent(field))
                     continue;
-                require(exists(field) && isObjectLayout(layout.kind), layout, field, "it is not a field of an object that is ever stored to"_s);
+                require(exists(field) && isObjectLayout(layout.kind), layout, field, "it is never stored or is not a field of an object"_s);
                 ++numberOfFields;
                 if (field.isOutOfLine) {
                     ++outOfLineCount;
@@ -5500,8 +5500,8 @@ private:
                 if (!m_isAccessed.quickGet(named.field) || !field.isMissingInSomeSubtype || field.hasOtherOffsetInSomeSubtype || field.isOutOfLine || supertype.acceptsUntypedObjects)
                     continue;
                 uint32_t subtypesWithSlotCount = 0;
-                forEachSubtypeWithField(table, fields, supertype, [&](uint32_t place) {
-                    subtypesWithSlotCount += fieldAt(fields[place]).slot == field.slot;
+                forEachSubtypeWithField(table, fields, supertype, [&](uint32_t fieldIndex) {
+                    subtypesWithSlotCount += fieldAt(fields[fieldIndex]).slot == field.slot;
                 });
                 field.hasSlotInEverySubtype = subtypesWithSlotCount == supertype.subtypes.size();
             }
@@ -5523,26 +5523,26 @@ private:
         forEachName([&](NamedFieldTable& table, std::span<const NamedField> fields) {
             for (auto& named : fields) {
                 auto& field = fieldAt(named);
-                forEachWithField(table, fields, layouts[named.layout].specializations, [&](uint32_t place) {
-                    auto& kept = fieldAt(fields[place]);
-                    RELEASE_ASSERT(kept.slot == field.slot && kept.offset == field.offset && kept.store == field.store && kept.stored == field.stored && kept.isOutOfLine == field.isOutOfLine);
+                forEachWithField(table, fields, layouts[named.layout].specializations, [&](uint32_t fieldIndex) {
+                    auto& specializedField = fieldAt(fields[fieldIndex]);
+                    RELEASE_ASSERT(specializedField.slot == field.slot && specializedField.offset == field.offset && specializedField.store == field.store && specializedField.stored == field.stored && specializedField.isOutOfLine == field.isOutOfLine);
                 });
                 if (!m_isAccessed.quickGet(named.field)) {
                     RELEASE_ASSERT(field.isMissingInSomeSubtype && field.subtypesWithField.neverPasses() && !m_subtypesWith[named.field].count);
                     continue;
                 }
                 uint32_t subtypesWithFieldCount = 0;
-                forEachSubtypeWithField(table, fields, layouts[named.layout], [&](uint32_t place) {
-                    auto& own = fieldAt(fields[place]);
+                forEachSubtypeWithField(table, fields, layouts[named.layout], [&](uint32_t fieldIndex) {
+                    auto& own = fieldAt(fields[fieldIndex]);
                     if (own.placeholderFor)
                         return;
                     if (own.slot != field.slot) {
-                        RELEASE_ASSERT(std::ranges::binary_search(layouts[named.layout].structuralSubtypes, LayoutID(fields[place].layout)) && !m_isStoredThrough.quickGet(named.field));
-                        RELEASE_ASSERT(field.isMissingInSomeSubtype && !m_program.passes(field.subtypesWithField, layouts[fields[place].layout].shape));
+                        RELEASE_ASSERT(std::ranges::binary_search(layouts[named.layout].structuralSubtypes, LayoutID(fields[fieldIndex].layout)) && !m_isStoredThrough.quickGet(named.field));
+                        RELEASE_ASSERT(field.isMissingInSomeSubtype && !m_program.passes(field.subtypesWithField, layouts[fields[fieldIndex].layout].shape));
                         return;
                     }
                     RELEASE_ASSERT(own.slot == field.slot && own.offset == field.offset && own.store == field.store && own.stored == field.stored && own.isOutOfLine == field.isOutOfLine);
-                    RELEASE_ASSERT(!field.isMissingInSomeSubtype || m_program.passes(field.subtypesWithField, layouts[fields[place].layout].shape));
+                    RELEASE_ASSERT(!field.isMissingInSomeSubtype || m_program.passes(field.subtypesWithField, layouts[fields[fieldIndex].layout].shape));
                     ++subtypesWithFieldCount;
                 });
                 RELEASE_ASSERT(subtypesWithFieldCount == m_subtypesWith[named.field].count);
@@ -5783,12 +5783,12 @@ public:
             }
         }
         Vector<uint32_t> isReferencedElsewhere(FillWith { }, (strings.size() + 31) / 32, 0);
-        auto recordNamedString = [&](StringID id) {
+        auto recordReferencedString = [&](StringID id) {
             if (id && mayBeLeftOut.get(id.index()))
                 WTF::atomicExchangeOr(&isReferencedElsewhere[id.index() / 32], 1u << id.index() % 32, std::memory_order_relaxed);
         };
         auto recordStringsNamedBy = [&](const Value& value) {
-            recordNamedString(value.predictedByKey());
+            recordReferencedString(value.predictedByKey());
             switch (value.opcode) {
             case Opcode::GetExternalModule:
             case Opcode::String:
@@ -5803,15 +5803,15 @@ public:
             case Opcode::DeleteById:
             case Opcode::CallMethod:
             case Opcode::Call:
-                recordNamedString(value.string());
+                recordReferencedString(value.string());
                 break;
             case Opcode::Cast:
                 if (value.castReason() != CastReason::Coerce)
-                    recordNamedString(value.string());
+                    recordReferencedString(value.string());
                 break;
             case Opcode::GetModuleVariable:
                 if (auto& variable = m_program.variables[value.variable().index()]; variable.mayBeReadUninitialized() && !value.readsInitializedVariable())
-                    recordNamedString(variable.name);
+                    recordReferencedString(variable.name);
                 break;
             default:
                 break;
@@ -5819,49 +5819,49 @@ public:
         };
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
             auto& function = m_program.functions[i];
-            recordNamedString(function.name);
+            recordReferencedString(function.name);
             for (auto& block : function.blocks) {
                 for (ValueID id : block.values)
                     recordStringsNamedBy(function.at(id));
             }
         });
-        forEachStringInTables(recordNamedString);
+        forEachStringInTables(recordReferencedString);
         for (auto& layout : m_program.layouts) {
-            recordNamedString(layout.name);
-            recordNamedString(layout.declaredPath);
+            recordReferencedString(layout.name);
+            recordReferencedString(layout.declaredPath);
             for (auto& field : layout.fields) {
-                recordNamedString(field.name);
+                recordReferencedString(field.name);
                 if (keepsTypeSource(field))
-                    recordNamedString(field.typeSource);
+                    recordReferencedString(field.typeSource);
             }
             for (auto* methods : { &layout.methods, &layout.staticMethods }) {
                 for (auto& method : *methods)
-                    recordNamedString(method.name);
+                    recordReferencedString(method.name);
             }
             for (auto& field : layout.staticFields)
-                recordNamedString(field.name);
+                recordReferencedString(field.name);
         }
         for (auto& module : m_program.modules) {
-            recordNamedString(module.path);
-            recordNamedString(module.displayPath);
+            recordReferencedString(module.path);
+            recordReferencedString(module.displayPath);
         }
         for (auto& entry : m_program.functionsByKey) {
-            recordNamedString(entry.property);
-            recordNamedString(entry.key);
+            recordReferencedString(entry.property);
+            recordReferencedString(entry.key);
         }
         for (auto& row : m_program.initialStructures) {
             for (StringID name : row.names)
-                recordNamedString(name);
+                recordReferencedString(name);
         }
         for (auto& row : m_program.structureDescriptors) {
             for (StringID name : row.names)
-                recordNamedString(name);
+                recordReferencedString(name);
         }
-        recordNamedString(m_program.emptyString);
+        recordReferencedString(m_program.emptyString);
         for (size_t index : mayBeLeftOut) {
             StringID id(static_cast<uint32_t>(index));
             if ((index < m_program.identifierNumbers.size() && m_program.identifierNumbers[index]) || m_program.builtinName(id) || m_program.prototypePropertyNames.get(index))
-                recordNamedString(id);
+                recordReferencedString(id);
         }
         auto isLeftOut = [&](uint32_t index) {
             return mayBeLeftOut.get(index) && !(isReferencedElsewhere[index / 32] >> index % 32 & 1);
@@ -6141,22 +6141,22 @@ public:
         }
         RELEASE_ASSERT(!(listedStrings.size() / 2 >> (32 - Data::stringLengthBits)));
         header.listedStringsOffset = append(listedStrings);
-        Vector<uint32_t> stringFacts;
+        Vector<uint32_t> stringHashAndFlags;
         for (auto string : m_program.strings) {
             auto characters = byteCast<Latin1Character>(string);
-            uint32_t facts = isPrivateName(string) ? Data::stringIsPrivateName : isEnginePrivateName(string) ? Data::stringIsEnginePrivateName : isConstantSymbol(string) ? Data::stringIsConstantSymbol : 0;
-            uint32_t identifier = stringFacts.size() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[stringFacts.size()] : 0;
+            uint32_t hashAndFlags = isPrivateName(string) ? Data::stringIsPrivateName : isEnginePrivateName(string) ? Data::stringIsEnginePrivateName : isConstantSymbol(string) ? Data::stringIsConstantSymbol : 0;
+            uint32_t identifier = stringHashAndFlags.size() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[stringHashAndFlags.size()] : 0;
             RELEASE_ASSERT(identifier <= Data::stringHashMask);
-            bool isHashed = isListedInFields.get(stringFacts.size()) && isLeftOut(stringFacts.size());
+            bool isHashed = isListedInFields.get(stringHashAndFlags.size()) && isLeftOut(stringHashAndFlags.size());
             if (charactersAreAllASCII(characters) && !isHashed)
-                facts |= Data::stringIsASCII | (identifier ? 0 : StringHasher::computeHashAndMaskTop8Bits(characters));
+                hashAndFlags |= Data::stringIsASCII | (identifier ? 0 : StringHasher::computeHashAndMaskTop8Bits(characters));
             if (identifier)
-                facts |= Data::stringHasIdentifierNumber | identifier;
+                hashAndFlags |= Data::stringHasIdentifierNumber | identifier;
             if (!characters.empty() && isASCIIDigit(characters[0]))
-                facts |= Data::stringStartsWithDigit;
-            stringFacts.append(facts);
+                hashAndFlags |= Data::stringStartsWithDigit;
+            stringHashAndFlags.append(hashAndFlags);
         }
-        header.stringFactsOffset = append(stringFacts);
+        header.stringFactsOffset = append(stringHashAndFlags);
         uint32_t maxIdentifier = 0;
         for (uint32_t identifier : m_program.identifierNumbers)
             maxIdentifier = std::max(maxIdentifier, identifier);
@@ -6376,7 +6376,7 @@ public:
                 return nameCells[a].size() > nameCells[b].size();
             });
             Vector<uint32_t> displacements(FillWith { }, greatest + 1, 0);
-            Vector<uint32_t> places(FillWith { }, maxCell + 1, 0);
+            Vector<uint32_t> tableEntries(FillWith { }, maxCell + 1, 0);
             Vector<uint64_t> isTaken;
             auto bitsFrom = [&](size_t position) -> uint64_t {
                 size_t word = position / 64;
@@ -6389,7 +6389,7 @@ public:
             uint32_t firstFree = 0;
             for (uint32_t identifier : order) {
                 auto& cells = nameCells[identifier];
-                while (firstFree < places.size() && places[firstFree])
+                while (firstFree < tableEntries.size() && tableEntries[firstFree])
                     ++firstFree;
                 uint32_t displacement = firstFree > cells[0].first ? firstFree - cells[0].first : 0;
                 for (;; displacement += 64) {
@@ -6404,12 +6404,12 @@ public:
                         break;
                     }
                 }
-                while (places.size() < displacement + maxCell + 1)
-                    places.append(0);
-                while (isTaken.size() * 64 < places.size())
+                while (tableEntries.size() < displacement + maxCell + 1)
+                    tableEntries.append(0);
+                while (isTaken.size() * 64 < tableEntries.size())
                     isTaken.append(0);
                 for (auto& [cell, place] : cells) {
-                    places[displacement + cell] = identifier << 8 | place;
+                    tableEntries[displacement + cell] = identifier << 8 | place;
                     isTaken[(displacement + cell) / 64] |= 1ULL << (displacement + cell) % 64;
                 }
                 RELEASE_ASSERT(identifier && identifier < 1u << 24);
@@ -6427,13 +6427,13 @@ public:
                 if (isPrivateName(m_program.strings[index]) || isEnginePrivateName(m_program.strings[index]))
                     displacements[identifier] |= Data::nameIsOnObjectPrototype;
             }
-            for (uint32_t& entry : places) {
+            for (uint32_t& entry : tableEntries) {
                 if (!entry)
                     entry = UINT32_MAX;
             }
             header.nameDisplacementsOffset = append(displacements);
-            header.offsetsByNameAndStructureOffset = append(places);
-            dataLogLnIf(Options::verboseAOTCompilation(), "AOT image: slots by name and structure: ", order.size(), " names in structures, ", places.size(), " entries, ", displacements.size(), " displacements");
+            header.offsetsByNameAndStructureOffset = append(tableEntries);
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT image: slots by name and structure: ", order.size(), " names in structures, ", tableEntries.size(), " entries, ", displacements.size(), " displacements");
         }
         Vector<uint32_t> eagerBuiltinCells;
         for (size_t cell : m_program.comparedBuiltinCells)
@@ -6572,7 +6572,7 @@ public:
         Vector<uint8_t> lengthsInBytes;
         for (auto& function : m_program.functions) {
             BuiltinID builtin = m_program.builtinImplementedBy(function);
-            StringID builtinNameString = builtin ? m_program.stringOf(Builtins::singleton().at(builtin).nameName) : StringID();
+            StringID builtinNameString = builtin ? m_program.stringOf(Builtins::singleton().at(builtin).nameID) : StringID();
             names.append((builtinNameString ? builtinNameString : function.name).index());
             static_assert(static_cast<uint8_t>(FunctionKind::Bound) < sharedBodyFunctionKind && sharedBodyFunctionKind <= functionKindMask);
             kinds.append(kindByteOf(m_program, function));
@@ -6611,11 +6611,11 @@ public:
         header.endOfClosureFunctions = endOfClosureFunctions;
         header.omittedClosureWordCount = omittedClosureWordCount;
         auto appendClosureTable = [&](std::span<const uint8_t> rows, size_t rowSize) {
-            auto kept = rows.subspan(firstClosureFunction * rowSize, (endOfClosureFunctions - firstClosureFunction) * rowSize);
+            auto closureFunctionRows = rows.subspan(firstClosureFunction * rowSize, (endOfClosureFunctions - firstClosureFunction) * rowSize);
             if (m_result.size() < firstClosureFunction * rowSize)
                 allocate(firstClosureFunction * rowSize - m_result.size());
-            uint32_t offset = allocate(kept.size());
-            memcpySpan(m_result.mutableSpan().subspan(offset), kept);
+            uint32_t offset = allocate(closureFunctionRows.size());
+            memcpySpan(m_result.mutableSpan().subspan(offset), closureFunctionRows);
             RELEASE_ASSERT(offset >= firstClosureFunction * rowSize);
             return safeCast<uint32_t>(offset - firstClosureFunction * rowSize);
         };
@@ -6663,7 +6663,7 @@ public:
             if (m_program.isResumeFunction(m_program.functions[i]))
                 setCounts(FunctionID(i), m_program.functions[i]);
         }
-        header.closureCountsOffset = appendClosureTable(asBytes(closureCounts.span()), sizeof(closureCounts[0]));
+        header.closureWordCountsOffset = appendClosureTable(asBytes(closureCounts.span()), sizeof(closureCounts[0]));
         Vector<uint8_t> slimClosures;
         slimClosures.fill(0, (m_program.functions.size() + 7) / 8);
         for (auto& [function, entrypoint] : m_program.genericEntrypoints) {
@@ -6986,7 +6986,7 @@ public:
             header.functionSourcesOffset = append(sources);
         }
         at<Data>(0) = header;
-        Vector<uint32_t> makers;
+        Vector<uint32_t> objectCreators;
         Vector<std::array<uint32_t, 2>> allocationsByConstructor;
         {
             const Data& data = at<Data>(0);
@@ -7009,15 +7009,15 @@ public:
                 makes(functionAndAllocation[0], allocations[functionAndAllocation[1]]);
             std::ranges::sort(found);
             for (uint32_t maker : found) {
-                if (!makers.isEmpty() && makers.last() >> 2 == maker >> 2)
-                    makers.last() |= maker;
+                if (!objectCreators.isEmpty() && objectCreators.last() >> 2 == maker >> 2)
+                    objectCreators.last() |= maker;
                 else
-                    makers.append(maker);
+                    objectCreators.append(maker);
             }
             std::ranges::sort(allocationsByConstructor);
         }
-        header.numberOfObjectCreators = makers.size();
-        header.objectCreatorsOffset = append(makers);
+        header.numberOfObjectCreators = objectCreators.size();
+        header.objectCreatorsOffset = append(objectCreators);
         header.numberOfAllocationsByConstructor = allocationsByConstructor.size();
         header.allocationsByConstructorOffset = append(allocationsByConstructor);
         header.functionTextsOffset = appendFunctionSources();
@@ -7083,18 +7083,18 @@ private:
                 continue;
             retainedModuleSource[function.module.index()].append({ function.sourceStart, function.sourceEnd, 0 });
         }
-        for (auto& kept : retainedModuleSource) {
-            std::ranges::sort(kept, [](const RetainedSource& a, const RetainedSource& b) {
+        for (auto& retainedRanges : retainedModuleSource) {
+            std::ranges::sort(retainedRanges, [](const RetainedSource& a, const RetainedSource& b) {
                 return a.start != b.start ? a.start < b.start : a.end > b.end;
             });
             size_t count = 0;
-            for (const RetainedSource& next : kept) {
-                if (count && next.start < kept[count - 1].end)
-                    kept[count - 1].end = std::max(kept[count - 1].end, next.end);
+            for (const RetainedSource& next : retainedRanges) {
+                if (count && next.start < retainedRanges[count - 1].end)
+                    retainedRanges[count - 1].end = std::max(retainedRanges[count - 1].end, next.end);
                 else
-                    kept[count++] = next;
+                    retainedRanges[count++] = next;
             }
-            kept.shrink(count);
+            retainedRanges.shrink(count);
         }
         for (auto [entrypoint, number] : values) {
             const Function& function = m_program.functions[number];
@@ -7108,16 +7108,16 @@ private:
             const Module& module = m_program.modules[function.module.index()];
             uint32_t& place = moduleSourceOffset[function.module.index()];
             if (function.sourceEnd) {
-                auto& kept = retainedModuleSource[function.module.index()];
+                auto& retainedRanges = retainedModuleSource[function.module.index()];
                 if (place == UINT32_MAX) {
                     place = 0;
-                    for (RetainedSource& range : kept) {
+                    for (RetainedSource& range : retainedRanges) {
                         range.place = safeCast<uint32_t>(text.size());
                         text.append(module.printed.subspan(range.start, range.end - range.start));
                     }
                 }
-                auto behind = std::ranges::upper_bound(kept, function.sourceStart, { }, &RetainedSource::start);
-                RELEASE_ASSERT(behind != kept.begin());
+                auto behind = std::ranges::upper_bound(retainedRanges, function.sourceStart, { }, &RetainedSource::start);
+                RELEASE_ASSERT(behind != retainedRanges.begin());
                 const RetainedSource& around = *std::prev(behind);
                 RELEASE_ASSERT(function.sourceEnd <= around.end);
                 entries.append({ entrypoint, around.place + function.sourceStart - around.start, around.place + function.sourceEnd - around.start });
@@ -7221,13 +7221,13 @@ private:
                 if (isObjectLayout(supertype.kind) && !supertype.shape)
                     supertypesWithoutLayoutData.append({ test, id });
             }
-            Vector<uint64_t, 16> said { type.primitives, type.anyObject, type.anyFunction, type.acceptsUntypedObjects(m_program), static_cast<uint64_t>(type.integers.minimum), static_cast<uint64_t>(type.integers.maximum), type.objectLayouts.size(), type.elements ? m_typeOffsets[type.elements.index()] : 0 };
+            Vector<uint64_t, 16> typeKey { type.primitives, type.anyObject, type.anyFunction, type.acceptsUntypedObjects(m_program), static_cast<uint64_t>(type.integers.minimum), static_cast<uint64_t>(type.integers.maximum), type.objectLayouts.size(), type.elements ? m_typeOffsets[type.elements.index()] : 0 };
             for (LayoutID id : type.objectLayouts)
-                said.append(supertypeOffset[id.index()]);
-            for (uint16_t index : type.engineClasses)
-                said.append(classes[index].type);
-            auto& typesWithHash = matchingTypes.add(hashOf(asBytes(said.span())), Vector<std::pair<Vector<uint64_t, 16>, uint32_t>, 1> { }).iterator->value;
-            if (size_t same = typesWithHash.findIf([&](auto& entry) { return entry.first == said; }); same != notFound) {
+                typeKey.append(supertypeOffset[id.index()]);
+            for (uint16_t index : type.builtinClasses)
+                typeKey.append(classes[index].type);
+            auto& typesWithHash = matchingTypes.add(hashOf(asBytes(typeKey.span())), Vector<std::pair<Vector<uint64_t, 16>, uint32_t>, 1> { }).iterator->value;
+            if (size_t same = typesWithHash.findIf([&](auto& entry) { return entry.first == typeKey; }); same != notFound) {
                 m_typeOffsets.append(typesWithHash[same].second);
                 continue;
             }
@@ -7242,22 +7242,22 @@ private:
                 rest.append(static_cast<uint32_t>(minimum));
             else if (!hasNoInteger)
                 rest.appendList({ static_cast<uint32_t>(minimum), static_cast<uint32_t>(static_cast<uint64_t>(minimum) >> 32), static_cast<uint32_t>(maximum), static_cast<uint32_t>(static_cast<uint64_t>(maximum) >> 32) });
-            RELEASE_ASSERT(type.objectLayouts.size() <= UINT16_MAX && type.engineClasses.size() <= UINT8_MAX);
-            uint32_t offset = allocateWords(sizeof(RuntimeType) + type.objectLayouts.size() * sizeof(int32_t) + type.engineClasses.size() * sizeof(uint32_t) + rest.sizeInBytes());
-            typesWithHash.append({ said, offset });
+            RELEASE_ASSERT(type.objectLayouts.size() <= UINT16_MAX && type.builtinClasses.size() <= UINT8_MAX);
+            uint32_t offset = allocateWords(sizeof(RuntimeType) + type.objectLayouts.size() * sizeof(int32_t) + type.builtinClasses.size() * sizeof(uint32_t) + rest.sizeInBytes());
+            typesWithHash.append({ typeKey, offset });
             auto& runtimeType = at<RuntimeType>(offset);
             runtimeType.primitives = type.withLiteralStringWidened().primitives;
             runtimeType.bits = (type.anyObject ? RuntimeType::allowsAnyObjectBit : 0) | (type.anyFunction ? RuntimeType::allowsAnyFunctionBit : 0) | (!type.acceptsUntypedObjects(m_program) ? 0 : m_program.isRelaxedForLogging(type) ? RuntimeType::isRelaxedForLoggingBit : type.acceptsUncheckedObjects(m_program) ? RuntimeType::acceptsUntypedObjectsBit : 0)
                 | (type.acceptsOnlyOtherLayouts(m_program) ? RuntimeType::acceptsOnlyOtherLayoutsBit : 0)
                 | (type.elements ? RuntimeType::hasElementsBit : 0) | (hasOneInteger ? RuntimeType::hasOneIntegerBit : hasNoInteger ? 0 : RuntimeType::hasIntegersBit);
             runtimeType.supertypesCount = type.objectLayouts.size();
-            runtimeType.jsTypesCount = type.engineClasses.size();
+            runtimeType.jsTypesCount = type.builtinClasses.size();
             uint32_t next = offset + sizeof(RuntimeType);
             for (LayoutID id : type.objectLayouts) {
                 at<int32_t>(next) = static_cast<int32_t>(supertypeOffset[id.index()]) - static_cast<int32_t>(offset);
                 next += sizeof(int32_t);
             }
-            for (uint16_t index : type.engineClasses) {
+            for (uint16_t index : type.builtinClasses) {
                 at<uint32_t>(next) = classes[index].type;
                 next += sizeof(uint32_t);
             }
@@ -7336,7 +7336,7 @@ private:
                 return { };
         }
         auto classes = Builtins::singleton().classes();
-        for (uint16_t index : type.engineClasses)
+        for (uint16_t index : type.builtinClasses)
             described.jsTypes.append(static_cast<uint32_t>(classes[index].type));
         if (type.elements) {
             described.elements = runtimeTypeDescription(type.elements);
@@ -7515,13 +7515,13 @@ private:
         };
         for (unsigned i = 0; i < layout.fields.size(); ++i) {
             if (isDescribed(i))
-                appendFieldTypes(layout.fields[i].storedInSlot, layout.fields[i].type, layout.fields[i].literals.size(), layout.fields[i].lazyClosure ? entrypointOf(layout.fields[i].lazyClosure) | (m_program.at(layout.fields[i].lazyClosure).captureTypes.isEmpty() ? 0 : lazyClosureCapturesObject) : literalsOffsets[i]);
+                appendFieldTypes(layout.fields[i].slotType, layout.fields[i].type, layout.fields[i].literals.size(), layout.fields[i].lazyClosure ? entrypointOf(layout.fields[i].lazyClosure) | (m_program.at(layout.fields[i].lazyClosure).captureTypes.isEmpty() ? 0 : lazyClosureCapturesObject) : literalsOffsets[i]);
         }
         for (auto [name, number, staticFieldType] : variables) {
             if (staticFieldType)
                 appendFieldTypes(staticFieldType, staticFieldType, 0, 0);
             else if (layout.environment)
-                appendFieldTypes(m_program.at(layout.environment).fields[number].storedInSlot, m_program.at(layout.environment).fields[number].type, 0, 0);
+                appendFieldTypes(m_program.at(layout.environment).fields[number].slotType, m_program.at(layout.environment).fields[number].type, 0, 0);
             else
                 appendFieldTypes(m_program.variables[number].type ? m_program.variables[number].type : m_program.types.anything, m_program.variables[number].type, 0, 0);
         }
@@ -7599,7 +7599,7 @@ private:
                 continue;
             uint32_t pinned = field.isPinned || (field.isPinnedToFunction && field.slot) ? fieldIsPinned | field.slot.index() % numberOfPinnedFieldGuards << pinnedFieldGuardShift : 0;
             RELEASE_ASSERT(!pinned || !(field.isUndeclared || field.isCreatedWithLazyClosure));
-            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned | (field.isUndeclared ? unpinnedFieldIsUndeclared : 0) | (field.isCreatedWithLazyClosure ? unpinnedFieldIsCreatedWithLazyClosure : 0), field.storedInSlot);
+            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned | (field.isUndeclared ? unpinnedFieldIsUndeclared : 0) | (field.isCreatedWithLazyClosure ? unpinnedFieldIsCreatedWithLazyClosure : 0), field.slotType);
         }
         memcpySpan(m_result.mutableSpan().subspan(next), asBytes(methods.span()));
         next += methods.sizeInBytes();
@@ -7609,7 +7609,7 @@ private:
                 appendField(name, 0, Store::JSValue, fieldIsAnnotated, staticFieldType);
             else if (layout.environment) {
                 auto& field = m_program.at(layout.environment).fields[number];
-                appendField(name, field.offset, field.store, field.flags, field.storedInSlot);
+                appendField(name, field.offset, field.store, field.flags, field.slotType);
             } else {
                 auto& variable = m_program.variables[number];
                 appendField(name, variable.offset, variable.store, 0, variable.type ? variable.type : m_program.types.anything);
@@ -7711,7 +7711,7 @@ static void findTypesNeededAtRuntime(Program& program)
     };
     auto recordFieldsOf = [&](const Layout& layout) {
         for (auto& field : layout.fields) {
-            note(field.storedInSlot);
+            note(field.slotType);
             note(field.type);
         }
         for (auto& field : layout.staticFields)

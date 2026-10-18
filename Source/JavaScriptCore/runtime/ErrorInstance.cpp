@@ -483,7 +483,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     }
 
 #if ENABLE(AOT)
-    if (m_returnAddresses && !vm.heap.isMarked(AOT::tokenOf(m_returnAddresses->instance))) {
+    if (m_returnAddresses && !vm.heap.isMarked(AOT::livenessToken(m_returnAddresses->instance))) {
         computeErrorInfo(vm, false);
         return;
     }

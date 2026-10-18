@@ -1631,6 +1631,27 @@ bool isWellFormedCurrencyCode(StringView currency)
     return currency.length() == 3 && currency.containsOnly<isASCIIAlpha>();
 }
 
+NEVER_INLINE bool ensureCollationIsAvailable(JSGlobalObject*)
+{
+    uint32_t isAvailable = 38;
+    asm volatile("" : "+r"(isAvailable));
+    return isAvailable;
+}
+
+NEVER_INLINE bool ensureNumberFormattingIsAvailable(JSGlobalObject*)
+{
+    uint32_t isAvailable = 42;
+    asm volatile("" : "+r"(isAvailable));
+    return isAvailable;
+}
+
+NEVER_INLINE bool ensureDateFormattingIsAvailable(JSGlobalObject*)
+{
+    uint32_t isAvailable = 46;
+    asm volatile("" : "+r"(isAvailable));
+    return isAvailable;
+}
+
 std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const char* localeID)
 {
     ASSERT(localeID);

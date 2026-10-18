@@ -68,7 +68,7 @@ inline NamedAccess classifyNamedAccess(JSValue base, JSValue key, UniquedStringI
         name = nullptr;
     }
     const char* receiver = "receiver-is-not-object";
-    const char* place = "property-is-unknown";
+    const char* propertyKind = "property-is-unknown";
     ASCIILiteral className = ""_s;
     if (base.isObject() && asObject(base)->type() != FinalObjectType) {
         receiver = "receiver-is-not-final";
@@ -103,11 +103,11 @@ inline NamedAccess classifyNamedAccess(JSValue base, JSValue key, UniquedStringI
                 bool isPlain = asObject(base)->getPrototypeDirect() == structure->realm()->objectPrototype();
                 return isPlain ? "property-is-absent-under-object-prototype" : "property-is-absent-under-another-chain";
             };
-            place = offset == invalidOffset ? notOwn() : attributes ? "property-has-attributes" : !isInlineOffset(offset) ? "property-is-out-of-line"
+            propertyKind = offset == invalidOffset ? notOwn() : attributes ? "property-has-attributes" : !isInlineOffset(offset) ? "property-is-out-of-line"
                 : static_cast<unsigned>(offset) >= namedSlots ? "property-is-beyond-named-slots" : inSlot();
         }
     }
-    return { keyKind, receiver, place, className };
+    return { keyKind, receiver, propertyKind, className };
 }
 
 inline NEVER_INLINE void countNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name)
@@ -208,7 +208,7 @@ ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const S
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
-#define AOT_OPERATION_BEGIN_AT(instance, cache) \
+#define AOT_OPERATION_BEGIN_WITH_CACHE(instance, cache) \
     JSGlobalObject* globalObject = (instance)->globalObject; \
     UNUSED_VARIABLE(globalObject); \
     VM& vm = *(instance)->vm; \
@@ -247,8 +247,8 @@ ALWAYS_INLINE Data* callerData(Instance* instance, CallFrame* callFrame)
 ALWAYS_INLINE Data* dataWithSlot(Instance* instance, CallFrame* callFrame, const Slot* slot)
 {
     const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
-    if (auto& asked = instance->cachedAddressInfo(returnAddress); asked.address == returnAddress) [[likely]] {
-        Data* data = instance->dataIfExists(asked.function);
+    if (auto& cachedInfo = instance->cachedAddressInfo(returnAddress); cachedInfo.address == returnAddress) [[likely]] {
+        Data* data = instance->dataIfExists(cachedInfo.function);
         return data ? data : instance->sharedData;
     }
     if (Data* data = instance->dataWithSlot(slot, returnAddress))

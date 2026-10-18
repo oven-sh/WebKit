@@ -137,9 +137,9 @@ inline DecodedInstruction decodeInstructionSlow(const uint8_t* bytes, size_t ava
         immediate = 1;
         break;
     }
-    unsigned place = 0;
+    unsigned modRMOffset = 0;
     if (hasModRM) {
-        place = at;
+        modRMOffset = at;
         if (at + 1 > available)
             return unknown;
         uint8_t modRM = bytes[at++];
@@ -160,9 +160,9 @@ inline DecodedInstruction decodeInstructionSlow(const uint8_t* bytes, size_t ava
             immediate = opcode == 0xf6 ? 1 : wordOrDoubleWord;
     }
     at += immediate;
-    if (at > available || place > 7)
+    if (at > available || modRMOffset > 7)
         return unknown;
-    return { static_cast<uint8_t>(at), static_cast<uint8_t>(place) };
+    return { static_cast<uint8_t>(at), static_cast<uint8_t>(modRMOffset) };
 }
 
 struct X86OpcodeTraits {
@@ -263,18 +263,18 @@ inline DecodedInstruction decodeInstruction(const uint8_t* bytes, size_t availab
     if (!(traits & X86OpcodeTraits::isFast)) [[unlikely]]
         return decodeInstructionSlow(bytes, available);
     ++at;
-    unsigned place = 0;
+    unsigned modRMOffset = 0;
     if (traits & X86OpcodeTraits::hasModRM) {
-        place = at;
+        modRMOffset = at;
         uint8_t modRM = bytes[at++];
         at += bytesAfterModRM[modRM];
-        if (modRM < 0x40 && (modRM & 7) == 4 && (bytes[place + 1] & 7) == 5)
+        if (modRM < 0x40 && (modRM & 7) == 4 && (bytes[modRMOffset + 1] & 7) == 5)
             at += 4;
     }
     at += traits & X86OpcodeTraits::immediateMask;
     if (isWide && (traits & X86OpcodeTraits::hasWideImmediate))
         at += 4;
-    return { static_cast<uint8_t>(at), static_cast<uint8_t>(place) };
+    return { static_cast<uint8_t>(at), static_cast<uint8_t>(modRMOffset) };
 }
 
 inline Vector<uint8_t> instructionRecords(std::span<const uint8_t> bytes, std::span<const DataInCode> data)
@@ -712,12 +712,12 @@ Cause tryDecode(const Code& code, const Functor& functor)
     size_t size = code.bytes.size();
     auto& calls = code.info.stubCalls;
     auto& faults = code.info.faultingAccesses;
-    auto& references = code.info.indexReferences;
+    auto& references = code.info.indexRelocations;
     auto& keptInline = code.info.rangesKeptInline;
     size_t nextKeptInline = 0;
     auto& ranges = code.dataInCode;
     size_t call = 0;
-    size_t fault = 0;
+    size_t faultIndex = 0;
     size_t reference = 0;
     size_t range = 0;
     size_t at = 0;
@@ -774,8 +774,8 @@ Cause tryDecode(const Code& code, const Functor& functor)
         }
         bool isKey = false;
         if (nextFault == at) {
-            ++fault;
-            nextFault = fault < faults.size() ? faults[fault].codeOffset : never;
+            ++faultIndex;
+            nextFault = faultIndex < faults.size() ? faults[faultIndex].codeOffset : never;
             isKey = true;
         }
 #if CPU(X86_64)
@@ -834,7 +834,7 @@ Cause tryDecode(const Code& code, const Functor& functor)
         return Cause::LengthsDoNotSum;
     if (call != calls.size())
         return Cause::UnconsumedStubCalls;
-    if (fault != faults.size())
+    if (faultIndex != faults.size())
         return Cause::UnconsumedFaultingAccesses;
     if (reference != references.size())
         return Cause::UnconsumedIndexReferences;

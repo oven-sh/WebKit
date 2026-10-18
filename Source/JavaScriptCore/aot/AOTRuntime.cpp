@@ -15,12 +15,9 @@
 
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
-#include "MapPrototype.h"
 #include "ModuleProgramCodeBlock.h"
 #include "ModuleProgramExecutable.h"
 #include "SamplingProfiler.h"
-#include "SetPrototype.h"
-#include "StringPrototype.h"
 
 #include "DeferTermination.h"
 #include "ErrorConstructor.h"
@@ -62,7 +59,6 @@
 #include "LinkBuffer.h"
 #include "MarkStack.h"
 #include "MarkedBlockCage.h"
-#include "MathObject.h"
 #include "MicrotaskQueue.h"
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructorInlines.h"
@@ -162,13 +158,13 @@ template<typename Wanted, typename Result, typename First, typename... Rest> str
 static_assert(HasFirstParameter<Instance*, std::remove_pointer_t<decltype(&operationAOTValueAdd)>>::value);
 static_assert(HasFirstParameter<JSCell*, std::remove_pointer_t<decltype(&operationAOTGetGeneric)>>::value);
 
-template<typename Wanted> static bool hasFirstParameter(Entry entry)
+template<typename ExpectedParameter> static bool hasFirstParameter(Entry entry)
 {
     using namespace DFG;
     switch (entry) {
 #define AOT_CASE_OF_OPERATION(name) \
     case Entry::name: \
-        return HasFirstParameter<Wanted, std::remove_pointer_t<decltype(&name)>>::value;
+        return HasFirstParameter<ExpectedParameter, std::remove_pointer_t<decltype(&name)>>::value;
     FOR_EACH_AOT_OPERATION(AOT_CASE_OF_OPERATION)
 #undef AOT_CASE_OF_OPERATION
     default:
@@ -204,7 +200,7 @@ struct CountedOperation<entry, operation> {
 
 static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
 {
-    dataLogLn("AOT: compiled code has called an operation that its image does not list among those it uses.");
+    dataLogLn("AOT: compiled code called an operation that its image does not list as used.");
     RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -228,9 +224,6 @@ RuntimeTable::RuntimeTable(VM& vm)
         m_entries[static_cast<unsigned>(entry)] = pointer;
     };
     set(Entry::HandleException, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::HandleException)));
-    set(Entry::VirtualCall, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualCall)));
-    set(Entry::VirtualConstruct, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualConstruct)));
-    set(Entry::VirtualTailCall, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualTailCall)));
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
@@ -249,32 +242,6 @@ RuntimeTable::RuntimeTable(VM& vm)
     };
     addCallLinkInfo(Entry::CallLinkInfoForCall, CallLinkInfo::Call);
     addCallLinkInfo(Entry::CallLinkInfoForConstruct, CallLinkInfo::Construct);
-    addCallLinkInfo(Entry::CallLinkInfoForTailCall, CallLinkInfo::TailCall);
-    set(Entry::StructureIDBase, std::bit_cast<void*>(structureIDBase()));
-    auto setHostFunction = [&](Entry entry, NativeFunction::Ptr function) {
-        set(entry, TaggedNativeFunction(function).taggedPtr());
-    };
-    setHostFunction(Entry::HostMathSqrt, mathProtoFuncSqrt);
-    setHostFunction(Entry::HostMathAbs, mathProtoFuncAbs);
-    setHostFunction(Entry::HostMathFloor, mathProtoFuncFloor);
-    setHostFunction(Entry::HostMathCeil, mathProtoFuncCeil);
-    setHostFunction(Entry::HostMathTrunc, mathProtoFuncTrunc);
-    setHostFunction(Entry::HostMathFround, mathProtoFuncFround);
-    setHostFunction(Entry::HostMathMin, mathProtoFuncMin);
-    setHostFunction(Entry::HostMathMax, mathProtoFuncMax);
-    setHostFunction(Entry::HostMathIMul, mathProtoFuncIMul);
-    setHostFunction(Entry::HostStringCharCodeAt, stringProtoFuncCharCodeAt);
-    setHostFunction(Entry::HostArrayPush, arrayProtoFuncPush);
-    setHostFunction(Entry::HostStringCodePointAt, stringProtoFuncCodePointAt);
-    setHostFunction(Entry::HostStringCharAt, stringProtoFuncCharAt);
-    setHostFunction(Entry::HostStringSlice, stringProtoFuncSlice);
-    setHostFunction(Entry::HostArrayPop, arrayProtoFuncPop);
-    setHostFunction(Entry::HostArrayIsArray, arrayConstructorIsArray);
-    setHostFunction(Entry::HostMapGet, mapProtoFuncGet);
-    setHostFunction(Entry::HostMapHas, mapProtoFuncHas);
-    setHostFunction(Entry::HostMapSet, mapProtoFuncSet);
-    setHostFunction(Entry::HostSetHas, setProtoFuncHas);
-    setHostFunction(Entry::HostSetAdd, setProtoFuncAdd);
 
     installOperationFrontEnds(vm, m_entries);
     const uint32_t* entriesUsed = Image::withCode()->header().entriesUsed;
@@ -538,7 +505,7 @@ struct Instance::Collections {
         SpreadLiteralPlans = 1 << 8,
         CopyStructures = 1 << 9,
     };
-    uint16_t weakTablesAddedToSinceLastCollection { 0 };
+    uint16_t dirtyWeakTables { 0 };
     AssumptionWatchpoint arraysHaveNoIsConcatSpreadable;
     AssumptionWatchpoint arraysHaveNoInheritedElements;
     std::unique_ptr<std::array<BufferAccessorWatchpoint, Instance::numberOfBufferAccessors>> bufferAccessorWatchpoints;
@@ -573,7 +540,7 @@ struct Instance::Collections {
         if (!result.isNewEntry && result.iterator->value == constructor)
             return;
         result.iterator->value = constructor;
-        weakTablesAddedToSinceLastCollection |= ConstructorsByFirstStructure;
+        dirtyWeakTables |= ConstructorsByFirstStructure;
     }
     UncheckedKeyHashMap<JSFunction*, unsigned> learnedInlineCapacities;
     UncheckedKeyHashMap<uint32_t, uint8_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> learnedDescriptorInlineCapacities;
@@ -627,12 +594,12 @@ Data* SharedData::get()
 }
 
 JSCell* ownerOf(Instance* instance) { return instance->loader(); }
-JSCell* tokenOf(Instance* instance) { return instance->collections->token; }
+JSCell* livenessToken(Instance* instance) { return instance->collections->token; }
 
 JSGlobalObject* globalObjectForInstanceToken(VM& vm, JSCell* token)
 {
     for (Instance* instance : vm.m_aotInstances) {
-        if (tokenOf(instance) == token)
+        if (livenessToken(instance) == token)
             return instance->globalObject;
     }
     return nullptr;
@@ -727,7 +694,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     size_t dataStart = SiteCaches::endOffset(dataStartFor(numberOfStates));
     size_t dataEnd = dataStart + roundUpToMultipleOf(WTF::pageSize(), Image::totalDataSize());
     size_t dataStartBitsSize = roundUpToMultipleOf(WTF::pageSize(), ((dataEnd >> stateWithDataShift) - (dataStart >> stateWithDataShift)) / 8 + sizeof(uint64_t));
-    constexpr size_t sizeOfCaches = sizeOfKeyedTables + 2 * numberOfNamedFields * sizeof(NamedField) + immutableElementCacheSize * sizeof(ImmutableElement) + spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry) + copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry);
+    constexpr size_t sizeOfCaches = sizeOfKeyedTables + 2 * numberOfNamedFields * sizeof(NamedField) + immutableElementCacheSize * sizeof(ImmutableElementCacheEntry) + spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry) + copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry);
     size_t cachesStart = roundUpToMultipleOf(WTF::pageSize(), dataEnd);
     size_t size = cachesStart + sizeOfCaches + dataStartBitsSize;
     Instance* instance = reinterpret_cast<Instance*>(static_cast<char*>(OSAllocator::reserveAndCommit(environmentsSize + size, OSAllocator::FastMallocPages)) + environmentsSize);
@@ -751,8 +718,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     static_assert(!(numberOfNamedFields * sizeof(NamedField) % (16 * KB)));
     instance->namedFieldReads = reinterpret_cast<NamedField*>(takeCache(numberOfNamedFields * sizeof(NamedField)));
     instance->namedFieldWrites = reinterpret_cast<NamedField*>(takeCache(numberOfNamedFields * sizeof(NamedField)));
-    static_assert(!(immutableElementCacheSize * sizeof(ImmutableElement) % (16 * KB)));
-    instance->immutableElementCache = reinterpret_cast<ImmutableElement*>(takeCache(immutableElementCacheSize * sizeof(ImmutableElement)));
+    static_assert(!(immutableElementCacheSize * sizeof(ImmutableElementCacheEntry) % (16 * KB)));
+    instance->immutableElementCache = reinterpret_cast<ImmutableElementCacheEntry*>(takeCache(immutableElementCacheSize * sizeof(ImmutableElementCacheEntry)));
     static_assert(!(spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry) % (16 * KB)));
     instance->spreadCopyCache = reinterpret_cast<SpreadCopyCacheEntry*>(takeCache(spreadCopyCacheSize * sizeof(SpreadCopyCacheEntry)));
     static_assert(!(copyKeyOrderCacheSize * sizeof(CopyKeyOrderEntry) % (16 * KB)));
@@ -779,7 +746,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->codeGranules = image->at<uint32_t>(image->header().codeGranulesOffset);
         instance->subsequentFunctionStarts = image->at<uint32_t>(image->header().functionStartsOffset) + 1;
-        for (uint32_t inAdapter : image->header().returnsIntoAdapters) {
+        for (uint32_t inAdapter : image->header().adapterReturnAddressOffsets) {
             const uint8_t* address = instance->code + image->header().stubCopies[0] + inAdapter;
             if (address > stubAddress(Stub::EnterSavedFrame) && address <= stubAddress(Stub::RestoreSavedFrameToStack) && !instance->savedFrameReturnAddress)
                 instance->savedFrameReturnAddress = address;
@@ -986,7 +953,7 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
         for (Instance* other : vm.m_aotInstances) {
             if (other == this || !other->typed || !other->typed->moduleRecord || (typed->data.mayRunInMultipleInstances && other->globalObject == globalObject))
                 continue;
-            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and has been loaded already: another realm or loader cannot load it again"_s)));
+            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and is already loaded, so another realm or loader can't load it again"_s)));
             return 0;
         }
         JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
@@ -1006,9 +973,9 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
                     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty);
                     bool isOwn = globalObject->methodTable()->getOwnPropertySlot(globalObject, globalObject, name, slot);
                     RETURN_IF_EXCEPTION(throwScope, 0);
-                    JSValue held = isOwn ? slot.getValue(globalObject, name) : JSValue();
+                    JSValue propertyValue = isOwn ? slot.getValue(globalObject, name) : JSValue();
                     RETURN_IF_EXCEPTION(throwScope, 0);
-                    isLanguageBuiltin = held && held.isObject() && !asObject(held)->isGlobalObject() && asObject(held) != globalObject->globalThis() && asObject(held)->isLockedBuiltin();
+                    isLanguageBuiltin = propertyValue && propertyValue.isObject() && !asObject(propertyValue)->isGlobalObject() && asObject(propertyValue) != globalObject->globalThis() && asObject(propertyValue)->isLockedBuiltin();
                 }
                 if (!isLanguageBuiltin || typed->readsThroughModuleGraph(name.string()))
                     continue;
@@ -1494,24 +1461,24 @@ Data* Instance::ensureData(uint32_t index)
 
 std::optional<FunctionRef> FunctionRef::tryAt(Instance* instance, const void* address)
 {
-    auto& asked = instance->cachedAddressInfo(address);
-    if (asked.address == address) [[likely]]
-        return FunctionRef { instance, asked.function };
+    auto& cachedInfo = instance->cachedAddressInfo(address);
+    if (cachedInfo.address == address) [[likely]]
+        return FunctionRef { instance, cachedInfo.function };
     ImageAddressInfo what = classifyAddress(address);
     if (what.kind != ImageAddressInfo::Function)
         return std::nullopt;
-    asked = { address, what.index, Instance::CachedAddressInfo::siteNotResolved };
+    cachedInfo = { address, what.index, Instance::CachedAddressInfo::siteNotResolved };
     return FunctionRef { instance, what.index };
 }
 
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
-    auto& asked = instance->cachedAddressInfo(address);
-    if (asked.address == address) [[likely]]
-        return { instance, asked.function };
+    auto& cachedInfo = instance->cachedAddressInfo(address);
+    if (cachedInfo.address == address) [[likely]]
+        return { instance, cachedInfo.function };
     ImageAddressInfo what = classifyAddress(address);
     RELEASE_ASSERT(what.kind == ImageAddressInfo::Function);
-    asked = { address, what.index, Instance::CachedAddressInfo::siteNotResolved };
+    cachedInfo = { address, what.index, Instance::CachedAddressInfo::siteNotResolved };
     return { instance, what.index };
 }
 
@@ -1548,10 +1515,10 @@ static ALWAYS_INLINE FunctionRef::Location locationForSite(FunctionRef function,
 
 static const Instance::CachedAddressInfo& resolve(FunctionRef function, const void* returnAddress, uint32_t offset)
 {
-    using Asked = Instance::CachedAddressInfo;
-    using Place = Instance::StackTraceInfo;
+    using CachedAddressInfo = Instance::CachedAddressInfo;
+    using StackTraceInfo = Instance::StackTraceInfo;
     Instance& instance = *function.instance;
-    Asked* all = instance.ensureCachedReturnAddresses();
+    CachedAddressInfo* all = instance.ensureCachedReturnAddresses();
     size_t index = Instance::primaryReturnAddressIndex(returnAddress);
     if (all[index].address) {
         size_t second = Instance::secondaryReturnAddressIndex(returnAddress);
@@ -1563,27 +1530,27 @@ static const Instance::CachedAddressInfo& resolve(FunctionRef function, const vo
                 index = second;
         }
     }
-    Asked& asked = all[index];
+    CachedAddressInfo& cachedInfo = all[index];
     auto& info = function.info();
     bool constructs = false;
     auto site = tryCallSiteAt(*info.function(), offset, &constructs);
-    RELEASE_ASSERT(!site || *site < Asked::hasNoSite);
-    asked = { returnAddress, function.index, site.value_or(Asked::hasNoSite) };
-    auto& place = instance.stackTraceInfos()[index];
-    place = { };
+    RELEASE_ASSERT(!site || *site < CachedAddressInfo::hasNoSite);
+    cachedInfo = { returnAddress, function.index, site.value_or(CachedAddressInfo::hasNoSite) };
+    auto& stackTraceInfo = instance.stackTraceInfos()[index];
+    stackTraceInfo = { };
     instance.unwindInfos()[index] = { };
     if (!site || !info.isTyped)
-        return asked;
-    place.typedFunction = info.typedFunction();
+        return cachedInfo;
+    stackTraceInfo.typedFunction = info.typedFunction();
     if (info.hasInlineFrames && PackedSite::inlineFrame(*site))
-        place.kind = Place::IsInInlinedBody;
-    else if (uint32_t bits = info.hasInlineFrames ? PackedSite::bits(*site) : *site; !(bits >> (constructs ? Place::numberOfBitsWithConstructedCallee : 30))) {
-        place.callSiteBits = bits;
-        place.kind = typedFunctionIsHiddenInStackTraces(place.typedFunction) ? Place::IsHidden : Place::IsVisible;
+        stackTraceInfo.kind = StackTraceInfo::IsInInlinedBody;
+    else if (uint32_t bits = info.hasInlineFrames ? PackedSite::bits(*site) : *site; !(bits >> (constructs ? StackTraceInfo::numberOfBitsWithConstructedCallee : 30))) {
+        stackTraceInfo.callSiteBits = bits;
+        stackTraceInfo.kind = typedFunctionIsHiddenInStackTraces(stackTraceInfo.typedFunction) ? StackTraceInfo::IsHidden : StackTraceInfo::IsVisible;
     }
     if (constructs)
-        place = place.withConstructedCallee();
-    return asked;
+        stackTraceInfo = stackTraceInfo.withConstructedCallee();
+    return cachedInfo;
 }
 
 Instance::CachedAddressInfo* Instance::allocateCachedReturnAddresses()
@@ -1592,35 +1559,35 @@ Instance::CachedAddressInfo* Instance::allocateCachedReturnAddresses()
     return cachedReturnAddresses;
 }
 
-const Instance::UnwindInfo& Instance::findUnwindInfo(const CachedAddressInfo& asked)
+const Instance::UnwindInfo& Instance::findUnwindInfo(const CachedAddressInfo& cachedInfo)
 {
-    auto& place = unwindInfos()[&asked - cachedReturnAddresses];
-    FunctionRef function { this, asked.function };
+    auto& unwindInfo = unwindInfos()[&cachedInfo - cachedReturnAddresses];
+    FunctionRef function { this, cachedInfo.function };
     auto& info = function.info();
-    place.state = UnwindInfo::NotUnwindable;
+    unwindInfo.state = UnwindInfo::NotUnwindable;
     if (!info.isTyped)
-        return place;
+        return unwindInfo;
     if (!info.hasNoHandlers) {
-        if (asked.site >= CachedAddressInfo::hasNoSite)
-            return place;
+        if (cachedInfo.site >= CachedAddressInfo::hasNoSite)
+            return unwindInfo;
         UnlinkedHandlerInfo scratchHandler;
-        uint32_t callSiteBits = info.hasInlineFrames ? PackedSite::bits(asked.site) : asked.site;
+        uint32_t callSiteBits = info.hasInlineFrames ? PackedSite::bits(cachedInfo.site) : cachedInfo.site;
         if (auto* handler = function.handlerFor(CallSiteIndex(callSiteBits).bytecodeIndex().offset(), scratchHandler)) {
-            place.handlerOffsetInImage = static_cast<uint32_t>(std::bit_cast<uintptr_t>(function.catchEntrypointAddress(handler->target)) - imageCodeStart());
-            place.state = handler->type() == HandlerType::Finally ? UnwindInfo::HasHandlerTakingException : handler->type() == HandlerType::SynthesizedCatch ? UnwindInfo::HasHandlerIgnoringValue : UnwindInfo::HasHandler;
-            return place;
+            unwindInfo.handlerOffsetInImage = static_cast<uint32_t>(std::bit_cast<uintptr_t>(function.catchEntrypointAddress(handler->target)) - imageCodeStart());
+            unwindInfo.state = handler->type() == HandlerType::Finally ? UnwindInfo::HasHandlerTakingException : handler->type() == HandlerType::SynthesizedCatch ? UnwindInfo::HasHandlerIgnoringValue : UnwindInfo::HasHandler;
+            return unwindInfo;
         }
     }
     const ImageFrame& frame = Image::of(*info.function()).frameOf(*info.function());
     for (uint64_t mask = ImageFunction::unpackRegisters(frame.calleeSaveRegisters); mask; mask &= mask - 1) {
         unsigned index = WTF::ctz(mask);
         if (RegisterSet::stackRegisters().contains(Reg::fromIndex(index), IgnoreVectors) || RegisterSet::vmCalleeSaveBufferSlotsByRegIndex()[index] < 0)
-            return place;
+            return unwindInfo;
     }
-    place.savedRegisters = frame.calleeSaveRegisters;
-    place.savedRegistersStart = frame.calleeSavesStart;
-    place.state = typedFunctionRejectsOnThrow(info.typedFunction()) ? UnwindInfo::RejectsPromise : UnwindInfo::HasNoHandler;
-    return place;
+    unwindInfo.savedRegisters = frame.calleeSaveRegisters;
+    unwindInfo.savedRegistersStart = frame.calleeSavesStart;
+    unwindInfo.state = typedFunctionRejectsOnThrow(info.typedFunction()) ? UnwindInfo::RejectsPromise : UnwindInfo::HasNoHandler;
+    return unwindInfo;
 }
 
 struct HandlerInCompiledCode {
@@ -1631,11 +1598,11 @@ struct HandlerInCompiledCode {
 
 static ALWAYS_INLINE HandlerInCompiledCode findHandlerInCompiledCallers(VM& vm, Instance& instance, CallFrame* stubFrame)
 {
-    using Place = Instance::UnwindInfo;
+    using UnwindInfo = Instance::UnwindInfo;
     if (instance.callSiteOverrides || stubFrame->callerFrameOrEntryFrame() == vm.topEntryFrame) [[unlikely]]
         return { };
     const Instance::CachedAddressInfo* cachedReturnAddresses = instance.ensureCachedReturnAddresses();
-    const Place* places = instance.unwindInfos();
+    const UnwindInfo* unwindInfoTable = instance.unwindInfos();
     CPURegister* calleeSaveRegistersBuffer = vmEntryRecord(vm.topEntryFrame)->calleeSaveRegistersBuffer;
     std::span<const int8_t> bufferSlotsByRegIndex = RegisterSet::vmCalleeSaveBufferSlotsByRegIndex();
     void* returnPC = removeCodePtrTag(stubFrame->rawReturnPC());
@@ -1657,17 +1624,17 @@ static ALWAYS_INLINE HandlerInCompiledCode findHandlerInCompiledCallers(VM& vm, 
                 return { };
             found = &resolve(FunctionRef { &instance, what.index }, returnPC, what.offset);
         }
-        const Place* place = &places[found - cachedReturnAddresses];
-        if (place->state == Place::NotComputed) [[unlikely]]
-            place = &instance.findUnwindInfo(*found);
-        if (place->state == Place::HasHandler || place->state == Place::HasHandlerTakingException || place->state == Place::HasHandlerIgnoringValue)
-            return { callFrame, std::bit_cast<void*>(imageCodeStart() + place->handlerOffsetInImage), place->state == Place::HasHandlerTakingException };
-        if (place->state == Place::NotUnwindable)
+        const UnwindInfo* unwindInfo = &unwindInfoTable[found - cachedReturnAddresses];
+        if (unwindInfo->state == UnwindInfo::NotComputed) [[unlikely]]
+            unwindInfo = &instance.findUnwindInfo(*found);
+        if (unwindInfo->state == UnwindInfo::HasHandler || unwindInfo->state == UnwindInfo::HasHandlerTakingException || unwindInfo->state == UnwindInfo::HasHandlerIgnoringValue)
+            return { callFrame, std::bit_cast<void*>(imageCodeStart() + unwindInfo->handlerOffsetInImage), unwindInfo->state == UnwindInfo::HasHandlerTakingException };
+        if (unwindInfo->state == UnwindInfo::NotUnwindable)
             return { };
-        const CPURegister* slot = reinterpret_cast<const CPURegister*>(callFrame->registers()) - place->savedRegistersStart;
-        for (uint64_t mask = ImageFunction::unpackRegisters(place->savedRegisters); mask; mask &= mask - 1, ++slot)
+        const CPURegister* slot = reinterpret_cast<const CPURegister*>(callFrame->registers()) - unwindInfo->savedRegistersStart;
+        for (uint64_t mask = ImageFunction::unpackRegisters(unwindInfo->savedRegisters); mask; mask &= mask - 1, ++slot)
             calleeSaveRegistersBuffer[bufferSlotsByRegIndex[WTF::ctz(mask)]] = *slot;
-        if (place->state == Place::RejectsPromise)
+        if (unwindInfo->state == UnwindInfo::RejectsPromise)
             return { callFrame, rejectInFrame, false };
     }
 }
@@ -1682,9 +1649,9 @@ static void completeGeneratorsLeftByThrow(VM& vm, CallFrame* throwingFrame, Call
 
 static NEVER_INLINE bool compiledCallerCatchesValue(VM& vm, Instance& instance, CallFrame* callFrame)
 {
-    using Place = Instance::UnwindInfo;
+    using UnwindInfo = Instance::UnwindInfo;
     const Instance::CachedAddressInfo* cachedReturnAddresses = instance.ensureCachedReturnAddresses();
-    const Place* places = instance.unwindInfos();
+    const UnwindInfo* unwindInfoTable = instance.unwindInfos();
     for (;;) {
         if (callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
             return false;
@@ -1701,19 +1668,19 @@ static NEVER_INLINE bool compiledCallerCatchesValue(VM& vm, Instance& instance, 
                 return false;
             found = &resolve(FunctionRef { &instance, what.index }, returnPC, what.offset);
         }
-        const Place* place = &places[found - cachedReturnAddresses];
-        if (place->state == Place::NotComputed) [[unlikely]]
-            place = &instance.findUnwindInfo(*found);
-        if (place->state == Place::HasHandler || place->state == Place::HasHandlerIgnoringValue || place->state == Place::RejectsPromise)
+        const UnwindInfo* unwindInfo = &unwindInfoTable[found - cachedReturnAddresses];
+        if (unwindInfo->state == UnwindInfo::NotComputed) [[unlikely]]
+            unwindInfo = &instance.findUnwindInfo(*found);
+        if (unwindInfo->state == UnwindInfo::HasHandler || unwindInfo->state == UnwindInfo::HasHandlerIgnoringValue || unwindInfo->state == UnwindInfo::RejectsPromise)
             return true;
-        if (place->state == Place::NotUnwindable)
+        if (unwindInfo->state == UnwindInfo::NotUnwindable)
             return false;
     }
 }
 
 bool Instance::nearestHandlerIgnoresValue(VM& vm, CallFrame* callFrame, void* returnPC)
 {
-    const UnwindInfo* places = unwindInfos();
+    const UnwindInfo* unwindInfoTable = unwindInfos();
     for (;; returnPC = removeCodePtrTag(callFrame->rawReturnPC()), callFrame = callFrame->callerFrame()) {
         const CachedAddressInfo* found = findCachedReturnAddress(returnPC);
         if (!found) [[unlikely]] {
@@ -1724,11 +1691,11 @@ bool Instance::nearestHandlerIgnoresValue(VM& vm, CallFrame* callFrame, void* re
                 return false;
             found = &resolve(FunctionRef { this, what.index }, returnPC, what.offset);
         }
-        const UnwindInfo* place = &places[found - cachedReturnAddresses];
-        if (place->state == UnwindInfo::NotComputed) [[unlikely]]
-            place = &findUnwindInfo(*found);
-        if (place->state != UnwindInfo::HasNoHandler)
-            return place->state == UnwindInfo::HasHandlerIgnoringValue;
+        const UnwindInfo* unwindInfo = &unwindInfoTable[found - cachedReturnAddresses];
+        if (unwindInfo->state == UnwindInfo::NotComputed) [[unlikely]]
+            unwindInfo = &findUnwindInfo(*found);
+        if (unwindInfo->state != UnwindInfo::HasNoHandler)
+            return unwindInfo->state == UnwindInfo::HasHandlerIgnoringValue;
     }
 }
 
@@ -1773,12 +1740,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         JSValue thrown = JSValue::decode(std::exchange(instance->thrownValue, 0));
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        Exception* made = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStack)));
+        Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStack)));
         if (isAtStackTraceItemSite)
-            made->setTopFrameIsAtStackTraceItemSite();
+            thrownException->setTopFrameIsAtStackTraceItemSite();
         if (handler.code && handler.takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            instance->thrownValue = JSValue::encode(made);
+            instance->thrownValue = JSValue::encode(thrownException);
             topScope.clearException();
         }
     }
@@ -1801,25 +1768,25 @@ const Instance::CachedAddressInfo* Instance::resolveReturnAddress(const void* re
 
 FunctionRef::Location FunctionRef::locationForReturnAddress(const void* returnAddress, const void* frame, InlineFrameReader* read) const
 {
-    using Asked = Instance::CachedAddressInfo;
-    const Asked* found = instance->findCachedReturnAddress(returnAddress);
+    using CachedAddressInfo = Instance::CachedAddressInfo;
+    const CachedAddressInfo* found = instance->findCachedReturnAddress(returnAddress);
     if (!found) [[unlikely]] {
         ImageAddressInfo what = classifyAddress(returnAddress);
         RELEASE_ASSERT(what.kind == ImageAddressInfo::Function && what.index == index);
         found = &resolve(*this, returnAddress, what.offset);
     }
-    auto& asked = *found;
-    ASSERT(asked.function == index);
-    if (asked.site == Asked::hasNoSite) [[unlikely]]
+    auto& cachedInfo = *found;
+    ASSERT(cachedInfo.function == index);
+    if (cachedInfo.site == CachedAddressInfo::hasNoSite) [[unlikely]]
         return { *this, BytecodeIndex(), 0, false, false, false, info().isTyped ? info().typedFunction() : none };
     for (const CallSiteOverride* candidate = instance->callSiteOverrides; candidate; candidate = candidate->previous()) {
         if (candidate->frame() != frame)
             continue;
-        if (auto site = spreadSite(*info().function(), asked.site, candidate->item()))
+        if (auto site = spreadSite(*info().function(), cachedInfo.site, candidate->item()))
             return locationForSite(*this, *site, read);
         break;
     }
-    return locationForSite(*this, asked.site, read);
+    return locationForSite(*this, cachedInfo.site, read);
 }
 
 FunctionRef::Location FunctionRef::inlineCallSiteLocation(unsigned inlineFrame, InlineFrameReader& read) const
@@ -1867,13 +1834,13 @@ String describeCodeAddresses(std::span<const void* const> addresses)
             bool isModule = typedFunctionCodeType(frame.typedFunction) == ModuleCode;
             String name = isModule ? String() : typedFunctionName(frame.typedFunction);
             auto position = function.reportedPositionFor(frame.callSite());
-            String place = position && position->source ? makeString(program->sourceNameInFrames(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+            String sourceLocation = position && position->source ? makeString(program->sourceNameInFrames(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
             if (isModule)
-                result.append("    at "_s, place, '\n');
-            else if (place.isEmpty())
+                result.append("    at "_s, sourceLocation, '\n');
+            else if (sourceLocation.isEmpty())
                 result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), '\n');
             else
-                result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), " ("_s, place, ")\n"_s);
+                result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), " ("_s, sourceLocation, ")\n"_s);
         }
     }
     return result.toString();
@@ -1907,8 +1874,8 @@ void writePerfMap()
         uint32_t typedFunction = function.info().typedFunction();
         String name = typedFunctionCodeType(typedFunction) == ModuleCode ? String("(module)"_s) : typedFunctionName(typedFunction);
         auto position = function.reportedPositionFor(BytecodeIndex(0));
-        String place = position && position->source ? makeString(' ', program->sourceName(position->source), ':', position->lineColumn.line) : emptyString();
-        rows.append({ starts[index], makeString(name.isEmpty() ? String("(anonymous)"_s) : name, place) });
+        String sourceLocation = position && position->source ? makeString(' ', program->sourceName(position->source), ':', position->lineColumn.line) : emptyString();
+        rows.append({ starts[index], makeString(name.isEmpty() ? String("(anonymous)"_s) : name, sourceLocation) });
     }
     for (unsigned i = 0; i < header.numberOfStubCopies; ++i)
         rows.append({ header.stubCopies[i], String("(stubs of compiled code)"_s) });
@@ -1923,7 +1890,7 @@ FunctionRef FunctionRef::of(VM& vm, ScriptExecutable* scriptExecutable, JSCell* 
 {
     auto instanceWithToken = [&]() -> Instance* {
         for (Instance* instance : vm.m_aotInstances) {
-            if (tokenOf(instance) == instanceToken)
+            if (livenessToken(instance) == instanceToken)
                 return instance;
         }
         return nullptr;
@@ -2198,15 +2165,15 @@ void* FunctionRef::catchEntrypointAddress(unsigned bytecodeOffset) const
 }
 
 template<typename Number>
-static const UnlinkedHandlerInfo* handlerInTable(std::span<const uint8_t> row, unsigned site, UnlinkedHandlerInfo& scratchHandler)
+static const UnlinkedHandlerInfo* handlerInTable(std::span<const uint8_t> table, unsigned site, UnlinkedHandlerInfo& scratchHandler)
 {
     constexpr size_t sizeOfHandler = 3 * sizeof(Number);
-    bool someHandlerIgnoresValue = row[0] & FunctionMetadata::someHandlerIgnoresValue;
-    size_t numberOfHandlers = someHandlerIgnoresValue ? (row.size() - 1) * 8 / (sizeOfHandler * 8 + 1) : (row.size() - 1) / sizeOfHandler;
-    const uint8_t* ignoresValue = row.data() + 1 + numberOfHandlers * sizeOfHandler;
+    bool someHandlerIgnoresValue = table[0] & FunctionMetadata::someHandlerIgnoresValue;
+    size_t numberOfHandlers = someHandlerIgnoresValue ? (table.size() - 1) * 8 / (sizeOfHandler * 8 + 1) : (table.size() - 1) / sizeOfHandler;
+    const uint8_t* ignoresValue = table.data() + 1 + numberOfHandlers * sizeOfHandler;
     for (size_t i = 0; i < numberOfHandlers; ++i) {
         std::array<Number, 3> handler;
-        memcpy(handler.data(), row.data() + 1 + i * sizeOfHandler, sizeof(handler));
+        memcpy(handler.data(), table.data() + 1 + i * sizeOfHandler, sizeof(handler));
         bool takesException = handler[0] > handler[1];
         if (takesException)
             std::swap(handler[0], handler[1]);
@@ -2236,11 +2203,6 @@ const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset, Unli
         return nullptr;
     std::span<const UnlinkedHandlerInfo> handlers { programData().at<UnlinkedHandlerInfo>(words[0]), words[1] };
     return UnlinkedHandlerInfo::handlerForIndex<const UnlinkedHandlerInfo>(handlers, bytecodeOffset, RequiredHandler::AnyHandler);
-}
-
-const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned tableIndex) const
-{
-    return instance->program->stringSwitchJumpTable(*metadata()->find(FunctionMetadata::StringSwitchJumpTables), tableIndex);
 }
 
 const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
@@ -2477,7 +2439,6 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         visitor.appendUnbarriered(structure);
     for (Structure* structure : arrayUnderConstructionStructures)
         visitor.appendUnbarriered(structure);
-    visitor.appendUnbarriered(cachedTypedContiguousArrayStructure);
     visitor.appendUnbarriered(bufferStructure);
     visitor.appendUnbarriered(bufferAccessorHolder);
     for (Structure* structure : asyncLocalStorageStructures)
@@ -2525,15 +2486,15 @@ void Instance::registerAsyncLocalStorage(JSObject* storage, JSObject* frame, JSC
     if (Structure* first = asyncLocalStorageStructures[0]) {
         if (!asyncLocalStorageStructureIDs[0] || asyncLocalStorageStructures[1] || structure == first || holder != first->storedPrototypeObject())
             return;
-        PropertyOffset place = (asyncLocalStorageDefaultValueOffset - JSObject::offsetOfInlineStorage()) / sizeof(EncodedJSValue);
+        PropertyOffset propertyOffset = (asyncLocalStorageDefaultValueOffset - JSObject::offsetOfInlineStorage()) / sizeof(EncodedJSValue);
         UniquedStringImpl* nameOfDefaultValue = nullptr;
         first->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
-            if (entry.offset() == place)
+            if (entry.offset() == propertyOffset)
                 nameOfDefaultValue = entry.key();
             return true;
         });
         unsigned attributes = 0;
-        if (!nameOfDefaultValue || structure->get(*vm, nameOfDefaultValue, attributes) != place)
+        if (!nameOfDefaultValue || structure->get(*vm, nameOfDefaultValue, attributes) != propertyOffset)
             return;
         asyncLocalStorageStructures[1] = structure;
         asyncLocalStorageStructureIDs[1] = structure->id().bits();
@@ -2541,18 +2502,18 @@ void Instance::registerAsyncLocalStorage(JSObject* storage, JSObject* frame, JSC
         return;
     }
     static constexpr ASCIILiteral namesInFrame[] = { "storage"_s, "value"_s, "prev"_s, "masked"_s };
-    for (unsigned place = 0; place < std::size(namesInFrame); ++place) {
+    for (unsigned propertyOffset = 0; propertyOffset < std::size(namesInFrame); ++propertyOffset) {
         unsigned attributes = 0;
-        if (frame->structure()->get(*vm, Identifier::fromString(*vm, namesInFrame[place]), attributes) != static_cast<PropertyOffset>(place) || attributes)
+        if (frame->structure()->get(*vm, Identifier::fromString(*vm, namesInFrame[propertyOffset]), attributes) != static_cast<PropertyOffset>(propertyOffset) || attributes)
             return;
     }
     std::optional<PropertyOffset> defaultValueSlot;
-    for (PropertyOffset place = 0; place < static_cast<PropertyOffset>(structure->inlineSize()); ++place) {
-        if (storage->getDirect(place) != JSValue(frame))
+    for (PropertyOffset propertyOffset = 0; propertyOffset < static_cast<PropertyOffset>(structure->inlineSize()); ++propertyOffset) {
+        if (storage->getDirect(propertyOffset) != JSValue(frame))
             continue;
         if (defaultValueSlot)
             return;
-        defaultValueSlot = place;
+        defaultValueSlot = propertyOffset;
     }
     if (!defaultValueSlot)
         return;
@@ -2602,15 +2563,15 @@ bool Instance::hasPropertyRunTarget(Structure* structure, std::span<UniquedStrin
     return found != collections->canonicalPropertyRuns.end() && collections->propertyRunTargets.contains({ structure, found->value.get() });
 }
 
-bool Instance::reservePropertyRunTarget(PropertyRunBudget room)
+bool Instance::reservePropertyRunTarget(PropertyRunBudget budget)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
-        return realmInstance.reservePropertyRunTarget(room);
-    uint16_t& left = room == PropertyRunBudget::SymbolKeyed ? remainingSymbolKeyedRuns : remainingCopiedNameRuns;
+        return realmInstance.reservePropertyRunTarget(budget);
+    uint16_t& left = budget == PropertyRunBudget::SymbolKeyed ? remainingSymbolKeyedRuns : remainingCopiedNameRuns;
     if (!left)
         return false;
     --left;
-    reservedPropertyRunBudget = room;
+    reservedPropertyRunBudget = budget;
     return true;
 }
 
@@ -2693,7 +2654,7 @@ const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* struct
         last = nullptr;
     target.last = last;
     collections->propertyRunTargetsAddedSinceLastCollection.append({ structure, last });
-    collections->weakTablesAddedToSinceLastCollection |= Collections::PropertyRunTargets;
+    collections->dirtyWeakTables |= Collections::PropertyRunTargets;
     return collections->propertyRunTargets.add({ structure, run }, WTF::move(target)).iterator->value;
 }
 
@@ -2714,20 +2675,20 @@ Structure* Instance::emptyStructureWithoutPrototype(unsigned inlineCapacity)
 void Instance::fillStructureDescriptorSlot(uint32_t number, Structure* structure, uint32_t slotsToClear, LocalAllocator* allocator)
 {
     RELEASE_ASSERT(number < maxStructureDescriptors && !descriptorSlotIndex(number));
-    uint32_t place;
+    uint32_t slotOffset;
     if (!collections->freeDescriptorSlots.isEmpty())
-        place = collections->freeDescriptorSlots.takeLast();
+        slotOffset = collections->freeDescriptorSlots.takeLast();
     else {
         if (collections->usedDescriptorSlotCount == maxFilledStructureDescriptors)
             return;
-        place = bytesReservedForDescriptorSlotIndices + collections->usedDescriptorSlotCount++ * sizeof(Slot);
+        slotOffset = bytesReservedForDescriptorSlotIndices + collections->usedDescriptorSlotCount++ * sizeof(Slot);
     }
-    Slot& row = descriptorSlotAt(place);
+    Slot& row = descriptorSlotAt(slotOffset);
     row.offset = slotsToClear;
     row.pointer = allocator;
     row.structureID = structure->id();
     WTF::storeStoreFence();
-    descriptorSlotIndex(number) = place;
+    descriptorSlotIndex(number) = slotOffset;
     collections->filledStructureDescriptors.append(number);
 }
 
@@ -2738,10 +2699,10 @@ void Instance::didFillGlobalPropertyCache()
 
 void Instance::clearStructureDescriptorSlot(uint32_t number)
 {
-    uint32_t place = std::exchange(descriptorSlotIndex(number), 0);
-    RELEASE_ASSERT(place);
-    zeroBytes(descriptorSlotAt(place));
-    collections->freeDescriptorSlots.append(place);
+    uint32_t slotOffset = std::exchange(descriptorSlotIndex(number), 0);
+    RELEASE_ASSERT(slotOffset);
+    zeroBytes(descriptorSlotAt(slotOffset));
+    collections->freeDescriptorSlots.append(slotOffset);
 }
 
 Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringImpl* const> names, uint32_t structureDescriptorPlusOne)
@@ -2771,7 +2732,7 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
         return true;
     };
     for (size_t i = 0; structureDescriptorPlusOne && i < names.size(); ++i) {
-        if (!(typed->data.stringFacts(typed->data.row(structureDescriptorPlusOne - 1)[1 + i]) & Typed::Data::stringHasIdentifierNumber))
+        if (!(typed->data.stringHashAndFlags(typed->data.row(structureDescriptorPlusOne - 1)[1 + i]) & Typed::Data::stringHasIdentifierNumber))
             structureDescriptorPlusOne = 0;
     }
     if (Structure* known = collections->shapes.get(key); known && hasExpectedNames(known)) {
@@ -2783,7 +2744,7 @@ Structure* Instance::literalStructure(Structure* empty, std::span<UniquedStringI
     if (!result)
         return nullptr;
     collections->shapes.set(key, result);
-    collections->weakTablesAddedToSinceLastCollection |= Collections::Shapes;
+    collections->dirtyWeakTables |= Collections::Shapes;
     didAddCell(result);
     return result;
 }
@@ -2816,12 +2777,12 @@ void Instance::didAddOutOfLineProperty(Structure* structure)
     while (Structure* previous = first->previousID())
         first = previous;
     size_t sizeOfCell = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(std::min<unsigned>(maxObservedInlineCapacity, structure->inlineSize() + structure->outOfLineSize())));
-    unsigned wanted = (sizeOfCell - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
+    unsigned newInlineCapacity = (sizeOfCell - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
     uint32_t numberPlusOne = first->structureDescriptorPlusOne();
     if (!numberPlusOne || row(numberPlusOne - 1).structureID != first->id())
         return;
     uint32_t number = numberPlusOne - 1;
-    collections->learnedDescriptorInlineCapacities.set(number, wanted);
+    collections->learnedDescriptorInlineCapacities.set(number, newInlineCapacity);
     clearStructureDescriptorSlot(number);
     if (size_t index = collections->filledStructureDescriptors.find(number); index != notFound) {
         collections->filledStructureDescriptors.removeAt(index);
@@ -2868,14 +2829,14 @@ JSFunction* Instance::constructorForStructure(Structure* structure)
 void Instance::recordInlineCapacity(JSFunction* constructor, Structure* structure)
 {
     unsigned inlineCapacity = structure->inlineCapacity();
-    unsigned wanted = std::min(maxObservedInlineCapacity, std::max(2 * inlineCapacity, inlineCapacity + structure->outOfLineSize() + 2));
+    unsigned newInlineCapacity = std::min(maxObservedInlineCapacity, std::max(2 * inlineCapacity, inlineCapacity + structure->outOfLineSize() + 2));
     auto addResult = collections->learnedInlineCapacities.add(constructor, 0);
     if (addResult.isNewEntry)
-        collections->weakTablesAddedToSinceLastCollection |= Collections::LearnedInlineCapacities;
-    unsigned& learned = addResult.iterator->value;
-    if (wanted <= learned)
+        collections->dirtyWeakTables |= Collections::LearnedInlineCapacities;
+    unsigned& recordedInlineCapacity = addResult.iterator->value;
+    if (newInlineCapacity <= recordedInlineCapacity)
         return;
-    learned = wanted;
+    recordedInlineCapacity = newInlineCapacity;
     if (FunctionRareData* rareData = constructor->rareData())
         rareData->clear("Objects get properties outside their inline storage");
 }
@@ -2888,7 +2849,7 @@ Instance::ClassStructures Instance::classStructures(uint32_t classIndex, JSObjec
 void Instance::cacheClassStructures(uint32_t classIndex, JSObject* classObjectParent, JSCell* prototypeParent, ClassStructures structures)
 {
     collections->classStructuresByKey.set({ classIndex + 1, classObjectParent, prototypeParent }, structures);
-    collections->weakTablesAddedToSinceLastCollection |= Collections::ClassStructuresTable;
+    collections->dirtyWeakTables |= Collections::ClassStructuresTable;
 }
 
 const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded)
@@ -2932,7 +2893,7 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
     for (unsigned i = 0; last && i < names.size(); ++i)
         result.offsets[i].second = last->get(*vm, names[i]);
     result.last = last;
-    collections->weakTablesAddedToSinceLastCollection |= Collections::CopiedProperties;
+    collections->dirtyWeakTables |= Collections::CopiedProperties;
     return *collections->copiedProperties.add(key, makeUniqueWithoutFastMallocCheck<CopiedProperties>(WTF::move(result))).iterator->value;
 }
 
@@ -2953,7 +2914,7 @@ bool Instance::prototypesAllowAssigning(Structure* target, Structure* source, co
     });
     copied.prototypeStructures.shrink(0);
     copied.prototypes = mayBeInterceptedByPrototypes(*vm, target, names.span(), copied.prototypeStructures) ? Prototypes::MayIntercept : Prototypes::AllowAssigning;
-    collections->weakTablesAddedToSinceLastCollection |= Collections::CopiedProperties;
+    collections->dirtyWeakTables |= Collections::CopiedProperties;
     return copied.prototypes == Prototypes::AllowAssigning;
 }
 
@@ -2984,7 +2945,7 @@ const Instance::CopyExcluding* Instance::setCopyExcluding(Structure* source, Cop
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
         return realmInstance.setCopyExcluding(source, WTF::move(copy));
     collections->deadCopyExcludingNames.shrink(0);
-    collections->weakTablesAddedToSinceLastCollection |= Collections::CopiesExcluding;
+    collections->dirtyWeakTables |= Collections::CopiesExcluding;
     didAddCell(source);
     didAddCell(copy.structure);
     Vector<UniquedStringImpl*, 4> excluded(copy.excluded.size(), [&](size_t i) {
@@ -3012,7 +2973,7 @@ const Instance::CloneAndExtendPlan* Instance::setCloneAndExtendPlan(Structure* s
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
         return realmInstance.setCloneAndExtendPlan(source, more, copy);
-    collections->weakTablesAddedToSinceLastCollection |= Collections::CloneAndExtendPlans;
+    collections->dirtyWeakTables |= Collections::CloneAndExtendPlans;
     collections->lastCopyAndExtendKey = { nullptr, 0 };
     didAddCell(source);
     didAddCell(copy.structure);
@@ -3040,7 +3001,7 @@ const Instance::SpreadLiteralPlan* Instance::addSpreadLiteralPlan(SpreadLiteralP
     if (collections->spreadLiteralPlans.size() >= maxSize)
         collections->spreadLiteralPlans.clear();
     collections->lastSpreadLiteralPlan = nullptr;
-    collections->weakTablesAddedToSinceLastCollection |= Collections::SpreadLiteralPlans;
+    collections->dirtyWeakTables |= Collections::SpreadLiteralPlans;
     for (Structure* source : plan.sources)
         didAddCell(source);
     didAddCell(plan.structure);
@@ -3067,20 +3028,8 @@ Structure* Instance::arrayUnderConstructionStructure(IndexingType indexingType)
     return arrayUnderConstructionStructures[arrayUnderConstructionIndex(indexingType)];
 }
 
-Structure* Instance::typedContiguousArrayStructure()
-{
-    if (!cachedTypedContiguousArrayStructure && !globalObject->isHavingABadTime() && MarkedBlockCage::isEnabled()) {
-        Structure* structure = Structure::nonPropertyTransition(*vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), TransitionKind::AllocateTypedContiguous, nullptr);
-        cachedTypedContiguousArrayStructure = structure;
-        newArrayWithTypedContiguousHeader = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
-        vm->writeBarrier(globalObject);
-    }
-    return newArrayWithTypedContiguousHeader ? cachedTypedContiguousArrayStructure : nullptr;
-}
-
 void Instance::didHaveBadTime()
 {
-    newArrayWithTypedContiguousHeader = 0;
     negativeOffsetFields().newArrayWithInt32Header = 0;
     negativeOffsetFields().newArrayWithDoubleHeader = 0;
     negativeOffsetFields().newArrayWithContiguousHeader = 0;
@@ -3090,7 +3039,7 @@ void Instance::didHaveBadTime()
     inlineAllocations[static_cast<unsigned>(InlineAllocation::Arguments)].allocator = nullptr;
 }
 
-void Instance::cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl* uid, uint32_t place)
+void Instance::cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl* uid, uint32_t location)
 {
     auto& names = collections->ownPropertyLocationNames;
     if (names.size() >= 4 * numberOfOwnPropertyLocations) [[unlikely]] {
@@ -3115,7 +3064,7 @@ void Instance::cacheOwnPropertyLocation(uint32_t structureID, UniquedStringImpl*
         keyedTableRandomState = keyedTableRandomState * 1664525u + 1013904223u;
         step = keyedTableRandomState >> 30;
     }
-    ownPropertyLocations[index ^ step] = { uid, structureID, place };
+    ownPropertyLocations[index ^ step] = { uid, structureID, location };
     hasOwnPropertyLocations = true;
     hasNewOwnPropertyLocations = true;
 }
@@ -3159,9 +3108,9 @@ void Instance::validateKeyedTables()
         return Found::NotFound;
     };
     constexpr uint32_t locationMask = Slot::offsetMask | Slot::isIndirect;
-    auto isAt = [&](uint32_t said, PropertyOffset offset) {
+    auto isAt = [&](uint32_t cachedLocation, PropertyOffset offset) {
         auto location = isValidOffset(offset) ? propertyLocation(offset) : std::nullopt;
-        return location && *location == (said & locationMask);
+        return location && *location == (cachedLocation & locationMask);
     };
     for (unsigned i = 0; i < numberOfKeyedReads; ++i) {
         auto& read = keyedReads[i];
@@ -3388,13 +3337,13 @@ void Instance::sweepKeyedTables(bool newOnly)
     groupsToSweep.clearAll();
     if (hasOwnPropertyResults && (std::exchange(hasNewOwnPropertyResults, false) || !newOnly || validates)) {
         hasOwnPropertyResults = false;
-        for (uint64_t& answer : ownPropertyResults) {
-            if (!answer)
+        for (uint64_t& cachedResult : ownPropertyResults) {
+            if (!cachedResult)
                 continue;
-            if (isLive(std::bit_cast<StructureID>(static_cast<uint32_t>(answer))))
+            if (isLive(std::bit_cast<StructureID>(static_cast<uint32_t>(cachedResult))))
                 hasOwnPropertyResults = true;
             else
-                answer = 0;
+                cachedResult = 0;
         }
     }
     if (hasOwnPropertyLocations && (std::exchange(hasNewOwnPropertyLocations, false) || !newOnly || validates)) {
@@ -3414,15 +3363,15 @@ JSString* Instance::proxyTrapKey(VM& vm, UniquedStringImpl* name)
 {
     static_assert(hasOneBitSet(proxyTrapKeyCacheSize));
     unsigned first = name->existingHash() * 2 % proxyTrapKeyCacheSize;
-    for (unsigned place : { first, first + 1 }) {
-        if (JSString* known = proxyTrapKeyCache[place]; known && known->tryGetValueImpl() == name)
+    for (unsigned index : { first, first + 1 }) {
+        if (JSString* known = proxyTrapKeyCache[index]; known && known->tryGetValueImpl() == name)
             return known;
     }
-    JSString* made = jsString(vm, String(name));
+    JSString* keyString = jsString(vm, String(name));
     proxyTrapKeyCache[first + 1] = proxyTrapKeyCache[first];
-    proxyTrapKeyCache[first] = made;
+    proxyTrapKeyCache[first] = keyString;
     proxyTrapKeyCacheIsDirty = true;
-    return made;
+    return keyString;
 }
 
 Instance::InheritedSetter& Instance::inheritedSetterFor(uint32_t structureID, UniquedStringImpl* uid)
@@ -3603,7 +3552,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (std::exchange(objectCreateCacheIsDirty, false))
         zeroSpan(std::span { objectCreateCache });
     forgetPrototypeChanges();
-    forgetInheritedFieldAnswers();
+    clearInheritedFieldCache();
     if (std::exchange(hasThisAllocations, false))
         zeroSpan(std::span { thisAllocations.get() });
     forgetTypedThisAllocations();
@@ -3665,7 +3614,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
                 entry.structureID = 0;
         }
     }
-    if (uint16_t addedTo = std::exchange(collections->weakTablesAddedToSinceLastCollection, 0); addedTo || !newOnly || Options::validateAOTTypedFacts()) {
+    if (uint16_t addedTo = std::exchange(collections->dirtyWeakTables, 0); addedTo || !newOnly || Options::validateAOTTypedFacts()) {
         auto walkWeakTable = [&](uint16_t table, auto& entries, const auto& isDeadEntry) {
             bool mayHaveDeadEntries = !newOnly || (addedTo & table);
             if (!mayHaveDeadEntries && !Options::validateAOTTypedFacts())
@@ -3841,9 +3790,9 @@ void Data::finalizeUnconditionally(VM& vm)
     }
 }
 
-static Stub stubFor(JITCode::EntryKind way)
+static Stub stubFor(JITCode::EntryKind entryKind)
 {
-    switch (way) {
+    switch (entryKind) {
     case JITCode::EntryKind::TopLevel:
         return Stub::Enter;
     case JITCode::EntryKind::Call:
@@ -3902,8 +3851,8 @@ const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
     return candidates.last().get();
 }
 
-JITCode::JITCode(void* code, const ImageFunction& function, EntryKind way)
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(stubFor(way)))), ShareAttribute::Shared)
+JITCode::JITCode(void* code, const ImageFunction& function, EntryKind entryKind)
+    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(stubFor(entryKind)))), ShareAttribute::Shared)
     , m_code(code)
     , m_entry(EntryWord::encode(code, function.convention()))
     , m_function(&function)

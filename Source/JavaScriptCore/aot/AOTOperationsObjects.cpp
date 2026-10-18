@@ -146,7 +146,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectFromFilledDescriptor, JSObject*, (
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
-    AOT_OPERATION_BEGIN_AT(instance, cache);
+    AOT_OPERATION_BEGIN_WITH_CACHE(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     if (StructureID structureID = cache[0].structureID) {
         Structure* structure = WTF::opaque(structureID.decode());
@@ -159,32 +159,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
     FunctionRef function = caller(instance, callFrame);
     RELEASE_ASSERT(function.info().isTyped);
     OPERATION_RETURN(scope, newObjectLiteralAtSite(instance, globalObject, vm, function, cache, values, count));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
-{
-    AOT_OPERATION_BEGIN(instance);
-    Structure* structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(static_cast<IndexingType>(indexingType));
-    OPERATION_RETURN(scope, constructArray(globalObject, structure, std::bit_cast<const JSValue*>(values), count));
-}
-
-JSCell* spread(JSGlobalObject* globalObject, JSValue iterable)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (iterable.isCell()) {
-        auto* result = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result)
-            return result;
-    }
-
-    JSFunction* iterationFunction = globalObject->iteratorProtocolFunction();
-    auto callData = JSC::getCallData(iterationFunction);
-    auto arguments = WTF::toArray<EncodedJSValue>({ JSValue::encode(iterable) });
-    JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), ArgList { arguments.data(), arguments.size() });
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, JSCellButterfly::createFromArray(globalObject, vm, uncheckedDowncast<JSArray>(arrayResult)));
 }
 
 static NEVER_INLINE void cacheInstanceOfForNonObject(Instance* instance, CallFrame* callFrame, JSGlobalObject* globalObject, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance)
@@ -205,7 +179,7 @@ static NEVER_INLINE void cacheInstanceOfForNonObject(Instance* instance, CallFra
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor, uint32_t, Slot* cache, uint32_t))
 {
-    AOT_OPERATION_BEGIN_AT(instance, cache);
+    AOT_OPERATION_BEGIN_WITH_CACHE(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     JSValue value = JSValue::decode(encodedValue);
     JSValue constructor = JSValue::decode(encodedConstructor);
@@ -267,13 +241,13 @@ static ALWAYS_INLINE const Identifier& wellKnownIdentifier(VM& vm, uint32_t whic
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, Slot* cache))
 {
-    AOT_OPERATION_BEGIN_AT(instance, cache);
+    AOT_OPERATION_BEGIN_WITH_CACHE(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     JSValue base = JSValue::decode(encodedBase);
     if (which == static_cast<unsigned>(WellKnownIdentifier::Length) && base.isCell() && isTypedArrayType(base.asCell()->type()) && instance->typedArrayHasBuiltinLength(base.asCell()))
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(uncheckedDowncast<JSArrayBufferView>(base.asCell())->length())));
     const Identifier& ident = wellKnownIdentifier(vm, which);
-    if (JSValue value = instance->typed && base.isCell() ? Typed::Object::tryGetOwnData(vm, base.asCell(), ident) : JSValue()) {
+    if (JSValue value = instance->typed && base.isCell() ? Typed::Object::tryGetOwnDataProperty(vm, base.asCell(), ident) : JSValue()) {
         cacheCompiledField(vm, callerData(instance, callFrame), cache, base.asCell(), ident, false);
         OPERATION_RETURN(scope, JSValue::encode(value));
     }
@@ -358,8 +332,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringIndexOf, EncodedJSValue, (Instance* i
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto sought = uncheckedDowncast<JSString>(other)->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    size_t place = characters->find(sought.data);
-    OPERATION_RETURN(scope, JSValue::encode(place == notFound ? jsNumber(-1) : jsNumber(place)));
+    size_t index = characters->find(sought.data);
+    OPERATION_RETURN(scope, JSValue::encode(index == notFound ? jsNumber(-1) : jsNumber(index)));
 }
 
 } } // namespace JSC::AOT

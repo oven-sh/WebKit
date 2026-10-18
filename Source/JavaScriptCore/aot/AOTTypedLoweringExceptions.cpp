@@ -160,13 +160,13 @@ Operand Lowering::get(ValueID id)
             auto& value = m_function.at(id);
             if (auto optional = m_optionalSubstrings.find(id.index()); optional != m_optionalSubstrings.end()) {
                 Substring part = optional->value;
-                Operand made = ensure(either<Boxed>(part.isPresent, [&] {
+                Operand fetchedLeaf = ensure(either<Boxed>(part.isPresent, [&] {
                     return box(makeSubstring(part.base, part.lengthOfBase, part.from, part.to));
                 }, [&] {
                     return undefined();
                 }), m_program.at(value.type));
-                m_fetchedLeaves.set(id.index(), std::pair { m_out.m_block, made });
-                return made;
+                m_fetchedLeaves.set(id.index(), std::pair { m_out.m_block, fetchedLeaf });
+                return fetchedLeaf;
             }
             CellPointer cell = value.opcode == Opcode::String ? stringConstant(value.string()) : value.opcode == Opcode::BuiltinFunction ? builtinCell(m_builtins.cellOf(value.builtin())) : concatenateIfNeeded(value);
             Operand operand = convert(cell, m_program.at(value.type), value.rep);

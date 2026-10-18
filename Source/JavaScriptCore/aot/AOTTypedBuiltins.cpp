@@ -112,7 +112,7 @@ static_assert([] {
 
 static_assert([] {
     for (auto& entry : builtinEntries) {
-        if (entry.nameName.index() >= numberOfBuiltinNames || toStringView(entry.name) != toStringView(builtinNames[entry.nameName.index()].text))
+        if (entry.nameID.index() >= numberOfBuiltinNames || toStringView(entry.name) != toStringView(builtinNames[entry.nameID.index()].text))
             return false;
         if (entry.holderName ? entry.holderName.index() >= numberOfBuiltinNames || toStringView(entry.holder) != toStringView(builtinNames[entry.holderName.index()].text) : !entry.holder.isEmpty())
             return false;
@@ -123,13 +123,13 @@ static_assert([] {
     }
     for (auto& first : firstBuiltins) {
         auto& entry = builtinEntries[first.index];
-        if (first.key != keyFor(entry.kind, entry.holderName, entry.nameName))
+        if (first.key != keyFor(entry.kind, entry.holderName, entry.nameID))
             return false;
-        if (first.index && first.key == keyFor(builtinEntries[first.index - 1].kind, builtinEntries[first.index - 1].holderName, builtinEntries[first.index - 1].nameName))
+        if (first.index && first.key == keyFor(builtinEntries[first.index - 1].kind, builtinEntries[first.index - 1].holderName, builtinEntries[first.index - 1].nameID))
             return false;
     }
     for (unsigned i = 0; i < numberOfEngineClasses; ++i) {
-        auto& engineClass = engineClasses[i];
+        auto& engineClass = builtinClasses[i];
         if (engineClass.index != i || builtinNames[engineClass.name.index()].engineClass != i || toStringView(engineClass.text) != toStringView(builtinNames[engineClass.name.index()].text))
             return false;
         if (engineClass.firstOriginalStructure + engineClass.numberOfOriginalStructures > numberOfOriginalStructures)
@@ -142,7 +142,7 @@ static_assert([] {
     return true;
 }());
 
-#define AOT_TYPED_CHECK_OPERATION(spelled, entry, nameOfEntry) static_assert(builtinEntries[entry].kind == BuiltinKind::Operation && toStringView(builtinEntries[entry].name) == #spelled && builtinEntries[entry].nameName == BuiltinName(nameOfEntry) && builtinNames[nameOfEntry].operation == entry);
+#define AOT_TYPED_CHECK_OPERATION(spelled, entry, nameOfEntry) static_assert(builtinEntries[entry].kind == BuiltinKind::Operation && toStringView(builtinEntries[entry].name) == #spelled && builtinEntries[entry].nameID == BuiltinName(nameOfEntry) && builtinNames[nameOfEntry].operation == entry);
 FOR_EACH_AOT_TYPED_IR_OPERATION(AOT_TYPED_CHECK_OPERATION)
 #undef AOT_TYPED_CHECK_OPERATION
 
@@ -200,12 +200,12 @@ BuiltinID Builtins::next(BuiltinID id) const
         return { };
     auto& previous = builtinEntries[id.index()];
     auto& entry = builtinEntries[index];
-    if (entry.kind != previous.kind || entry.holderName != previous.holderName || entry.nameName != previous.nameName)
+    if (entry.kind != previous.kind || entry.holderName != previous.holderName || entry.nameID != previous.nameID)
         return { };
     return BuiltinID(index);
 }
 
-BuiltinID Builtins::findForInstance(BuiltinKind kind, const EngineClass& engineClass, BuiltinName name) const
+BuiltinID Builtins::findForInstance(BuiltinKind kind, const BuiltinClass& engineClass, BuiltinName name) const
 {
     if (BuiltinID found = find(kind, engineClass.name, name))
         return found;
@@ -222,7 +222,7 @@ BuiltinID Builtins::findStatic(BuiltinKind kind, BuiltinName global, BuiltinName
         return { };
     if (BuiltinID found = find(kind, global, name))
         return found;
-    const EngineClass* engineClass = classNamed(global);
+    const BuiltinClass* engineClass = classNamed(global);
     if (!engineClass || engineClass->listedAs == engineClass->name)
         return { };
     return find(kind, engineClass->listedAs, name);
@@ -230,22 +230,22 @@ BuiltinID Builtins::findStatic(BuiltinKind kind, BuiltinName global, BuiltinName
 
 BuiltinID Builtins::findConstructor(BuiltinName global) const
 {
-    const EngineClass* engineClass = classNamed(global);
+    const BuiltinClass* engineClass = classNamed(global);
     return find(BuiltinKind::Constructor, { }, engineClass ? engineClass->listedAs : global);
 }
 
-const EngineClass* Builtins::classNamed(BuiltinName name) const
+const BuiltinClass* Builtins::classNamed(BuiltinName name) const
 {
     if (!name || builtinNames[name.index()].engineClass == noClass)
         return nullptr;
-    return &engineClasses[builtinNames[name.index()].engineClass];
+    return &builtinClasses[builtinNames[name.index()].engineClass];
 }
 
-const EngineClass* Builtins::classSpeculatedFor(BuiltinName method) const
+const BuiltinClass* Builtins::classSpeculatedFor(BuiltinName method) const
 {
     if (!method || builtinNames[method.index()].classSpeculatedFor >= multipleClasses)
         return nullptr;
-    return &engineClasses[builtinNames[method.index()].classSpeculatedFor];
+    return &builtinClasses[builtinNames[method.index()].classSpeculatedFor];
 }
 
 std::optional<PreludeFunction> Builtins::preludeFunctionNamed(std::span<const uint8_t> bytes) const
@@ -361,7 +361,7 @@ static ASCIILiteral textOf(BuiltinCallee callee)
 {
     switch (callee) {
     case BuiltinCallee::None:
-        return "no function"_s;
+        return "not a function"_s;
     case BuiltinCallee::Function:
         return "a function that is not native"_s;
     case BuiltinCallee::HostFunction:
@@ -377,7 +377,7 @@ static String calleeMismatch(BuiltinCallee expected, JSValue value)
     BuiltinCallee found = calleeKindOf(value);
     if (found == expected || (expected == BuiltinCallee::Function && found != BuiltinCallee::None))
         return { };
-    return makeString("is "_s, textOf(found), ", the table says "_s, expected == BuiltinCallee::Function ? "a function"_s : textOf(expected));
+    return makeString("is "_s, textOf(found), ", but the table says "_s, expected == BuiltinCallee::Function ? "a function"_s : textOf(expected));
 }
 
 static String textOf(const Builtin& builtin)
@@ -403,20 +403,20 @@ static String textOf(const Builtin& builtin)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObject, const Builtin& builtin, JSObject* given, bool underPrivateName) const
+std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObject, const Builtin& builtin, JSObject* knownHolder, bool underPrivateName) const
 {
     VM& vm = globalObject->vm();
     bool isSharedByTypedArrays = builtin.holderName == BuiltinName(AOT_TYPED_BUILTIN_NAME_TypedArray);
     Mutability mutability = isReplaceable(builtin.holderName) ? Mutability::Replaceable : Mutability::Fixed;
-    std::expected<JSObject*, String> holder = given;
-    if (!given)
+    std::expected<JSObject*, String> holder = knownHolder;
+    if (!knownHolder)
         holder = findGlobal(globalObject, isSharedByTypedArrays ? "Int8Array"_s : builtin.holder, mutability);
     if (holder && isSharedByTypedArrays) {
         if (globalObject->hasImmutableIntrinsics() && !(*holder)->structure()->inheritorsMayOverrideReadOnlyProperties())
-            return makeUnexpected(String("Int8Array can be given another prototype"_s));
+            return makeUnexpected(String("the prototype of Int8Array can be changed"_s));
         JSObject* shared = (*holder)->getPrototypeDirect().getObject();
         if (!shared)
-            return makeUnexpected(String("Int8Array inherits from no object"_s));
+            return makeUnexpected(String("Int8Array has no prototype"_s));
         holder = shared;
     }
     if (holder && builtin.hasReceiver())
@@ -430,13 +430,13 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
             return makeUnexpected(symbols.error());
         auto symbol = findOwnProperty(globalObject, *symbols, Identifier::fromString(vm, builtin.name.span8().subspan(2)), PropertyKind::Data);
         if (!symbol || !symbol->isSymbol())
-            return makeUnexpected(String("is named by no symbol"_s));
+            return makeUnexpected(String("is named by a symbol that does not exist"_s));
         key = Identifier::fromUid(asSymbol(*symbol)->privateName());
     }
     if (underPrivateName) {
         PrivateSymbolImpl* name = vm.propertyNames->builtinNames().lookUpPrivateName(builtin.name.span8());
         if (!name)
-            return makeUnexpected(String("is no private name"_s));
+            return makeUnexpected(String("is not a private name"_s));
         key = Identifier::fromUid(vm, name);
         mutability = Mutability::Replaceable;
     }
@@ -455,8 +455,8 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
 
 std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* globalObject, unsigned index) const
 {
-    const EngineClass* engineClass = nullptr;
-    for (auto& candidate : engineClasses) {
+    const BuiltinClass* engineClass = nullptr;
+    for (auto& candidate : builtinClasses) {
         if (index - candidate.firstOriginalStructure < candidate.numberOfOriginalStructures)
             engineClass = &candidate;
     }
@@ -468,7 +468,7 @@ std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* g
     if (!structure)
         return mismatch("is missing"_s);
     if (structure->typeInfo().type() != engineClass->type)
-        return mismatch("has another JSType"_s);
+        return mismatch("has a different JSType"_s);
     if (structure->maxOffset() != invalidOffset)
         return mismatch("has properties"_s);
     auto prototype = findGlobal(globalObject, engineClass->text);
@@ -477,14 +477,14 @@ std::expected<JSCell*, String> Builtins::findOriginalStructure(JSGlobalObject* g
     if (!prototype)
         return mismatch(prototype.error());
     if (structure->hasPolyProto() || structure->storedPrototype() != JSValue(*prototype))
-        return mismatch("has another prototype"_s);
+        return mismatch("has a different prototype"_s);
     return static_cast<JSCell*>(structure);
 }
 
 std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, unsigned index, JSObject* holder) const
 {
     if (index >= firstPrototypeCell()) {
-        auto prototype = findGlobal(globalObject, engineClasses[index - firstPrototypeCell()].text);
+        auto prototype = findGlobal(globalObject, builtinClasses[index - firstPrototypeCell()].text);
         if (prototype)
             prototype = findObject(globalObject, *prototype, globalObject->vm().propertyNames->prototype);
         if (!prototype)
@@ -499,7 +499,7 @@ std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, un
         auto object = findGlobal(globalObject, text);
         if (!object)
             return makeUnexpected(object.error());
-        const EngineClass* engineClass = classNamed(name);
+        const BuiltinClass* engineClass = classNamed(name);
         BuiltinName listedAs = engineClass ? engineClass->listedAs : name;
         for (BuiltinKind kind : { BuiltinKind::Function, BuiltinKind::Constructor }) {
             for (BuiltinID id = find(kind, { }, listedAs); id; id = next(id)) {
@@ -538,7 +538,7 @@ bool Builtins::isHostFunctionInEngine(BuiltinID id) const
 {
     auto& entry = at(id);
     for (auto& sibling : builtinEntries) {
-        if (sibling.kind == entry.kind && sibling.holderName == entry.holderName && sibling.nameName == entry.nameName && sibling.implementation.kind == BuiltinImplementation::Call && sibling.implementation.callee != BuiltinCallee::Function)
+        if (sibling.kind == entry.kind && sibling.holderName == entry.holderName && sibling.nameID == entry.nameID && sibling.implementation.kind == BuiltinImplementation::Call && sibling.implementation.callee != BuiltinCallee::Function)
             return true;
     }
     return false;
@@ -586,7 +586,7 @@ unsigned Builtins::staticFunctionCell(ASCIILiteral global, ASCIILiteral name) co
 bool Builtins::hasCell(unsigned index) const
 {
     if (index >= firstPrototypeCell())
-        return isGlobal(engineClasses[index - firstPrototypeCell()].name);
+        return isGlobal(builtinClasses[index - firstPrototypeCell()].name);
     if (index >= originalStructureCell(0))
         return true;
     if (index >= numberOfBuiltins)
@@ -602,7 +602,7 @@ bool Builtins::hasCell(unsigned index) const
     }
     switch (builtin.implementation.kind) {
     case BuiltinImplementation::Generic:
-        return callOrApply(builtin.nameName) == BuiltinID(index);
+        return callOrApply(builtin.nameID) == BuiltinID(index);
     case BuiltinImplementation::Cell:
         return true;
     default:
@@ -648,10 +648,10 @@ Vector<String> Builtins::mismatches(JSGlobalObject* globalObject) const
         auto found = builtin.hasPrivateAlias ? findProperty(globalObject, builtin) : makeUnexpected(String());
         if (!found)
             continue;
-        auto twin = findProperty(globalObject, builtin, nullptr, true);
-        if (!twin)
-            add(makeString(textOf(builtin), ": under the private name: "_s, twin.error()));
-        else if (!isSameFunction(*found, *twin))
+        auto privateNameValue = findProperty(globalObject, builtin, nullptr, true);
+        if (!privateNameValue)
+            add(makeString(textOf(builtin), ": under the private name: "_s, privateNameValue.error()));
+        else if (!isSameFunction(*found, *privateNameValue))
             add(makeString(textOf(builtin), ": under the private name is another function"_s));
     }
     return result;

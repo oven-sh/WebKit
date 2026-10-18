@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
-#include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "AOTTypedThreads.h"
@@ -345,30 +344,6 @@ public:
             words.append(append(handlers));
             words.append(count);
         }
-        if (size_t count = codeBlock->numberOfUnlinkedStringSwitchJumpTables()) {
-            Vector<uint32_t> list { static_cast<uint32_t>(count) };
-            for (size_t i = 0; i < count; ++i) {
-                auto& table = codeBlock->unlinkedStringSwitchJumpTable(i);
-                Vector<std::pair<StringImpl*, int32_t>> inOrder;
-                for (auto& entry : table.m_offsetTable)
-                    inOrder.append({ entry.key.get(), entry.value.m_branchOffset });
-                std::ranges::sort(inOrder, [](auto& a, auto& b) { return codePointCompare(StringView { *a.first }, StringView { *b.first }) < 0; });
-                Vector<std::pair<uint32_t, int32_t>> entries;
-                for (auto [string, offset] : inOrder) {
-                    m_switchAtoms.append(AtomStringImpl::add(string));
-                    entries.append({ numberOfIdentifier(m_switchAtoms.last().get()), offset });
-                }
-                std::ranges::sort(entries);
-                list.append(entries.size());
-                list.append(static_cast<uint32_t>(table.m_defaultOffset));
-                for (auto [name, offset] : entries) {
-                    list.append(name);
-                    list.append(static_cast<uint32_t>(offset));
-                }
-            }
-            words[0] |= Metadata::StringSwitchJumpTables;
-            words.append(append(list));
-        }
         if (size_t count = codeBlock->numberOfConstantIdentifierSets()) {
             Vector<uint32_t> list { static_cast<uint32_t>(count) };
             for (auto& set : codeBlock->constantIdentifierSets()) {
@@ -527,7 +502,7 @@ public:
             if (functions[number])
                 rows.append(Row { precomputed[number].hash, number });
         }
-        Typed::sortOnPool(rows.mutableSpan(), [](const Row& a, const Row& b) {
+        Typed::parallelSort(rows.mutableSpan(), [](const Row& a, const Row& b) {
             return a.hash != b.hash ? a.hash < b.hash : a.number < b.number;
         });
         Vector<uint32_t> firstWithBytesOf;
@@ -630,7 +605,6 @@ public:
                     own.names.add(codeBlock->identifier(bytecode.m_var).impl());
                 break;
             default:
-                RELEASE_ASSERT(!(traitsOf(instruction->opcodeID()) & OpcodeTraits::LooksUpVariableByName));
                 break;
             }
         }
@@ -661,13 +635,13 @@ public:
 
     void mergeSymbolTables()
     {
-        UncheckedKeyHashMap<uint64_t, SymbolTable*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> kept;
+        UncheckedKeyHashMap<uint64_t, SymbolTable*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> canonicalTables;
         for (JSValue& constant : m_constants) {
             auto* table = constant && constant.isCell() ? dynamicDowncast<SymbolTable>(constant.asCell()) : nullptr;
             if (!table)
                 continue;
-            if (auto said = table->namelessContentKey())
-                constant = kept.add(*said, table).iterator->value;
+            if (auto contentKey = table->namelessContentKey())
+                constant = canonicalTables.add(*contentKey, table).iterator->value;
         }
     }
 
@@ -684,7 +658,6 @@ public:
     Vector<uint32_t> m_functionMetadataOffsets;
     Vector<UniquedStringImpl*> m_identifiers;
     Vector<AtomString> m_typedIdentifiers;
-    Vector<RefPtr<AtomStringImpl>> m_switchAtoms;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_identifierIndices;
     Vector<JSValue> m_constants;
     Vector<UnlinkedCodeBlock*> m_topLevelCodes;
@@ -1075,18 +1048,18 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         size_t capacity = 16;
         while (capacity * 3 < count * 4)
             capacity *= 2;
-        Vector<ImageKey> kept;
-        kept.grow(capacity);
-        zeroSpan(kept.mutableSpan());
+        Vector<ImageKey> imageKeyTable;
+        imageKeyTable.grow(capacity);
+        zeroSpan(imageKeyTable.mutableSpan());
         for (auto& key : image->keys()) {
             if (!isLookedUp(key))
                 continue;
             size_t bucket = key.hash() & (capacity - 1);
-            while (kept[bucket].record)
+            while (imageKeyTable[bucket].record)
                 bucket = (bucket + 1) & (capacity - 1);
-            kept[bucket] = key;
+            imageKeyTable[bucket] = key;
         }
-        header.imageKeysOffset = builder.append(kept);
+        header.imageKeysOffset = builder.append(imageKeyTable);
         header.imageKeyCapacity = capacity;
     }
     endStep("the keys"_s);
@@ -1126,8 +1099,8 @@ const ProgramModule* ProgramData::moduleWithEntryOffset(uint32_t entryOffset) co
 String ProgramData::sourceName(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* places = at<uint32_t>(sourceNamesOffset);
-    auto* record = reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1];
+    auto* nameOffsets = at<uint32_t>(sourceNamesOffset);
+    auto* record = reinterpret_cast<const char8_t*>(nameOffsets + numberOfSources) + nameOffsets[source - 1];
     SourceNameHeader head;
     memcpy(&head, record, sizeof(head));
     size_t rest = head.restAndIsASCII & 0x7fff;
@@ -1149,8 +1122,8 @@ String ProgramData::sourceName(uint32_t source) const
 String ProgramData::sourceNameInFrames(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* places = at<uint32_t>(sourceNamesOffset);
-    auto* record = reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1];
+    auto* nameOffsets = at<uint32_t>(sourceNamesOffset);
+    auto* record = reinterpret_cast<const char8_t*>(nameOffsets + numberOfSources) + nameOffsets[source - 1];
     SourceNameHeader head;
     memcpy(&head, record, sizeof(head));
     if (!(head.sharedAndIsRelative & 0x8000))
@@ -1190,9 +1163,9 @@ String ProgramData::sourceNameInFrames(uint32_t source) const
 bool ProgramData::isSourceNameEmpty(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* places = at<uint32_t>(sourceNamesOffset);
+    auto* nameOffsets = at<uint32_t>(sourceNamesOffset);
     SourceNameHeader head;
-    memcpy(&head, reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1], sizeof(head));
+    memcpy(&head, reinterpret_cast<const char8_t*>(nameOffsets + numberOfSources) + nameOffsets[source - 1], sizeof(head));
     return !(head.sharedAndIsRelative & 0x7fff) && !(head.restAndIsASCII & 0x7fff);
 }
 
@@ -1289,7 +1262,6 @@ struct VMProgram::Impl {
     SegmentedVector<Identifier, 64> overflowIdentifiers;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> overflowIdentifierPositions;
     Vector<RefPtr<SourceProvider>> providers;
-    UncheckedKeyHashMap<uint32_t, FixedVector<UnlinkedStringJumpTable>> stringSwitchJumpTables;
     UncheckedKeyHashMap<uint32_t, FixedVector<IdentifierSet>> identifierSets;
 };
 
@@ -1332,8 +1304,8 @@ VMProgram::VMProgram(VM& vm)
 VMProgram::~VMProgram()
 {
     Typed::destroy(typedFunctionTables);
-    for (uint32_t place = 1; place <= m_positionedIdentifierCount; ++place)
-        m_identifiers[place]->deref();
+    for (uint32_t position = 1; position <= m_positionedIdentifierCount; ++position)
+        m_identifiers[position]->deref();
     fastFree(m_constantValues);
     fastFree(m_constantKeys);
     OSAllocator::decommitAndRelease(m_identifiers, sizeOfIdentifierTables(m_data));
@@ -1361,10 +1333,10 @@ void VMProgram::didMaterialize(JSCell* cell)
 JSValue VMProgram::constant(uint32_t index)
 {
     RELEASE_ASSERT(index < m_data.numberOfConstants);
-    for (uint32_t place = constantHash(index);; ++place) {
-        uint32_t key = m_constantKeys[place & m_constantMask];
+    for (uint32_t probe = constantHash(index);; ++probe) {
+        uint32_t key = m_constantKeys[probe & m_constantMask];
         if (key == index + 1)
-            return JSValue::decode(m_constantValues[place & m_constantMask]);
+            return JSValue::decode(m_constantValues[probe & m_constantMask]);
         if (!key)
             break;
     }
@@ -1386,11 +1358,11 @@ JSValue VMProgram::constant(uint32_t index)
 void VMProgram::addConstant(uint32_t index, JSValue value)
 {
     auto add = [&](uint32_t key, EncodedJSValue encoded) {
-        uint32_t place = constantHash(key - 1);
-        while (m_constantKeys[place & m_constantMask])
-            ++place;
-        m_constantValues[place & m_constantMask] = encoded;
-        m_constantKeys[place & m_constantMask] = key;
+        uint32_t probe = constantHash(key - 1);
+        while (m_constantKeys[probe & m_constantMask])
+            ++probe;
+        m_constantValues[probe & m_constantMask] = encoded;
+        m_constantKeys[probe & m_constantMask] = key;
     };
     if (++m_numberOfMaterializedConstants * 2 > m_constantMask) {
         uint32_t oldCapacity = m_constantMask + 1;
@@ -1411,11 +1383,11 @@ void VMProgram::addConstant(uint32_t index, JSValue value)
 
 NEVER_INLINE UniquedStringImpl* VMProgram::identifierSlow(uint32_t index)
 {
-    uint16_t place = m_identifierPositions[index];
-    if (place == identifierStoredElsewhere) [[unlikely]]
+    uint16_t position = m_identifierPositions[index];
+    if (position == identifierStoredElsewhere) [[unlikely]]
         return m_impl->overflowIdentifiers[m_impl->overflowIdentifierPositions.get(index)].impl();
-    if (place)
-        return m_identifiers[place];
+    if (position)
+        return m_identifiers[position];
     Identifier identifier = Typed::tryCreateIdentifier(m_vm, index);
     if (identifier.isNull())
         identifier = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).identifier(index);
@@ -1432,30 +1404,30 @@ const Identifier& VMProgram::retainIdentifier(uint32_t index, Identifier&& ident
         m_identifierPositions[index] = identifierStoredElsewhere;
         return m_impl->overflowIdentifiers.last();
     }
-    uint16_t place = ++m_positionedIdentifierCount;
-    m_identifiers[place] = &Ref { *identifier.impl() }.leakRef();
+    uint16_t position = ++m_positionedIdentifierCount;
+    m_identifiers[position] = &Ref { *identifier.impl() }.leakRef();
     WTF::storeStoreFence();
-    m_identifierPositions[index] = place;
-    return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
+    m_identifierPositions[index] = position;
+    return *reinterpret_cast<const Identifier*>(&m_identifiers[position]);
 }
 
 const Identifier* VMProgram::tryGetIdentifierConcurrently(uint32_t index) const
 {
     RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-    uint16_t place = m_identifierPositions[index];
-    if (index && (!place || place == identifierStoredElsewhere))
+    uint16_t position = m_identifierPositions[index];
+    if (index && (!position || position == identifierStoredElsewhere))
         return nullptr;
     WTF::loadLoadFence();
-    return reinterpret_cast<const Identifier*>(&m_identifiers[place]);
+    return reinterpret_cast<const Identifier*>(&m_identifiers[position]);
 }
 
 NEVER_INLINE const Identifier& VMProgram::identifierAsIdentifierSlow(uint32_t index)
 {
     identifierSlow(index);
-    uint16_t place = m_identifierPositions[index];
-    if (place == identifierStoredElsewhere) [[unlikely]]
+    uint16_t position = m_identifierPositions[index];
+    if (position == identifierStoredElsewhere) [[unlikely]]
         return m_impl->overflowIdentifiers[m_impl->overflowIdentifierPositions.get(index)];
-    return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
+    return *reinterpret_cast<const Identifier*>(&m_identifiers[position]);
 }
 
 UnlinkedCodeBlock* VMProgram::topLevelCode(uint32_t index)
@@ -1499,25 +1471,6 @@ void VMProgram::didLoadModule(SourceProvider& provider)
     RefPtr<SourceProvider>& first = m_impl->providers[module - m_data.modules().data()];
     if (!first)
         first = &provider;
-}
-
-const UnlinkedStringJumpTable& VMProgram::stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which)
-{
-    return m_impl->stringSwitchJumpTables.ensure(offsetOfTables, [&] {
-        const uint32_t* words = m_data.at<uint32_t>(offsetOfTables);
-        FixedVector<UnlinkedStringJumpTable> tables(*words++);
-        for (auto& table : tables) {
-            uint32_t count = *words++;
-            table.m_defaultOffset = static_cast<int32_t>(*words++);
-            for (uint32_t i = 0; i < count; ++i, words += 2) {
-                StringImpl* string = identifier(words[0]);
-                table.m_offsetTable.add(string, UnlinkedStringJumpTable::OffsetLocation { static_cast<int32_t>(words[1]), i });
-                table.m_minLength = std::min(table.m_minLength, string->length());
-                table.m_maxLength = std::max(table.m_maxLength, string->length());
-            }
-        }
-        return tables;
-    }).iterator->value[which];
 }
 
 const IdentifierSet& VMProgram::identifierSet(uint32_t offsetOfSets, unsigned which)
@@ -1587,7 +1540,7 @@ void VMProgram::didFinishCollection()
         dataLog("AOT: made so far: ", m_positionedIdentifierCount + m_impl->overflowIdentifiers.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants:");
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
-        dataLogLn("; ", m_impl->stringSwitchJumpTables.size(), " + ", m_impl->identifierSets.size(), " tables of functions");
+        dataLogLn("; ", m_impl->identifierSets.size(), " tables of functions");
         if (m_vm.heap.collectionScope().value_or(CollectionScope::Full) == CollectionScope::Full) {
             dataLogLn("CENSUS begin");
             m_vm.heap.objectSpace().forEachSubspace([&](Subspace& subspace) {

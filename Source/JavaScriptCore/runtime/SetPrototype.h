@@ -63,7 +63,4 @@ private:
 
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncValues);
 
-JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
-JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
-
 } // namespace JSC

@@ -1536,7 +1536,7 @@ Value* OMGIRGenerator::addressOfOperation(BasicBlock* block, void* operation)
     if (m_context.codeForImage) {
         if (auto index = CodeInImage::indexOfOperation(operation))
             return imageCodePointer(block, *index);
-        m_context.codeForImage->whyDeclined = "it calls an operation that code in an image cannot"_s;
+        m_context.codeForImage->declineReason = "it calls an operation that code in an image cannot"_s;
     }
     return block->appendNew<ConstPtrValue>(m_proc, origin(), operation);
 }
@@ -1548,7 +1548,7 @@ Value* OMGIRGenerator::addressOfRTT(const RTT& rtt)
             if (&m_info.rtt(TypeSignatureIndex(index)) == &rtt)
                 return imageCodePointer(m_currentBlock, CodeInImage::indexOfRTT(m_info, TypeSignatureIndex(index)));
         }
-        m_context.codeForImage->whyDeclined = "it names a type that is not one of its module"_s;
+        m_context.codeForImage->declineReason = "it names a type that is not one of its module"_s;
     }
     return constant(pointerType(), std::bit_cast<uintptr_t>(&rtt));
 }

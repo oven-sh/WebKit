@@ -845,7 +845,7 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return (!Options::useJIT() && Options::useMiniVMModeWithoutJIT()) || Options::forceMiniVMMode();
+        return (!Options::useJIT() && !Options::useAOT()) || Options::forceMiniVMMode();
     }
 
     static bool useUnlinkedCodeBlockJettisoning()

@@ -271,7 +271,7 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
-    AOT::InlineFrameReader m_inlineFramesRead;
+    AOT::InlineFrameReader m_inlineFrameReader;
     const void* m_classifiedAddress { nullptr };
     AOT::ImageAddressInfo m_classification;
     AOT::Instance* m_aotInstance { nullptr };

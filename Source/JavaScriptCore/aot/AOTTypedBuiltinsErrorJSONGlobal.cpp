@@ -69,8 +69,8 @@ std::optional<Operand> Lowering::lowerInlineErrorJSONGlobal(InlineBuiltin which,
         return Operand(value.rep, nullptr);
     }
     uint32_t inlineFrame = m_function.at(result).inlineFrame;
-    auto& maker = inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function;
-    if (m_program.isHiddenInStackTraces(maker) && !m_program.implementsBuiltin(maker))
+    auto& enclosingFunction = inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function;
+    if (m_program.isHiddenInStackTraces(enclosingFunction) && !m_program.implementsBuiltin(enclosingFunction))
         return ensure(asCell(callBuiltinFunction(value, effects)), errorClass, typeOf(result));
     if (isErrorThrownAtCreation(*m_currentBlock, result) && isLazilyFetched(arguments[0])) {
         m_isLazilyFetched.set(result.index());
@@ -92,8 +92,8 @@ bool Lowering::isErrorThrownAtCreation(const Block& block, ValueID id)
         return false;
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
         return false;
-    auto& maker = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
-    if (m_program.isHiddenInStackTraces(maker) && !m_program.implementsBuiltin(maker))
+    auto& enclosingFunction = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+    if (m_program.isHiddenInStackTraces(enclosingFunction) && !m_program.implementsBuiltin(enclosingFunction))
         return false;
     return value.arguments.size() == 1 && m_function.at(value.arguments[0]).opcode == Opcode::String;
 }

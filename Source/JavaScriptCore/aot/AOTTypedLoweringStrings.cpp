@@ -254,13 +254,13 @@ void Lowering::open(const OpenedString& opened)
     };
     StringReceiver receiver;
     if (opened.capturedVariableCell) {
-        Operand held = lowerGetEnvironmentField(opened.string, m_function.at(opened.string));
+        Operand stringOperand = lowerGetEnvironmentField(opened.string, m_function.at(opened.string));
         auto& type = typeOf(opened.string);
-        set(opened.capturedVariableCell, held.value);
-        receiver = stringReceiver(held.rep == Rep::Cell ? held.as<CellPointer>() : asCell(held.as<Boxed>()));
-        if (held.rep != Rep::Cell && type.mayBeUndefinedOrNull()) {
+        set(opened.capturedVariableCell, stringOperand.value);
+        receiver = stringReceiver(stringOperand.rep == Rep::Cell ? stringOperand.as<CellPointer>() : asCell(stringOperand.as<Boxed>()));
+        if (stringOperand.rep != Rep::Cell && type.mayBeUndefinedOrNull()) {
             receiver.flags = 0;
-            receiver.isString = isCell(held.as<Boxed>(), type);
+            receiver.isString = isCell(stringOperand.as<Boxed>(), type);
         }
     } else
         receiver = stringReceiver(opened.string);
@@ -366,7 +366,7 @@ std::optional<unsigned> fieldReadAtConstantIndex(const Program& program, const F
 bool isReadOfLastElement(const Program& program, const Function& function, const Value& value)
 {
     auto& builtins = Builtins::singleton();
-    auto inlinedAs = [&](const Value& call) -> std::optional<InlineBuiltin> {
+    auto inlineBuiltinFor = [&](const Value& call) -> std::optional<InlineBuiltin> {
         if (call.opcode != Opcode::CallBuiltin || !call.child(0))
             return std::nullopt;
         auto& implementation = builtins.at(call.builtin()).implementation;
@@ -374,18 +374,18 @@ bool isReadOfLastElement(const Program& program, const Function& function, const
             return std::nullopt;
         return implementation.inlined;
     };
-    auto isInteger = [&](ValueID id, int64_t wanted) {
+    auto isInteger = [&](ValueID id, int64_t expected) {
         ValueID constant = program.constantOf(function, id);
-        return constant && function.at(constant).opcode == Opcode::Integer && function.at(constant).integer() == wanted;
+        return constant && function.at(constant).opcode == Opcode::Integer && function.at(constant).integer() == expected;
     };
     if (value.opcode == Opcode::GetByVal) {
         auto& index = function.at(value.child(1));
         if (index.opcode != Opcode::Sub || !isInteger(index.child(1), 1))
             return false;
         auto& length = function.at(index.child(0));
-        return inlinedAs(length) == InlineBuiltin::ArrayLength && length.child(0) == value.child(0);
+        return inlineBuiltinFor(length) == InlineBuiltin::ArrayLength && length.child(0) == value.child(0);
     }
-    auto which = inlinedAs(value);
+    auto which = inlineBuiltinFor(value);
     if (which == InlineBuiltin::ArrayPop)
         return value.arguments.isEmpty();
     return which == InlineBuiltin::ArrayAt && value.arguments.size() == 1 && isInteger(value.arguments[0], -1);
@@ -397,7 +397,7 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
         return splits;
     auto& builtins = Builtins::singleton();
-    auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
+    auto inlineBuiltinFor = [&](const Value& value) -> std::optional<InlineBuiltin> {
         if (value.opcode != Opcode::CallBuiltin || !value.child(0))
             return std::nullopt;
         auto& implementation = builtins.at(value.builtin()).implementation;
@@ -408,7 +408,7 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& value = function.at(id);
-            if (inlinedAs(value) != InlineBuiltin::StringSplit || value.arguments.size() != 1 || value.isInTailPosition || program.typeOf(function, value.child(0)).hasObjects())
+            if (inlineBuiltinFor(value) != InlineBuiltin::StringSplit || value.arguments.size() != 1 || value.isInTailPosition || program.typeOf(function, value.child(0)).hasObjects())
                 continue;
             ValueID constant = program.constantOf(function, value.arguments[0]);
             if (!constant || function.at(constant).opcode != Opcode::String)
@@ -454,11 +454,11 @@ SplitsOnlyTakenApart findSplitsOnlyTakenApart(const Program& program, const Func
                 ++found->value.numberOfUses;
                 if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0))
                     found->value.numberOfPositions = std::max(found->value.numberOfPositions, *field + 1);
-                else if (inlinedAs(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
+                else if (inlineBuiltinFor(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
                     found->value.countsAllSeparators = true;
                 else if (child == user.child(0) && !user.arguments.contains(child) && isReadOfLastElement(program, function, user)) {
                     found->value.countsAllSeparators = true;
-                    found->value.isPopped |= inlinedAs(user) == InlineBuiltin::ArrayPop;
+                    found->value.isPopped |= inlineBuiltinFor(user) == InlineBuiltin::ArrayPop;
                 } else if (user.opcode == Opcode::IteratorOpen && isUsed.get(id.index()) && !isUsedOtherThanToStep.get(id.index()))
                     found->value.iterator = id;
                 else if (user.opcode != Opcode::IteratorOpen || isUsed.get(id.index()))
@@ -490,7 +490,7 @@ std::optional<MatchProperty> matchPropertyRead(const Program& program, const Val
     return std::nullopt;
 }
 
-ValueID matchBehindCasts(const Function& function, ValueID id)
+ValueID lookThroughCasts(const Function& function, ValueID id)
 {
     while (function.at(id).opcode == Opcode::Cast) {
         CastReason reason = function.at(id).castReason();
@@ -507,7 +507,7 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
         return matches;
     auto& builtins = Builtins::singleton();
-    auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
+    auto inlineBuiltinFor = [&](const Value& value) -> std::optional<InlineBuiltin> {
         if (value.opcode != Opcode::CallBuiltin || !value.child(0))
             return std::nullopt;
         auto& implementation = builtins.at(value.builtin()).implementation;
@@ -541,7 +541,7 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& value = function.at(id);
-            auto which = inlinedAs(value);
+            auto which = inlineBuiltinFor(value);
             if (value.arguments.size() != 1 || value.isInTailPosition || program.at(value.type).primitives & ~Primitive::UndefinedOrNull)
                 continue;
             if (which == InlineBuiltin::StringMatch) {
@@ -581,7 +581,7 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
         for (ValueID id : block.values) {
             auto& user = function.at(id);
             user.forEachChild([&](ValueID child) {
-                auto found = matches.find(matchBehindCasts(function, child).index());
+                auto found = matches.find(lookThroughCasts(function, child).index());
                 if (found == matches.end())
                     return;
                 if (auto field = fieldReadAtConstantIndex(program, function, user); field && child == user.child(0)) {
@@ -590,22 +590,22 @@ MatchesOnlyTakenApart findMatchesOnlyTakenApart(const Program& program, const Fu
                 }
                 if (user.opcode == Opcode::ToBoolean || user.opcode == Opcode::IsUndefinedOrNull || matchPropertyRead(program, user))
                     return;
-                if (user.opcode == Opcode::Cast && matchBehindCasts(function, id) != id && !(program.at(user.type).primitives & ~Primitive::UndefinedOrNull))
+                if (user.opcode == Opcode::Cast && lookThroughCasts(function, id) != id && !(program.at(user.type).primitives & ~Primitive::UndefinedOrNull))
                     return;
                 if (user.opcode == Opcode::IteratorOpen && !isUsed.get(id.index()))
                     return;
                 if ((user.opcode == Opcode::StrictEq || user.opcode == Opcode::Eq) && isNil(user.child(user.child(0) == child)))
                     return;
-                if (inlinedAs(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
+                if (inlineBuiltinFor(user) == InlineBuiltin::ArrayLength && user.arguments.isEmpty())
                     return;
                 matches.remove(found);
             });
         }
         if (block.terminator.value)
-            matches.remove(matchBehindCasts(function, block.terminator.value).index());
+            matches.remove(lookThroughCasts(function, block.terminator.value).index());
         for (auto& target : block.terminator.targets) {
             for (ValueID argument : target.arguments)
-                matches.remove(matchBehindCasts(function, argument).index());
+                matches.remove(lookThroughCasts(function, argument).index());
         }
     }
     return matches;
@@ -629,7 +629,7 @@ std::optional<Operand> Lowering::lowerPropertyOfMatch(ValueID result, const Valu
 {
     if (m_matchesInFrame.isEmpty())
         return std::nullopt;
-    auto found = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index());
+    auto found = m_matchesInFrame.find(lookThroughCasts(m_function, value.child(0)).index());
     if (found == m_matchesInFrame.end())
         return std::nullopt;
     nonNullish(value.child(0), value.string());
@@ -638,7 +638,7 @@ std::optional<Operand> Lowering::lowerPropertyOfMatch(ValueID result, const Valu
     return ensure(found->value->subject.string, m_program.at(m_program.types.string), typeOf(result));
 }
 
-Integer Lowering::findSeparators(const SeparatedString& separated, Integer from, uint32_t wanted)
+Integer Lowering::findSeparators(const SeparatedString& separated, Integer from, uint32_t positionCountAndFlags)
 {
     auto text = m_program.string(separated.separator);
     Word32 separator = word32(text.size() == 1 ? text[0] : separated.separator.index());
@@ -648,13 +648,13 @@ Integer Lowering::findSeparators(const SeparatedString& separated, Integer from,
     Integer found = zeroExtended(either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
         Integer data(offsetBy(characters.data, from, 0).value());
         if (text.size() == 1)
-            return AOT_TYPED_OPERATION(FindSeparators8, data, length, separator, positions, word32(wanted));
-        return AOT_TYPED_OPERATION(FindLongSeparators8, data, length, separator, positions, word32(wanted));
+            return AOT_TYPED_OPERATION(FindSeparators8, data, length, separator, positions, word32(positionCountAndFlags));
+        return AOT_TYPED_OPERATION(FindLongSeparators8, data, length, separator, positions, word32(positionCountAndFlags));
     }, [&] {
         Integer data(offsetBy(characters.data, from, 1).value());
         if (text.size() == 1)
-            return AOT_TYPED_OPERATION(FindSeparators16, data, length, separator, positions, word32(wanted));
-        return AOT_TYPED_OPERATION(FindLongSeparators16, data, length, separator, positions, word32(wanted));
+            return AOT_TYPED_OPERATION(FindSeparators16, data, length, separator, positions, word32(positionCountAndFlags));
+        return AOT_TYPED_OPERATION(FindLongSeparators16, data, length, separator, positions, word32(positionCountAndFlags));
     }));
     ensureStillAliveHere(characters.owner);
     return found;
@@ -667,7 +667,7 @@ std::optional<Operand> Lowering::lowerStepOfIteratedSplit(ValueID result, const 
     auto split = m_splitsByIterator.find(value.child(0).index());
     if (split == m_splitsByIterator.end())
         return std::nullopt;
-    const SeparatedString& separated = *m_separatedStrings.find(split->value)->value;
+    const SeparatedString& separated = *m_splitStrings.find(split->value)->value;
     Integer length = separated.length;
     Integer from(m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), separated.nextPiece));
     if (value.opcode == Opcode::IteratorHasNext)
@@ -685,7 +685,7 @@ std::optional<Operand> Lowering::lowerSplitOnlyTakenApart(ValueID result, const 
     if (taken == m_splitsOnlyTakenApart.end() || !isOnMainPath())
         return std::nullopt;
     unsigned numberOfPositions = taken->value.numberOfPositions;
-    uint32_t wanted = numberOfPositions | (taken->value.countsAllSeparators ? 1u << 31 : 0);
+    uint32_t positionCountAndFlags = numberOfPositions | (taken->value.countsAllSeparators ? 1u << 31 : 0);
     SeparatedString separated;
     separated.subject = stringReceiver(string);
     separated.subject.id = value.child(0);
@@ -699,27 +699,27 @@ std::optional<Operand> Lowering::lowerSplitOnlyTakenApart(ValueID result, const 
         m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), separated.nextPiece, m_out.int64Zero);
         m_splitsByIterator.set(iterator.index(), result.index());
     } else {
-        separated.numberOfSeparators = findSeparators(separated, integer(0), wanted);
+        separated.numberOfSeparators = findSeparators(separated, integer(0), positionCountAndFlags);
         for (unsigned i = 0; i < numberOfPositions + taken->value.countsAllSeparators; ++i)
             separated.positions.append(zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, separated.slot, i * sizeof(uint32_t))))));
     }
-    m_separatedStrings.set(result.index(), makeUniqueWithoutFastMallocCheck<SeparatedString>(WTF::move(separated)));
+    m_splitStrings.set(result.index(), makeUniqueWithoutFastMallocCheck<SeparatedString>(WTF::move(separated)));
     return Operand(value.rep, nullptr);
 }
 
 std::optional<Operand> Lowering::lowerFieldOfSeparatedString(ValueID result, const Value& value)
 {
-    if (m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty())
+    if (m_splitStrings.isEmpty() && m_matchesInFrame.isEmpty())
         return std::nullopt;
     unsigned field = fieldReadAtConstantIndex(m_program, m_function, value).value_or(0);
-    if (auto found = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index()); found != m_matchesInFrame.end()) {
+    if (auto found = m_matchesInFrame.find(lookThroughCasts(m_function, value.child(0)).index()); found != m_matchesInFrame.end()) {
         const MatchInFrame& match = *found->value;
         nonNullish(value.child(0), { });
         Word32 isPresent = field ? logicalAnd(lessThanOrEqual(integer(field), match.numberOfGroups), greaterThanOrEqual(match.starts[field], integer(0))) : Word32();
         return partOfSubject(result, value, field, match.subject, stringLength(match.subject), match.starts[field], match.ends[field], isPresent);
     }
-    auto found = m_separatedStrings.find(value.child(0).index());
-    if (found == m_separatedStrings.end())
+    auto found = m_splitStrings.find(value.child(0).index());
+    if (found == m_splitStrings.end())
         return std::nullopt;
     const SeparatedString& separated = *found->value;
     Integer length = separated.length;
@@ -756,8 +756,8 @@ Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned fie
         uint64_t key = static_cast<uint64_t>(value.child(0).index()) << 8 | field;
         if (mayBeAbsent || !isOnMainPath() || field == UINT_MAX)
             return makeSubstring(subject, length, from, to);
-        if (auto made = m_fieldsMadeInBlock.find(key); made != m_fieldsMadeInBlock.end() && made->value.first == m_currentBlockID.index())
-            return CellPointer(made->value.second);
+        if (auto iterator = m_fieldsMadeInBlock.find(key); iterator != m_fieldsMadeInBlock.end() && iterator->value.first == m_currentBlockID.index())
+            return CellPointer(iterator->value.second);
         CellPointer cell = makeSubstring(subject, length, from, to);
         m_fieldsMadeInBlock.set(key, std::pair { m_currentBlockID.index(), cell.value() });
         return cell;
@@ -773,14 +773,14 @@ Operand Lowering::partOfSubject(ValueID result, const Value& value, unsigned fie
 
 std::optional<Operand> Lowering::lowerLengthOfSeparatedString(ValueID result, const Value& value)
 {
-    if ((m_separatedStrings.isEmpty() && m_matchesInFrame.isEmpty()) || !value.child(0))
+    if ((m_splitStrings.isEmpty() && m_matchesInFrame.isEmpty()) || !value.child(0))
         return std::nullopt;
-    if (auto match = m_matchesInFrame.find(matchBehindCasts(m_function, value.child(0)).index()); match != m_matchesInFrame.end()) {
-        nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    if (auto match = m_matchesInFrame.find(lookThroughCasts(m_function, value.child(0)).index()); match != m_matchesInFrame.end()) {
+        nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
         return ensure(add(match->value->numberOfGroups, integer(1)), Type::integer(Range::length()), typeOf(result));
     }
-    auto found = m_separatedStrings.find(value.child(0).index());
-    if (found == m_separatedStrings.end())
+    auto found = m_splitStrings.find(value.child(0).index());
+    if (found == m_splitStrings.end())
         return std::nullopt;
     if (isReadOfLastElement(m_program, m_function, value))
         return lowerFieldOfSeparatedString(result, value);
@@ -789,7 +789,7 @@ std::optional<Operand> Lowering::lowerLengthOfSeparatedString(ValueID result, co
 
 void Lowering::findSubstringsOnlyInspected()
 {
-    auto inlinedAs = [&](const Value& value) -> std::optional<InlineBuiltin> {
+    auto inlineBuiltinFor = [&](const Value& value) -> std::optional<InlineBuiltin> {
         if (value.opcode != Opcode::CallBuiltin)
             return std::nullopt;
         auto& implementation = m_builtins.at(value.builtin()).implementation;
@@ -804,10 +804,10 @@ void Lowering::findSubstringsOnlyInspected()
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
             auto& value = m_function.at(id);
-            bool isField = value.opcode == Opcode::GetByVal && (m_splitsOnlyTakenApart.contains(value.child(0).index()) || m_matchesOnlyTakenApart.contains(matchBehindCasts(m_function, value.child(0)).index()));
+            bool isField = value.opcode == Opcode::GetByVal && (m_splitsOnlyTakenApart.contains(value.child(0).index()) || m_matchesOnlyTakenApart.contains(lookThroughCasts(m_function, value.child(0)).index()));
             isField |= value.opcode == Opcode::CallBuiltin && value.child(0) && m_splitsOnlyTakenApart.contains(value.child(0).index()) && isReadOfLastElement(m_program, m_function, value);
             isField |= value.opcode == Opcode::IteratorValue && m_function.at(value.child(0)).opcode == Opcode::IteratorOpen && m_splitsOnlyTakenApart.contains(m_function.at(value.child(0)).child(0).index());
-            if ((isField || (value.child(0) && isSlice(inlinedAs(value)))) && holdsCells(value.rep))
+            if ((isField || (value.child(0) && isSlice(inlineBuiltinFor(value)))) && holdsCells(value.rep))
                 isPart.set(id.index());
         }
     }
@@ -816,7 +816,7 @@ void Lowering::findSubstringsOnlyInspected()
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
             auto& user = m_function.at(id);
-            auto which = inlinedAs(user);
+            auto which = inlineBuiltinFor(user);
             bool inspectsReceiver = which && user.child(0) && (*which == InlineBuiltin::StringLength || *which == InlineBuiltin::StringCharCodeAt || *which == InlineBuiltin::StringCodePointAt || *which == InlineBuiltin::StringCharAt || *which == InlineBuiltin::StringAt || isSlice(which));
             bool parsesFirstArgument = which == InlineBuiltin::ToNumber ? user.arguments.size() == 1 : which == InlineBuiltin::ParseInt && (user.arguments.size() == 1 || (user.arguments.size() == 2 && typeOf(user.arguments[1]).isInteger() && typeOf(user.arguments[1]).integers.isSubsetOf(Range::int32())));
             user.forEachChild([&](ValueID child) {
@@ -929,7 +929,7 @@ Lowering::Characters Lowering::charactersOf(const StringReceiver& receiver, LBas
     m_out.appendTo(notSubstring);
     Word32 isNowFlat = hasNoBits(current, JSString::isRopeInPointer);
     if (ifRope) {
-        orElse(isNowFlat, ifRope);
+        branchUnless(isNowFlat, ifRope);
         returnWholeString(current);
     } else {
         returnWholeString(eitherPointer(isNowFlat, [&] {
@@ -1042,7 +1042,7 @@ Operand Lowering::getStringElement(const StringReceiver& receiver, ValueID key, 
     Integer index = indexOrElse(key, outside);
     Characters characters = charactersOf(receiver);
     if (!std::exchange(m_indexIsKnownInBounds, false))
-        orElse(below(index, characters.length), outside);
+        branchUnless(below(index, characters.length), outside);
     bool tracksCodeUnit = !otherwise;
     Word32 codeUnit;
     CellPointer string = singleCharacterStringAt(characters, index, tracksCodeUnit || codeUnitVariable ? &codeUnit : nullptr);
@@ -1113,11 +1113,11 @@ Integer Lowering::relativeStringIndex(Operand operand, const Type& type, Integer
         if (!m_out.m_block->frequency())
             return Integer(AOT_TYPED_OPERATION(IndexInString, operand.as<Number>(), length, word32(isRelativeToEnd)).value());
         Number limit = number(static_cast<double>(1ll << 32));
-        Number given = operand.as<Number>();
-        given = select(equal(given, given), given, number(0));
-        given = select(greaterThan(given, limit), limit, given);
-        given = select(lessThan(given, neg(limit)), neg(limit), given);
-        x = truncateToInteger(given);
+        Number clampedIndex = operand.as<Number>();
+        clampedIndex = select(equal(clampedIndex, clampedIndex), clampedIndex, number(0));
+        clampedIndex = select(greaterThan(clampedIndex, limit), limit, clampedIndex);
+        clampedIndex = select(lessThan(clampedIndex, neg(limit)), neg(limit), clampedIndex);
+        x = truncateToInteger(clampedIndex);
 #endif
     }
     Integer capped = select(greaterThan(x, length), length, x);
@@ -1134,7 +1134,7 @@ Integer Lowering::relativeStringIndex(Operand operand, const Type& type, Integer
 
 CellPointer Lowering::allocateRope(LBasicBlock slowPath)
 {
-    LValue cell = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), slowPath);
+    LValue cell = allocateHeapCell(loadImmutablePointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), slowPath);
     applyEffects(cell->as<PatchpointValue>(), { Writes::RuntimeState, false });
     storeHeader(cell, fixed64(Instance::offsetOfStringHeader()));
     return CellPointer(cell);
@@ -1267,8 +1267,8 @@ std::optional<Word32> Lowering::areTrackedCodeUnitsEqual(ValueID a, ValueID b)
         auto unit = constantCodeUnit(constant);
         if (!unit)
             continue;
-        if (auto kept = stringCodeUnit(other))
-            return equal(*kept, integer(*unit));
+        if (auto otherUnit = stringCodeUnit(other))
+            return equal(*otherUnit, integer(*unit));
     }
     return std::nullopt;
 }
@@ -1817,8 +1817,8 @@ StringBuilderAnalysis analyzeStringBuilders(const Program& program, FunctionID f
     BitVector isLoopCarried(numberOfValues);
     UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> loopBlocks;
     if (!isViable.isEmpty()) {
-        Vector<unsigned> place;
-        place.fill(0, numberOfBlocks);
+        Vector<unsigned> orderIndex;
+        orderIndex.fill(0, numberOfBlocks);
         BitVector seen(numberOfBlocks);
         Vector<std::pair<unsigned, unsigned>> stack;
         unsigned next = numberOfBlocks;
@@ -1833,7 +1833,7 @@ StringBuilderAnalysis analyzeStringBuilders(const Program& program, FunctionID f
                     stack.append({ successor, 0 });
                 continue;
             }
-            place[block] = --next;
+            orderIndex[block] = --next;
             stack.removeLast();
         }
         Vector<Vector<unsigned, 2>> predecessors(numberOfBlocks);
@@ -1843,7 +1843,7 @@ StringBuilderAnalysis analyzeStringBuilders(const Program& program, FunctionID f
         }
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             for (auto& target : function.blocks[b].terminator.targets) {
-                if (!seen.get(b) || place[target.block.index()] > place[b])
+                if (!seen.get(b) || orderIndex[target.block.index()] > orderIndex[b])
                     continue;
                 Vector<uint32_t, 2> carried;
                 auto& parameters = function.at(target.block).parameters;
@@ -2020,7 +2020,7 @@ Lowering::StringPart Lowering::concatenate(const StringPart& first, const String
             returnIfEmpty(second.length, first.string);
     }
     static_assert(JSString::MaxLength == std::numeric_limits<int32_t>::max());
-    orElse(isZero(bitAnd(length, integer(~static_cast<int64_t>(JSString::MaxLength)))), slowPath);
+    branchUnless(isZero(bitAnd(length, integer(~static_cast<int64_t>(JSString::MaxLength)))), slowPath);
     CellPointer rope = allocateRope(slowPath);
     LValue mark = m_out.bitOr(m_out.constInt64(JSString::isRopeInPointer), zeroExtended(bitAnd(flags, word32(StringImpl::flagIs8Bit()))).value());
     m_out.store64(m_out.bitOr(first.string.value(), mark), rope.value(), m_heaps.JSRopeString_fiber0);
@@ -2101,7 +2101,7 @@ bool Lowering::isConcatenation(const Value& value, bool mayHoldNullishStrings) c
 bool Lowering::collectConcatenationParts(const BitVector& isInBlock, ValueID id, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough, bool looksThroughStrings)
 {
     auto& value = m_function.at(id);
-    if (isLast || (isInBlock.get(id.index()) && useCountOf(id) == 1 && isConcatenation(value, looksThroughStrings) && !m_stringBuilderAnalysis.isState(id))) {
+    if (isLast || (isInBlock.get(id.index()) && useCountOf(id) == 1 && isConcatenation(value, looksThroughStrings) && !m_stringBuilderAnalysis.hasBuilder(id))) {
         size_t numberOfParts = parts.size();
         size_t searchedCount = lookedThrough.size();
         if (!isLast)
@@ -2146,7 +2146,7 @@ void Lowering::findConcatenationsWithNumbers()
         for (size_t i = block.values.size(); i--;) {
             ValueID id = block.values[i];
             auto& value = m_function.at(id);
-            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isLazilyFetched(id) || m_stringBuilderAnalysis.isState(id) || !isConcatenation(value, true))
+            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isLazilyFetched(id) || m_stringBuilderAnalysis.hasBuilder(id) || !isConcatenation(value, true))
                 continue;
             if (!keys)
                 keys = computeMapKeyValues(m_program, m_id, m_function);
@@ -2404,11 +2404,11 @@ void Lowering::appendStringToStringBuilder(const StackStringBuilder& builder, Ce
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     Pointer impl = fiberOf(stringReceiver(string));
-    orElse(hasNoBits(impl, JSString::isRopeInPointer), slowPath);
-    orElse(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()), slowPath);
+    branchUnless(hasNoBits(impl, JSString::isRopeInPointer), slowPath);
+    branchUnless(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()), slowPath);
     Integer length = stringBuilderLength(builder);
     Integer newLength = add(length, zeroExtended(loadField<Word32>(impl, m_heaps.StringImpl_length)));
-    orElse(belowOrEqual(newLength, integer(stringBuilderCapacity)), slowPath);
+    branchUnless(belowOrEqual(newLength, integer(stringBuilderCapacity)), slowPath);
     copyLatin1Characters(Pointer(m_out.add(stringBuilderBuffer(builder).value(), length.value())), loadField<Pointer>(impl, m_heaps.StringImpl_data), sub(newLength, length));
     ensureStillAliveHere(string);
     setStringBuilderLength(builder, newLength);
@@ -2507,7 +2507,7 @@ void Lowering::initializeStringBuildersOnEdge(const Target& target)
     auto& parameters = m_function.at(target.block).parameters;
     for (unsigned i = 0; i < target.arguments.size(); ++i) {
         ValueID argument = target.arguments[i];
-        if (!m_stringBuilderAnalysis.isState(parameters[i]) || m_stringBuilderAnalysis.isState(argument))
+        if (!m_stringBuilderAnalysis.hasBuilder(parameters[i]) || m_stringBuilderAnalysis.hasBuilder(argument))
             continue;
         auto& builder = stringBuilderFor(parameters[i]);
         resetStringBuilder(builder);
@@ -2527,7 +2527,7 @@ void Lowering::materializeFinalStringBuilderStates(const Block& block)
     if (!m_stringBuilderAnalysis.builderCount)
         return;
     for (ValueID parameter : block.parameters) {
-        if (!m_stringBuilderAnalysis.isState(parameter) || isResidentInStringBuilder(parameter))
+        if (!m_stringBuilderAnalysis.hasBuilder(parameter) || isResidentInStringBuilder(parameter))
             continue;
         CellPointer string = finishStringBuilder(stringBuilderFor(parameter), stringBuilderMayBeEmpty(parameter));
         define(parameter, convert(string, m_program.at(m_program.types.string), m_function.at(parameter).rep));
@@ -2620,19 +2620,19 @@ std::optional<Operand> Lowering::tryFindMakingKey(InlineBuiltin which, ValueID r
     auto& parts = m_concatenationParts.find(key.index())->value;
     LValue buffer = storeKeyParts(parts);
     LValue found = m_out.lockedStackSlot(2 * sizeof(EncodedJSValue));
-    CellPointer made = AOT_TYPED_OPERATION(FindMakingKey, table, word32(parts.size() | (which == InlineBuiltin::MapGet ? returnsValue : 0)), Pointer(buffer), Pointer(found));
-    Boxed answer(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, 0)));
+    CellPointer keyCell = AOT_TYPED_OPERATION(FindMakingKey, table, word32(parts.size() | (which == InlineBuiltin::MapGet ? returnsValue : 0)), Pointer(buffer), Pointer(found));
+    Boxed lookupResult(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, 0)));
     m_isLazilyFetched.clear(key.index());
     m_sunkKeyConcatenations.clear(key.index());
-    Operand operand = convert(made, typeOf(key), m_function.at(key).rep);
+    Operand operand = convert(keyCell, typeOf(key), m_function.at(key).rep);
     if (operand.rep == Rep::Cell)
         m_cellTypes.add(operand.value, m_function.at(key).type);
     define(key, operand);
     if (m_tableLookupsRepeatedLater.get(result.index()))
-        m_lastTableEntry = TableEntry { m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, sizeof(EncodedJSValue))), made.value(), nullptr };
+        m_lastTableEntry = TableEntry { m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, found, sizeof(EncodedJSValue))), keyCell.value(), nullptr };
     if (which == InlineBuiltin::MapGet)
-        return ensure(answer, type);
-    return ensure(unboxedBoolean(answer), m_program.at(m_program.types.boolean), type);
+        return ensure(lookupResult, type);
+    return ensure(unboxedBoolean(lookupResult), m_program.at(m_program.types.boolean), type);
 }
 
 std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& type, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath)
@@ -2645,10 +2645,10 @@ std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& t
     LBasicBlock hit = m_out.newBlock();
     LBasicBlock miss = m_out.newBlock();
     Join join(m_out, rep, b3TypeOf(rep));
-    Boxed answer = ask(word32(parts.size()), Pointer(buffer));
-    m_out.branch(m_out.notZero64(answer.value()), unsure(hit), unsure(miss));
+    Boxed lookupResult = ask(word32(parts.size()), Pointer(buffer));
+    m_out.branch(m_out.notZero64(lookupResult.value()), unsure(hit), unsure(miss));
     m_out.appendTo(hit);
-    join.add(ensure(answer, type));
+    join.add(ensure(lookupResult, type));
     m_out.appendTo(miss);
     SetForScope keyBeingMaterialized(m_keyBeingMaterialized, key);
     auto& keyType = typeOf(key);
@@ -2662,7 +2662,7 @@ CellPointer Lowering::concatenateIfNeeded(const Value& value)
 {
     if (auto* part = substringCreatedBy(ValueID(static_cast<uint32_t>(&value - m_function.values.span().data()))))
         return makeSubstring(part->base, part->lengthOfBase, part->from, part->to);
-    if (auto separated = m_separatedStrings.find(static_cast<uint32_t>(&value - m_function.values.span().data())); separated != m_separatedStrings.end())
+    if (auto separated = m_splitStrings.find(static_cast<uint32_t>(&value - m_function.values.span().data())); separated != m_splitStrings.end())
         return AOT_TYPED_OPERATION(StringSplitString, separated->value->subject.string, in<CellPointer>(value.arguments[0]), word32(-1));
     RELEASE_ASSERT(value.opcode != Opcode::CallBuiltin);
     if (ValueID id(static_cast<uint32_t>(&value - m_function.values.span().data())); isResidentInStringBuilder(id))
@@ -2686,23 +2686,23 @@ CellPointer Lowering::concatenateInOnePiece(const ConcatenationParts& parts)
 {
     static constexpr int64_t maxLength = 64;
     static constexpr int64_t maxInt32StringLength = 11;
-    int64_t room = maxLength;
+    int64_t remainingLength = maxLength;
     unsigned numberOfNumbers = 0;
     ValueID lastNumber;
     bool hasConstant = false;
     bool hasOtherStrings = false;
     for (ValueID part : parts) {
         if (isNumberOrNullish(typeOf(part))) {
-            room -= maxInt32StringLength;
+            remainingLength -= maxInt32StringLength;
             ++numberOfNumbers;
             lastNumber = part;
         } else if (auto text = constantASCIIString(part)) {
-            room -= text->size();
+            remainingLength -= text->size();
             hasConstant |= !text->empty();
         } else
             hasOtherStrings = true;
     }
-    if (room < (hasOtherStrings ? 8 : 0))
+    if (remainingLength < (hasOtherStrings ? 8 : 0))
         return concatenateAsRopes(parts.span());
 
     LBasicBlock asRopes = hasOtherStrings ? newUnlikelyBlock() : nullptr;
@@ -2745,7 +2745,7 @@ CellPointer Lowering::concatenateInOnePiece(const ConcatenationParts& parts)
         flags = flags ? bitAnd(flags, implFlags) : implFlags;
     }
     if (hasOtherStrings) {
-        require(logicalAnd(belowOrEqual(otherStringsLength, integer(room)), hasBits(flags, StringImpl::flagIs8Bit())));
+        require(logicalAnd(belowOrEqual(otherStringsLength, integer(remainingLength)), hasBits(flags, StringImpl::flagIs8Bit())));
         if (numberOfNumbers == 1 && !hasConstant) {
             LBasicBlock isOnlyNumber = m_out.newBlock();
             LBasicBlock next = m_out.newBlock();
@@ -2783,7 +2783,7 @@ CellPointer Lowering::integerToString(Integer value, const Type& type)
     Join join(m_out, Rep::Cell, Int64);
     Word32 low = low32(value);
     if (!type.isInteger() || !type.integers.isSubsetOf(Range::int32()))
-        orElse(equal(signExtended(low), value), slowPath);
+        branchUnless(equal(signExtended(low), value), slowPath);
     join.add(CellPointer(int32ToString(low.value(), slowPath)));
     m_out.appendTo(slowPath);
     join.add(AOT_TYPED_OPERATION(IntToString, value));
@@ -2842,16 +2842,16 @@ Word32 Lowering::hasText(Pointer data, std::span<const uint8_t> text, bool leave
     return join.finish().as<Word32>();
 }
 
-Word32 Lowering::hasSubstringAt(const StringReceiver& receiver, Integer place, ValueID constant, std::span<const uint8_t> text)
+Word32 Lowering::hasSubstringAt(const StringReceiver& receiver, Integer position, ValueID constant, std::span<const uint8_t> text)
 {
     auto genericPath = [&] {
-        return AOT_TYPED_OPERATION(StringHasAt, receiver.string, in<CellPointer>(constant), low32(place));
+        return AOT_TYPED_OPERATION(StringHasAt, receiver.string, in<CellPointer>(constant), low32(position));
     };
     if (text.size() > maxInlineStringCompareLength)
         return genericPath();
     Characters characters = charactersOf(receiver);
     return either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
-        Word32 result = textMatches(offsetBy(characters.data, place, 0), text);
+        Word32 result = textMatches(offsetBy(characters.data, position, 0), text);
         ensureStillAliveHere(characters.owner);
         return result;
     }, genericPath);
@@ -3061,7 +3061,7 @@ Word32 Lowering::equalsLiteralOfLengthByStub(const StringReceiver& receiver, Val
     m_out.appendTo(isNotAsLong);
     join.add(boolean(false));
     m_out.appendTo(isAsLong);
-    orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), byStub);
+    branchUnless(hasBits(characters.flags, StringImpl::flagIs8Bit()), byStub);
     Word32 isSame = hasText(characters.data, text);
     ensureStillAliveHere(characters.owner);
     m_out.branch(isSame.value(), unsure(isText), unsure(isNotAsLong));
@@ -3406,7 +3406,7 @@ void Lowering::lowerBranchOnLiteral()
         return { data, flags, zeroExtended(loadField<Word32>(fiber, m_heaps.StringImpl_length)), receiver.string };
     };
     Characters characters = checksLengthFirst ? charactersOfStringWithLength(receiver, lengths[0], otherwise, wide, flattensRopes) : flattensRopes ? charactersOf(receiver) : flatStringCharacters();
-    orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), wide);
+    branchUnless(hasBits(characters.flags, StringImpl::flagIs8Bit()), wide);
 
     bool returnsNarrow = !flattensRopes && cases.size() > 1;
     for (auto& one : cases)
@@ -3470,7 +3470,7 @@ void Lowering::lowerBranchOnLiteral()
                 word |= static_cast<uint32_t>(one.text[offset + k]) << (8 * k);
             return word;
         };
-        size_t place = 0;
+        size_t chosenOffset = 0;
         unsigned maxWords = 0;
         if (width && group.size() >= minStringsForWordDispatch) {
             for (size_t offset = 0; offset + width <= lengths[i]; ++offset) {
@@ -3481,7 +3481,7 @@ void Lowering::lowerBranchOnLiteral()
                 }
                 if (words.size() > maxWords) {
                     maxWords = words.size();
-                    place = offset;
+                    chosenOffset = offset;
                 }
             }
         }
@@ -3489,13 +3489,13 @@ void Lowering::lowerBranchOnLiteral()
             compareSequentially(group);
             continue;
         }
-        TypedPointer pointer = m_out.address(m_heaps.characters8.atAnyIndex(), characters.data.value(), place);
+        TypedPointer pointer = m_out.address(m_heaps.characters8.atAnyIndex(), characters.data.value(), chosenOffset);
         LValue word = m_out.zeroExtPtr(marked(width == 4 ? m_out.load32(pointer) : m_out.load16ZeroExt32(pointer), IsFixed));
         ensureStillAliveHere(characters.owner);
         Vector<FTL::SwitchCase, 8> byWord;
         Vector<std::tuple<uint32_t, LBasicBlock, Group>, 8> leaves;
         for (auto* one : group) {
-            uint32_t has = wordAt(*one, place);
+            uint32_t has = wordAt(*one, chosenOffset);
             size_t at = leaves.findIf([&](auto& leaf) {
                 return std::get<0>(leaf) == has;
             });
@@ -3621,7 +3621,7 @@ Word32 Lowering::areStringsEqual(ValueID a, ValueID b)
     Word32 common = bitAnd(p.flags, q.flags);
     when(hasBits(common, StringImpl::flagIsAtom()), boolean(false));
     LBasicBlock slowPath = newColdBlock();
-    orElse(hasBits(common, StringImpl::flagIs8Bit()), slowPath);
+    branchUnless(hasBits(common, StringImpl::flagIs8Bit()), slowPath);
 
     join.add(areBytesEqual(p.data, q.data, length));
     m_out.appendTo(slowPath);
@@ -3648,7 +3648,7 @@ Boxed Lowering::mapKey(ValueID id)
     LBasicBlock otherwise = newUnlikelyBlock();
     Join join(m_out, Rep::JSValue, Int64);
     if (auto exact = knownIntegerFor(id)) {
-        orElse(equal(signExtended(low32(*exact)), *exact), otherwise);
+        branchUnless(equal(signExtended(low32(*exact)), *exact), otherwise);
         join.add(boxInt32(low32(*exact)));
     } else
         join.add(boxInt32(low32(integralOrElse(key, Range::int32(), otherwise))));
@@ -3729,7 +3729,7 @@ bool Lowering::mayChangeTables(const Block& block, size_t index) const
             return true;
         if (!(builtin.effects & (Effect::WritesReceiver | Effect::WritesRuntimeState)))
             return false;
-        auto* engineClass = builtin.hasReceiver() && value.child(0) ? typeOf(value.child(0)).singleEngineClass() : nullptr;
+        auto* engineClass = builtin.hasReceiver() && value.child(0) ? typeOf(value.child(0)).singleBuiltinClass() : nullptr;
         return !engineClass || engineClass->type == JSMapType || engineClass->type == JSSetType;
     }
     default:
@@ -3909,7 +3909,7 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
     if (which == InlineBuiltin::MapNew)
         return ensure(AOT_TYPED_OPERATION(NewMap), Type::engineClass(m_builtins.classes()[value.engineClass()]), type);
 
-    CellPointer table = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    CellPointer table = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
     bool isMap = which != InlineBuiltin::SetAdd && which != InlineBuiltin::SetHas && which != InlineBuiltin::SetSize;
     bool checksReceiver = std::exchange(m_tableStubChecksReceiver, false);
     if (which == InlineBuiltin::MapSize || which == InlineBuiltin::SetSize)
@@ -3918,14 +3918,14 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
         return ensure(table, typeOf(value.child(0)).withoutPrimitives(Primitive::UndefinedOrNull), type);
     };
     if (which == InlineBuiltin::MapGet || which == InlineBuiltin::MapHas || which == InlineBuiltin::SetHas) {
-        if (auto answer = tryFindMakingKey(which, result, value, table, type))
-            return *answer;
-        if (auto answer = tryLookupWithSunkKey(arguments[0], type, [&](Word32 count, Pointer parts) -> Boxed {
+        if (auto lookupResult = tryFindMakingKey(which, result, value, table, type))
+            return *lookupResult;
+        if (auto lookupResult = tryLookupWithSunkKey(arguments[0], type, [&](Word32 count, Pointer parts) -> Boxed {
             return AOT_TYPED_OPERATION(TryMapOrSetLookupWithKeyParts, table, word32(which == InlineBuiltin::MapGet), count, parts);
         }, [&]() -> Operand {
             return lowerMapOrSetBuiltin(which, result, value, inlinePath);
         }))
-            return *answer;
+            return *lookupResult;
     }
     const TableEntry* earlier = entryFoundByEarlierLookup(result);
     Boxed key = earlier ? Boxed(earlier->key) : mapKey(arguments[0]);
@@ -3943,21 +3943,21 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
             LBasicBlock hasPlace = m_out.newBlock();
             LBasicBlock hasNone = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
-            Integer place(earlier->entry);
-            m_out.branch(m_out.above(place.value(), m_out.constInt64(CompactTable::keyIsAbsent)), unsure(hasPlace), unsure(hasNone));
+            Integer entryAddress(earlier->entry);
+            m_out.branch(m_out.above(entryAddress.value(), m_out.constInt64(CompactTable::keyIsAbsent)), unsure(hasPlace), unsure(hasNone));
             m_out.appendTo(hasPlace);
             if (isMap) {
                 didEmitWrite(Writes::RuntimeState);
-                m_out.store64(in<Boxed>(arguments[1]).value(), m_out.address(m_heaps.AOTTyped_runtimeState, place.value(), 0));
+                m_out.store64(in<Boxed>(arguments[1]).value(), m_out.address(m_heaps.AOTTyped_runtimeState, entryAddress.value(), 0));
                 if (typeOf(arguments[1]).hasCells())
                     barrier(loadField<CellPointer>(table, m_heaps.JSMap_compactTable));
             }
             m_out.jump(continuation);
             m_out.appendTo(hasNone);
             if (isMap)
-                AOT_TYPED_OPERATION(MapSetAfterLookup, table, CellPointer(earlier->key), in<Boxed>(arguments[1]), place);
+                AOT_TYPED_OPERATION(MapSetAfterLookup, table, CellPointer(earlier->key), in<Boxed>(arguments[1]), entryAddress);
             else
-                AOT_TYPED_OPERATION(SetAddAfterLookup, table, CellPointer(earlier->key), place);
+                AOT_TYPED_OPERATION(SetAddAfterLookup, table, CellPointer(earlier->key), entryAddress);
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             return tableResult();

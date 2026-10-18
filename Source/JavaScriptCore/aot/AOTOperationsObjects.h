@@ -27,7 +27,6 @@ struct Slot;
     v(operationAOTNewObjectLiteral) \
     v(operationAOTNewObjectFromDescriptor) \
     v(operationAOTNewObjectFromFilledDescriptor) \
-    v(operationAOTNewArray) \
     v(operationAOTInstanceofAndCache) \
     v(operationAOTDefaultHasInstance) \
     v(operationAOTGetByIdWellKnown) \
@@ -63,8 +62,6 @@ bool tryCopyRecordDataProperties(Instance*, VM&, JSObject* target, JSObject* rec
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectFromDescriptor, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, uint32_t slotIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectFromFilledDescriptor, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
-JSCell* spread(JSGlobalObject*, JSValue iterable);
 
 JSC_DECLARE_JIT_OPERATION(operationAOTInstanceofAndCache, size_t, (Instance*, EncodedJSValue value, EncodedJSValue constructor, uint32_t, Slot* cache, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTDefaultHasInstance, size_t, (Instance*, EncodedJSValue value, EncodedJSValue prototype));

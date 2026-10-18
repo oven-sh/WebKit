@@ -121,9 +121,6 @@ void dumpIndexingType(PrintStream& out, IndexingType indexingType)
     case ArrayWithSlowPutArrayStorage:
         basicName = "ArrayWithSlowPutArrayStorage";
         break;
-    case ArrayWithTypedContiguous:
-        basicName = "ArrayWithTypedContiguous";
-        break;
     case CopyOnWriteArrayWithInt32:
         basicName = "CopyOnWriteArrayWithInt32";
         break;

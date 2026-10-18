@@ -215,7 +215,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT() && !Options::useRegExpJIT())
+    if (!Options::useJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -578,8 +578,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
-    } else if (Options::useRegExpJIT()) {
-        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 
@@ -2482,7 +2480,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObjec
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nameOfProperty);
     for (AOT::Instance* instance : m_aotInstances) {
-        instance->forgetInheritedFieldAnswers();
+        instance->clearInheritedFieldCache();
         if (instance->typed && instance->typed->hasDescendantPrototypes()) [[unlikely]]
             instance->typed->didChangeDescendantPrototype(*this, changed, nameOfProperty);
     }
@@ -2530,7 +2528,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
     if (m_aotPropertyLookupTable)
         m_aotPropertyLookupTable->didChangePrototype(nullptr);
     for (AOT::Instance* instance : m_aotInstances)
-        instance->forgetInheritedFieldAnswers();
+        instance->clearInheritedFieldCache();
 #endif
     invalidateEpochCaches();
 }

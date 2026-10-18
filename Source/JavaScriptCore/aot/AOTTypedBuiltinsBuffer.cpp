@@ -37,11 +37,11 @@ static constexpr BufferAccessor bufferAccessors[] = {
 };
 static_assert(std::size(bufferAccessors) == Instance::numberOfBufferAccessors);
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindBufferAccessor, void, (Instance* instance, JSCell* receiver, uint32_t row))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindBufferAccessor, void, (Instance* instance, JSCell* receiver, uint32_t accessorIndex))
 {
     VM& vm = *instance->vm;
-    auto& accessor = bufferAccessors[row];
-    if (instance->bufferAccessorStructureIDs[row])
+    auto& accessor = bufferAccessors[accessorIndex];
+    if (instance->bufferAccessorStructureIDs[accessorIndex])
         return;
     auto find = [&]() -> JSCell* {
         Structure* structure = receiver->structure();
@@ -71,7 +71,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindBufferAccessor, void, (In
             return nullptr;
         if (!condition.isWatchable(PropertyCondition::EnsureWatchability))
             return nullptr;
-        instance->watchBufferAccessor(row, condition);
+        instance->watchBufferAccessor(accessorIndex, condition);
         instance->bufferStructure = structure;
         instance->bufferAccessorHolder = holder;
         return function;
@@ -79,11 +79,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFindBufferAccessor, void, (In
     JSCell* function = find();
     countOperationNamed(instance, "operationAOTTypedFindBufferAccessor", function ? "found" : "not-found");
     if (function) {
-        instance->bufferAccessors[row] = function;
-        instance->bufferAccessorStructureIDs[row] = receiver->structureID().bits();
+        instance->bufferAccessors[accessorIndex] = function;
+        instance->bufferAccessorStructureIDs[accessorIndex] = receiver->structureID().bits();
         vm.writeBarrier(instance->globalObject);
-    } else if (++instance->bufferAccessorAttempts[row] == Instance::maxBufferAccessorAttempts)
-        instance->bufferAccessorStructureIDs[row] = Instance::bufferAccessorLookupDisabled;
+    } else if (++instance->bufferAccessorAttempts[accessorIndex] == Instance::maxBufferAccessorAttempts)
+        instance->bufferAccessorStructureIDs[accessorIndex] = Instance::bufferAccessorLookupDisabled;
 }
 
 static constexpr size_t oneDigitBigIntSize = roundUpToMultipleOf<MarkedBlock::atomSize>(JSBigInt::allocationSize(1));
@@ -161,7 +161,7 @@ static std::optional<unsigned> numberOfAtomicsOperands(InlineBuiltin which)
 
 static std::optional<TypedArrayType> elementsForAtomics(const Type& array)
 {
-    const EngineClass* engineClass = array.withoutPrimitives(Primitive::UndefinedOrNull).singleEngineClass();
+    const BuiltinClass* engineClass = array.withoutPrimitives(Primitive::UndefinedOrNull).singleBuiltinClass();
     if (!engineClass)
         return std::nullopt;
     switch (engineClass->typedArrayType) {
@@ -213,7 +213,7 @@ std::optional<Operand> Lowering::lowerAtomics(InlineBuiltin which, ValueID resul
 
     Operand array = get(arguments[0]);
     if (array.rep != Rep::Cell)
-        orElse(isCell(array.as<Boxed>(), arrayType), slowPath);
+        branchUnless(isCell(array.as<Boxed>(), arrayType), slowPath);
     CellPointer view = array.rep == Rep::Cell ? array.as<CellPointer>() : asCell(array.as<Boxed>());
     Integer index = indexOrElse(arguments[1], slowPath);
     Integer stored;
@@ -291,11 +291,11 @@ std::optional<Operand> Lowering::lowerInlineBuffer(InlineBuiltin which, ValueID 
     unsigned size = elementSize(elements);
     ByteOrder order { false, { } };
     if (unsigned index = 1 + isWrite; size > 1 && arguments.size() > index) {
-        uint16_t given = typeOf(arguments[index]).primitives;
-        if (given & Primitive::True)
-            order = given == Primitive::True ? ByteOrder { true, { } } : ByteOrder { std::nullopt, lowerToBoolean(arguments[index]) };
+        uint16_t argumentPrimitives = typeOf(arguments[index]).primitives;
+        if (argumentPrimitives & Primitive::True)
+            order = argumentPrimitives == Primitive::True ? ByteOrder { true, { } } : ByteOrder { std::nullopt, lowerToBoolean(arguments[index]) };
     }
-    CellPointer view = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    CellPointer view = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
     Rep rep = repOf(type);
     LBasicBlock slowPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
@@ -367,7 +367,7 @@ bool Lowering::mayBeNegative(ValueID id) const
 Pointer Lowering::findBytes(CellPointer view, Integer offset, bool mayBeNegative, unsigned size, LBasicBlock otherwise)
 {
     if (size > 1 && mayBeNegative)
-        orElse(greaterThanOrEqual(offset, integer(0)), otherwise);
+        branchUnless(greaterThanOrEqual(offset, integer(0)), otherwise);
     LBasicBlock outside = newColdBlock();
     Pointer vector = findTypedArrayElement(typedArrayReceiver(view), add(offset, integer(size - 1)), otherwise, outside);
     LBasicBlock inside = m_out.m_block;
@@ -502,7 +502,7 @@ CellPointer Lowering::newBigInt(Integer bits, bool isSigned)
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     LValue allocator = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind)));
-    orElse(m_out.notNull(allocator), slowPath);
+    branchUnless(m_out.notNull(allocator), slowPath);
     CellPointer cell = allocateCell(allocator, oneDigitBigIntSize, slowPath);
     LValue header = m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfHeaderFor(kind)));
     Integer magnitude = bits;
@@ -518,10 +518,10 @@ CellPointer Lowering::newBigInt(Integer bits, bool isSigned)
     ValueFromBlock inlinePath = m_out.anchor(cell.value());
     m_out.jump(continuation);
     m_out.appendTo(slowPath);
-    ValueFromBlock made = m_out.anchor(AOT_TYPED_OPERATION(NewBigInt64, bits, word32(isSigned)).value());
+    ValueFromBlock slowResult = m_out.anchor(AOT_TYPED_OPERATION(NewBigInt64, bits, word32(isSigned)).value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-    return CellPointer(m_out.phi(pointerType(), inlinePath, made));
+    return CellPointer(m_out.phi(pointerType(), inlinePath, slowResult));
 }
 
 std::optional<unsigned> Lowering::bufferAccessorNamed(StringID name) const
@@ -529,14 +529,14 @@ std::optional<unsigned> Lowering::bufferAccessorNamed(StringID name) const
     BuiltinName builtinName = m_program.builtinName(name);
     if (!builtinName)
         return std::nullopt;
-    for (unsigned row = 0; row < std::size(bufferAccessors); ++row) {
-        if (bufferAccessors[row].builtinName == builtinName.index())
-            return row;
+    for (unsigned accessorIndex = 0; accessorIndex < std::size(bufferAccessors); ++accessorIndex) {
+        if (bufferAccessors[accessorIndex].builtinName == builtinName.index())
+            return accessorIndex;
     }
     return std::nullopt;
 }
 
-Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool isCalled)
+Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned accessorIndex, bool isCalled)
 {
     LBasicBlock isCellCase = m_out.newBlock();
     LBasicBlock hit = m_out.newBlock();
@@ -548,17 +548,17 @@ Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool 
     m_out.branch(isCell(base).value(), usually(isCellCase), rarely(read));
     m_out.appendTo(isCellCase);
     CellPointer cell = asCell(base);
-    Word32 expected(loadRuntimeState32(Instance::offsetOfBufferAccessorStructureID(row)));
+    Word32 expected(loadRuntimeState32(Instance::offsetOfBufferAccessorStructureID(accessorIndex)));
     m_out.branch(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), expected).value(), usually(hit), rarely(miss));
     m_out.appendTo(hit);
-    ValueFromBlock known = m_out.anchor(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(row))));
+    ValueFromBlock known = m_out.anchor(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(accessorIndex))));
     m_out.jump(continuation);
     m_out.appendTo(miss);
     m_out.branch(isZero(expected).value(), rarely(mayProbe), usually(read));
     m_out.appendTo(mayProbe);
     m_out.branch(equal(loadCellType(cell), word32(Uint8ArrayType)).value(), unsure(look), unsure(read));
     m_out.appendTo(look);
-    AOT_TYPED_OPERATION(FindBufferAccessor, cell, word32(row));
+    AOT_TYPED_OPERATION(FindBufferAccessor, cell, word32(accessorIndex));
     m_out.jump(read);
     m_out.appendTo(read);
     ValueFromBlock found = m_out.anchor(emitCachedGetById(base, name, isCalled).value());
@@ -569,12 +569,12 @@ Boxed Lowering::getBufferAccessor(Boxed base, StringID name, unsigned row, bool 
 
 std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name, std::optional<Boxed> method, const Arguments& arguments, const Type& type)
 {
-    auto row = bufferAccessorNamed(name);
-    if (!row || arguments.size() > numberOfArgumentGPRs)
+    auto accessorIndex = bufferAccessorNamed(name);
+    if (!accessorIndex || arguments.size() > numberOfArgumentGPRs)
         return std::nullopt;
-    auto& accessor = bufferAccessors[*row];
+    auto& accessor = bufferAccessors[*accessorIndex];
     auto& bufferType = typeOf(buffer);
-    const EngineClass* engineClass = bufferType.withoutPrimitives(Primitive::UndefinedOrNull).singleEngineClass();
+    const BuiltinClass* engineClass = bufferType.withoutPrimitives(Primitive::UndefinedOrNull).singleBuiltinClass();
     bool isByteArray = engineClass && engineClass->type == Uint8ArrayType;
     if (!isByteArray && !bufferType.anyObject)
         return std::nullopt;
@@ -595,30 +595,30 @@ std::optional<Operand> Lowering::lowerBufferAccess(ValueID buffer, StringID name
     return ifPredictionHolds({ }, repOf(type), [&](LBasicBlock otherwise) {
         Operand receiver = get(buffer);
         if (receiver.rep != Rep::Cell)
-            orElse(isCell(receiver.as<Boxed>(), bufferType), otherwise);
+            branchUnless(isCell(receiver.as<Boxed>(), bufferType), otherwise);
         CellPointer view = receiver.rep == Rep::Cell ? receiver.as<CellPointer>() : asCell(receiver.as<Boxed>());
         if (method) {
-            orElse(equal(*method, Boxed(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(*row))))), otherwise);
+            branchUnless(equal(*method, Boxed(m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfBufferAccessor(*accessorIndex))))), otherwise);
             if (!isByteArray)
-                orElse(equal(loadCellType(view), word32(Uint8ArrayType)), otherwise);
+                branchUnless(equal(loadCellType(view), word32(Uint8ArrayType)), otherwise);
         } else
-            orElse(equal(loadField<Word32>(view, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfBufferAccessorStructureID(*row)))), otherwise);
+            branchUnless(equal(loadField<Word32>(view, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfBufferAccessorStructureID(*accessorIndex)))), otherwise);
 
         Operand stored;
         if (accessor.isWrite && isFloat(elements))
             stored = speculateOrElse(Expectation { arguments[0], &elementType }, otherwise);
         else if (accessor.isWrite && isBigInt(elements)) {
             CellPointer bigInt = speculateOrElse(Expectation { arguments[0], &elementType }, otherwise).as<CellPointer>();
-            orElse(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), word32(1)), otherwise);
+            branchUnless(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), word32(1)), otherwise);
             Integer value = low64Of(bigInt);
             Word32 isNegative = isNegativeBigInt(bigInt);
-            orElse(elements == TypeBigUint64 ? logicalNot(isNegative) : logicalOr(isZero(value), equal(lessThan(value, integer(0)), isNegative)), otherwise);
+            branchUnless(elements == TypeBigUint64 ? logicalNot(isNegative) : logicalOr(isZero(value), equal(lessThan(value, integer(0)), isNegative)), otherwise);
             stored = value;
         } else if (accessor.isWrite) {
             Integer value = indexOrElse(arguments[0], otherwise);
             Range range = elementType.integers;
             if (auto& valueType = typeOf(arguments[0]); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
-                orElse(belowOrEqual(sub(value, integer(range.minimum)), integer(range.maximum - range.minimum)), otherwise);
+                branchUnless(belowOrEqual(sub(value, integer(range.minimum)), integer(range.maximum - range.minimum)), otherwise);
             stored = low32(value);
         }
 

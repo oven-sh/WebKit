@@ -72,7 +72,7 @@ Vector<uint32_t> findIndicesInParallel(unsigned count, const Invocable<bool(unsi
 }
 
 template<typename T, typename Less>
-void sortOnPool(std::span<T> list, const Less& isAhead)
+void parallelSort(std::span<T> list, const Less& isAhead)
 {
     constexpr size_t numberOfRuns = 16;
     constexpr size_t fewestForPool = 1 << 13;
@@ -81,9 +81,9 @@ void sortOnPool(std::span<T> list, const Less& isAhead)
         std::ranges::sort(list, isAhead);
         return;
     }
-    Vector<T> room(count);
+    Vector<T> scratchBuffer(count);
     std::span<T> from = list;
-    std::span<T> to = room.mutableSpan();
+    std::span<T> to = scratchBuffer.mutableSpan();
     auto runOf = [&](std::span<T> all, size_t run, size_t runs) {
         size_t start = count * run / runs;
         return all.subspan(start, count * (run + 1) / runs - start);

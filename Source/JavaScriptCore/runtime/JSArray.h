@@ -69,11 +69,6 @@ public:
     inline static JSArray* tryCreate(VM&, Structure*, unsigned initialLength, unsigned vectorLengthHint);
     inline static JSArray* create(VM&, Structure*, unsigned initialLength = 0);
     static JSArray* createWithButterfly(VM&, GCDeferralContext*, Structure*, Butterfly*);
-    static constexpr unsigned typedContiguousCapacityFor(unsigned wanted)
-    {
-        return static_cast<unsigned>((((sizeof(IndexingHeader) + static_cast<uint64_t>(wanted ? wanted : 1) * sizeof(uint32_t) + 15) & ~static_cast<uint64_t>(15)) - sizeof(IndexingHeader)) / sizeof(uint32_t));
-    }
-    JS_EXPORT_PRIVATE static JSArray* tryCreateWithTypedContiguous(VM&, Structure*, unsigned length, unsigned minCapacity);
 
     // tryCreateUninitializedRestricted is used for fast construction of arrays whose size and
     // contents are known at time of creation. This is a restricted API for careful use only in

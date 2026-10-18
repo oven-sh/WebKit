@@ -34,15 +34,15 @@ static JSArray* asContiguousArray(JSValue value, unsigned minLength)
     return array;
 }
 
-static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject, Structure* structure, JSValue given)
+static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject, Structure* structure, JSValue iterable)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!given.isCell() || given.asCell()->type() == JSSetType || !JSSet::isAddFastAndNonObservable(structure))
+    if (!iterable.isCell() || iterable.asCell()->type() == JSSetType || !JSSet::isAddFastAndNonObservable(structure))
         return nullptr;
     JSArray* walked = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    bool isWalked = Typed::CollectionIteration::tryAppendTo(globalObject, walked, given);
+    bool isWalked = Typed::CollectionIteration::tryAppendTo(globalObject, walked, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isWalked)
         return nullptr;
@@ -64,15 +64,15 @@ static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject,
 }
 
 template<typename Table>
-static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure* structure, JSValue given)
+static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure* structure, JSValue iterable)
 {
     constexpr bool isMap = std::is_same_v<Table, JSMap>;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* list = asContiguousArray(given, 1);
+    JSArray* list = asContiguousArray(iterable, 1);
     if constexpr (!isMap) {
         if (!list)
-            RELEASE_AND_RETURN(scope, tryNewSetFromSideEffectFreeIterable(globalObject, structure, given));
+            RELEASE_AND_RETURN(scope, tryNewSetFromSideEffectFreeIterable(globalObject, structure, iterable));
     }
     if (!list || !list->isIteratorProtocolFastAndNonObservable())
         return nullptr;
@@ -264,7 +264,7 @@ struct KeyPieces {
 static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer, KeyPieces& pieces)
 {
     Latin1Character* cursor = buffer.data();
-    size_t room = buffer.size();
+    size_t remainingCapacity = buffer.size();
     for (uint32_t i = 0; i < count; ++i) {
         JSValue part = JSValue::decode(parts[i]);
         size_t length;
@@ -272,14 +272,14 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyP
             int32_t integer = part.asInt32();
             uint32_t magnitude = integer < 0 ? 0u - static_cast<uint32_t>(integer) : integer;
             length = lengthAsDecimal(magnitude) + (integer < 0);
-            if (length > room)
+            if (length > remainingCapacity)
                 return std::nullopt;
             if (integer < 0)
                 *cursor = '-';
             writeAsDecimal(magnitude, cursor + length);
             ++pieces.count;
         } else {
-            if (!part.isString() || !asString(part)->is8Bit() || asString(part)->length() > room)
+            if (!part.isString() || !asString(part)->is8Bit() || asString(part)->length() > remainingCapacity)
                 return std::nullopt;
             length = asString(part)->length();
             if (const StringImpl* impl = asString(part)->tryGetValueImpl()) [[likely]]
@@ -292,7 +292,7 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyP
             }
         }
         cursor += length;
-        room -= length;
+        remainingCapacity -= length;
     }
     return std::span<const Latin1Character> { buffer.data(), cursor };
 }
@@ -442,15 +442,15 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES findMa
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
-    JSValue answer;
+    JSValue result;
     if (collection->type() != JSMapType)
-        answer = jsBoolean(uncheckedDowncast<JSSet>(collection)->has(globalObject, key));
+        result = jsBoolean(uncheckedDowncast<JSSet>(collection)->has(globalObject, key));
     else if (countAndKind & findReturnsValue)
-        answer = uncheckedDowncast<JSMap>(collection)->get(globalObject, key);
+        result = uncheckedDowncast<JSMap>(collection)->get(globalObject, key);
     else
-        answer = jsBoolean(uncheckedDowncast<JSMap>(collection)->has(globalObject, key));
+        result = jsBoolean(uncheckedDowncast<JSMap>(collection)->has(globalObject, key));
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    found[0] = JSValue::encode(answer);
+    found[0] = JSValue::encode(result);
     found[1] = CompactTable::placeIsUnknown;
     OPERATION_RETURN(scope, key);
 }
@@ -486,12 +486,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedFindMakingKey, JSCell*, (Instance* ins
     [[clang::musttail]] return findMakingKeyGeneric(instance, collection, countAndKind, parts, found);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedMapSetAfterLookup, void, (Instance* instance, JSCell* map, JSCell* key, EncodedJSValue value, uint64_t place))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedMapSetAfterLookup, void, (Instance* instance, JSCell* map, JSCell* key, EncodedJSValue value, uint64_t lookupResult))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSMap* table = uncheckedDowncast<JSMap>(map);
     if (!table->m_storage) {
-        bool isAdded = place == CompactTable::keyIsAbsent
+        bool isAdded = lookupResult == CompactTable::keyIsAbsent
             ? CompactTable::tryAddAbsent(globalObject, table, uncheckedDowncast<JSString>(key), JSValue::decode(value))
             : CompactTable::tryAdd(globalObject, table, key, JSValue::decode(value), CompactTable::CreateIfNeeded::Yes);
         OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -502,12 +502,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedMapSetAfterLookup, void, (Instance* in
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetAddAfterLookup, void, (Instance* instance, JSCell* set, JSCell* key, uint64_t place))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetAddAfterLookup, void, (Instance* instance, JSCell* set, JSCell* key, uint64_t lookupResult))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSSet* table = uncheckedDowncast<JSSet>(set);
     if (!table->m_storage) {
-        bool isAdded = place == CompactTable::keyIsAbsent
+        bool isAdded = lookupResult == CompactTable::keyIsAbsent
             ? CompactTable::tryAddAbsent(globalObject, table, uncheckedDowncast<JSString>(key), JSValue())
             : CompactTable::tryAdd(globalObject, table, key, JSValue(), CompactTable::CreateIfNeeded::Yes);
         OPERATION_RETURN_IF_EXCEPTION(scope);
@@ -661,7 +661,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         LValue data = dataOf(storage);
         LValue usedInStorage = m_out.zeroExtPtr(m_out.add(m_out.load32(dataAt(data, JSMap::Helper::aliveEntryCountIndex())), m_out.load32(dataAt(data, JSMap::Helper::deletedEntryCountIndex()))));
         LValue entries = entriesOf(data);
-        LValue deletedValue = m_out.loadPtr(fieldOf(fixedPointer(Instance::offsetOfVM()), VM::offsetOfOrderedHashTableDeletedValue()));
+        LValue deletedValue = m_out.loadPtr(fieldOf(loadImmutablePointer(Instance::offsetOfVM()), VM::offsetOfOrderedHashTableDeletedValue()));
         ValueFromBlock firstInStorage = m_out.anchor(start.value());
         m_out.jump(storageLoop);
 
@@ -731,7 +731,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
             m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))), unsure(isNarrow), unsure(isWide));
             m_out.appendTo(isNarrow);
             LValue index = m_out.zeroExtPtr(m_out.load32(at(values, number, 2)));
-            join.add(Boxed(cell32IsPointer ? decoded(index, table) : m_out.select(m_out.belowOrEqual(index, m_out.constInt64(undefinedCell32)), index, decoded(index, table))));
+            join.add(Boxed(m_out.select(m_out.belowOrEqual(index, m_out.constInt64(undefinedCell32)), index, decoded(index, table))));
             m_out.appendTo(isWide);
             join.add(Boxed(m_out.load64(at(values, number, 3))));
         }
@@ -745,7 +745,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     switch (which) {
     case InlineBuiltin::MapDelete:
     case InlineBuiltin::SetDelete: {
-        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
         Vector<std::pair<LValue, GPRReg>, 4> operands { { owner.value(), thisGPR }, { mapKey(arguments[0]).value(), argumentGPR(0) } };
         Boxed isRemoved(callICStub(which == InlineBuiltin::MapDelete ? Stub::MapDelete : Stub::SetDelete, Int64, operands, std::nullopt, OperationEffects { inlinePath, true }));
         return booleanResult(unboxedBoolean(isRemoved), type);
@@ -754,7 +754,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     case InlineBuiltin::SetIterator: {
         bool isMap = which == InlineBuiltin::MapIterator;
         auto& builtin = m_builtins.at(value.builtin());
-        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(builtin.nameID));
         IterationKind kind = builtin.name == "entries"_s || (isMap && builtin.name == "@@iterator"_s) ? IterationKind::Entries : isMap && builtin.name == "keys"_s ? IterationKind::Keys : IterationKind::Values;
         Word32 encodedKind = word32(static_cast<int32_t>(kind));
         return ensure(isMap ? AOT_TYPED_OPERATION(NewMapIterator, owner, encodedKind) : AOT_TYPED_OPERATION(NewSetIterator, owner, encodedKind), Type::engineClass(m_builtins.classes()[value.engineClass()]), type);
@@ -762,7 +762,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
     case InlineBuiltin::MapClear:
     case InlineBuiltin::SetClear: {
         bool isMap = which == InlineBuiltin::MapClear;
-        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        CellPointer owner = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
         LValue storage = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
         LValue compactTable = m_out.loadPtr(owner.value(), isMap ? m_heaps.JSMap_compactTable : m_heaps.JSSet_compactTable);
         LBasicBlock hasTable = m_out.newBlock();
@@ -890,18 +890,18 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         auto withoutReadBarrier = [&](LValue base, ptrdiff_t offset) {
             return m_out.address(m_heaps.AOTTyped_collectorState, base, offset);
         };
-        CellPointer table = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
-        Boxed given = in<Boxed>(arguments[0]);
+        CellPointer table = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
+        Boxed boxedKey = in<Boxed>(arguments[0]);
         LBasicBlock mayBeKey = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock isAnother = m_out.newBlock();
         LBasicBlock next = m_out.newBlock();
         LBasicBlock found = m_out.newBlock();
         LBasicBlock absent = m_out.newBlock();
-        m_out.branch(isCell(given, typeOf(arguments[0])).value(), usually(mayBeKey), rarely(absent));
+        m_out.branch(isCell(boxedKey, typeOf(arguments[0])).value(), usually(mayBeKey), rarely(absent));
 
         m_out.appendTo(mayBeKey);
-        CellPointer key = asCell(given);
+        CellPointer key = asCell(boxedKey);
         ValueFromBlock first = m_out.anchor(mapKeyHash(box(key)).value());
         LValue buffer = m_out.loadPtr(withoutReadBarrier(table.value(), JSWeakMap::offsetOfBuffer()));
         LValue mask = m_out.sub(m_out.load32(withoutReadBarrier(table.value(), JSWeakMap::offsetOfCapacity())), m_out.int32One);
@@ -928,9 +928,9 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
             join.add(ensure(Boxed(m_out.load64(withoutReadBarrier(bucket, MapBucket::offsetOfValue()))), type));
             m_out.appendTo(absent);
             join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
-            Operand held = join.finish();
+            Operand joinedResult = join.finish();
             ensureStillAliveHere(table);
-            return held;
+            return joinedResult;
         }
         Join join(m_out, Rep::Int32, Int32);
         join.add(boolean(true));

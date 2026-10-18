@@ -154,7 +154,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the time it spent outside parallel loops."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
     v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
-    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTB3Graph, dumpAOTDisassembly and logAOTTypeInference only cover the functions of this name, or the code at <start offset> or <module>:<start offset> as in the map file."_s) \
+    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name, or the code at <start offset> or <module>:<start offset> as in the map file."_s) \
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
     v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
     v(OptionString, aotTypeCoverageCountsPath, nullptr, Normal, "With useAOTOperationCounters: what is counted is written to this path with .operations and .allocations appended, at each collection and when the VM is destroyed. %p stands for the process ID."_s) \
@@ -162,12 +162,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
     v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
     v(OptionString, aotGuardToDropForTesting, nullptr, Normal, "For testing the tests. When compiling: omit the branch to a rarely taken block that the compiler emits at <file>:<line> of its own source, so that the other block is always taken. A test should detect this.") \
-    v(OptionString, aotGuardsToFailForTesting, nullptr, Normal, "For testing. When compiling ahead of time: make the guards that the compiler emits at these lines of its own source always fail, so that their slow paths run. The list has a comma at both ends: ,<file>:<line>,<file>:<line>,"_s) \
-    v(OptionString, aotSlowPathFaultForTesting, nullptr, Normal, "For testing the tests. When compiling ahead of time: emit one kind of deliberately wrong code for slow paths (word: a throw site passes a wrong word; the other values are named where argument thunks are generated), so that a test can show that it notices."_s) \
-    v(OptionString, aotOutlinerFaultForTesting, nullptr, Normal, "For testing the tests. When compiling ahead of time: the outliner makes one kind of deliberate mistake, named where it is read in AOTImage.cpp, so that a test can show that it notices."_s) \
-    v(OptionString, aotOutlineForTesting, nullptr, Normal, "For testing. When compiling ahead of time: outline from a program that is too small for the outliner to choose anything by itself. k: also windows that end in a call."_s) \
     v(OptionString, aotImageLimitToExceedForTesting, nullptr, Normal, "For testing. When compiling ahead of time: behave as if the first function exceeded this limit of a function record in the image: index, frame, callSites or slots; or as if the frame on the stack were larger than an image can describe: frameSize for the entry function of each module, functionFrameSize for every other function. The build has to stop with an error."_s) \
-    v(OptionString, airBlockOrderFaultForTesting, nullptr, Normal, "For testing the tests. off: do not place rarely taken blocks in the gaps after their guards. 1: place one block where it must not go, so that a test can show that it detects this."_s) \
     v(Unsigned, aotHotByTextForTesting, 0, Normal, "For testing. When compiling ahead of time: overrides the static hotness estimate. 1: only a function that contains a loop is hot, and only inside its loops, whatever calls or creates it. 2: every function is hot. 3: every function is cold, as the coldest part of a large program is. 4: the normal estimate, but no function is among the hottest of the program, as in most of a large program. 0: the normal estimate."_s) \
     v(Bool, aotCountsBranches, false, Normal, "When compiling ahead of time: the code counts how often each side of every branch of the program runs. With useAOTOperationCounters and aotTypeCoverageCountsPath when it runs, the counts are among the operations: Branch:at:<module>:<position>:bc<2 * position, + 1 for the false side>. With aotMapFilePath the map names the modules. For the tool that proposes $likely and $unlikely."_s) \
     v(Bool, aotIgnoresBranchHintsForTesting, false, Normal, "For testing. When compiling ahead of time: lay out code as if Bun's built-in modules had no $likely and no $unlikely."_s) \
@@ -179,7 +174,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, validateAOTNarrowReferences, 0, Normal, "For testing the typed AOT compiler. When compiling: wherever the collector can run, a 32-bit reference that is decoded, stored or compared afterwards must have a pointer to its object alive, which is all that the scan of the stack knows. 1: a function that breaks this fails the build. 2: it is only reported, in lines that begin with `AOT narrow reference:`.") \
     v(Bool, auditAOTTypedAssertions, false, Normal, "Finds every place where a program compiled by the typed AOT compiler contradicts its types, in one run. Compiled code trusts no front-end type except unboxed numbers and booleans, and every access takes the generic path. When a value fails a type check (at a cast, `!`, a parameter, a result, a store, or the result of a read or a call), a line is printed to stderr, once per site, and the value is used unchanged; where it has to be stored as an unboxed number or boolean it is converted, and the line says so. A line is also printed for each `as` that changed its operand or let it through. Slow. Must be set when the program is compiled; the image records it.") \
     v(Bool, countAOTTypedAllocations, false, Normal, "Counts the cells a program compiled by the typed AOT compiler allocates, by allocation and layout, its shape transitions and the fields it creates, and prints `AOT count:` records to stderr at exit. The program is optimized as usual, but every allocation calls into the runtime. Must be set when the program is compiled; the image records it.") \
-    v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -188,8 +182,6 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
-    v(Bool, hideFunctionSourceForTesting, false, Normal, "Function.prototype.toString() behaves as if the program had been built without source text."_s) \
-    v(OptionString, aotProfileBreakForTesting, nullptr, Normal, "For testing the tests of the sampling profiler on AOT-compiled code. guest: attribute a sample whose pc is in an entry appended to another function to that function, not to the function the entry belongs to. caller: when the top of the stack is a stub or a frameless function, drop its caller."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
@@ -626,7 +618,6 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, airGreedyRegAllocDumpFunction, nullptr, Normal, "dump greedy register allocator state and IR for functions matching this substring"_s) \
     v(Double, airGreedyRegAllocSplitMultiplier, 2.0, Normal, nullptr) \
     v(Bool, airGreedyRegAllocSplitAroundLoops, false, Normal, nullptr) \
-    v(Bool, airGreedyRegAllocRecordsFalseMoveForTesting, false, Normal, "For testing airValidateGreedRegAlloc. Next to each move of a value into the register that holds it while its own register is clobbered, also record the reverse move at the same place, so that the validation of those moves must fail."_s) \
     v(Double, airGreedyRegAllocLoopSplitMaxLoopFraction, 0.75, Normal, nullptr) \
     v(Bool, airGreedyRegAllocSpillsEverything, false, Normal, nullptr) \
     v(Bool, airDumpPhaseStats, false, Normal, nullptr) \
@@ -710,7 +701,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useCopyOnWriteArraysForImmutableProperties, true, Normal, "If true, JSObject::makePropertiesImmutable() makes a JSArray whose Int32, Double or Contiguous elements have no holes a copy-on-write array. If false, it enters dictionary indexing mode, as every other object with elements does."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
-    v(Bool, useMiniVMModeWithoutJIT, true, Normal, "Treat the absence of a JIT as a request to favor memory over speed. Disabled when running AOT-compiled code."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \
     v(Bool, useCompilerSignpost, false, Normal, nullptr) \
     v(Bool, useGCSignpost, false, Normal, nullptr) \

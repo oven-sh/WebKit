@@ -37,10 +37,10 @@ public:
             for (auto& value : std::as_const(program).functions[i].values) {
                 if (value.opcode != Opcode::NewClosure && value.opcode != Opcode::NewClosureOnce && value.opcode != Opcode::FunctionReference)
                     continue;
-                uint32_t* maker = &singleCreators[value.function().index()];
-                uint32_t previous = WTF::atomicCompareExchangeStrong(maker, Program::hasNoClosureCreator, i, std::memory_order_relaxed);
+                uint32_t* singleCreator = &singleCreators[value.function().index()];
+                uint32_t previous = WTF::atomicCompareExchangeStrong(singleCreator, Program::hasNoClosureCreator, i, std::memory_order_relaxed);
                 if (previous != Program::hasNoClosureCreator && previous != i)
-                    WTF::atomicStore(maker, Program::hasMultipleClosureCreators, std::memory_order_relaxed);
+                    WTF::atomicStore(singleCreator, Program::hasMultipleClosureCreators, std::memory_order_relaxed);
             }
             if (!std::as_const(program).functions[i].blocks.isEmpty())
                 facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.calledParametersOf(FunctionID(i)), inlining.parametersCalledInLoopsOf(FunctionID(i)) };
@@ -178,17 +178,17 @@ public:
                 }
                 if (size + growsBy > maxGrownTo && !m_program.at(callee).worker && !isOwnWorker(callee))
                     continue;
-                uint8_t given = inlineReasonForLetter(head ? 'e' : m_program.at(callee).worker ? 'w' : isOwnWorker(callee) ? 'o' : isBuiltin ? 'p' : isMoved ? 'm' : licence);
-                if (m_program.isInliningDisabled(m_id, given) && m_program.at(m_id).startFunction != callee) {
-                    m_caller.at(call).immediates[1] = Value::inliningWasDeclined - given;
+                uint8_t inlineReason = inlineReasonForLetter(head ? 'e' : m_program.at(callee).worker ? 'w' : isOwnWorker(callee) ? 'o' : isBuiltin ? 'p' : isMoved ? 'm' : licence);
+                if (m_program.isInliningDisabled(m_id, inlineReason) && m_program.at(m_id).startFunction != callee) {
+                    m_caller.at(call).immediates[1] = Value::inliningWasDeclined - inlineReason;
                     continue;
                 }
                 unsigned first = m_caller.blocks.size();
-                m_isInliningMaker = given == inlineReasonForLetter('b');
+                m_isInliningMaker = inlineReason == inlineReasonForLetter('b');
                 copyIn(block, k, callee, head);
                 m_isInliningMaker = false;
                 didChangeCaller();
-                m_caller.inlineFrames[m_lastInlineFrame].licence = given;
+                m_caller.inlineFrames[m_lastInlineFrame].licence = inlineReason;
                 if (isMoved)
                     m_movedFrames.set(m_lastInlineFrame);
                 for (unsigned b = m_caller.blocks.size(); b-- > first;)
@@ -287,11 +287,11 @@ private:
     static constexpr uint32_t none = UINT32_MAX;
     static constexpr uint32_t maxDepth = 2;
 
-    using EdgesIntoBlocks = Vector<Vector<const Target*, 2>>;
+    using IncomingEdges = Vector<Vector<const Target*, 2>>;
 
-    static EdgesIntoBlocks edgesIntoBlocks(const Function& function)
+    static IncomingEdges edgesIntoBlocks(const Function& function)
     {
-        EdgesIntoBlocks result(function.blocks.size());
+        IncomingEdges result(function.blocks.size());
         for (auto& block : function.blocks) {
             for (auto& target : block.terminator.targets)
                 result[target.block.index()].append(&target);
@@ -299,7 +299,7 @@ private:
         return result;
     }
 
-    static ValueID originOf(const Function& function, ValueID value, EdgesIntoBlocks& edges)
+    static ValueID underlyingValue(const Function& function, ValueID value, IncomingEdges& edges)
     {
         auto skipCasts = [&](ValueID id) {
             while (function.at(id).opcode == Opcode::Cast)
@@ -353,11 +353,11 @@ private:
         return m_calledParameters.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
-            EdgesIntoBlocks edges;
+            IncomingEdges edges;
             for (auto& value : function.values) {
                 if (value.opcode != Opcode::Call)
                     continue;
-                if (size_t index = function.blocks[0].parameters.find(originOf(function, value.child(0), edges)); index != notFound)
+                if (size_t index = function.blocks[0].parameters.find(underlyingValue(function, value.child(0), edges)); index != notFound)
                     result.set(index);
             }
             return result;
@@ -371,7 +371,7 @@ private:
         return m_parametersCalledInLoops.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
-            EdgesIntoBlocks edges;
+            IncomingEdges edges;
             Vector<unsigned> cycles;
             for (unsigned b = 0; b < function.blocks.size(); ++b) {
                 for (ValueID value : function.blocks[b].values) {
@@ -381,7 +381,7 @@ private:
                         cycles = computeBlockCycles(function);
                     if (cycles[b] == notInCycle)
                         break;
-                    if (size_t index = function.blocks[0].parameters.find(originOf(function, function.at(value).child(0), edges)); index != notFound)
+                    if (size_t index = function.blocks[0].parameters.find(underlyingValue(function, function.at(value).child(0), edges)); index != notFound)
                         result.set(index);
                 }
             }
@@ -911,11 +911,11 @@ private:
                 for (const Target* target : m_edgesIntoBlocks[definition.immediates[0]]) {
                     if (definition.immediates[1] >= target->arguments.size())
                         return false;
-                    ValueID given = target->arguments[definition.immediates[1]];
-                    while (m_caller.at(given).opcode == Opcode::Cast && classifyObjectUse(m_caller, m_caller.at(given), m_caller.at(given).child(0)) == ObjectUse::IsAlias)
-                        given = m_caller.at(given).child(0);
-                    bool isJoin = m_caller.at(given).opcode == Opcode::Parameter && m_caller.at(given).immediates[0];
-                    if ((!isJoin && !isObjectAllocation(given)) || !add(given))
+                    ValueID incomingValue = target->arguments[definition.immediates[1]];
+                    while (m_caller.at(incomingValue).opcode == Opcode::Cast && classifyObjectUse(m_caller, m_caller.at(incomingValue), m_caller.at(incomingValue).child(0)) == ObjectUse::IsAlias)
+                        incomingValue = m_caller.at(incomingValue).child(0);
+                    bool isJoin = m_caller.at(incomingValue).opcode == Opcode::Parameter && m_caller.at(incomingValue).immediates[0];
+                    if ((!isJoin && !isObjectAllocation(incomingValue)) || !add(incomingValue))
                         return false;
                 }
             }
@@ -956,7 +956,7 @@ private:
         for (ValueID argument : call.arguments) {
             if (!m_program.at(m_caller.at(argument).type).singleLayout())
                 continue;
-            if (ValueID origin = originOf(m_caller, argument, m_edgesIntoBlocks); isObjectAllocation(origin) && isReadOnlyThroughPhisAndCalls(origin))
+            if (ValueID origin = underlyingValue(m_caller, argument, m_edgesIntoBlocks); isObjectAllocation(origin) && isReadOnlyThroughPhisAndCalls(origin))
                 return true;
         }
         return false;
@@ -1449,15 +1449,15 @@ private:
         uint32_t depth = call.immediates[1] == Format::none ? 0 : call.immediates[1];
         uint32_t frames = 0;
         uint32_t innermostFrame = call.inlineFrame;
-        uint32_t maker = call.function().index() < m_program.singleClosureCreators.size() ? m_program.singleClosureCreators[call.function().index()] : Program::hasNoClosureCreator;
-        if (counted == Copies::OnlyNestingLevels && innermostFrame && maker < Program::hasMultipleClosureCreators && m_caller.inlineFrames[innermostFrame].callee.index() != maker) {
+        uint32_t closureCreator = call.function().index() < m_program.singleClosureCreators.size() ? m_program.singleClosureCreators[call.function().index()] : Program::hasNoClosureCreator;
+        if (counted == Copies::OnlyNestingLevels && innermostFrame && closureCreator < Program::hasMultipleClosureCreators && m_caller.inlineFrames[innermostFrame].callee.index() != closureCreator) {
             uint32_t creatorFrame = innermostFrame;
             bool isInOwnInlinedCopy = false;
-            while (creatorFrame && m_caller.inlineFrames[creatorFrame].callee.index() != maker) {
+            while (creatorFrame && m_caller.inlineFrames[creatorFrame].callee.index() != closureCreator) {
                 isInOwnInlinedCopy |= m_caller.inlineFrames[creatorFrame].callee == call.function();
                 creatorFrame = m_caller.inlineFrames[creatorFrame].parent;
             }
-            if (!isInOwnInlinedCopy && (creatorFrame || maker == m_id.index())) {
+            if (!isInOwnInlinedCopy && (creatorFrame || closureCreator == m_id.index())) {
                 innermostFrame = creatorFrame;
                 depth = 0;
             }
@@ -1551,14 +1551,14 @@ private:
         if (!tested)
             return 0;
         auto placeOf = [&](const Target& target) {
-            const Target* place = &target;
-            for (unsigned steps = 0; steps < valuesInWindow && place->arguments.isEmpty(); ++steps) {
-                auto& block = function.at(place->block);
+            const Target* destination = &target;
+            for (unsigned steps = 0; steps < valuesInWindow && destination->arguments.isEmpty(); ++steps) {
+                auto& block = function.at(destination->block);
                 if (!block.values.isEmpty() || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::Jump)
                     break;
-                place = &block.terminator.targets[0];
+                destination = &block.terminator.targets[0];
             }
-            return place;
+            return destination;
         };
         auto isSameConstant = [&](ValueID a, ValueID b) {
             if (a == b)
@@ -1578,7 +1578,7 @@ private:
         };
         Vector<unsigned, 32> links;
         Vector<int64_t, 32> integers;
-        Vector<const Target*, maxTargets> places;
+        Vector<const Target*, maxTargets> destinations;
         for (unsigned at = first; !isInChain.get(at) && !links.contains(at);) {
             auto& block = function.blocks[at];
             auto test = trailingIntegerTest(function, block);
@@ -1589,11 +1589,11 @@ private:
             });
             if (!isCheckOnlyCast || (at != first && !block.parameters.isEmpty()))
                 break;
-            const Target* place = placeOf(block.terminator.targets[0]);
-            if (!places.containsIf([&](const Target* known) { return isSameTarget(known, place); })) {
-                if (places.size() == maxTargets)
+            const Target* destination = placeOf(block.terminator.targets[0]);
+            if (!destinations.containsIf([&](const Target* known) { return isSameTarget(known, destination); })) {
+                if (destinations.size() == maxTargets)
                     break;
-                places.append(place);
+                destinations.append(destination);
             }
             links.append(at);
             integers.append(test->second);
@@ -1610,7 +1610,7 @@ private:
             while (i < integers.size() && integers[i] - start < valuesInWindow)
                 ++i;
         }
-        unsigned instructions = 2 * (windows - 1) + windows * (3 + 3 * places.size());
+        unsigned instructions = 2 * (windows - 1) + windows * (3 + 3 * destinations.size());
         unsigned size = (instructions + instructionsInUnit - 1) / instructionsInUnit;
         if (size >= 2 * links.size())
             return 0;
@@ -1693,13 +1693,13 @@ private:
                     value = onlyPassed[value.index()];
                 return value;
             };
-            Vector<Vector<Vector<ValueID, 2>>> given;
+            Vector<Vector<Vector<ValueID, 2>>> incomingArguments;
             for (auto& block : callee.blocks)
-                given.append(Vector<Vector<ValueID, 2>>(block.parameters.size()));
+                incomingArguments.append(Vector<Vector<ValueID, 2>>(block.parameters.size()));
             for (auto& block : callee.blocks) {
                 for (auto& target : block.terminator.targets) {
                     for (unsigned i = 0; i < target.arguments.size(); ++i)
-                        given[target.block.index()][i].append(target.arguments[i]);
+                        incomingArguments[target.block.index()][i].append(target.arguments[i]);
                 }
             }
             bool changed;
@@ -1713,7 +1713,7 @@ private:
                             continue;
                         ValueID only;
                         bool isTrivial = true;
-                        for (ValueID argument : given[b][i]) {
+                        for (ValueID argument : incomingArguments[b][i]) {
                             argument = resolve(argument);
                             if (argument == parameter || argument == only)
                                 continue;
@@ -2183,7 +2183,7 @@ private:
                 }
                 copied.forEachChild(mapped);
                 if (copied.opcode == Opcode::Operation && copied.immediates[0] == Operations::IsKnownFunction.index() && copied.arguments.size() == 1) {
-                    Opcode origin = m_caller.at(m_program.originOf(m_caller, copied.arguments[0])).opcode;
+                    Opcode origin = m_caller.at(m_program.underlyingValue(m_caller, copied.arguments[0])).opcode;
                     if (origin == Opcode::NewClosure || origin == Opcode::NewClosureOnce || origin == Opcode::FunctionReference) {
                         copied.opcode = Opcode::Boolean;
                         copied.arguments.clear();
@@ -2318,7 +2318,7 @@ private:
     Vector<uint32_t> m_firstUser;
     Vector<ValueID> m_users;
     Vector<uint32_t> m_blockOfValue;
-    EdgesIntoBlocks m_edgesIntoBlocks;
+    IncomingEdges m_edgesIntoBlocks;
     BitVector m_isUsedByTerminator;
     unsigned m_resultSearchValueCount { 0 };
     UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_resultReads;

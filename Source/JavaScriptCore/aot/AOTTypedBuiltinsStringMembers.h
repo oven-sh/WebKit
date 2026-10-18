@@ -28,7 +28,7 @@
     StringBuilderAnalysis m_stringBuilderAnalysis;
     Vector<StackStringBuilder> m_stringBuilders;
     void prepareStringBuilders();
-    bool isResidentInStringBuilder(ValueID id) const { return m_stringBuilderAnalysis.isState(id) && !m_stringBuilderAnalysis.isFinalState.get(id.index()); }
+    bool isResidentInStringBuilder(ValueID id) const { return m_stringBuilderAnalysis.hasBuilder(id) && !m_stringBuilderAnalysis.isFinalState.get(id.index()); }
     const StackStringBuilder& stringBuilderFor(ValueID id) const { return m_stringBuilders[m_stringBuilderAnalysis.builderForValue[id.index()]]; }
     bool stringBuilderMayBeEmpty(ValueID id) const { return m_stringBuilderAnalysis.mayBeEmpty.get(m_stringBuilderAnalysis.builderForValue[id.index()]); }
     Integer stringBuilderLength(const StackStringBuilder&);
@@ -138,7 +138,7 @@
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_splitsByIterator;
     Integer findSeparators(const SeparatedString&, Integer from, uint32_t wanted);
     std::optional<Operand> lowerStepOfIteratedSplit(ValueID, const Value&);
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SeparatedString>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_separatedStrings;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SeparatedString>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_splitStrings;
     UncheckedKeyHashMap<uint64_t, std::pair<unsigned, LValue>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fieldsMadeInBlock;
     struct MatchInFrame {
         StringReceiver subject;

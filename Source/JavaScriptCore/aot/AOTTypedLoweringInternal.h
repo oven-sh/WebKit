@@ -183,7 +183,7 @@ struct LoweringContext {
     Vector<ImageKey> knownCallees;
     UncheckedKeyHashMap<uint32_t, uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> calleeIndices;
     AddressLikeIntegers wideIntegerConstants;
-    IndexReferences indexReferences;
+    IndexRelocations indexRelocations;
     unsigned numberOfSiteCacheWords { 0 };
     Vector<std::pair<CCallHelpers::Label, CCallHelpers::Label>> rangesKeptInline;
     Vector<Site> sites;
@@ -338,7 +338,6 @@ void checkShadowBeforeAccesses(B3::Procedure&);
 #endif
 void foldDecodingsIntoAccesses(B3::Procedure&, LoweringContext&);
 Vector<String> validateNarrowReferences(B3::Procedure&, LoweringContext&);
-void branchOverUndefinedForAbsentCells(B3::Procedure&);
 void splitBranchConditions(B3::Procedure&);
 void foldNumberBoxings(B3::Procedure&, LoweringContext&);
 void loadDoubleConstantsFromInstance(B3::Procedure&);
@@ -422,7 +421,6 @@ private:
 
     enum class RegistersAtLandingPad : uint8_t { Clobbered, PreservedFromSite };
     void unwindToLandingPad(B3::PatchpointValue*, CallSite, RegistersAtLandingPad = RegistersAtLandingPad::Clobbered, bool mayReturn = true);
-    void branchToLandingPad(B3::PatchpointValue*, std::optional<GPRReg> exception);
     Boxed catchException(BlockID handler);
     ValueID exceptionCaughtIn(BlockID handler) const;
     bool ignoresCaughtValue(BlockID handler);
@@ -717,7 +715,7 @@ private:
     ValueID receiverWithoutCasts(ValueID) const;
     void branchOnOriginalStructure(const Value&, const Terminator&, LBasicBlock isOriginal, LBasicBlock hasChanged);
     enum class GuardKind : uint8_t { Class, Structure };
-    std::optional<bool> resultOfDominatingGuard(ValueID receiver, const EngineClass&, GuardKind);
+    std::optional<bool> resultOfDominatingGuard(ValueID receiver, const BuiltinClass&, GuardKind);
     void branchOnAwaitMayContinue(const Value&, BlockID goesOn, LBasicBlock mayContinue, LBasicBlock mustSuspend);
     CellPointer awaitedObjectOrElse(ValueID awaited, LBasicBlock isNotObject);
     void findClosureTestsFusedWithBranches();
@@ -753,23 +751,17 @@ private:
     Operand narrowBoxedOrElse(Boxed, const Type& from, const Type& to, LBasicBlock otherwise);
     Operand narrowBoxedToIntegerOrElse(Boxed, const Type& from, const Type& to, LBasicBlock otherwise);
     Integer integralOrElse(Number, Range, LBasicBlock otherwise);
-    using Emitter::orElse;
+    using Emitter::branchUnless;
     bool dropsGuardAt(const char* file, unsigned line) const { return !m_isValidatingFact && isDroppedForTesting(file, line); }
-    void orElse(Word32 condition, LBasicBlock otherwise, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
+    void branchUnless(Word32 condition, LBasicBlock otherwise, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
     {
-        if (!m_isValidatingFact && isForcedForTesting(file, line)) [[unlikely]] {
-            Emitter::orElse(m_out.constInt32(0), otherwise);
-            return;
-        }
         if (!dropsGuardAt(file, line)) [[likely]]
-            Emitter::orElse(condition.value(), otherwise);
+            Emitter::branchUnless(condition.value(), otherwise);
     }
     FTL::WeightedTarget rarely(LBasicBlock block, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
     {
         if (dropsGuardAt(file, line)) [[unlikely]]
             m_out.dropNextGuardForTesting();
-        if (!m_isValidatingFact && isForcedForTesting(file, line)) [[unlikely]]
-            m_out.forceNextGuardForTesting();
         return FTL::rarely(block);
     }
     Operand coerce(Operand, const Type& from, const Value& cast, std::optional<OperationEffects> = std::nullopt);
@@ -847,16 +839,16 @@ private:
     bool instanceOfUsesShapeTest(const Value&);
     bool isOnlyUsedByShapeInstanceOf(ValueID);
     Word32 lowerInstanceOfByShape(const Value&);
-    const EngineClass* instanceOfEngineClass(const Value&);
+    const BuiltinClass* instanceOfEngineClass(const Value&);
     void findInstanceOfRuns(const Vector<BlockID>& order);
     Word32 isNonObjectOrPlainObject(ValueID);
-    Word32 lowerInstanceOfEngineClass(ValueID, const Value&, const EngineClass&);
+    Word32 lowerInstanceOfEngineClass(ValueID, const Value&, const BuiltinClass&);
     Word32 lowerGenericInstanceOf(Boxed value, Boxed constructor);
     bool isUsedOnlyByInlineInstanceOf(ValueID);
 
     Number asNumericOperand(ValueID);
     bool hasNumericType(ValueID) const;
-    Operand numericResult(Operand computed, const Type& guarantee, const Type&, bool typeIsFact);
+    Operand numericResult(Operand computed, const Type& guarantee, const Type&, bool typeIsProven);
     Operand lowerBinary(ValueID result, const Value&);
     Operand lowerNumericBinary(Opcode, ValueID a, ValueID b, const Type& result);
     Operand int32ResultOrElse(Integer, const Type& result, LBasicBlock otherwise);
@@ -962,24 +954,24 @@ private:
         }
         return equal(a, b);
     }
-    LValue cellCageBase() { return m_cellCageBase ? m_cellCageBase : marked(fixedPointer(Instance::offsetOfCellCageBase()), IsFixed | IsSafe); }
-    LValue decodeCell32(LValue index) { return cell32IsPointer ? index : m_out.add(cellCageBase(), m_out.shl(index, m_out.constInt32(cell32Shift))); }
+    LValue cellCageBase() { return m_cellCageBase ? m_cellCageBase : marked(loadImmutablePointer(Instance::offsetOfCellCageBase()), IsFixed | IsSafe); }
+    LValue decodeCell32(LValue index) { return m_out.add(cellCageBase(), m_out.shl(index, m_out.constInt32(cell32Shift))); }
     Word32 refersToNumberBox(Word32 word) { return below(Word32(m_out.sub(word.value(), m_out.constInt32(nullInt32 + 1))), word32(static_cast<uint32_t>(minInlineInt32) - static_cast<uint32_t>(nullInt32 + 1))); }
-    TypedPointer numberBoxAt(const Field& field, Word32 word) { return m_out.address(heapOf(field.slot), m_out.add(marked(fixedPointer(Instance::offsetOfNumberBoxBase()), IsFixed | IsSafe), m_out.shl(m_out.zeroExtPtr(m_out.bitAnd(word.value(), m_out.constInt32(INT32_MAX))), m_out.constInt32(numberBoxShift))), 0); }
+    TypedPointer numberBoxAt(const Field& field, Word32 word) { return m_out.address(heapOf(field.slot), m_out.add(marked(loadImmutablePointer(Instance::offsetOfNumberBoxBase()), IsFixed | IsSafe), m_out.shl(m_out.zeroExtPtr(m_out.bitAnd(word.value(), m_out.constInt32(INT32_MAX))), m_out.constInt32(numberBoxShift))), 0); }
     void unlessBoxed(CellPointer, const Layout&, LBasicBlock otherwise);
-    LValue closureTableEntry(uint32_t general) { return m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfTypedClosures()), static_cast<ptrdiff_t>(general) * sizeof(uint32_t))); }
-    LValue closureIfCreated(uint32_t general)
+    LValue closureTableEntry(uint32_t genericEntrypointIndex) { return m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, loadImmutablePointer(Instance::offsetOfTypedClosures()), static_cast<ptrdiff_t>(genericEntrypointIndex) * sizeof(uint32_t))); }
+    LValue closureIfCreated(uint32_t genericEntrypointIndex)
     {
         if (Options::useAOTWideReferences())
-            return m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfTypedClosures()), static_cast<ptrdiff_t>(general) * sizeof(void*)));
-        return m_out.add(noClosure(), m_out.shl(m_out.zeroExtPtr(closureTableEntry(general)), m_out.constInt32(cell32Shift)));
+            return m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, loadImmutablePointer(Instance::offsetOfTypedClosures()), static_cast<ptrdiff_t>(genericEntrypointIndex) * sizeof(void*)));
+        return m_out.add(noClosure(), m_out.shl(m_out.zeroExtPtr(closureTableEntry(genericEntrypointIndex)), m_out.constInt32(cell32Shift)));
     }
     LValue noClosure() { return Options::useAOTWideReferences() ? m_out.constInt64(0) : m_out.add(cellCageBase(), m_out.constInt64(1 << cell32Shift)); }
-    Word32 isSingletonClosure(CellPointer cell, uint32_t general)
+    Word32 isSingletonClosure(CellPointer cell, uint32_t genericEntrypointIndex)
     {
         if (auto found = m_cellIndices.find(cell.value()); found != m_cellIndices.end())
-            return Word32(m_out.equal(m_out.sub(m_out.castToInt32(found->value), m_out.int32One), closureTableEntry(general)));
-        return equal(cell, CellPointer(closureIfCreated(general)));
+            return Word32(m_out.equal(m_out.sub(m_out.castToInt32(found->value), m_out.int32One), closureTableEntry(genericEntrypointIndex)));
+        return equal(cell, CellPointer(closureIfCreated(genericEntrypointIndex)));
     }
     void validateCell32(LValue index, LValue stored, bool mayBeNullish);
     LValue noteNarrowSlot(TypedPointer slot, LValue access)
@@ -1026,7 +1018,7 @@ private:
     void barrier(CellPointer array, std::span<const Boxed> stored);
     void fenceAfterInitialization();
     void didLowerInitializingStore();
-    BitVector m_fieldsAwaitingFirstStore;
+    BitVector m_uninitializedFields;
     bool m_isReportingFactViolation { false };
     LayoutID m_fieldsAwaitingFirstStoreLayout;
 
@@ -1331,7 +1323,6 @@ private:
     CellPointer lowerMaterializeEnvironment(const Value&);
     Word32 extensionWordOf(CellPointer cell) { return loadField<Word32>(cell, m_heaps.AOTTypedObject_extension); }
     Pointer extensionAt(Word32 word) { return Pointer(decodeCell32(m_out.zeroExtPtr(word.value()))); }
-    Word32 extensionCovers(CellPointer, const Field&);
     TypedPointer fieldAt(CellPointer cell, const Field& field) { return m_out.address(heapOf(field.slot), field.isOutOfLine ? extensionAt(extensionWordOf(cell)).value() : cell.value(), field.offset); }
 
     std::optional<LoweringContext::SitePosition> frameRemainingAfterTailCall(const Value& call) const
@@ -1674,7 +1665,6 @@ private:
         return isProtectionDroppedForTesting(file, line, function) ? cell : m_out.opaque(cell);
     }
     static bool isDroppedForTesting(const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
-    static bool isForcedForTesting(const char* file, unsigned line);
     struct TypedArrayReceiver {
         CellPointer view;
         unsigned flags { 0 };
@@ -1799,7 +1789,7 @@ private:
     bool checksMapGetResultAfterJoin(const Value&);
 
     CellPointer builtinCell(unsigned);
-    Word32 hasOriginalStructure(CellPointer, const EngineClass&);
+    Word32 hasOriginalStructure(CellPointer, const BuiltinClass&);
     void validateReceiverHasOriginalStructure(Word32 holds, CellPointer, ValueID);
     Boxed callBuiltinFunction(const Value&, OperationEffects, std::optional<Boxed> calledOn = std::nullopt);
     bool createsStringKeyedTable(const Value&);
@@ -2405,7 +2395,7 @@ Operand Lowering::lowerPredictedBuiltin(ValueID result, const PredictedBuiltin& 
     SetForScope callerSharedPath(m_sharedGenericPath, nullptr);
     SetForScope sharedPathBuiltin(m_sharedGenericPathBuiltin, expected.call.builtin());
     Vector<Expectation, 4> expectations;
-    bool readsMoreFromReceiver = m_builtins.at(expected.call.builtin()).thisUses & OperandUse::Gets && familyOf(which) != BuiltinFamily::Array;
+    bool readsMoreFromReceiver = m_builtins.at(expected.call.builtin()).receiverUses & OperandUse::Gets && familyOf(which) != BuiltinFamily::Array;
     if (receiver)
         expectations.append(Expectation { receiver, &expected.receiver, (!callee || readsMoreFromReceiver) && which != InlineBuiltin::ArrayLength });
     for (unsigned i = 0; i < expected.arguments.size(); ++i)
@@ -2423,7 +2413,7 @@ Operand Lowering::lowerPredictedBuiltin(ValueID result, const PredictedBuiltin& 
     if (auto& builtin = m_builtins.at(expected.call.builtin()); !receiver && builtin.kind == BuiltinKind::StaticFunction && !expected.arguments.isEmpty()) {
         Vector<Type, 4> integers;
         integers.fill(int32Type, expected.arguments.size());
-        integerVariant = applicableEntry(m_builtins.findStatic(BuiltinKind::StaticFunction, builtin.holderName, builtin.nameName), integers.span());
+        integerVariant = resolveBuiltinOverload(m_builtins.findStatic(BuiltinKind::StaticFunction, builtin.holderName, builtin.nameID), integers.span());
     }
     bool mayAllBeInt32 = integerVariant && m_builtins.at(integerVariant).parameters.begin()->conversion == ArgumentConversion::RequiresInteger;
     bool isAnyBoxed = false;
@@ -2459,7 +2449,7 @@ Operand Lowering::lowerPredictedBuiltin(ValueID result, const PredictedBuiltin& 
     }
     return ifPredictionHolds(expectations, repOf(typeOf(result)), [&](LBasicBlock otherwise) {
         if (receiver && callee)
-            orElse(equal(*callee, box(builtinCell(m_builtins.cellOf(expected.call.builtin())))), otherwise);
+            branchUnless(equal(*callee, box(builtinCell(m_builtins.cellOf(expected.call.builtin())))), otherwise);
         Value call = expected.call;
         call.type = m_function.at(result).type;
         SetForScope predictedMethodAlreadyRead(m_predictedMethodAlreadyRead, receiver && callee ? expected.call.builtin() : m_predictedMethodAlreadyRead);
@@ -2497,7 +2487,7 @@ T Lowering::lazilyInitialized(Stub stub, ptrdiff_t table, uint64_t indexAndMore,
     }
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    LValue value = table == Instance::offsetOfTypedClosures() ? closureIfCreated(index) : m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(table), static_cast<ptrdiff_t>(index) * sizeof(void*)));
+    LValue value = table == Instance::offsetOfTypedClosures() ? closureIfCreated(index) : m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, loadImmutablePointer(table), static_cast<ptrdiff_t>(index) * sizeof(void*)));
     ValueFromBlock fast = m_out.anchor(value);
     m_out.branch(table == Instance::offsetOfTypedClosures() ? m_out.notEqual(value, noClosure()) : m_out.notZero64(value), usually(continuation), rarely(slowPath));
     m_out.appendTo(slowPath);

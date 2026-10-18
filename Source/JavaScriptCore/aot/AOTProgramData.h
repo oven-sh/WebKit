@@ -202,8 +202,8 @@ public:
     ALWAYS_INLINE UniquedStringImpl* identifier(uint32_t index)
     {
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        if (uint16_t place = m_identifierPositions[index]; isIdentifierPosition(place)) [[likely]]
-            return m_identifiers[place];
+        if (uint16_t position = m_identifierPositions[index]; isIdentifierPosition(position)) [[likely]]
+            return m_identifiers[position];
         return identifierSlow(index);
     }
     ALWAYS_INLINE const Identifier& identifierAsIdentifier(uint32_t index)
@@ -212,15 +212,15 @@ public:
         if (!index) [[unlikely]]
             return *reinterpret_cast<const Identifier*>(&m_identifiers[0]);
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        if (uint16_t place = m_identifierPositions[index]; isIdentifierPosition(place)) [[likely]]
-            return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
+        if (uint16_t position = m_identifierPositions[index]; isIdentifierPosition(position)) [[likely]]
+            return *reinterpret_cast<const Identifier*>(&m_identifiers[position]);
         return identifierAsIdentifierSlow(index);
     }
     ALWAYS_INLINE const Identifier* identifierIfCreated(uint32_t index) const
     {
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-        uint16_t place = m_identifierPositions[index];
-        return isIdentifierPosition(place) ? reinterpret_cast<const Identifier*>(&m_identifiers[place]) : nullptr;
+        uint16_t position = m_identifierPositions[index];
+        return isIdentifierPosition(position) ? reinterpret_cast<const Identifier*>(&m_identifiers[position]) : nullptr;
     }
     const Identifier* tryGetIdentifierConcurrently(uint32_t index) const;
     bool isIdentifierRetained(uint32_t index) const { return m_identifierPositions[index]; }
@@ -231,7 +231,6 @@ public:
 
     JS_EXPORT_PRIVATE void didLoadModule(SourceProvider&);
 
-    const UnlinkedStringJumpTable& stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which);
     const IdentifierSet& identifierSet(uint32_t offsetOfSets, unsigned which);
 
     template<typename Visitor> void visit(Visitor&, CollectionScope);
@@ -252,7 +251,7 @@ private:
     UniquedStringImpl** m_identifiers;
     uint16_t* m_identifierPositions;
     static constexpr uint16_t identifierStoredElsewhere = UINT16_MAX;
-    static constexpr bool isIdentifierPosition(uint16_t place) { return static_cast<uint16_t>(place - 1) < identifierStoredElsewhere - 1; }
+    static constexpr bool isIdentifierPosition(uint16_t position) { return static_cast<uint16_t>(position - 1) < identifierStoredElsewhere - 1; }
     JS_EXPORT_PRIVATE UniquedStringImpl* identifierSlow(uint32_t index);
     JS_EXPORT_PRIVATE const Identifier& identifierAsIdentifierSlow(uint32_t index);
     uint32_t m_positionedIdentifierCount { 0 };

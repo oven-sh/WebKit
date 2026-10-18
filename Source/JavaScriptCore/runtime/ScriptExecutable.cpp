@@ -332,7 +332,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         }
 #endif
         if (unlinkedCodeBlock->hasNoInstructions()) [[unlikely]] {
-            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and the executable was built without its bytecode. The compiled code cannot be used in this context, and there is no other code to run."_s)));
+            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time, and the executable was built without its bytecode, so it can't run in this context."_s)));
             return nullptr;
         }
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));

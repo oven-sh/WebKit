@@ -652,7 +652,7 @@ class CompiledLayoutVisitor {
             AOT::Image* image = AOT::Image::withCode();
             const Data* data = image->at<Data>(image->header().typedDataOffset);
             const EncodedJSValue* capture = reinterpret_cast<const EncodedJSValue*>(bytes + SlimClosure::offsetOfCaptures());
-            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureCountsOffset)[AOT::ClosureWord::functionOf(word)][0]; capture != end; ++capture)
+            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureWordCountsOffset)[AOT::ClosureWord::functionOf(word)][0]; capture != end; ++capture)
                 appender.appendValue(JSValue::decode(*capture));
             return true;
         }
@@ -723,7 +723,7 @@ class CompiledLayoutVisitor {
             AOT::Image* image = AOT::Image::withCode();
             const Data* data = image->at<Data>(image->header().typedDataOffset);
             const EncodedJSValue* capture = reinterpret_cast<const EncodedJSValue*>(bytes + Closure::offsetOfCaptures());
-            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureCountsOffset)[AOT::ClosureWord::functionOf(closureWord)][0]; capture != end; ++capture)
+            for (const EncodedJSValue* end = capture + data->at<std::array<uint8_t, 2>>(data->closureWordCountsOffset)[AOT::ClosureWord::functionOf(closureWord)][0]; capture != end; ++capture)
                 appender.appendValue(JSValue::decode(*capture));
             return true;
         }

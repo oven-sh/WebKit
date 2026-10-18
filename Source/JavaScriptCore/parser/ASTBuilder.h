@@ -952,9 +952,9 @@ public:
     void auditLastBinaryOperand(const AuditSites& auditSites)
     {
         auto& operand = m_binaryOperandStack.last();
-        operand.first = auditedIfListed(auditSites, operand.first, operand.second.start.offset, operand.second.end.offset);
+        operand.first = wrapInAuditIfNeeded(auditSites, operand.first, operand.second.start.offset, operand.second.end.offset);
     }
-    ExpressionNode* auditedIfListed(const AuditSites& auditSites, ExpressionNode* expression, unsigned start, unsigned end)
+    ExpressionNode* wrapInAuditIfNeeded(const AuditSites& auditSites, ExpressionNode* expression, unsigned start, unsigned end)
     {
         auto sites = auditSites.find(start, end);
         if (sites.empty() || !expression || expression->isBaseFuncExprNode() || expression->isClassExprNode() || expression->isSuperNode())

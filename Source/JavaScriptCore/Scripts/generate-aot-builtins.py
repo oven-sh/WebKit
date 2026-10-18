@@ -474,14 +474,14 @@ for entry in entries:
 WELL_KNOWN_NAMES = ['TypedArray', 'prototype', 'call', 'apply', 'hasOwn', 'hasOwnProperty', 'propertyIsEnumerable']
 WELL_KNOWN_CLASSES = ['Array', 'Promise', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Function', 'Object']
 WELL_KNOWN_OPERATIONS = ['HasOriginalStructure', 'Call', 'PropertyIsEnumerable']
-texts = set(WELL_KNOWN_NAMES) | set(replaceable)
+builtin_names = set(WELL_KNOWN_NAMES) | set(replaceable)
 for entry in entries:
-    texts.update(text for text in (entry['holder'], entry['name']) if text)
+    builtin_names.update(text for text in (entry['holder'], entry['name']) if text)
 for engine in engine_classes:
-    texts.update((engine['text'], engine['listed_as']))
-texts.update(buffer_accessors)
-texts = sorted(texts, key=lambda text: text.encode())
-name_numbers = {text: number for number, text in enumerate(texts)}
+    builtin_names.update((engine['text'], engine['listed_as']))
+builtin_names.update(buffer_accessors)
+builtin_names = sorted(builtin_names, key=lambda text: text.encode())
+name_numbers = {text: number for number, text in enumerate(builtin_names)}
 for text in WELL_KNOWN_CLASSES:
     if text not in class_numbers:
         errors.append('no entry makes %s a class' % text)
@@ -520,8 +520,8 @@ table += array('Builtin builtinEntries[numberOfBuiltins]', ['{ BuiltinKind::%s, 
                                                             for entry, rest in rows])
 table += array('BuiltinNameData builtinNames[numberOfBuiltinNames]', ['{ "%s"_s, %s, %s, %s, %s, %s, %s }' % (
     text, class_numbers.get(text, 'noClass'), class_numbers.get(speculated[text], 'multipleClasses') if text in speculated else 'noClass', operation_numbers.get(text, 'noOperation'),
-    *('true' if text in texts_with else 'false' for texts_with in (is_global, replaceable, may_be_extended))) for text in texts])
-table += array('EngineClass engineClasses[numberOfEngineClasses]', ['{ "%s"_s, %d, %s, %s, %s, %s, %d, %d }' % (
+    *('true' if text in texts_with else 'false' for texts_with in (is_global, replaceable, may_be_extended))) for text in builtin_names])
+table += array('BuiltinClass builtinClasses[numberOfEngineClasses]', ['{ "%s"_s, %d, %s, %s, %s, %s, %d, %d }' % (
     engine['text'], number, cpp_name(engine['text']), cpp_name(engine['listed_as']), engine['typed_array_type'], engine['type'], engine['first'], engine['count']) for number, engine in enumerate(engine_classes)])
 table += array('FirstBuiltin firstBuiltins[]', ['{ keyFor(BuiltinKind::%s, %s, %s), %d }' % (entry['table_kind'], cpp_name(entry['holder']), cpp_name(entry['name']), number) for key, number, entry in first_entries])
 captured = [str(number) for number, entry in enumerate(entries) if entry['holder'] in replaceable and entry['lowering'] != 'Generic']
@@ -599,7 +599,7 @@ if bun:
         for of_file, function, code, number in engine_functions:
             if of_file == file and not re.search(r'^export (async )?function %s\(' % aot_engine_builtins.exported_name(function), text, re.M):
                 errors.append('engine.def: src/aot/prelude/engine/%s.ts has no `export function %s`' % (file, aot_engine_builtins.exported_name(function)))
-if len(structures) > 255 or len(engine_classes) > 255 or len(entries) >= 0xfffe or len(texts) >= 0xfffe:
+if len(structures) > 255 or len(engine_classes) > 255 or len(entries) >= 0xfffe or len(builtin_names) >= 0xfffe:
     errors.append('too many entries, names, classes or structures')
 for text in WELL_KNOWN_OPERATIONS:
     if text not in operation_numbers:
@@ -689,7 +689,7 @@ lists += x_macro('FOR_EACH_AOT_TYPED_LINK_TIME_CONSTANT_NAME', link_time_constan
 for family in families:
     if family in checked_constants:
         lists += x_macro('FOR_EACH_AOT_TYPED_%s_CONSTANT' % family_name(family).upper(), checked_constants[family])
-lists += '#define AOT_TYPED_NUMBER_OF_BUILTINS %d\n#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES %d\n#define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES %d\n' % (len(entries), len(texts), len(engine_classes))
+lists += '#define AOT_TYPED_NUMBER_OF_BUILTINS %d\n#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES %d\n#define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES %d\n' % (len(entries), len(builtin_names), len(engine_classes))
 lists += '#define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES %d\n#define AOT_TYPED_BUILTINS_HASH 0x%08xu\n\n' % (len(structures), table_hash)
 lists += ''.join('#define AOT_TYPED_BUILTIN_NAME_%s %d\n' % (text, name_numbers[text]) for text in WELL_KNOWN_NAMES)
 lists += ''.join('#define AOT_TYPED_ENGINE_CLASS_%s %d\n' % (text, class_numbers[text]) for text in WELL_KNOWN_CLASSES)

@@ -100,11 +100,11 @@ public:
     void freeBlock(void* block)
     {
         uintptr_t offset = std::bit_cast<uintptr_t>(block) - m_start;
-        size_t place = offset / MarkedBlock::blockSize;
-        size_t index = indexOf(place);
+        size_t blockIndex = offset / MarkedBlock::blockSize;
+        size_t index = indexOf(blockIndex);
 
         Locker locker { m_lock };
-        RELEASE_ASSERT(place && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
+        RELEASE_ASSERT(blockIndex && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
         RELEASE_ASSERT(!m_committedFreeBlocks.get(index) && !m_decommittedFreeBlocks.get(index), offset);
         addCommittedFreeBlocks(index, index + 1);
     }
@@ -165,11 +165,11 @@ private:
         void* address = nullptr;
 #if OS(LINUX)
         for (unsigned attempt = 0; attempt < 16 && !address; ++attempt) {
-            void* wanted = std::bit_cast<void*>((firstWindow + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % numberOfWindows)) * MarkedBlockCage::maxSize);
-            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, wanted, false);
+            void* requestedAddress = std::bit_cast<void*>((firstWindow + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % numberOfWindows)) * MarkedBlockCage::maxSize);
+            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, requestedAddress, false);
             if (!reserved)
                 return 0;
-            if (reserved == wanted)
+            if (reserved == requestedAddress)
                 address = reserved;
             else
                 OSAllocator::releaseDecommitted(reserved, size, 0);
@@ -206,13 +206,13 @@ private:
 
     void* blockAt(size_t index) const
     {
-        size_t place = index < m_firstWrappedBlock ? m_firstBlockIndex + index - 1 : index - m_firstWrappedBlock + reservedBlockCount;
-        return std::bit_cast<void*>(m_start + place * MarkedBlock::blockSize);
+        size_t blockIndex = index < m_firstWrappedBlock ? m_firstBlockIndex + index - 1 : index - m_firstWrappedBlock + reservedBlockCount;
+        return std::bit_cast<void*>(m_start + blockIndex * MarkedBlock::blockSize);
     }
 
-    size_t indexOf(size_t place) const
+    size_t indexOf(size_t blockIndex) const
     {
-        return place >= m_firstBlockIndex ? place - m_firstBlockIndex + 1 : place + m_firstWrappedBlock - reservedBlockCount;
+        return blockIndex >= m_firstBlockIndex ? blockIndex - m_firstBlockIndex + 1 : blockIndex + m_firstWrappedBlock - reservedBlockCount;
     }
 
     size_t endOfRunFrom(size_t begin, size_t end) const
@@ -400,12 +400,12 @@ void MarkedBlockCage::decommitFreeBlocks()
 void MarkedBlockCage::require()
 {
     if (!isEnabled()) {
-        dataLogLn("This program was compiled with 32-bit references and cannot run with markedBlockCageSizeInMB=0. Compile it with useAOTWideReferences=1 to run it without the cage. In bun build the flag is --aot-huge-heap.");
+        dataLogLn("error: this executable can't run with BUN_JSC_markedBlockCageSizeInMB=0. Build it with --aot-huge-heap to run it without a heap limit.");
         exit(EXIT_FAILURE);
     }
     s_isRequired.store(true, std::memory_order_relaxed);
     if (s_hasBlocksOutside.load(std::memory_order_relaxed)) {
-        dataLogLn("This program was compiled with 32-bit references, and the objects made before it was loaded did not fit markedBlockCageSizeInMB=", Options::markedBlockCageSizeInMB(), ". Give it a larger range, or compile the program with useAOTWideReferences=1. In bun build the flag is --aot-huge-heap.");
+        dataLogLn("error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=", Options::markedBlockCageSizeInMB(), ". Raise it, or build with --aot-huge-heap.");
         exit(EXIT_FAILURE);
     }
 }
@@ -414,7 +414,8 @@ void MarkedBlockCage::logExhaustion()
 {
     if (!isRequired())
         return;
-    dataLogLn("FATAL: MarkedBlocks fill the ", g_jscConfig.markedBlockCageSize / MB, " MB of address space that each thread of a program compiled with 32-bit references has for them (markedBlockCageSizeInMB). Compiled with useAOTWideReferences=1 it has no such limit. In bun build the flag is --aot-huge-heap.");
+    bool isInGB = !(g_jscConfig.markedBlockCageSize % GB);
+    dataLogLn("FATAL: out of memory. Each thread of a compiled executable can use ", g_jscConfig.markedBlockCageSize / (isInGB ? GB : MB), isInGB ? " GB" : " MB", " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower.");
     if (ExhaustionHandler handler = s_exhaustionHandler.load(std::memory_order_relaxed))
         handler();
 }

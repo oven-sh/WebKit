@@ -105,11 +105,11 @@ public:
     {
     }
 
-    void collectBoundFunction(ValueID id, Vector<uint64_t>& wanted) const
+    void collectBoundFunction(ValueID id, Vector<uint64_t>& boundFunctionKeys) const
     {
         auto& value = m_function.at(id);
         if (auto known = boundCalleeOf(value))
-            wanted.append(Program::boundFunctionKey(known->function, boundArgumentCount(value)));
+            boundFunctionKeys.append(Program::boundFunctionKey(known->function, boundArgumentCount(value)));
     }
 
     void expandDisposableStacks()
@@ -175,7 +175,7 @@ private:
         bool isClassFieldInitializer { false };
     };
 
-    using Refuted = std::pair<ValueID, FunctionID>;
+    using FailedGuard = std::pair<ValueID, FunctionID>;
     using RefutedShape = std::pair<ValueID, LayoutID>;
     using PinnedFunction = std::tuple<LayoutID, StringID, bool>;
 
@@ -187,7 +187,7 @@ private:
     const Type& typeOf(ValueID value) const { return m_program.typeOf(m_function, value); }
     bool isSubsetOf(ValueID value, TypeID type) const { return !type || typeOf(value).isSubsetOf(m_program.at(type), m_program); }
 
-    ValueID originOf(ValueID value) const
+    ValueID underlyingValue(ValueID value) const
     {
         while (m_function.at(value).opcode == Opcode::Cast)
             value = m_function.at(value).child(0);
@@ -221,8 +221,8 @@ private:
     BlockID addBlock()
     {
         m_function.blocks.append(Block { });
-        m_refuted.append(Refuted { });
-        m_classObjectFallbackBlocks.append(LayoutID());
+        m_failedGuards.append(FailedGuard { });
+        m_fallbackClassByBlock.append(LayoutID());
         m_refutedShapes.append(RefutedShape { });
         m_pinnedFunctionBlocks.append(PinnedFunction { });
         return BlockID(m_function.blocks.size() - 1);
@@ -461,7 +461,7 @@ private:
             ValueID value;
             BlockID addedIn;
             Vector<uint8_t> atEntryOf;
-            Vector<ValueID> parametersOf;
+            Vector<ValueID> parameterValues;
         };
         if (definedIn.index() < m_originalBlockCount && !m_isReached.get(definedIn.index()))
             return false;
@@ -616,13 +616,13 @@ private:
         TypeID anything = m_program.types.anything;
         Vector<unsigned, 32> sources(region);
         for (auto& resource : resources) {
-            resource.parametersOf.fill(ValueID(), 2 * regionSize);
+            resource.parameterValues.fill(ValueID(), 2 * regionSize);
             for (unsigned i = 0; i < regionSize; ++i) {
                 unsigned b = region[i];
                 if (BlockID(b) == definedIn || resource.atEntryOf[i] != mayBeAdded || !reachesDisposal.get(i))
                     continue;
-                resource.parametersOf[2 * i] = addParameterTo(BlockID(b), anything);
-                resource.parametersOf[2 * i + 1] = addParameterTo(BlockID(b), anything);
+                resource.parameterValues[2 * i] = addParameterTo(BlockID(b), anything);
+                resource.parameterValues[2 * i + 1] = addParameterTo(BlockID(b), anything);
                 if (auto unreachable = m_unreachablePredecessors.find(b); unreachable != m_unreachablePredecessors.end())
                     sources.appendVector(unreachable->value);
             }
@@ -640,14 +640,14 @@ private:
                 if (to == UINT_MAX)
                     continue;
                 for (auto& resource : resources) {
-                    if (!resource.parametersOf[2 * to])
+                    if (!resource.parameterValues[2 * to])
                         continue;
                     uint8_t state = stateAtExitOf(resource, b, t);
-                    RELEASE_ASSERT(state != mayBeAdded || resource.parametersOf[2 * from]);
+                    RELEASE_ASSERT(state != mayBeAdded || resource.parameterValues[2 * from]);
                     if (state != isAdded && state != mayBeAdded && !nothing)
                         nothing = insertUndefinedAtBlockStart(BlockID(b));
-                    targets[t].arguments.append(state == isAdded ? resource.value : state == mayBeAdded ? resource.parametersOf[2 * from] : nothing);
-                    targets[t].arguments.append(state == isAdded ? resource.method : state == mayBeAdded ? resource.parametersOf[2 * from + 1] : nothing);
+                    targets[t].arguments.append(state == isAdded ? resource.value : state == mayBeAdded ? resource.parameterValues[2 * from] : nothing);
+                    targets[t].arguments.append(state == isAdded ? resource.method : state == mayBeAdded ? resource.parameterValues[2 * from + 1] : nothing);
                 }
             }
         }
@@ -690,8 +690,8 @@ private:
             uint8_t state = resource.atEntryOf[disposal];
             if (state == isNotAdded)
                 continue;
-            ValueID value = state == isAdded ? resource.value : resource.parametersOf[2 * disposal];
-            ValueID method = state == isAdded ? resource.method : resource.parametersOf[2 * disposal + 1];
+            ValueID value = state == isAdded ? resource.value : resource.parameterValues[2 * disposal];
+            ValueID method = state == isAdded ? resource.method : resource.parameterValues[2 * disposal + 1];
             BlockID next = addBlock();
             ValueID hasErrorAfter = addParameterTo(next, m_program.types.boolean);
             ValueID errorAfter = addParameterTo(next, anything);
@@ -847,7 +847,7 @@ private:
         return !rest || Type::engineClass(Builtins::singleton().arrayClass()).isSubsetOf(m_program.at(rest), m_program);
     }
 
-    Arguments passedTo(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> given)
+    Arguments argumentsFor(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> callArguments)
     {
         auto& callee = m_program.at(id);
         Arguments all;
@@ -860,11 +860,11 @@ private:
             TypeID type = callee.parameterTypes[k];
             if (callee.has(Format::FunctionHasRestParameter) && k + 1 == count) {
                 Value rest = make(Opcode::NewArray, type ? type : m_program.types.anything);
-                if (k < given.size())
-                    rest.arguments.append(given.subspan(k));
+                if (k < callArguments.size())
+                    rest.arguments.append(callArguments.subspan(k));
                 all.append(appendThrowing(WTF::move(rest)));
-            } else if (k < given.size())
-                all.append(castToParameterType(id, given[k], type, callee.parameterCastReason(k)));
+            } else if (k < callArguments.size())
+                all.append(castToParameterType(id, callArguments[k], type, callee.parameterCastReason(k)));
             else
                 all.append(castToParameterType(id, append(make(Opcode::Undefined, m_program.types.undefined)), type, callee.parameterCastReason(k)));
         }
@@ -880,7 +880,7 @@ private:
         return appendThrowing(WTF::move(call));
     }
 
-    bool needsArgumentCasts(FunctionID id, ValueID thisValue, std::span<const ValueID> given) const
+    bool needsArgumentCasts(FunctionID id, ValueID thisValue, std::span<const ValueID> callArguments) const
     {
         auto& callee = m_program.at(id);
         auto isHeld = [&](const Type& have, TypeID type, CastReason reason) {
@@ -889,7 +889,7 @@ private:
         if (callee.has(Format::FunctionHasThis) && !isHeld(typeOf(thisValue), callee.thisType, CastReason::Flow))
             return true;
         for (unsigned k = 0; k < callee.parameterTypes.size(); ++k) {
-            if (!isHeld(k < given.size() ? typeOf(given[k]) : m_program.at(m_program.types.undefined), callee.parameterTypes[k], callee.parameterCastReason(k)))
+            if (!isHeld(k < callArguments.size() ? typeOf(callArguments[k]) : m_program.at(m_program.types.undefined), callee.parameterTypes[k], callee.parameterCastReason(k)))
                 return true;
         }
         return false;
@@ -908,9 +908,9 @@ private:
         return false;
     }
 
-    void callAndFinish(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> given, TypeID type, Yields yields)
+    void callAndFinish(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> callArguments, TypeID type, Yields yields)
     {
-        if (FunctionID written = m_program.at(id).declaredGenericEntrypoint; written && (needsArgumentCasts(id, thisValue, given) || (m_program.at(written).has(FunctionLogsTypeMismatches) && mayTakeUntypedObjects(id))))
+        if (FunctionID written = m_program.at(id).declaredGenericEntrypoint; written && (needsArgumentCasts(id, thisValue, callArguments) || (m_program.at(written).has(FunctionLogsTypeMismatches) && mayTakeUntypedObjects(id))))
             id = written;
         else if (FunctionID copy = m_program.at(id).selfCheckingCopy; copy && !m_isInTailPosition && !m_program.at(type).isAnything())
             id = copy;
@@ -926,7 +926,7 @@ private:
             m_hasHandler = true;
             m_handler = Target { refused, { } };
         }
-        Arguments arguments = passedTo(id, captures, thisValue, given);
+        Arguments arguments = argumentsFor(id, captures, thisValue, callArguments);
         bool mayRefuse = promiseType && (m_lastMayThrow || m_block != before);
         if (promiseType) {
             endBlockAfterThrowingValue();
@@ -1060,11 +1060,11 @@ private:
     {
         if (!m_mayGuess || !typeOf(object).anyObject)
             return { };
-        TypeID prediction = m_function.at(object).prediction() ? m_function.at(object).prediction() : m_function.at(originOf(object)).prediction();
+        TypeID prediction = m_function.at(object).prediction() ? m_function.at(object).prediction() : m_function.at(underlyingValue(object)).prediction();
         if (!prediction)
             return { };
         LayoutID supertype = m_program.at(prediction).singleLayout();
-        if (!supertype || m_refutedShapes[block.index()] == RefutedShape { originOf(object), supertype })
+        if (!supertype || m_refutedShapes[block.index()] == RefutedShape { underlyingValue(object), supertype })
             return { };
         return supertype;
     }
@@ -1075,7 +1075,7 @@ private:
         test.children[0] = object;
         test.immediates = { supertype.index(), m_program.mayRunInMultipleInstances ? shapeTestIsForThisInstance : 0u };
         BlockID otherwise = branch(append(WTF::move(test)));
-        m_refutedShapes[otherwise.index()] = RefutedShape { originOf(object), supertype };
+        m_refutedShapes[otherwise.index()] = RefutedShape { underlyingValue(object), supertype };
         return otherwise;
     }
 
@@ -1088,7 +1088,7 @@ private:
         if (m_function.at(read).opcode != Opcode::GetById)
             return false;
         ValueID object = m_function.at(read).child(0);
-        if (typeOf(object).singleLayout() || originOf(object) != originOf(m_function.at(id).child(1)))
+        if (typeOf(object).singleLayout() || underlyingValue(object) != underlyingValue(m_function.at(id).child(1)))
             return false;
         LayoutID supertype = predictedLayoutOf(block, object);
         if (!supertype || !isObjectLayout(m_program.at(supertype).kind) || !isUsedOnlyBy(read, id))
@@ -1138,13 +1138,13 @@ private:
             return false;
         bool callsFunction = std::ranges::any_of(*cases, [](auto& which) { return !!which.callee; });
         bool needsInstanceTest = !isExpected && m_program.mayRunInMultipleInstances && callsFunction;
-        if ((needsInstanceTest || needsMembershipTest) && m_refutedShapes[block.index()] == RefutedShape { originOf(object), supertype })
+        if ((needsInstanceTest || needsMembershipTest) && m_refutedShapes[block.index()] == RefutedShape { underlyingValue(object), supertype })
             return false;
-        Arguments given;
+        Arguments callArguments;
         if (kind == MethodKind::Method)
-            given = original.arguments;
+            callArguments = original.arguments;
         else if (kind == MethodKind::Setter)
-            given.append(original.child(1));
+            callArguments.append(original.child(1));
 
         open(block, index);
         ValueID receiver = object;
@@ -1157,7 +1157,7 @@ private:
             cast.immediates = { name.index(), static_cast<uint32_t>(CastReason::Flow) };
             receiver = appendThrowing(WTF::move(cast));
         }
-        dispatch(*cases, supertype, receiver, given.span(), original, kind == MethodKind::Setter ? Yields::Undefined : Yields::Result);
+        dispatch(*cases, supertype, receiver, callArguments.span(), original, kind == MethodKind::Setter ? Yields::Undefined : Yields::Result);
         if (otherwise) {
             moveTo(otherwise);
             ValueID result = appendThrowing(Value(original));
@@ -1181,7 +1181,7 @@ private:
         return isProven ? held(receiver, callee.thisType, CastReason::Flow) : receiver;
     }
 
-    void dispatch(const Cases& cases, LayoutID supertype, ValueID receiver, std::span<const ValueID> given, const Value& original, Yields yields)
+    void dispatch(const Cases& cases, LayoutID supertype, ValueID receiver, std::span<const ValueID> callArguments, const Value& original, Yields yields)
     {
         for (unsigned c = 0; c < cases.size(); ++c) {
             auto& which = cases[c];
@@ -1193,7 +1193,7 @@ private:
                 otherwise = branch(append(WTF::move(test)));
             }
             if (which.callee)
-                callAndFinish(which.callee, { }, narrowedToThisType(which, receiver), given, original.type, yields);
+                callAndFinish(which.callee, { }, narrowedToThisType(which, receiver), callArguments, original.type, yields);
             else
                 callFieldValueAndFinish(supertype, receiver, original);
             if (otherwise)
@@ -1211,7 +1211,7 @@ private:
         ValueID object = m_function.at(read).child(0);
         StringID name = m_function.at(read).string();
         LayoutID supertype = typeOf(object).singleLayout();
-        if (originOf(object) != originOf(original.child(1)) || !supertype || !isObjectLayout(m_program.at(supertype).kind) || m_program.mayRunInMultipleInstances)
+        if (underlyingValue(object) != underlyingValue(original.child(1)) || !supertype || !isObjectLayout(m_program.at(supertype).kind) || m_program.mayRunInMultipleInstances)
             return false;
         auto cases = casesOf(supertype, name, MethodKind::Method);
         if (!cases || !orderCases(*cases, supertype) || !cases->last().callee || !isUsedOnlyBy(read, id))
@@ -1310,7 +1310,7 @@ private:
 
     LayoutID classOfClassObject(ValueID value) const
     {
-        auto& definition = m_function.at(originOf(value));
+        auto& definition = m_function.at(underlyingValue(value));
         return definition.opcode == Opcode::FunctionReference ? m_program.at(definition.function()).constructedClass : LayoutID();
     }
 
@@ -1352,10 +1352,10 @@ private:
             return;
         Value test = make(Opcode::IsClassObjectUnmodified, m_program.types.boolean);
         test.immediates[0] = ofClass.index();
-        BlockID asks = branch(append(WTF::move(test)));
+        BlockID fallbackBlock = branch(append(WTF::move(test)));
         BlockID isUnmodified = m_block;
-        m_classObjectFallbackBlocks[asks.index()] = ofClass;
-        moveTo(asks);
+        m_fallbackClassByBlock[fallbackBlock.index()] = ofClass;
+        moveTo(fallbackBlock);
         Value fallback(original);
         if (original.opcode == Opcode::ConstructSuper || original.opcode == Opcode::ConstructSuperForwardVarargs)
             fallback.isOnSlowPath = true;
@@ -1415,16 +1415,16 @@ private:
             return false;
         ValueID id = values[callIndex];
         Value original = m_function.at(id);
-        if (original.opcode != Opcode::Call || original.child(0) != read || originOf(original.child(1)) != originOf(classObject) || !isUsedOnlyBy(read, id))
+        if (original.opcode != Opcode::Call || original.child(0) != read || underlyingValue(original.child(1)) != underlyingValue(classObject) || !isUsedOnlyBy(read, id))
             return false;
         values.removeAt(index);
         open(block, callIndex - 1);
         Value test = make(Opcode::IsClassObjectUnmodified, m_program.types.boolean);
         test.immediates[0] = ofClass.index();
-        BlockID asks = branch(append(WTF::move(test)));
+        BlockID fallbackBlock = branch(append(WTF::move(test)));
         BlockID isUnmodified = m_block;
-        m_classObjectFallbackBlocks[asks.index()] = ofClass;
-        moveTo(asks);
+        m_fallbackClassByBlock[fallbackBlock.index()] = ofClass;
+        moveTo(fallbackBlock);
         Value call = original;
         if (m_function.at(classObject).opcode == Opcode::FunctionReference && original.child(1) == classObject) {
             ValueID again = append(Value(m_function.at(classObject)));
@@ -1468,7 +1468,7 @@ private:
         Value original = m_function.at(m_function.at(block).values[index]);
         ValueID classObject = original.child(0);
         LayoutID ofClass = classOfClassObject(classObject);
-        if (!ofClass || m_classObjectFallbackBlocks[block.index()] == ofClass)
+        if (!ofClass || m_fallbackClassByBlock[block.index()] == ofClass)
             return false;
         if ((original.opcode == Opcode::GetById || original.opcode == Opcode::PutById) && accessStaticField(block, index, ofClass))
             return false;
@@ -1506,7 +1506,7 @@ private:
             return false;
         auto& key = m_function.at(keyID);
         auto& isStatic = m_function.at(isStaticID);
-        if (!around || key.opcode != Opcode::String || isStatic.opcode != Opcode::Boolean || (isStatic.boolean() && m_classObjectFallbackBlocks[block.index()] == m_program.at(around).base))
+        if (!around || key.opcode != Opcode::String || isStatic.opcode != Opcode::Boolean || (isStatic.boolean() && m_fallbackClassByBlock[block.index()] == m_program.at(around).base))
             return false;
         if (!m_program.at(around).hasFixedLayout || !m_program.at(around).hasImmutableMembers)
             return false;
@@ -1524,7 +1524,7 @@ private:
         ValueID operand = value;
         FunctionID predicted;
         bool isClassFieldInitializer = false;
-        value = originOf(value);
+        value = underlyingValue(value);
         auto& definition = m_function.at(value);
         switch (definition.opcode) {
         case Opcode::FunctionReference:
@@ -1534,25 +1534,25 @@ private:
             return KnownCallee { definition.function(), value, definition.arguments, true };
         case Opcode::GetModuleVariable: {
             auto& variable = m_program.variables[definition.variable().index()];
-            if (variable.singleFunctionIsProven || variable.singleFunctionOrNullish)
+            if (variable.singleFunctionIsProven || variable.isSingleFunctionOrNullish)
                 return KnownCallee { variable.singleFunction, value, { }, variable.singleFunctionIsProven, true };
             predicted = variable.singleFunction;
             break;
         }
         case Opcode::GetCapture: {
-            auto& holder = m_function.at(originOf(definition.child(0)));
+            auto& holder = m_function.at(underlyingValue(definition.child(0)));
             if (holder.opcode != Opcode::GetModuleVariable)
                 break;
             auto& variable = m_program.variables[holder.variable().index()];
             auto& captured = variable.functionsCapturedBySingleFunction;
             uint32_t index = definition.immediates[1];
-            if (variable.singleFunction == definition.function() && (variable.singleFunctionIsProven || variable.singleFunctionOrNullish) && index < captured.size() && captured[index])
+            if (variable.singleFunction == definition.function() && (variable.singleFunctionIsProven || variable.isSingleFunctionOrNullish) && index < captured.size() && captured[index])
                 return KnownCallee { captured[index], value, { }, true };
             break;
         }
         case Opcode::GetField: {
             auto& field = m_program.at(definition.layout()).fields[definition.field()];
-            if (field.singleFunctionIsProven || field.singleFunctionOrNullish)
+            if (field.singleFunctionIsProven || field.isSingleFunctionOrNullish)
                 return KnownCallee { field.singleFunction, value, { }, field.singleFunctionIsProven, true };
             if (field.otherFunction)
                 return KnownCallee { field.singleFunction, value, { }, false, false, field.otherFunction };
@@ -1604,8 +1604,8 @@ private:
 
     void recordRefutedCallees()
     {
-        m_refuted.fill(Refuted { }, m_function.blocks.size());
-        m_classObjectFallbackBlocks.fill(LayoutID(), m_function.blocks.size());
+        m_failedGuards.fill(FailedGuard { }, m_function.blocks.size());
+        m_fallbackClassByBlock.fill(LayoutID(), m_function.blocks.size());
         m_refutedShapes.fill(RefutedShape { }, m_function.blocks.size());
         m_pinnedFunctionBlocks.fill(PinnedFunction { }, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
@@ -1613,7 +1613,7 @@ private:
                 continue;
             auto& condition = m_function.at(block.terminator.value);
             if (condition.opcode == Opcode::IsClosureOf)
-                m_refuted[block.terminator.targets[1].block.index()] = Refuted { originOf(condition.child(0)), condition.function() };
+                m_failedGuards[block.terminator.targets[1].block.index()] = FailedGuard { underlyingValue(condition.child(0)), condition.function() };
             if (condition.testsPinnedField()) {
                 StringID name = m_program.at(condition.layout()).fields[condition.immediates[1]].name;
                 m_pinnedFunctionBlocks[block.terminator.targets[0].block.index()] = PinnedFunction { condition.layout(), name, true };
@@ -1621,20 +1621,20 @@ private:
                 continue;
             }
             if (condition.opcode == Opcode::IsClassObjectUnmodified)
-                m_classObjectFallbackBlocks[block.terminator.targets[1].block.index()] = condition.layout();
+                m_fallbackClassByBlock[block.terminator.targets[1].block.index()] = condition.layout();
             if (condition.opcode == Opcode::HasShapeOf && condition.immediates[1] != shapeTestIsExact)
-                m_refutedShapes[block.terminator.targets[1].block.index()] = RefutedShape { originOf(condition.child(0)), condition.layout() };
+                m_refutedShapes[block.terminator.targets[1].block.index()] = RefutedShape { underlyingValue(condition.child(0)), condition.layout() };
             if (condition.opcode == Opcode::IsUndefinedOrNull)
-                m_refuted[block.terminator.targets[0].block.index()] = Refuted { originOf(condition.child(0)), FunctionID() };
+                m_failedGuards[block.terminator.targets[0].block.index()] = FailedGuard { underlyingValue(condition.child(0)), FunctionID() };
         }
     }
 
     bool isRefuted(BlockID block, const KnownCallee& known) const
     {
-        if (m_refuted[block.index()] == Refuted { known.definition, known.function } || m_refuted[block.index()] == Refuted { known.definition, FunctionID() })
+        if (m_failedGuards[block.index()] == FailedGuard { known.definition, known.function } || m_failedGuards[block.index()] == FailedGuard { known.definition, FunctionID() })
             return true;
         FunctionID bound = m_program.boundFunction(known.function, 0);
-        return bound && m_refuted[block.index()] == Refuted { known.definition, bound };
+        return bound && m_failedGuards[block.index()] == FailedGuard { known.definition, bound };
     }
 
     BlockID testClosure(ValueID callee, const KnownCallee& known)
@@ -1644,7 +1644,7 @@ private:
             test.children[0] = callee;
             BlockID isClosure = branch(append(WTF::move(test)));
             BlockID isNil = m_block;
-            m_refuted[isNil.index()] = Refuted { known.definition, FunctionID() };
+            m_failedGuards[isNil.index()] = FailedGuard { known.definition, FunctionID() };
             moveTo(isClosure);
             return isNil;
         }
@@ -1654,7 +1654,7 @@ private:
         if (known.other || m_program.at(known.function).closuresHaveOwnProperties)
             test.immediates[1] = closureMayBeModified;
         BlockID otherwise = branch(append(WTF::move(test)));
-        m_refuted[otherwise.index()] = Refuted { known.definition, known.function };
+        m_failedGuards[otherwise.index()] = FailedGuard { known.definition, known.function };
         return otherwise;
     }
 
@@ -1663,8 +1663,8 @@ private:
         Value original = m_function.at(m_function.at(block).values[index]);
         auto known = knownCallee(original.child(0));
         if (!known) {
-            if (FunctionID method = predictedMethodOf(originOf(original.child(0))); method && m_program.boundFunction(method, 0))
-                known = KnownCallee { method, originOf(original.child(0)), { }, false };
+            if (FunctionID method = predictedMethodOf(underlyingValue(original.child(0))); method && m_program.boundFunction(method, 0))
+                known = KnownCallee { method, underlyingValue(original.child(0)), { }, false };
         }
         if (!known || !mayBeCalledDirectlyWithClosure(known->function) || isRefuted(block, *known))
             return false;
@@ -1685,12 +1685,12 @@ private:
             otherwise = testClosure(original.child(0), *known);
         }
         FunctionID called = m_program.at(known->function).rampForClosures ? m_program.at(known->function).rampForClosures : known->function;
-        Arguments given;
+        Arguments callArguments;
         if (m_program.at(called).takesCalleeClosure)
-            given.append(original.child(0));
-        given.append(original.arguments.span());
+            callArguments.append(original.child(0));
+        callArguments.append(original.arguments.span());
         m_unsharedLiterals = WTF::move(literals);
-        callAndFinish(called, capturesOf(*known, original.child(0)).span(), original.child(1), given.span(), original.type, Yields::Result);
+        callAndFinish(called, capturesOf(*known, original.child(0)).span(), original.child(1), callArguments.span(), original.type, Yields::Result);
         m_unsharedLiterals.clear();
         if (otherwise && known->other) {
             moveTo(otherwise);
@@ -1718,11 +1718,11 @@ private:
             }
             if (known->isCertainUnlessNullish)
                 original.arguments.clear();
-            ValueID general = appendThrowing(WTF::move(original));
+            ValueID genericCall = appendThrowing(WTF::move(original));
             if (known->isCertainUnlessNullish)
                 finishThrowing();
             else
-                finishWithCast(general);
+                finishWithCast(genericCall);
         }
         return true;
     }
@@ -1771,10 +1771,10 @@ private:
             return std::nullopt;
         auto known = knownCallee(bind.child(0));
         if (!known) {
-            FunctionID method = predictedMethodOf(originOf(bind.child(0)));
+            FunctionID method = predictedMethodOf(underlyingValue(bind.child(0)));
             if (!method || !m_program.genericEntrypoints.contains(method.index()))
                 return std::nullopt;
-            known = KnownCallee { method, originOf(bind.child(0)), { }, false };
+            known = KnownCallee { method, underlyingValue(bind.child(0)), { }, false };
         }
         auto& callee = m_program.at(known->function);
         if ((callee.kind != FunctionKind::Method && callee.kind != FunctionKind::Arrow) || callee.declaredAs & functionIsGenerator)
@@ -1808,7 +1808,7 @@ private:
         test.children[0] = original.child(0);
         test.immediates = { known->function.index(), closureIsUnmodified };
         BlockID otherwise = branch(append(WTF::move(test)));
-        m_refuted[otherwise.index()] = Refuted { known->definition, known->function };
+        m_failedGuards[otherwise.index()] = FailedGuard { known->definition, known->function };
 
         Value closure = make(Opcode::NewClosure, m_program.types.function);
         closure.immediates[0] = bound.index();
@@ -1828,9 +1828,9 @@ private:
 
     bool isReadFromGlobal(ValueID value) const
     {
-        value = originOf(value);
+        value = underlyingValue(value);
         while (m_function.at(value).opcode == Opcode::GetById)
-            value = originOf(m_function.at(value).child(0));
+            value = underlyingValue(m_function.at(value).child(0));
         auto& root = m_function.at(value);
         return root.opcode == Opcode::GetGlobal && !(m_program.mayRunInMultipleInstances && m_program.isGlobalThisName(root.string()));
     }
@@ -1919,20 +1919,20 @@ private:
             return false;
         if (!site.child(1) || typeOf(site.child(1)).isUndefinedOrNull())
             return true;
-        auto& read = m_function.at(originOf(site.child(0)));
-        return m_program.mayRunInMultipleInstances && builtins.classNamed(callee.global) != &builtins.arrayClass() && read.opcode == Opcode::GetById && originOf(read.child(0)) == originOf(site.child(1));
+        auto& read = m_function.at(underlyingValue(site.child(0)));
+        return m_program.mayRunInMultipleInstances && builtins.classNamed(callee.global) != &builtins.arrayClass() && read.opcode == Opcode::GetById && underlyingValue(read.child(0)) == underlyingValue(site.child(1));
     }
 
     bool isLiteralMethodCalledOnLiteral(const Value& site) const
     {
         if (site.opcode != Opcode::Call || !site.child(1))
             return false;
-        auto& read = m_function.at(originOf(site.child(0)));
+        auto& read = m_function.at(underlyingValue(site.child(0)));
         if (read.opcode != Opcode::GetById)
             return false;
-        ValueID holder = originOf(read.child(0));
+        ValueID holder = underlyingValue(read.child(0));
         Opcode opcode = m_function.at(holder).opcode;
-        return (opcode == Opcode::NewArray || opcode == Opcode::NewObject) && holder == originOf(site.child(1));
+        return (opcode == Opcode::NewArray || opcode == Opcode::NewObject) && holder == underlyingValue(site.child(1));
     }
 
     bool resolvePredictedBuiltinCall(BlockID block, unsigned index)
@@ -2007,7 +2007,7 @@ private:
             method = original.child(0);
             function = original.child(1);
             auto& read = m_function.at(method);
-            if (read.opcode != Opcode::GetById || originOf(read.child(0)) != originOf(function))
+            if (read.opcode != Opcode::GetById || underlyingValue(read.child(0)) != underlyingValue(function))
                 return false;
             name = read.string();
         }
@@ -2030,27 +2030,27 @@ private:
         guard.immediates[0] = entry.index();
         BlockID otherwise = branch(append(WTF::move(guard)));
 
-        auto given = original.arguments.span();
-        ValueID thisValue = given.empty() ? append(make(Opcode::Undefined, m_program.types.undefined)) : given[0];
+        auto originalArguments = original.arguments.span();
+        ValueID thisValue = originalArguments.empty() ? append(make(Opcode::Undefined, m_program.types.undefined)) : originalArguments[0];
         bool isApply = m_program.builtinName(name) == builtins.applyName();
         Value direct = make(Opcode::Call, original.type);
-        if (isApply && given.size() > 1 && !typeOf(given[1]).isUndefinedOrNull()) {
+        if (isApply && originalArguments.size() > 1 && !typeOf(originalArguments[1]).isUndefinedOrNull()) {
             direct.opcode = Opcode::CallBuiltin;
             direct.immediates[0] = Operations::Apply.index();
-            direct.arguments = Arguments { function, thisValue, given[1] };
+            direct.arguments = Arguments { function, thisValue, originalArguments[1] };
         } else {
             direct.children = { function, thisValue, ValueID() };
             direct.immediates[1] = m_inliningDepth;
-            if (!isApply && given.size() > 1)
-                direct.arguments.append(given.subspan(1));
+            if (!isApply && originalArguments.size() > 1)
+                direct.arguments.append(originalArguments.subspan(1));
         }
         finish(appendThrowing(WTF::move(direct)));
 
         moveTo(otherwise);
-        Value general = make(Opcode::Call, original.type);
-        general.children = { method, function, ValueID() };
-        general.arguments = WTF::move(original.arguments);
-        finish(appendThrowing(WTF::move(general)));
+        Value genericCall = make(Opcode::Call, original.type);
+        genericCall.children = { method, function, ValueID() };
+        genericCall.arguments = WTF::move(original.arguments);
+        finish(appendThrowing(WTF::move(genericCall)));
         return true;
     }
 
@@ -2105,18 +2105,18 @@ private:
         BlockID otherwise;
         if (!known.isCertain)
             otherwise = testClosure(original.child(0), known);
-        BlockID asks;
+        BlockID fallbackBlock;
         for (LayoutID ofClass : classesWithResolvedSuper(known.function)) {
             Value test = make(Opcode::IsClassObjectUnmodified, m_program.types.boolean);
             test.immediates[0] = ofClass.index();
             BlockID isNot = branch(append(WTF::move(test)));
-            m_classObjectFallbackBlocks[isNot.index()] = ofClass;
-            if (!asks) {
-                asks = isNot;
+            m_fallbackClassByBlock[isNot.index()] = ofClass;
+            if (!fallbackBlock) {
+                fallbackBlock = isNot;
                 continue;
             }
             m_function.at(isNot).terminator.kind = TerminatorKind::Jump;
-            m_function.at(isNot).terminator.targets.append(Target { asks, { } });
+            m_function.at(isNot).terminator.targets.append(Target { fallbackBlock, { } });
         }
         Arguments captures = capturesOf(known, original.child(0));
         bool isAllocatedBySuperclass = callee.kind == FunctionKind::Constructor && m_program.at(callee.constructedClass).hasUntypedBase;
@@ -2124,11 +2124,11 @@ private:
         if (!isAllocatedBySuperclass)
             object.children[0] = original.child(0);
         ValueID created = append(WTF::move(object));
-        Arguments given;
+        Arguments callArguments;
         if (callee.has(Format::FunctionHasNewTarget))
-            given.append(original.child(0));
-        given.appendVector(original.arguments);
-        ValueID returned = call(known.function, passedTo(known.function, captures.span(), created, given.span()));
+            callArguments.append(original.child(0));
+        callArguments.appendVector(original.arguments);
+        ValueID returned = call(known.function, argumentsFor(known.function, captures.span(), created, callArguments.span()));
         m_function.at(returned).constructs = true;
         if (isAllocatedBySuperclass)
             created = returned;
@@ -2141,19 +2141,19 @@ private:
             moveTo(isNotObject);
         }
         finish(held(created, original.type, CastReason::Claim));
-        if (asks) {
-            moveTo(asks);
+        if (fallbackBlock) {
+            moveTo(fallbackBlock);
             finish(appendThrowing(Value(original)));
         }
         if (otherwise) {
             moveTo(otherwise);
             if (known.isCertainUnlessNullish)
                 original.arguments.clear();
-            ValueID general = appendThrowing(WTF::move(original));
+            ValueID genericConstruct = appendThrowing(WTF::move(original));
             if (known.isCertainUnlessNullish)
                 finishThrowing();
             else
-                finish(general);
+                finish(genericConstruct);
         }
         return true;
     }
@@ -2220,7 +2220,7 @@ private:
     {
         Value original = m_function.at(m_function.at(block).values[index]);
         LayoutID ofClass = classOfClassObject(original.child(0));
-        if (!ofClass || m_classObjectFallbackBlocks[block.index()] == ofClass)
+        if (!ofClass || m_fallbackClassByBlock[block.index()] == ofClass)
             return false;
         FunctionID parent = m_program.at(ofClass).declaredSuperclassConstructor;
         if (!parent || !constructsOrdinaryObject(parent) || !m_program.at(parent).captureTypes.isEmpty())
@@ -2228,7 +2228,7 @@ private:
         auto& callee = m_program.at(parent);
         ValueID newTarget = original.child(1);
         bool isAllocatedBySuperclass = m_program.at(callee.constructedClass).hasUntypedBase;
-        if (!isAllocatedBySuperclass && m_function.at(originOf(newTarget)).opcode != Opcode::FunctionReference)
+        if (!isAllocatedBySuperclass && m_function.at(underlyingValue(newTarget)).opcode != Opcode::FunctionReference)
             return false;
         bool isUnmodified = isKnownUnmodified(block, index, ofClass);
         open(block, index);
@@ -2245,11 +2245,11 @@ private:
             object.children[1] = append(WTF::move(constructor));
             created = append(WTF::move(object));
         }
-        Arguments given;
+        Arguments callArguments;
         if (callee.has(Format::FunctionHasNewTarget))
-            given.append(newTarget);
-        given.appendVector(original.arguments);
-        ValueID returned = call(parent, passedTo(parent, { }, created, given.span()));
+            callArguments.append(newTarget);
+        callArguments.appendVector(original.arguments);
+        ValueID returned = call(parent, argumentsFor(parent, { }, created, callArguments.span()));
         m_function.at(returned).constructs = true;
         if (isAllocatedBySuperclass)
             created = returned;
@@ -2365,7 +2365,7 @@ private:
             test.children[0] = original.arguments[0];
             test.immediates = { known->function.index(), closureIsConstructingCallee };
             otherwise = branch(append(WTF::move(test)));
-            m_refuted[otherwise.index()] = Refuted { known->definition, known->function };
+            m_failedGuards[otherwise.index()] = FailedGuard { known->definition, known->function };
         } else if (!known->isCertain) {
             absorbResultCast(id);
             otherwise = testClosure(original.arguments[0], *known);
@@ -2375,7 +2375,7 @@ private:
         uint32_t number = m_function.allocationOf(WTF::move(allocation));
         ValueID created = otherwise ? addValue(Value(m_function.at(object))) : object;
         m_function.at(created).immediates[1] = number;
-        Arguments arguments = passedTo(known->function, { }, created, original.arguments.span().subspan(2));
+        Arguments arguments = argumentsFor(known->function, { }, created, original.arguments.span().subspan(2));
         place(created);
         call(known->function, WTF::move(arguments));
         finishWithCast(held(created, original.type, CastReason::Claim));
@@ -2385,11 +2385,11 @@ private:
             bool isNil = known->isCertainUnlessNullish && !isOneOfMany;
             if (isNil)
                 original.arguments.shrink(2);
-            ValueID general = appendThrowing(WTF::move(original));
+            ValueID genericConstruct = appendThrowing(WTF::move(original));
             if (isNil)
                 finishThrowing();
             else
-                finishWithCast(general);
+                finishWithCast(genericConstruct);
         }
         return true;
     }
@@ -2402,7 +2402,7 @@ private:
         if (!known || isRefuted(block, *known))
             return false;
         auto& callee = m_program.at(known->function);
-        if (LayoutID asked = m_classObjectFallbackBlocks[block.index()]; asked && classesWithResolvedSuper(known->function).contains(asked))
+        if (LayoutID guardedClass = m_fallbackClassByBlock[block.index()]; guardedClass && classesWithResolvedSuper(known->function).contains(guardedClass))
             return false;
         Allocation allocation;
         if (mayConstructClassDirectly(known->function)) {
@@ -2428,17 +2428,17 @@ private:
         object.immediates[0] = allocation.layout.index();
         object.immediates[1] = m_function.allocationOf(WTF::move(allocation));
         ValueID created = append(WTF::move(object));
-        call(known->function, passedTo(known->function, { }, created, original.arguments.span()));
+        call(known->function, argumentsFor(known->function, { }, created, original.arguments.span()));
         finishWithCast(held(created, original.type, CastReason::Claim));
         if (otherwise) {
             moveTo(otherwise);
             if (known->isCertainUnlessNullish)
                 original.arguments.clear();
-            ValueID general = appendThrowing(WTF::move(original));
+            ValueID genericConstruct = appendThrowing(WTF::move(original));
             if (known->isCertainUnlessNullish)
                 finishThrowing();
             else
-                finishWithCast(general);
+                finishWithCast(genericConstruct);
         }
         return true;
     }
@@ -2458,8 +2458,8 @@ private:
     BitVector m_isReached;
     UncheckedKeyHashMap<unsigned, Vector<unsigned, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_unreachablePredecessors;
     Vector<unsigned> m_indexInRegion;
-    Vector<Refuted> m_refuted;
-    Vector<LayoutID> m_classObjectFallbackBlocks;
+    Vector<FailedGuard> m_failedGuards;
+    Vector<LayoutID> m_fallbackClassByBlock;
     Vector<RefutedShape> m_refutedShapes;
     Vector<PinnedFunction> m_pinnedFunctionBlocks;
 
@@ -2729,13 +2729,13 @@ static Function createValueEntry(const Program& program, FunctionID id, const Va
     };
     ValueID closure = addEntryParameter(program, entry, program.at(program.closureLayout).type);
     ValueID thisValue = addEntryParameter(program, entry, program.types.anything);
-    Vector<ValueID, 8> given;
+    Vector<ValueID, 8> entryParameters;
     for (TypeID type : signature.parameters)
-        given.append(addEntryParameter(program, entry, type));
+        entryParameters.append(addEntryParameter(program, entry, type));
     auto undefinedValue = [&] {
         return append(makeEntryValue(program, Opcode::Undefined, program.types.undefined, callee.position));
     };
-    auto held = [&](ValueID passed, TypeID type, CastReason reason) {
+    auto castTo = [&](ValueID passed, TypeID type, CastReason reason) {
         if (!type || program.castIsRedundant(program.typeOf(entry, passed), program.at(type), reason))
             return passed;
         Value cast = makeEntryValue(program, Opcode::Cast, type, callee.position);
@@ -2751,9 +2751,9 @@ static Function createValueEntry(const Program& program, FunctionID id, const Va
         all.append(append(WTF::move(capture)));
     }
     if (callee.has(Format::FunctionHasThis))
-        all.append(held(thisValue, callee.thisType, CastReason::Store));
+        all.append(castTo(thisValue, callee.thisType, CastReason::Store));
     for (unsigned i = 0; i < callee.parameterTypes.size(); ++i)
-        all.append(held(i < given.size() ? given[i] : undefinedValue(), callee.parameterTypes[i], callee.parameterCastReason(i)));
+        all.append(castTo(i < entryParameters.size() ? entryParameters[i] : undefinedValue(), callee.parameterTypes[i], callee.parameterCastReason(i)));
     Value call = makeEntryValue(program, Opcode::CallDirect, callee.resultType ? callee.resultType : program.types.anything, callee.position);
     call.immediates[0] = id.index();
     call.arguments = WTF::move(all);
@@ -2780,46 +2780,46 @@ static bool canHaveValueEntryClone(const Program& program, FunctionID id, const 
 
 static Function createValueEntryClone(const Program& program, FunctionID id, const ValueEntrySignature& signature)
 {
-    Function twin = program.at(id);
-    twin.isValueEntry = true;
-    twin.isValueEntryClone = true;
-    twin.valueEntryTarget = id;
-    twin.takesCapturesFromClosure = !twin.captureTypes.isEmpty();
-    auto& first = twin.blocks[0];
-    unsigned numberOfCaptures = twin.captureTypes.size();
+    Function clone = program.at(id);
+    clone.isValueEntry = true;
+    clone.isValueEntryClone = true;
+    clone.valueEntryTarget = id;
+    clone.takesCapturesFromClosure = !clone.captureTypes.isEmpty();
+    auto& first = clone.blocks[0];
+    unsigned numberOfCaptures = clone.captureTypes.size();
     unsigned numberAtHead = 0;
-    while (twin.parameterTypes.size() > signature.parameters.size()) {
+    while (clone.parameterTypes.size() > signature.parameters.size()) {
         ValueID parameter = first.parameters.takeLast();
-        twin.parameterTypes.removeLast();
-        twin.at(parameter) = makeEntryValue(program, Opcode::Undefined, program.types.undefined, twin.position);
+        clone.parameterTypes.removeLast();
+        clone.at(parameter) = makeEntryValue(program, Opcode::Undefined, program.types.undefined, clone.position);
         first.values.insert(numberAtHead++, parameter);
     }
     for (unsigned i = 0; i < signature.parameters.size(); ++i) {
-        TypeID own = twin.parameterTypes[i];
+        TypeID own = clone.parameterTypes[i];
         TypeID passed = signature.parameters[i];
-        CastReason reason = twin.parameterCastReason(i);
+        CastReason reason = clone.parameterCastReason(i);
         if (repOf(program.at(own)) == repOf(program.at(passed)) && program.castIsRedundant(program.at(passed), program.at(own), reason))
             continue;
         ValueID parameter = first.parameters[numberOfCaptures + i];
-        ValueID held(twin.values.size());
+        ValueID castID(clone.values.size());
         auto replaceWithCast = [&](ValueID& child) {
             if (child == parameter)
-                child = held;
+                child = castID;
         };
-        for (auto& value : twin.values)
+        for (auto& value : clone.values)
             value.forEachChild(replaceWithCast);
-        for (auto& block : twin.blocks)
+        for (auto& block : clone.blocks)
             block.terminator.forEachChild(replaceWithCast);
-        Value cast = makeEntryValue(program, Opcode::Cast, own, twin.position);
+        Value cast = makeEntryValue(program, Opcode::Cast, own, clone.position);
         cast.children[0] = parameter;
         cast.immediates[1] = static_cast<uint32_t>(reason);
-        twin.values.append(WTF::move(cast));
-        twin.blocks[0].values.insert(numberAtHead++, held);
-        twin.at(parameter).type = passed;
-        twin.at(parameter).rep = repOf(program.at(passed));
-        twin.parameterTypes[i] = passed;
+        clone.values.append(WTF::move(cast));
+        clone.blocks[0].values.insert(numberAtHead++, castID);
+        clone.at(parameter).type = passed;
+        clone.at(parameter).rep = repOf(program.at(passed));
+        clone.parameterTypes[i] = passed;
     }
-    return twin;
+    return clone;
 }
 
 static Function createSignatureAdapter(const Program& program, const Function& like, const ValueEntrySignature& signature)
@@ -2842,13 +2842,13 @@ static Function createSignatureAdapter(const Program& program, const Function& l
     };
     ValueID callee = addEntryParameter(program, adapter, program.types.anything);
     ValueID thisValue = addEntryParameter(program, adapter, program.types.anything);
-    Arguments given;
+    Arguments callArguments;
     for (TypeID type : signature.parameters)
-        given.append(addEntryParameter(program, adapter, type));
+        callArguments.append(addEntryParameter(program, adapter, type));
     Value call = makeEntryValue(program, Opcode::Call, signature.result, like.position);
     call.children[0] = callee;
     call.children[1] = thisValue;
-    call.arguments = WTF::move(given);
+    call.arguments = WTF::move(callArguments);
     adapter.blocks[0].terminator.kind = TerminatorKind::Return;
     adapter.blocks[0].terminator.value = append(WTF::move(call));
     return adapter;
@@ -2983,14 +2983,14 @@ void createResultAdapters(Program& program)
         uint32_t like { 0 };
         uint32_t numberOfCalls { 0 };
     };
-    struct Asked {
+    struct RequestedResult {
         TypeID type;
         uint32_t resultCast;
         uint32_t numberOfArguments;
         uint32_t like;
         uint32_t numberOfCalls;
     };
-    Vector<Asked> allRequestedResults;
+    Vector<RequestedResult> allRequestedResults;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> requestedResultIndex;
     struct RequestedCallResult {
         TypeID type;
@@ -3024,21 +3024,21 @@ void createResultAdapters(Program& program)
         for (auto [type, resultCast, numberOfArguments] : requestedResultsIn[i]) {
             auto added = requestedResultIndex.add(Program::resultAdapterKey(type, resultCast, numberOfArguments), static_cast<uint32_t>(allRequestedResults.size()));
             if (added.isNewEntry)
-                allRequestedResults.append(Asked { type, resultCast, numberOfArguments, i, 0 });
+                allRequestedResults.append(RequestedResult { type, resultCast, numberOfArguments, i, 0 });
             ++allRequestedResults[added.iterator->value].numberOfCalls;
         }
     }
     Vector<Result> results;
     UncheckedKeyHashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> resultIndex;
     Vector<std::pair<uint32_t, uint32_t>> adaptersToCreate;
-    for (auto& asked : allRequestedResults) {
-        if (asked.numberOfCalls < minCallsPerAdapter)
+    for (auto& requestedResult : allRequestedResults) {
+        if (requestedResult.numberOfCalls < minCallsPerAdapter)
             continue;
-        auto added = resultIndex.add(Program::resultAdapterKey(asked.type, asked.resultCast, 0), static_cast<uint32_t>(results.size()));
+        auto added = resultIndex.add(Program::resultAdapterKey(requestedResult.type, requestedResult.resultCast, 0), static_cast<uint32_t>(results.size()));
         if (added.isNewEntry)
-            results.append(Result { asked.type, asked.resultCast, asked.like, 0 });
-        results[added.iterator->value].numberOfCalls += asked.numberOfCalls;
-        adaptersToCreate.append({ added.iterator->value, asked.numberOfArguments });
+            results.append(Result { requestedResult.type, requestedResult.resultCast, requestedResult.like, 0 });
+        results[added.iterator->value].numberOfCalls += requestedResult.numberOfCalls;
+        adaptersToCreate.append({ added.iterator->value, requestedResult.numberOfArguments });
     }
     if (results.isEmpty())
         return;
@@ -3054,13 +3054,13 @@ void createResultAdapters(Program& program)
         if (entrypoint == constProgram.genericEntrypoints.end())
             return;
         FunctionID id(index);
-        FunctionID general = entrypoint->value;
+        FunctionID genericEntrypoint = entrypoint->value;
         auto& function = constProgram.at(id);
-        if (!isPlainFunctionWithKnownCallers(constProgram, id) || function.has(Format::FunctionIsBuiltin) || !function.has(Format::FunctionIsTyped) || !function.resultType || !constProgram.usesSlimClosures(function) || constProgram.at(general).valueEntry)
+        if (!isPlainFunctionWithKnownCallers(constProgram, id) || function.has(Format::FunctionIsBuiltin) || !function.has(Format::FunctionIsTyped) || !function.resultType || !constProgram.usesSlimClosures(function) || constProgram.at(genericEntrypoint).valueEntry)
             return;
-        collected.append({ general, function.resultType });
+        collected.append({ genericEntrypoint, function.resultType });
     });
-    for (auto [general, resultType] : candidates) {
+    for (auto [genericEntrypoint, resultType] : candidates) {
         if (resultTypeIndex.add(resultType.index(), static_cast<uint32_t>(resultTypes.size())).isNewEntry)
             resultTypes.append(resultType);
     }
@@ -3084,12 +3084,12 @@ void createResultAdapters(Program& program)
     });
     uint64_t usedCompatibleResults = 0;
     uint64_t numberOfFunctions = 0;
-    for (auto [general, resultType] : candidates) {
+    for (auto [genericEntrypoint, resultType] : candidates) {
         uint64_t holding = compatibleResults[resultTypeIndex.get(resultType.index())];
         if (!holding)
             continue;
-        program.functions[general.index()].compatibleResultsMask = holding;
-        program.functions[general.index()].resultTypeAtAdapterSelection = resultType;
+        program.functions[genericEntrypoint.index()].compatibleResultsMask = holding;
+        program.functions[genericEntrypoint.index()].resultTypeAtAdapterSelection = resultType;
         usedCompatibleResults |= holding;
         ++numberOfFunctions;
     }
@@ -3133,9 +3133,9 @@ void clearCallerCheckedResultTypes(Program& program)
         auto entrypoint = constProgram.genericEntrypoints.find(index);
         if (entrypoint == constProgram.genericEntrypoints.end())
             return;
-        FunctionID general = entrypoint->value;
-        if (constProgram.at(general).compatibleResultsMask && (constProgram.functions[index].resultType != constProgram.at(general).resultTypeAtAdapterSelection || constProgram.functions[index].isCalledFromDroppableFrame))
-            program.functions[general.index()].compatibleResultsMask = 0;
+        FunctionID genericEntrypoint = entrypoint->value;
+        if (constProgram.at(genericEntrypoint).compatibleResultsMask && (constProgram.functions[index].resultType != constProgram.at(genericEntrypoint).resultTypeAtAdapterSelection || constProgram.functions[index].isCalledFromDroppableFrame))
+            program.functions[genericEntrypoint.index()].compatibleResultsMask = 0;
     });
 }
 
@@ -3216,7 +3216,7 @@ void createValueEntrypoints(Program& program)
     if (shapes.isEmpty())
         return;
 
-    struct Answer {
+    struct CandidateMatch {
         FunctionID function;
         uint32_t shape { Format::none };
         unsigned argumentCount { 0 };
@@ -3236,7 +3236,7 @@ void createValueEntrypoints(Program& program)
     std::ranges::sort(shapesBySiteCount, [&](uint32_t a, uint32_t b) {
         return shapes[a].numberOfSites != shapes[b].numberOfSites ? shapes[a].numberOfSites > shapes[b].numberOfSites : a < b;
     });
-    Vector<Answer> candidateMatches(candidates.size());
+    Vector<CandidateMatch> candidateMatches(candidates.size());
     forEachIndexInParallel(candidates.size(), [&](unsigned k) {
         auto& function = constProgram.at(candidates[k]);
         auto& own = possibleParameterTypes[k];
@@ -3249,35 +3249,35 @@ void createValueEntrypoints(Program& program)
         for (unsigned round = 0; round < 2 * shapesBySiteCount.size(); ++round) {
             uint32_t shape = shapesBySiteCount[round % shapesBySiteCount.size()];
             auto& signature = shapes[shape].signature;
-            unsigned given = std::min<unsigned>(signature.parameters.size(), own.size());
-            if (given < minArguments || !returnedValue.isSubsetOf(constProgram.at(signature.result), constProgram))
+            unsigned numberOfArguments = std::min<unsigned>(signature.parameters.size(), own.size());
+            if (numberOfArguments < minArguments || !returnedValue.isSubsetOf(constProgram.at(signature.result), constProgram))
                 continue;
             if (round < shapesBySiteCount.size() && repOf(constProgram.at(signature.result)) != repOf(returnedValue))
                 continue;
             bool fits = true;
-            for (unsigned i = 0; i < given && fits; ++i)
+            for (unsigned i = 0; i < numberOfArguments && fits; ++i)
                 fits = !constProgram.at(own[i]).hasCells() && (signature.parameters[i] == own[i] || constProgram.at(signature.parameters[i]).isSubsetOf(constProgram.at(own[i]), constProgram));
             if (!fits)
                 continue;
             bool crosses = isPassedUnboxed(constProgram, signature.result) && isExpensiveToBox(returnedValue);
-            for (unsigned i = 0; i < given && !crosses; ++i)
+            for (unsigned i = 0; i < numberOfArguments && !crosses; ++i)
                 crosses = isPassedUnboxed(constProgram, signature.parameters[i]);
             if (!crosses)
                 continue;
             answer.shape = shape;
-            answer.argumentCount = given;
+            answer.argumentCount = numberOfArguments;
             break;
         }
     });
-    Vector<Answer> answers;
+    Vector<CandidateMatch> matches;
     for (auto& answer : candidateMatches) {
         if (answer.shape != Format::none)
-            answers.append(answer);
+            matches.append(answer);
     }
-    if (answers.isEmpty())
+    if (matches.isEmpty())
         return;
     BitVector matchesSomeShape(count);
-    for (auto& answer : answers)
+    for (auto& answer : matches)
         matchesSomeShape.set(answer.function.index());
     Vector<uint8_t> escapesToProgram(FillWith { }, count, static_cast<uint8_t>(0));
     for (auto& layout : constProgram.layouts) {
@@ -3335,14 +3335,14 @@ void createValueEntrypoints(Program& program)
             }
         }
     });
-    answers.removeAllMatching([&](auto& answer) {
+    matches.removeAllMatching([&](auto& answer) {
         return !escapesToProgram[answer.function.index()];
     });
-    if (answers.isEmpty())
+    if (matches.isEmpty())
         return;
 
     Vector<Function> created;
-    for (auto& answer : answers) {
+    for (auto& answer : matches) {
         if (shapes[answer.shape].adapter)
             continue;
         shapes[answer.shape].adapter = FunctionID(count + created.size());
@@ -3350,9 +3350,9 @@ void createValueEntrypoints(Program& program)
     }
     size_t numberOfAdapters = created.size();
     program.firstSignatureAdapter = FunctionID(count);
-    created.grow(numberOfAdapters + answers.size());
-    forEachIndexInParallel(answers.size(), [&](unsigned k) {
-        auto& answer = answers[k];
+    created.grow(numberOfAdapters + matches.size());
+    forEachIndexInParallel(matches.size(), [&](unsigned k) {
+        auto& answer = matches[k];
         auto& shape = shapes[answer.shape];
         ValueEntrySignature signature;
         signature.parameters.append(shape.signature.parameters.span().first(answer.argumentCount));
@@ -3361,8 +3361,8 @@ void createValueEntrypoints(Program& program)
         entry = canHaveValueEntryClone(constProgram, answer.function, signature) ? createValueEntryClone(constProgram, answer.function, signature) : createValueEntry(constProgram, answer.function, signature);
         entry.valueEntryAdapter = shape.adapter;
     });
-    for (unsigned k = 0; k < answers.size(); ++k)
-        program.functions[constProgram.genericEntrypoints.get(answers[k].function.index()).index()].valueEntry = FunctionID(count + numberOfAdapters + k);
+    for (unsigned k = 0; k < matches.size(); ++k)
+        program.functions[constProgram.genericEntrypoints.get(matches[k].function.index()).index()].valueEntry = FunctionID(count + numberOfAdapters + k);
     for (auto& shape : shapes) {
         if (!shape.adapter)
             continue;
@@ -3370,7 +3370,7 @@ void createValueEntrypoints(Program& program)
         program.valueCallShapes.append({ shape.signature.parameters, shape.signature.result, shape.adapter });
     }
     program.functions.appendVector(WTF::move(created));
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: indirect calls by signature: ", shapes.size(), " signatures pass a double in the unoptimized program; ", answers.size(), " functions of ", candidates.size(), " implement ", numberOfAdapters, " of them");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: indirect calls by signature: ", shapes.size(), " signatures pass a double in the unoptimized program; ", matches.size(), " functions of ", candidates.size(), " implement ", numberOfAdapters, " of them");
 }
 
 void resolveCallsBySignature(Program& program)
@@ -3429,9 +3429,9 @@ void resolveCallsBySignature(Program& program)
                     goes = false;
                 auto& parameters = constProgram.at(adapter).blocks[0].parameters;
                 for (unsigned k = 0; k < call.arguments.size() && goes; ++k) {
-                    auto& given = constProgram.typeOf(function, call.arguments[k]);
-                    LayoutID supertype = given.singleLayout();
-                    goes = given.isSubsetOf(constProgram.typeOf(constProgram.at(adapter), parameters[k + 2]), constProgram) && !(supertype && constProgram.at(supertype).mayBeStackAllocated);
+                    auto& argumentType = constProgram.typeOf(function, call.arguments[k]);
+                    LayoutID supertype = argumentType.singleLayout();
+                    goes = argumentType.isSubsetOf(constProgram.typeOf(constProgram.at(adapter), parameters[k + 2]), constProgram) && !(supertype && constProgram.at(supertype).mayBeStackAllocated);
                 }
                 if (!goes) {
                     verdictsIn[i].append(Judged { id, cast, adapter, Verdict::IsUnchanged });
@@ -3486,8 +3486,8 @@ void resolveCallsBySignature(Program& program)
             bytesSavedByUpperHalf += static_cast<int64_t>(numberOfCalls) * bytesSavedPerCallByResult - resultAdapterBytes;
     }
     int64_t informativeEntryCount = 0;
-    for (auto& [index, general] : constProgram.genericEntrypoints)
-        informativeEntryCount += !!(constProgram.at(general).compatibleResultsMask & profitableResults);
+    for (auto& [index, genericEntrypoint] : constProgram.genericEntrypoints)
+        informativeEntryCount += !!(constProgram.at(genericEntrypoint).compatibleResultsMask & profitableResults);
     program.compatibleResultsMaskSize = sizeof(uint64_t);
     if (bytesSavedByUpperHalf <= informativeEntryCount * static_cast<int64_t>(sizeof(uint32_t))) {
         program.compatibleResultsMaskSize = sizeof(uint32_t);
@@ -3754,10 +3754,10 @@ void createBoundFunctions(Program& program)
             resolution.collectBoundFunction(id, boundFunctionsNeededBy[i]);
         });
     });
-    Vector<uint64_t> wanted;
+    Vector<uint64_t> boundFunctionKeys;
     for (auto& perFunction : boundFunctionsNeededBy)
-        wanted.appendVector(perFunction);
-    for (uint64_t key : wanted) {
+        boundFunctionKeys.appendVector(perFunction);
+    for (uint64_t key : boundFunctionKeys) {
         if (program.boundFunctions.contains(key))
             continue;
         FunctionID function(static_cast<uint32_t>(key >> 2));

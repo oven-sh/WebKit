@@ -54,7 +54,7 @@ static constexpr bool verbose = false;
 
 class DuplicateTails {
 public:
-    DuplicateTails(Procedure& proc, bool onlyDecidedTests)
+    DuplicateTails(Procedure& proc)
         : m_proc(proc)
         , m_insertionSet(proc)
 #if USE(BUN_JSC_ADDITIONS)
@@ -63,7 +63,6 @@ public:
         , m_maxSize(Options::maxB3TailDupBlockSize())
 #endif
         , m_maxSuccessors(Options::maxB3TailDupBlockSuccessors())
-        , m_onlyDecidedTests(onlyDecidedTests)
     {
     }
 
@@ -76,7 +75,6 @@ public:
     static constexpr unsigned maxTestDepth = 8;
     static constexpr unsigned maxBlocksOnPath = 8;
     static constexpr double minFrequency = 1e-6;
-    static constexpr uint64_t maxValuesToDemoteTimesBlocks = 1 << 24;
 #endif
 
     enum class Outcome : uint8_t { Unknown, NotTaken, Taken, Jumps };
@@ -131,7 +129,7 @@ public:
                 canCopyBlock = numberOfLikelyPredecessors >= 2 || hasPhi;
             }
 #endif
-            if (canCopyBlock && !m_onlyDecidedTests)
+            if (canCopyBlock)
                 candidates.add(block);
         }
 
@@ -167,8 +165,6 @@ public:
             }
         }
 #endif
-        if (m_onlyDecidedTests && candidates.isEmpty())
-            return;
 #if USE(BUN_JSC_ADDITIONS)
         if (candidates.isEmpty()) {
             m_proc.resetReachability();
@@ -197,14 +193,9 @@ public:
             }
         }
 #if USE(BUN_JSC_ADDITIONS)
-        if (m_onlyDecidedTests && static_cast<uint64_t>(valuesToDemote.size()) * m_proc.size() > maxValuesToDemoteTimesBlocks)
-            return;
-#endif
-#if USE(BUN_JSC_ADDITIONS)
         if (!valuesToDemote.isEmpty())
 #endif
             demoteValues(m_proc, valuesToDemote);
-        m_changed = true;
         if (B3DuplicateTailsInternal::verbose) {
             dataLog("Procedure after value demotion:\n");
             dataLog(m_proc);
@@ -889,20 +880,15 @@ private:
     InsertionSet m_insertionSet;
     unsigned m_maxSize;
     unsigned m_maxSuccessors;
-    bool m_onlyDecidedTests;
-
-public:
-    bool m_changed { false };
 };
 
 } // anonymous namespace
 
-bool duplicateTails(Procedure& proc, bool onlyDecidedTests)
+void duplicateTails(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "duplicateTails"_s);
-    DuplicateTails duplicateTails(proc, onlyDecidedTests);
+    DuplicateTails duplicateTails(proc);
     duplicateTails.run();
-    return duplicateTails.m_changed;
 }
 
 } } // namespace JSC::B3

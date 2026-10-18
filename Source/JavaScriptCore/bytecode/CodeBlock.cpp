@@ -1116,9 +1116,6 @@ CodeBlock::~CodeBlock()
 
     VM& vm = *m_vm;
 
-    if (void* instructions = predecodedInstructions())
-        LLInt::PredecodedInstructionsHeader::destroy(instructions);
-
 #if ENABLE(JIT) && USE(BUN_JSC_ADDITIONS)
     if (jitType() == JITType::BaselineJIT)
         static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = vm.heap.lastGCBoundaryTime();
@@ -2213,8 +2210,6 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
-        if (predecodedInstructions())
-            LLInt::copyInlineCachesIntoPredecodedInstructions(this);
         // If the CodeBlock is DFG or FTL, CallLinkInfo in metadata is not related.
         forEachLLIntOrBaselineCallLinkInfo([&](DataOnlyCallLinkInfo& callLinkInfo) {
             callLinkInfo.reconcileWeakReferencesAtGCEnd(vm);

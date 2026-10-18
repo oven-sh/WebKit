@@ -64,7 +64,7 @@ class TierUpCount;
 
 struct CodeForImage {
     Vector<uint32_t> callsToThrowStub;
-    String whyDeclined;
+    String declineReason;
 };
 
 struct CompilationContext {

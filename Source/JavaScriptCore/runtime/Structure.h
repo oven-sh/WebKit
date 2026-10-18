@@ -64,7 +64,7 @@ struct Data;
 struct LayoutData;
 }
 JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
-JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
+JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
 JS_EXPORT_PRIVATE bool convertsToOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
 }

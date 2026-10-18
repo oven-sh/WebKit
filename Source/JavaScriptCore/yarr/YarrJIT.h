@@ -500,7 +500,7 @@ struct YarrCodeForImage {
         std::span<const uint8_t> table;
     };
     Vector<TableReference> tables;
-    enum class OwnedTableKind : uint8_t { Other, BitPlane, ClassTable, ClassTableForRoutine };
+    enum class OwnedTableKind : uint8_t { Other, BitPlane, CharacterClassTable, ClassTableForRoutine };
     struct OwnedTableReference {
         uint32_t offset;
         uint8_t reg;

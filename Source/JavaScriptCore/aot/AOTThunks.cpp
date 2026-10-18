@@ -22,7 +22,6 @@
 
 namespace JSC { namespace AOT {
 
-#if CPU(ARM64) || CPU(X86_64)
 
 namespace {
 
@@ -430,11 +429,6 @@ void installOperationFrontEnds(VM& vm, void** entries)
     entries[static_cast<unsigned>(Entry::NonConstructorHostFunction)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
 }
 
-#else
-
-void installOperationFrontEnds(VM&, void**) { }
-
-#endif // CPU(ARM64) || CPU(X86_64)
 
 } } // namespace JSC::AOT
 

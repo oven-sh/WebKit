@@ -929,7 +929,7 @@ public:
                 marks[index] |= isReached;
             }
         }
-        size_t kept = 0;
+        size_t writeIndex = 0;
         Vector<int32_t> newUnitIndexes;
         newUnitIndexes.fill(-1, n + 1);
         int32_t* newIndex = newUnitIndexes.mutableSpan().data();
@@ -949,9 +949,9 @@ public:
                     continue;
                 }
             }
-            newIndex[i] = kept++;
+            newIndex[i] = writeIndex++;
         }
-        if (kept == n)
+        if (writeIndex == n)
             return;
         int32_t next = -1;
         for (size_t i = n; i--;) {
@@ -961,20 +961,20 @@ public:
                 newIndex[i] = next;
         }
         uint64_t* identities = m_unitIdentities.mutableSpan().data();
-        kept = 0;
+        writeIndex = 0;
         for (size_t i = 0; i < n; ++i) {
             if (marks[i] & isDropped)
                 continue;
-            if (kept != i) {
-                all[kept] = all[i];
-                identities[kept] = identities[i];
+            if (writeIndex != i) {
+                all[writeIndex] = all[i];
+                identities[writeIndex] = identities[i];
             }
-            if (all[kept].target >= 0)
-                all[kept].target = newIndex[all[kept].target];
-            ++kept;
+            if (all[writeIndex].target >= 0)
+                all[writeIndex].target = newIndex[all[writeIndex].target];
+            ++writeIndex;
         }
-        units.shrink(kept);
-        m_unitIdentities.shrink(kept);
+        units.shrink(writeIndex);
+        m_unitIdentities.shrink(writeIndex);
     }
 
 #if CPU(X86_64)
@@ -992,7 +992,7 @@ public:
         bool hasMovedOutputRegister = units[0].size == sizeof(movesOutputRegister) && !memcmp(bytesOf(units[0]), movesOutputRegister, sizeof(movesOutputRegister));
         if (hasMovedOutputRegister)
             output = 10;
-        struct Facts {
+        struct UnitSummary {
             uint32_t reads { 0 };
             uint32_t writes { 0 };
             uint32_t registersThatMustBeDead { 0 };
@@ -1005,43 +1005,43 @@ public:
             bool stores { false };
             bool returnsFailure { false };
         };
-        Vector<Facts> unitFacts;
-        unitFacts.grow(n);
-        Facts* facts = unitFacts.mutableSpan().data();
+        Vector<UnitSummary> unitSummaries;
+        unitSummaries.grow(n);
+        UnitSummary* summaries = unitSummaries.mutableSpan().data();
         Unit* all = units.mutableSpan().data();
         bool tracksFrame = true;
         for (size_t i = 0; i < n; ++i) {
             auto& unit = all[i];
-            auto& fact = facts[i];
+            auto& summary = summaries[i];
             const uint8_t* bytes = bytesOf(unit);
             switch (unit.kind) {
             case Kind::Jump:
                 continue;
             case Kind::ConditionalJump:
-                fact.reads = flags;
+                summary.reads = flags;
                 continue;
             case Kind::Return:
-                fact.reads = liveOnReturn;
-                fact.outputSlotsRead = allSlots;
+                summary.reads = liveOnReturn;
+                summary.outputSlotsRead = allSlots;
                 continue;
             case Kind::IndirectJump:
-                fact.reads = allRegisters;
-                fact.frameSlotsRead = allSlots;
+                summary.reads = allRegisters;
+                summary.frameSlotsRead = allSlots;
                 if (unit.size == 3 && bytes[0] == 0xff && bytes[1] == 0x65 && bytes[2] >= 0x80 && !(bytes[2] & 7))
-                    fact.frameSlotsRead = 1ull << ((0x100 - bytes[2]) / 8 - 1);
+                    summary.frameSlotsRead = 1ull << ((0x100 - bytes[2]) / 8 - 1);
                 else if (unit.size == 6 && bytes[0] == 0xff && bytes[1] == 0xa5) {
                     int32_t displacement;
                     memcpy(&displacement, bytes + 2, 4);
                     if (displacement < 0 && !(displacement & 7))
-                        fact.frameSlotsRead = displacement >= -512 ? 1ull << (-displacement / 8 - 1) : 0;
+                        summary.frameSlotsRead = displacement >= -512 ? 1ull << (-displacement / 8 - 1) : 0;
                 }
                 continue;
             case Kind::Reference:
                 if (bytes[0] == 0xe8) {
-                    fact.reads = allRegisters;
+                    summary.reads = allRegisters;
                     if (!unit.usesRegistersOnly) {
-                        fact.outputSlotsRead = allSlots;
-                        fact.frameSlotsRead = allSlots;
+                        summary.outputSlotsRead = allSlots;
+                        summary.frameSlotsRead = allSlots;
                     }
                     continue;
                 }
@@ -1053,18 +1053,18 @@ public:
                 return;
             }
             if (!i && hasMovedOutputRegister) {
-                fact.reads = 1u << 1;
-                fact.writes = 1u << 10;
+                summary.reads = 1u << 1;
+                summary.writes = 1u << 10;
                 continue;
             }
             Effects effects;
             if (!computeEffects(bytes, unit.size, effects))
                 return;
-            fact.reads = effects.reads | (effects.readsFlags ? flags : 0) | (effects.readsVectorRegister ? vectorRegister : 0);
-            fact.writes = effects.writes | (effects.setsAllFlags ? flags : 0) | (effects.writesVectorRegister && !effects.readsVectorRegister ? vectorRegister : 0);
-            fact.registersThatMustBeDead = effects.writes | (effects.touchesFlags ? flags : 0) | (effects.writesVectorRegister ? vectorRegister : 0);
-            fact.isRemovable = !(effects.writes & stackRegisters) && !effects.stores;
-            fact.stores = effects.stores;
+            summary.reads = effects.reads | (effects.readsFlags ? flags : 0) | (effects.readsVectorRegister ? vectorRegister : 0);
+            summary.writes = effects.writes | (effects.setsAllFlags ? flags : 0) | (effects.writesVectorRegister && !effects.readsVectorRegister ? vectorRegister : 0);
+            summary.registersThatMustBeDead = effects.writes | (effects.touchesFlags ? flags : 0) | (effects.writesVectorRegister ? vectorRegister : 0);
+            summary.isRemovable = !(effects.writes & stackRegisters) && !effects.stores;
+            summary.stores = effects.stores;
             if (effects.writes & 1u << output)
                 return;
             constexpr unsigned framePointer = 5;
@@ -1077,12 +1077,12 @@ public:
                     if (static_cast<unsigned>(-effects.displacement) - slot * 8 < effects.bytesInMemory)
                         tracksFrame = false;
                     if (effects.loads)
-                        fact.frameSlotsRead = 1ull << slot;
+                        summary.frameSlotsRead = 1ull << slot;
                     if (effects.stores) {
-                        fact.frameSlotsThatMustBeDead = 1ull << slot;
+                        summary.frameSlotsThatMustBeDead = 1ull << slot;
                         if (isWhole)
-                            fact.frameSlotsWritten = 1ull << slot;
-                        fact.isRemovable = !(effects.writes & stackRegisters);
+                            summary.frameSlotsWritten = 1ull << slot;
+                        summary.isRemovable = !(effects.writes & stackRegisters);
                     }
                 } else if (effects.displacement >= 0)
                     tracksFrame = false;
@@ -1095,10 +1095,10 @@ public:
                 if (slot + count <= 64) {
                     uint64_t slots = (count == 2 ? 3ull : 1ull) << slot;
                     if (effects.loads)
-                        fact.outputSlotsRead = slots;
+                        summary.outputSlotsRead = slots;
                     if (effects.stores) {
-                        fact.outputSlotsWritten = slots;
-                        fact.isRemovable = !(effects.writes & stackRegisters);
+                        summary.outputSlotsWritten = slots;
+                        summary.isRemovable = !(effects.writes & stackRegisters);
                     }
                 }
             }
@@ -1110,14 +1110,14 @@ public:
             size_t index = i + 1;
             for (unsigned steps = 0; steps < 24 && index < n; ++steps) {
                 if (all[index].kind == Kind::Return) {
-                    facts[i].returnsFailure = true;
+                    summaries[i].returnsFailure = true;
                     break;
                 }
                 if (all[index].kind == Kind::Jump) {
                     index = all[index].target;
                     continue;
                 }
-                if (all[index].kind != Kind::Plain || (facts[index].writes & 1) || facts[index].stores || facts[index].outputSlotsRead)
+                if (all[index].kind != Kind::Plain || (summaries[index].writes & 1) || summaries[index].stores || summaries[index].outputSlotsRead)
                     break;
                 ++index;
             }
@@ -1133,8 +1133,8 @@ public:
         uint64_t* liveFrameSlots = liveFrameSlotsBeforeUnit.mutableSpan().data();
         if (!tracksFrame) {
             for (size_t i = 0; i < n; ++i) {
-                if (facts[i].frameSlotsThatMustBeDead)
-                    facts[i].isRemovable = false;
+                if (summaries[i].frameSlotsThatMustBeDead)
+                    summaries[i].isRemovable = false;
             }
         }
         Vector<uint8_t> removedUnits;
@@ -1158,7 +1158,7 @@ public:
             }
             for (size_t i = n; i--;) {
                 auto& unit = all[i];
-                auto& fact = facts[i];
+                auto& summary = summaries[i];
                 uint32_t liveRegistersAfter = 0;
                 uint64_t liveOutputSlotsAfter = 0;
                 uint64_t liveFrameSlotsAfter = 0;
@@ -1176,12 +1176,12 @@ public:
                     liveOutputSlotsAfter |= liveOutputSlotsAtTakenAddresses;
                     liveFrameSlotsAfter |= liveFrameSlotsAtTakenAddresses;
                 }
-                bool isDead = fact.isRemovable && !(fact.registersThatMustBeDead & liveRegistersAfter) && !(fact.outputSlotsWritten & liveOutputSlotsAfter) && !(fact.frameSlotsThatMustBeDead & liveFrameSlotsAfter);
+                bool isDead = summary.isRemovable && !(summary.registersThatMustBeDead & liveRegistersAfter) && !(summary.outputSlotsWritten & liveOutputSlotsAfter) && !(summary.frameSlotsThatMustBeDead & liveFrameSlotsAfter);
                 isRemoved[i] = isDead;
-                uint32_t liveRegistersBefore = isDead ? liveRegistersAfter : (liveRegistersAfter & ~fact.writes) | fact.reads;
-                uint64_t liveOutputSlotsBefore = isDead ? liveOutputSlotsAfter : (liveOutputSlotsAfter & ~fact.outputSlotsWritten) | fact.outputSlotsRead;
-                uint64_t liveFrameSlotsBefore = isDead ? liveFrameSlotsAfter : (liveFrameSlotsAfter & ~fact.frameSlotsWritten) | fact.frameSlotsRead;
-                if (fact.returnsFailure)
+                uint32_t liveRegistersBefore = isDead ? liveRegistersAfter : (liveRegistersAfter & ~summary.writes) | summary.reads;
+                uint64_t liveOutputSlotsBefore = isDead ? liveOutputSlotsAfter : (liveOutputSlotsAfter & ~summary.outputSlotsWritten) | summary.outputSlotsRead;
+                uint64_t liveFrameSlotsBefore = isDead ? liveFrameSlotsAfter : (liveFrameSlotsAfter & ~summary.frameSlotsWritten) | summary.frameSlotsRead;
+                if (summary.returnsFailure)
                     liveOutputSlotsBefore = 0;
                 if (liveRegistersBefore != liveRegisters[i] || liveOutputSlotsBefore != liveOutputSlots[i] || liveFrameSlotsBefore != liveFrameSlots[i]) {
                     liveRegisters[i] = liveRegistersBefore;
@@ -1207,7 +1207,7 @@ public:
             }
             if (i < 3 || isRemoved[i] || all[i].kind == Kind::Return || startsWith(i, releasesFrame, 1))
                 continue;
-            frameIsUnused = !((facts[i].reads | facts[i].writes) & stackRegisters);
+            frameIsUnused = !((summaries[i].reads | summaries[i].writes) & stackRegisters);
         }
         for (size_t i = 0; i < n && frameIsUnused; ++i) {
             if (i < 3 || startsWith(i, releasesFrame, 1))
@@ -1223,12 +1223,12 @@ public:
         Vector<int32_t> newUnitIndexes;
         newUnitIndexes.fill(-1, n + 1);
         int32_t* newIndex = newUnitIndexes.mutableSpan().data();
-        size_t kept = 0;
+        size_t writeIndex = 0;
         for (size_t i = 0; i < n; ++i) {
             if (!isRemoved[i])
-                newIndex[i] = kept++;
+                newIndex[i] = writeIndex++;
         }
-        if (kept == n)
+        if (writeIndex == n)
             return;
         int32_t next = -1;
         for (size_t i = n; i--;) {
@@ -1237,18 +1237,18 @@ public:
             else
                 newIndex[i] = next;
         }
-        kept = 0;
+        writeIndex = 0;
         for (size_t i = 0; i < n; ++i) {
             if (isRemoved[i])
                 continue;
-            units[kept] = units[i];
-            m_unitIdentities[kept] = m_unitIdentities[i];
-            if (units[kept].target >= 0)
-                units[kept].target = newIndex[units[kept].target];
-            ++kept;
+            units[writeIndex] = units[i];
+            m_unitIdentities[writeIndex] = m_unitIdentities[i];
+            if (units[writeIndex].target >= 0)
+                units[writeIndex].target = newIndex[units[writeIndex].target];
+            ++writeIndex;
         }
-        units.shrink(kept);
-        m_unitIdentities.shrink(kept);
+        units.shrink(writeIndex);
+        m_unitIdentities.shrink(writeIndex);
     }
 
     void optimizeLoops(unsigned maxLoopSize)

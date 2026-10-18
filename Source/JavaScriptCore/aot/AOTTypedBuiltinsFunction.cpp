@@ -61,21 +61,21 @@ std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std:
     LBasicBlock genericPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     if (method)
-        orElse(equal(*method, box(builtinCell(m_builtins.cellOf(bind)))), genericPath);
+        branchUnless(equal(*method, box(builtinCell(m_builtins.cellOf(bind)))), genericPath);
     if (functionType.primitives & ~(Primitive::String | Primitive::Symbol | Primitive::BigInt))
-        orElse(isCell(callee, functionType), genericPath);
+        branchUnless(isCell(callee, functionType), genericPath);
     CellPointer target = asCell(callee);
     const Function* definedAs = definingFunctionOf(function);
     auto hasStructureIDAt = [&](ptrdiff_t offset) {
         return equal(loadField<Word32>(target, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(offset)));
     };
     auto checkCalledFullClosureOrElse = [&] {
-        orElse(hasStructureIDAt(Instance::offsetOfTypedClosureStructureID()), genericPath);
+        branchUnless(hasStructureIDAt(Instance::offsetOfTypedClosureStructureID()), genericPath);
         if (!definedAs || definedAs->kind == FunctionKind::Constructor)
-            orElse(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), genericPath);
+            branchUnless(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), genericPath);
     };
     if (definedAs && m_program.usesSlimClosures(*definedAs))
-        orElse(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)), genericPath);
+        branchUnless(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)), genericPath);
     else if (definedAs)
         checkCalledFullClosureOrElse();
     else {
@@ -88,12 +88,12 @@ std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std:
         m_out.appendTo(isCalledClosure);
     }
     LValue allocator = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind)));
-    orElse(m_out.notNull(allocator), genericPath);
+    branchUnless(m_out.notNull(allocator), genericPath);
     CellPointer bound = allocateCell(allocator, sizeof(JSBoundFunction), genericPath);
     m_out.store64(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfHeaderFor(kind))), bound.value(), m_heaps.JSCell_header);
     m_out.storePtr(m_out.intPtrZero, bound.value(), m_heaps.JSObject_butterfly);
-    m_out.storePtr(fixedPointer(Instance::offsetOfGlobalObject()), bound.value(), m_heaps.JSCallee_scope);
-    m_out.storePtr(fixedPointer(Instance::offsetOfBoundFunctionExecutable()), bound.value(), m_heaps.JSFunction_executableOrRareData);
+    m_out.storePtr(loadImmutablePointer(Instance::offsetOfGlobalObject()), bound.value(), m_heaps.JSCallee_scope);
+    m_out.storePtr(loadImmutablePointer(Instance::offsetOfBoundFunctionExecutable()), bound.value(), m_heaps.JSFunction_executableOrRareData);
     m_out.storePtr(target.value(), bound.value(), m_heaps.JSBoundFunction_targetFunction);
     m_out.store64(boundThis.value(), bound.value(), m_heaps.JSBoundFunction_boundThis);
     m_out.store64(boundArguments[0].value(), bound.value(), m_heaps.JSBoundFunction_boundArg0);

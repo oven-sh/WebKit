@@ -61,12 +61,6 @@ void JSOrderedHashTable<Traits>::copyCompactTableOf(VM& vm, JSOrderedHashTable* 
 }
 
 template<typename Traits>
-uint32_t JSOrderedHashTable<Traits>::sizeOfCompactTable()
-{
-    return uncheckedDowncast<CompactTable>(m_compactTable.get())->size();
-}
-
-template<typename Traits>
 void JSOrderedHashTable<Traits>::clearCompactTable()
 {
     CompactTable::clear(vm(), this);

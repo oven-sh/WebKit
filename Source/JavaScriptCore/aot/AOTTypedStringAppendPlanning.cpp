@@ -188,10 +188,10 @@ BitVector findEscapeHTMLAliases(const Program& program)
                 auto& store = function.at(id);
                 if (store.opcode != Opcode::PutModuleVariable)
                     continue;
-                auto& read = function.at(program.originOf(function, store.child(0)));
+                auto& read = function.at(program.underlyingValue(function, store.child(0)));
                 bool isAlias = read.opcode == Opcode::GetById && program.builtinName(read.string()) == member;
                 if (isAlias) {
-                    auto& global = function.at(program.originOf(function, read.child(0)));
+                    auto& global = function.at(program.underlyingValue(function, read.child(0)));
                     isAlias = global.opcode == Opcode::GetGlobal && program.builtinName(global.string()) == holder;
                 }
                 storesByFunction[i].append({ store.variable().index(), isAlias });
@@ -243,12 +243,12 @@ public:
         m_newValues.clear();
         m_isCommitting = true;
         for (auto& [root, finish] : m_finishedRoots) {
-            Value made(m_function.at(finish));
+            Value replacement(m_function.at(finish));
             auto& value = m_function.at(root);
-            made.type = value.type;
-            made.rep = value.rep;
-            made.copyPredictionFrom(value);
-            value = WTF::move(made);
+            replacement.type = value.type;
+            replacement.rep = value.rep;
+            replacement.copyPredictionFrom(value);
+            value = WTF::move(replacement);
         }
         if (!m_replacements.isEmpty()) {
             auto replace = [&](ValueID& operand) {
@@ -433,7 +433,7 @@ private:
     {
         unsigned numberOfBlocks = m_function.blocks.size();
         unsigned numberOfValues = m_function.values.size();
-        m_uses.fill(0, numberOfValues);
+        m_useCounts.fill(0, numberOfValues);
         m_blockOf.fill(noBlock, numberOfValues);
         m_indexOf.fill(0, numberOfValues);
         m_predecessors.resize(numberOfBlocks);
@@ -464,14 +464,14 @@ private:
                 m_blockOf[id.index()] = b;
                 m_indexOf[id.index()] = i + 1;
                 std::as_const(m_function.at(id)).forEachChild([&](ValueID child) {
-                    ++m_uses[child.index()];
+                    ++m_useCounts[child.index()];
                 });
             }
             if (block.terminator.value)
-                ++m_uses[block.terminator.value.index()];
+                ++m_useCounts[block.terminator.value.index()];
             for (auto& target : block.terminator.targets) {
                 for (ValueID argument : target.arguments)
-                    ++m_uses[argument.index()];
+                    ++m_useCounts[argument.index()];
                 if (m_isReachable.get(b))
                     m_predecessors[target.block.index()].append(b);
             }
@@ -529,7 +529,7 @@ private:
             m_builders = analyzeStringBuilders(m_program, m_id, m_function);
             m_keys = computeMapKeyValues(m_program, m_id, m_function);
         }
-        return m_builders->isState(id) || m_builders->isFoldedIntoAppend.get(id.index()) || m_keys.get(id.index());
+        return m_builders->hasBuilder(id) || m_builders->isFoldedIntoAppend.get(id.index()) || m_keys.get(id.index());
     }
 
     bool isConcatenation(ValueID id)
@@ -686,7 +686,7 @@ private:
 
     bool isEscapeHTMLCall(ValueID id) const
     {
-        if (id.index() >= m_originalValueCount || m_uses[id.index()] != 1 || m_isDead.get(id.index()))
+        if (id.index() >= m_originalValueCount || m_useCounts[id.index()] != 1 || m_isDead.get(id.index()))
             return false;
         auto& value = m_function.at(id);
         if (value.opcode != Opcode::Call || value.arguments.size() != 1 || value.isInTailPosition || !isPlainPrimitive(typeOf(value.arguments[0])) || typeOf(value.arguments[0]).primitives & Primitive::BigInt)
@@ -733,13 +733,13 @@ private:
     {
         static const BuiltinName stringName = Builtins::singleton().nameOf(asBytes("String"_s.span8()));
         static const BuiltinName sliceName = Builtins::singleton().nameOf(asBytes("slice"_s.span8()));
-        if (id.index() >= m_originalValueCount || m_uses[id.index()] != 1 || m_isDead.get(id.index()))
+        if (id.index() >= m_originalValueCount || m_useCounts[id.index()] != 1 || m_isDead.get(id.index()))
             return false;
         auto& value = m_function.at(id);
         if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty() || value.arguments.size() > 2 || !value.child(0))
             return false;
         auto& builtin = Builtins::singleton().at(value.builtin());
-        if (builtin.kind != BuiltinKind::Method || builtin.holderName != stringName || builtin.nameName != sliceName)
+        if (builtin.kind != BuiltinKind::Method || builtin.holderName != stringName || builtin.nameID != sliceName)
             return false;
         auto& receiver = typeOf(value.child(0));
         if (!(receiver.primitives & Primitive::String) || !receiver.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull))
@@ -826,7 +826,7 @@ private:
 
     bool placeNumberToString(Context& context, ValueID id)
     {
-        if (id.index() >= m_originalValueCount || m_uses[id.index()] != 1 || m_isDead.get(id.index()) || m_mustMaterialize.get(id.index()))
+        if (id.index() >= m_originalValueCount || m_useCounts[id.index()] != 1 || m_isDead.get(id.index()) || m_mustMaterialize.get(id.index()))
             return false;
         auto& value = m_function.at(id);
         if (value.opcode != Opcode::CallBuiltin || !value.child(0) || value.arguments.size() > 1 || !typeOf(value.child(0)).isNumber())
@@ -850,7 +850,7 @@ private:
 
     ValueID skipConversions(ValueID id)
     {
-        while (id.index() < m_originalValueCount && m_uses[id.index()] == 1 && !m_mustMaterialize.get(id.index())) {
+        while (id.index() < m_originalValueCount && m_useCounts[id.index()] == 1 && !m_mustMaterialize.get(id.index())) {
             auto& value = m_function.at(id);
             ValueID child = value.child(0);
             bool isSkippable = (value.opcode == Opcode::ToString && (isString(child) || isPlainPrimitive(typeOf(child)))) || (isStringPreservingCast(m_program, value) && isString(child));
@@ -869,7 +869,7 @@ private:
         auto& value = at(id);
         if (value.opcode == Opcode::String)
             return true;
-        if (id.index() < m_originalValueCount && m_uses[id.index()] == 1) {
+        if (id.index() < m_originalValueCount && m_useCounts[id.index()] == 1) {
             if (countsShortEscapes && isEscapeHTMLCall(id))
                 return true;
             if (value.opcode == Opcode::ToString)
@@ -893,7 +893,7 @@ private:
     bool place(Context& context, ValueID operand, ValueID checkedUser = { })
     {
         ValueID id = skipConversions(operand);
-        if (id.index() < m_originalValueCount && m_function.at(id).opcode == Opcode::ToString && m_uses[id.index()] == 1 && isEscapeHTMLCall(m_function.at(id).child(0)) && hasOnlyConstantsBetween(m_function.at(id).child(0), id)) {
+        if (id.index() < m_originalValueCount && m_function.at(id).opcode == Opcode::ToString && m_useCounts[id.index()] == 1 && isEscapeHTMLCall(m_function.at(id).child(0)) && hasOnlyConstantsBetween(m_function.at(id).child(0), id)) {
             Checkpoint before = checkpoint();
             Context saved = context;
             markDead(id);
@@ -922,8 +922,8 @@ private:
             if (!m_mustMaterialize.get(id.index()) && m_placementDepth < maxPlacementDepth) {
                 Checkpoint before = checkpoint();
                 Context saved = context;
-                bool isUsedOnce = m_uses[id.index()] == 1;
-                bool canBeBuffered = isUsedOnce || m_continuationUses[id.index()] == m_uses[id.index()];
+                bool isUsedOnce = m_useCounts[id.index()] == 1;
+                bool canBeBuffered = isUsedOnce || m_continuationUses[id.index()] == m_useCounts[id.index()];
                 bool succeeded = false;
                 bool attempted = true;
                 ++m_placementDepth;
@@ -956,11 +956,11 @@ private:
     bool placeConcatenation(Context& context, ValueID id, bool isRegionRoot, ValueID checkedUser = { })
     {
         auto& value = m_function.at(id);
-        bool isUsedOnce = m_uses[id.index()] == 1 || isRegionRoot;
+        bool isUsedOnce = m_useCounts[id.index()] == 1 || isRegionRoot;
         BufferedValue buffered;
         if (!isUsedOnce)
             buffered = BufferedValue { 0, context.region, context.state, context.needsBegin, context.pending, KnownStart::None };
-        bool isChecked = !isRegionRoot && !isBounded(id) && !(checkedUser && m_uses[id.index()] == 1 && hasOnlyConstantsBetween(id, checkedUser));
+        bool isChecked = !isRegionRoot && !isBounded(id) && !(checkedUser && m_useCounts[id.index()] == 1 && hasOnlyConstantsBetween(id, checkedUser));
         bool isMeasured = !m_isNeverMeasured.get(id.index()) && isChecked && isUsedOnce && isBounded(id, true);
         if (isMeasured)
             isChecked = false;
@@ -975,7 +975,7 @@ private:
         bool continuesBufferedValue = false;
         if (isChecked) {
             ValueID first = operands[0];
-            while (first.index() < m_originalValueCount && !m_bufferedValues.contains(first.index()) && m_uses[first.index()] == 1 && (m_function.at(first).opcode == Opcode::ToString || isStringPreservingCast(m_program, m_function.at(first))))
+            while (first.index() < m_originalValueCount && !m_bufferedValues.contains(first.index()) && m_useCounts[first.index()] == 1 && (m_function.at(first).opcode == Opcode::ToString || isStringPreservingCast(m_program, m_function.at(first))))
                 first = m_function.at(first).child(0);
             if (auto found = m_bufferedValues.find(first.index()); found != m_bufferedValues.end()) {
                 if (found->value->knownStart == KnownStart::None)
@@ -1072,9 +1072,9 @@ private:
             if (position >= target.arguments.size())
                 return false;
             ValueID argument = target.arguments[position];
-            while (m_uses[argument.index()] == 1 && (m_function.at(argument).opcode == Opcode::ToString || isStringPreservingCast(m_program, m_function.at(argument))) && isString(m_function.at(argument).child(0)))
+            while (m_useCounts[argument.index()] == 1 && (m_function.at(argument).opcode == Opcode::ToString || isStringPreservingCast(m_program, m_function.at(argument))) && isString(m_function.at(argument).child(0)))
                 argument = m_function.at(argument).child(0);
-            if (m_uses[argument.index()] == 1 && (isConcatenation(argument) || (isStringPhi(argument) && hasConcatenationOperand(argument, depth + 1))))
+            if (m_useCounts[argument.index()] == 1 && (isConcatenation(argument) || (isStringPhi(argument) && hasConcatenationOperand(argument, depth + 1))))
                 return true;
         }
         return false;
@@ -1085,7 +1085,7 @@ private:
         auto& value = m_function.at(id);
         unsigned block = value.parameterBlock().index();
         unsigned position = value.parameterIndex();
-        bool isUsedOnce = m_uses[id.index()] == 1 && !isRegionRoot;
+        bool isUsedOnce = m_useCounts[id.index()] == 1 && !isRegionRoot;
         bool pushedStart = false;
         if (!isUsedOnce && context.knownStart == KnownStart::None) {
             context.pending.append(Part { StringAppendPart::PushStart, { } });
@@ -1103,12 +1103,12 @@ private:
             if (terminator.kind != TerminatorKind::Jump || position >= terminator.targets[0].arguments.size())
                 return false;
             isLoop |= dominates(block, predecessor);
-            Context arm = context;
-            if (!place(arm, terminator.targets[0].arguments[position]))
+            Context predecessorContext = context;
+            if (!place(predecessorContext, terminator.targets[0].arguments[position]))
                 return false;
-            if (!flush(arm, endOf(predecessor), value))
+            if (!flush(predecessorContext, endOf(predecessor), value))
                 return false;
-            insert(endOf(predecessor), Step::Rename, ValueID(), context.region, arm.state, merged);
+            insert(endOf(predecessor), Step::Rename, ValueID(), context.region, predecessorContext.state, merged);
         }
         m_loopCount += isLoop;
         context.state = merged;
@@ -1124,7 +1124,7 @@ private:
     {
         for (size_t k = firstBuffered; k < m_bufferedLog.size(); ++k) {
             ValueID id = m_bufferedLog[k];
-            if (id != exempt && m_accounted[id.index()] != m_uses[id.index()])
+            if (id != exempt && m_accounted[id.index()] != m_useCounts[id.index()])
                 return false;
         }
         return true;
@@ -1134,7 +1134,7 @@ private:
     {
         for (size_t k = firstBuffered; k < m_bufferedLog.size(); ++k) {
             ValueID id = m_bufferedLog[k];
-            if (id != exempt && m_accounted[id.index()] != m_uses[id.index()])
+            if (id != exempt && m_accounted[id.index()] != m_useCounts[id.index()])
                 return id;
         }
         return { };
@@ -1240,7 +1240,7 @@ private:
             ++parts;
             return;
         }
-        if (depth < 8 && id.index() < m_originalValueCount && (!depth || m_uses[id.index()] == 1) && isConcatenation(id)) {
+        if (depth < 8 && id.index() < m_originalValueCount && (!depth || m_useCounts[id.index()] == 1) && isConcatenation(id)) {
             value.forEachChild([&](ValueID child) {
                 measureParts(child, depth + 1, parts, constantLength);
             });
@@ -1251,7 +1251,7 @@ private:
 
     bool isStoredInArray(ValueID root)
     {
-        if (m_uses[root.index()] != 1 || !m_isInLoop.get(m_blockOf[root.index()]))
+        if (m_useCounts[root.index()] != 1 || !m_isInLoop.get(m_blockOf[root.index()]))
             return false;
         unsigned parts = 0;
         size_t constantLength = 0;
@@ -1271,7 +1271,7 @@ private:
             static const BuiltinName arrayName = Builtins::singleton().nameOf(asBytes("Array"_s.span8()));
             static const BuiltinName pushName = Builtins::singleton().nameOf(asBytes("push"_s.span8()));
             auto& builtin = Builtins::singleton().at(user.builtin());
-            return builtin.kind == BuiltinKind::Method && builtin.holderName == arrayName && builtin.nameName == pushName;
+            return builtin.kind == BuiltinKind::Method && builtin.holderName == arrayName && builtin.nameID == pushName;
         }
         default:
             return false;
@@ -1341,7 +1341,7 @@ private:
 
     void planPhiRegion(ValueID root)
     {
-        if (m_continuationUses[root.index()] + 1 < m_uses[root.index()] || m_nextRegion > maxStringAppendRegion)
+        if (m_continuationUses[root.index()] + 1 < m_useCounts[root.index()] || m_nextRegion > maxStringAppendRegion)
             return;
         const Value origin(m_function.at(root));
         for (unsigned attempt = 0; attempt < maxPlanAttempts; ++attempt) {
@@ -1352,7 +1352,7 @@ private:
             m_loopCount = 0;
             bool planned = placePhi(context, root, true);
             bool isProfitable = this->isProfitable();
-            auto use = planned && isProfitable && m_accounted[root.index()] + 1 == m_uses[root.index()] ? findSingleExternalUse(root) : std::nullopt;
+            auto use = planned && isProfitable && m_accounted[root.index()] + 1 == m_useCounts[root.index()] ? findSingleExternalUse(root) : std::nullopt;
             if (use && allBufferedUsesAccounted(firstBuffered, root) && flush(context, *use, origin)) {
                 ValueID regionID = addInteger(origin, region);
                 insert(*use, Step::Other, regionID, region, 0, 0);
@@ -1544,13 +1544,13 @@ private:
         for (auto& block : m_function.blocks) {
             for (auto& target : block.terminator.targets) {
                 auto& parameters = m_function.at(target.block).parameters;
-                Arguments kept;
+                Arguments remainingArguments;
                 for (unsigned i = 0; i < target.arguments.size(); ++i) {
                     if (!isRemoved.get(parameters[i].index()))
-                        kept.append(target.arguments[i]);
+                        remainingArguments.append(target.arguments[i]);
                 }
-                if (kept.size() != target.arguments.size())
-                    target.arguments = WTF::move(kept);
+                if (remainingArguments.size() != target.arguments.size())
+                    target.arguments = WTF::move(remainingArguments);
             }
         }
         for (unsigned b = 1; b < m_function.blocks.size(); ++b) {
@@ -1582,7 +1582,7 @@ private:
     const BitVector& m_escapeHTMLAliases;
     unsigned m_originalValueCount { 0 };
     bool m_isCommitting { false };
-    Vector<uint32_t> m_uses;
+    Vector<uint32_t> m_useCounts;
     Vector<uint32_t> m_blockOf;
     Vector<uint32_t> m_indexOf;
     Vector<Vector<unsigned, 2>> m_predecessors;

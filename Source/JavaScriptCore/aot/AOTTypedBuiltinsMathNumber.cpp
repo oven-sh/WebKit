@@ -412,7 +412,7 @@ void Lowering::findNumbersJoinedWithInt32(const Vector<BlockID>& order)
 
 std::optional<bool> Lowering::isMathMaxOrMin(ValueID id) const
 {
-    auto& definition = m_function.at(originOf(id));
+    auto& definition = m_function.at(underlyingValue(id));
     if (definition.opcode != Opcode::BuiltinFunction)
         return std::nullopt;
     auto& implementation = m_builtins.at(definition.builtin()).implementation;
@@ -426,7 +426,7 @@ Number Lowering::minOrMaxOfElements(bool isMax, CellPointer array, Pointer butte
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 2> results;
     auto fold = [&](IndexingType indexingType) {
-        auto& elements = elementsOf(indexingType);
+        auto& elements = elementHeapFor(indexingType);
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock element = m_out.newBlock();
         LBasicBlock done = m_out.newBlock();
@@ -444,7 +444,7 @@ Number Lowering::minOrMaxOfElements(bool isMax, CellPointer array, Pointer butte
             next = Number(m_out.loadDouble(address));
         else {
             Boxed boxed(m_out.load64(address));
-            orElse(isNumber(boxed), otherwise);
+            branchUnless(isNumber(boxed), otherwise);
             next = select(isInt32(boxed), toNumber(low32(boxed)), unboxedDouble(boxed));
         }
         m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.intPtrOne)));
@@ -461,12 +461,12 @@ Number Lowering::minOrMaxOfElements(bool isMax, CellPointer array, Pointer butte
     m_out.appendTo(doubles);
     fold(ArrayWithDouble);
     m_out.appendTo(values);
-    orElse(isContiguousOrInt32Shape(shape), otherwise);
+    branchUnless(isContiguousOrInt32Shape(shape), otherwise);
     fold(ArrayWithContiguous);
     m_out.appendTo(continuation);
     Number result(m_out.phi(Double, results));
     ensureStillAliveHere(array);
-    orElse(equal(result, result), otherwise);
+    branchUnless(equal(result, result), otherwise);
     return result;
 }
 
@@ -505,7 +505,7 @@ std::optional<Number> Lowering::powerWithConstantExponent(Number base, ValueID e
 
 std::optional<Number> Lowering::powerWithConstantBase(ValueID base, ValueID exponent)
 {
-    auto& constant = m_function.at(originOf(base));
+    auto& constant = m_function.at(underlyingValue(base));
     double x;
     if (constant.opcode == Opcode::Integer)
         x = static_cast<double>(constant.integer());
@@ -519,7 +519,7 @@ std::optional<Number> Lowering::powerWithConstantBase(ValueID base, ValueID expo
     auto inlinePath = [&](Integer k) {
         if (x == 2)
             return Number(m_out.bitCast(m_out.shl(add(k, integer(1023)).value(), m_out.constInt32(52)), Double));
-        LValue table = fixedPointer(Instance::offsetOfPowersOfTen());
+        LValue table = loadImmutablePointer(Instance::offsetOfPowersOfTen());
         return Number(m_out.loadDouble(TypedPointer(m_heaps.AOTInstance_fixedFields, m_out.add(table, m_out.shl(k.value(), m_out.constInt32(3))))));
     };
     auto& type = typeOf(exponent);
@@ -534,10 +534,10 @@ std::optional<Number> Lowering::powerWithConstantBase(ValueID base, ValueID expo
         k = in<Integer>(exponent);
     else {
         Word32 narrow = low32(truncateToInteger(y));
-        orElse(equal(toNumber(narrow), y), genericPath);
+        branchUnless(equal(toNumber(narrow), y), genericPath);
         k = signExtended(narrow);
     }
-    orElse(belowOrEqual(sub(k, integer(handled.minimum)), integer(handled.maximum - handled.minimum)), genericPath);
+    branchUnless(belowOrEqual(sub(k, integer(handled.minimum)), integer(handled.maximum - handled.minimum)), genericPath);
     join.add(inlinePath(k));
     m_out.appendTo(genericPath);
     join.add(Number(AOT_TYPED_OPERATION(Pow, number(x), y)));
@@ -568,7 +568,7 @@ Integer Lowering::divide(Integer x, Range dividends, Integer y, Range divisors)
 
 std::optional<Integer> Lowering::roundedQuotient(InlineBuiltin which, ValueID argument, bool yieldsInteger)
 {
-    ValueID origin = m_program.originOf(m_function, argument);
+    ValueID origin = m_program.underlyingValue(m_function, argument);
     auto& quotient = m_function.at(origin);
     if (quotient.opcode != Opcode::Div || !operandsAreAvailable(origin))
         return std::nullopt;
@@ -692,7 +692,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         LBasicBlock otherwise = newBlockForGenericCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         Characters characters = charactersOf(stringReceiver(get(string).as<CellPointer>()), otherwise);
-        orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
+        branchUnless(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
         Number yielded = functor(characters);
         ensureStillAliveHere(characters.owner);
         join.add(numberResult(yielded, type));
@@ -782,7 +782,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
     case InlineBuiltin::MathF16Round:
         return numberResult(AOT_TYPED_OPERATION(MathF16Round, asNumericOperand(arguments[0])), type);
     case InlineBuiltin::MathRandom: {
-        LValue globalObject = fixedPointer(Instance::offsetOfGlobalObject());
+        LValue globalObject = loadImmutablePointer(Instance::offsetOfGlobalObject());
         TypedPointer lowAddress = m_out.address(m_heaps.AOTTyped_runtimeState, globalObject, JSGlobalObject::weakRandomOffset() + WeakRandom::lowOffset());
         TypedPointer highAddress = m_out.address(m_heaps.AOTTyped_runtimeState, globalObject, JSGlobalObject::weakRandomOffset() + WeakRandom::highOffset());
         LValue x = m_out.load64(lowAddress);
@@ -928,16 +928,16 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
             LBasicBlock notCell = m_out.newBlock();
             LBasicBlock otherwise = newBlockForGenericCall(value);
             Join join(m_out, rep, b3TypeOf(rep));
-            orElse(isCell(operand), notCell);
+            branchUnless(isCell(operand), notCell);
             CellPointer cell = asCell(operand);
-            orElse(equal(loadCellType(cell), word32(StringType)), otherwise);
+            branchUnless(equal(loadCellType(cell), word32(StringType)), otherwise);
             Characters characters = charactersOf(stringReceiver(cell), otherwise);
-            orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
+            branchUnless(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
             Number yielded = AOT_TYPED_OPERATION(StringToNumber8, characters.data, low32(characters.length));
             ensureStillAliveHere(characters.owner);
             join.add(numberResult(yielded, type));
             m_out.appendTo(notCell);
-            orElse(isNumber(operand), otherwise);
+            branchUnless(isNumber(operand), otherwise);
             join.add(ensure(operand, m_program.at(m_program.types.number), type));
             if (!isSharedGenericPath(otherwise)) {
                 m_out.appendTo(otherwise);

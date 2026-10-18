@@ -51,7 +51,7 @@ void JSGlobalObjectDebuggerAgent::internalEnable()
 {
     InspectorDebuggerAgent::internalEnable();
     if (Options::useAOT()) [[unlikely]]
-        m_consoleAgent->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::Other, MessageType::Log, MessageLevel::Warning, "This program was compiled ahead of time (--aot). Breakpoints, stepping, pausing and `debugger` statements have no effect in compiled code, and its sources are not listed. The console, evaluation, object inspection, heap snapshots and CPU profiles work. To debug the program, run it from its sources without --aot."_s));
+        m_consoleAgent->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::Other, MessageType::Log, MessageLevel::Warning, "This program was compiled ahead of time. Breakpoints, stepping, pausing and `debugger` statements have no effect in compiled code, and its sources aren't listed. The console, evaluation, object inspection, heap snapshots and CPU profiles work. To debug the program, run it from source with bun run."_s));
 }
 
 InjectedScript JSGlobalObjectDebuggerAgent::injectedScriptForEval(Protocol::ErrorString& errorString, std::optional<Protocol::Runtime::ExecutionContextId>&& executionContextId)

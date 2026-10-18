@@ -35,7 +35,7 @@ class Procedure;
 // branches that are path-redundant. Does not do a fixpoint, because it does not have a good way
 // of detecting termination.
 
-bool duplicateTails(Procedure&, bool onlyDecidedTests = false);
+void duplicateTails(Procedure&);
 
 } } // namespace JSC::B3
 

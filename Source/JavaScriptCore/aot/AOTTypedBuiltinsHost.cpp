@@ -101,11 +101,11 @@ static bool tryEncodeRopeAsUTF8(JSString* root, Vector<uint8_t>& bytes)
     uint8_t* start = bytes.mutableSpan().data();
     uint8_t* cursor = start;
     uint8_t* end = start + bytes.size();
-    auto ensureRoom = [&](size_t room) ALWAYS_INLINE_LAMBDA {
-        if (room <= static_cast<size_t>(end - cursor)) [[likely]]
+    auto ensureRoom = [&](size_t additionalBytes) ALWAYS_INLINE_LAMBDA {
+        if (additionalBytes <= static_cast<size_t>(end - cursor)) [[likely]]
             return true;
         size_t size = cursor - start;
-        if (!bytes.tryGrow(std::max(bytes.size() * 2, size + room)))
+        if (!bytes.tryGrow(std::max(bytes.size() * 2, size + additionalBytes)))
             return false;
         start = bytes.mutableSpan().data();
         cursor = start + size;
@@ -203,9 +203,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetRequestOrResponseHeader, EncodedJSV
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCallHeadersMethod, EncodedJSValue, (Instance* instance, EncodedJSValue headersOrHolder, EncodedJSValue name, EncodedJSValue value, uint32_t methodAndKnownName))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    EncodedJSValue answer = s_hostClassEntryPoints.callHeadersMethod(globalObject, headersOrHolder, name, value, methodAndKnownName);
+    EncodedJSValue result = s_hostClassEntryPoints.callHeadersMethod(globalObject, headersOrHolder, name, value, methodAndKnownName);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    OPERATION_RETURN(scope, answer);
+    OPERATION_RETURN(scope, result);
 }
 
 namespace Typed {
@@ -279,42 +279,42 @@ void findUnsharedResponseBodies(Program& program)
     if (!hasSites.load())
         return;
 
-    struct Facts {
+    struct FunctionAnalysis {
         Vector<uint32_t> numberOfUses;
         Vector<uint32_t> blockOf;
         Vector<uint32_t> numberOfPredecessors;
         BitVector isInLoop;
     };
-    UncheckedKeyHashMap<unsigned, std::unique_ptr<Facts>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> factsOfFunctions;
-    auto factsOf = [&](unsigned i) -> const Facts& {
-        auto& facts = factsOfFunctions.add(i, nullptr).iterator->value;
-        if (facts)
-            return *facts;
-        facts = makeUniqueWithoutFastMallocCheck<Facts>();
+    UncheckedKeyHashMap<unsigned, std::unique_ptr<FunctionAnalysis>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> factsOfFunctions;
+    auto factsOf = [&](unsigned i) -> const FunctionAnalysis& {
+        auto& analysis = factsOfFunctions.add(i, nullptr).iterator->value;
+        if (analysis)
+            return *analysis;
+        analysis = makeUniqueWithoutFastMallocCheck<FunctionAnalysis>();
         auto& function = functions[i];
-        facts->numberOfUses.fill(0, function.values.size());
-        facts->blockOf.fill(unlisted, function.values.size());
-        facts->numberOfPredecessors.fill(0, function.blocks.size());
-        facts->isInLoop = blocksInLoops(function);
+        analysis->numberOfUses.fill(0, function.values.size());
+        analysis->blockOf.fill(unlisted, function.values.size());
+        analysis->numberOfPredecessors.fill(0, function.blocks.size());
+        analysis->isInLoop = blocksInLoops(function);
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
             for (ValueID parameter : block.parameters)
-                facts->blockOf[parameter.index()] = b;
+                analysis->blockOf[parameter.index()] = b;
             for (ValueID id : block.values) {
-                facts->blockOf[id.index()] = b;
+                analysis->blockOf[id.index()] = b;
                 function.at(id).forEachChild([&](ValueID child) {
-                    ++facts->numberOfUses[child.index()];
+                    ++analysis->numberOfUses[child.index()];
                 });
             }
             if (block.terminator.value)
-                ++facts->numberOfUses[block.terminator.value.index()];
+                ++analysis->numberOfUses[block.terminator.value.index()];
             for (auto& target : block.terminator.targets) {
-                ++facts->numberOfPredecessors[target.block.index()];
+                ++analysis->numberOfPredecessors[target.block.index()];
                 for (ValueID argument : target.arguments)
-                    ++facts->numberOfUses[argument.index()];
+                    ++analysis->numberOfUses[argument.index()];
             }
         }
-        return *facts;
+        return *analysis;
     };
 
     BitVector hasOtherEntries(count);
@@ -368,10 +368,10 @@ void findUnsharedResponseBodies(Program& program)
         if (depth > maxDepth)
             return false;
         auto& function = functions[i];
-        auto& facts = factsOf(i);
+        auto& analysis = factsOf(i);
         auto& value = function.at(id);
-        unsigned block = facts.blockOf[id.index()];
-        if (facts.numberOfUses[id.index()] > allowedUses || block == unlisted || (block != userBlock && facts.isInLoop.get(userBlock)))
+        unsigned block = analysis.blockOf[id.index()];
+        if (analysis.numberOfUses[id.index()] > allowedUses || block == unlisted || (block != userBlock && analysis.isInLoop.get(userBlock)))
             return false;
         auto isNewOrUnshared = [&](std::span<const ValueID> operands) {
             if (std::ranges::any_of(operands, [&](ValueID operand) { return isNonEmptyConstant(function, operand); }))
@@ -458,19 +458,19 @@ void findUnsharedResponseBodies(Program& program)
     };
     auto takesUnsharedString = [&](unsigned i, ValueID site) {
         auto& function = functions[i];
-        auto& facts = factsOf(i);
-        unsigned block = facts.blockOf[site.index()];
-        if (block == unlisted || facts.isInLoop.get(block))
+        auto& analysis = factsOf(i);
+        unsigned block = analysis.blockOf[site.index()];
+        if (block == unlisted || analysis.isInLoop.get(block))
             return false;
         ValueID body = function.at(site).arguments[0];
         unsigned allowedUses = 1;
-        if (facts.numberOfUses[body.index()] == 2 && facts.numberOfPredecessors[block] == 1) {
+        if (analysis.numberOfUses[body.index()] == 2 && analysis.numberOfPredecessors[block] == 1) {
             for (auto& fork : function.blocks) {
                 if (fork.terminator.kind != TerminatorKind::Branch || !fork.terminator.targets.containsIf([&](auto& target) { return target.block.index() == block; }))
                     continue;
                 for (auto& target : fork.terminator.targets) {
                     unsigned other = target.block.index();
-                    if (other == block || facts.numberOfPredecessors[other] != 1 || facts.isInLoop.get(other))
+                    if (other == block || analysis.numberOfPredecessors[other] != 1 || analysis.isInLoop.get(other))
                         continue;
                     for (ValueID id : function.blocks[other].values) {
                         auto& value = function.at(id);

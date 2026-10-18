@@ -1476,9 +1476,9 @@ void BytecodeGenerator::emitParameterAudits(const AuditSites& auditSites, Functi
     for (auto& site : auditSites.functionParameters(m_scopeNode->source().startOffset())) {
         if (site.index >= parameters.size() || parameters.at(site.index).first->isRestParameter())
             continue;
-        if (AuditSites::valueClasses(site.passes).containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody }) && !m_auditsAreOff) {
-            m_auditsAreOff = newBlockScopeVariable();
-            emitLoad(m_auditsAreOff.get(), jsBoolean(false));
+        if (AuditSites::valueClasses(site.passes).containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody }) && !m_auditsDisabledRegister) {
+            m_auditsDisabledRegister = newBlockScopeVariable();
+            emitLoad(m_auditsDisabledRegister.get(), jsBoolean(false));
         }
         RefPtr<RegisterID> argument = site.index + 1 < m_parameters.size() ? &m_parameters[site.index + 1] : emitGetArgument(newTemporary(), site.index);
         emitAudit(argument.get(), site.id, AuditSites::valueClasses(site.passes), site.least, site.most);
@@ -1554,8 +1554,8 @@ void BytecodeGenerator::emitElementReadAudit(RegisterID* base, RegisterID* subsc
 {
     unsigned begin = instructions().size();
     Ref<Label> done = newLabel();
-    if (m_auditsAreOff)
-        emitJumpIfTrue(m_auditsAreOff.get(), done.get());
+    if (m_auditsDisabledRegister)
+        emitJumpIfTrue(m_auditsDisabledRegister.get(), done.get());
     emitJumpIfTrue(emitIsCellWithType(newTemporary(), base, ArrayType), done.get());
     RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
     RefPtr<RegisterID> result = newTemporary();
@@ -1586,8 +1586,8 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
 
     unsigned begin = instructions().size();
     Ref<Label> done = newLabel();
-    if (m_auditsAreOff)
-        emitJumpIfTrue(m_auditsAreOff.get(), done.get());
+    if (m_auditsDisabledRegister)
+        emitJumpIfTrue(m_auditsDisabledRegister.get(), done.get());
     if (fails == OptionSet<AuditedValueClass> { AuditedValueClass::Undefined, AuditedValueClass::Null })
         emitJumpIfFalse(emitIsUndefinedOrNull(newTemporary(), value), done.get());
     else if (numberOfValueClassTests(fails) < numberOfValueClassTests(passes)) {
@@ -1643,7 +1643,7 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
     if (passes.containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody })) {
         Ref<Label> fits = newLabel();
         emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), result.get(), function.get()), fits.get());
-        emitLoad(m_auditsAreOff.get(), jsBoolean(true));
+        emitLoad(m_auditsDisabledRegister.get(), jsBoolean(true));
         emitJump(done.get());
         emitLabel(fits.get());
     }
@@ -3145,10 +3145,10 @@ RegisterID* BytecodeGenerator::emitPutById(RegisterID* base, const Identifier& p
 
     m_staticPropertyAnalyzer.putById(base, propertyIndex);
 
-    if (m_auditsAreOff && !property.isSymbol()) {
+    if (m_auditsDisabledRegister && !property.isSymbol()) {
         Ref<Label> asTypedCode = newLabel();
         Ref<Label> done = newLabel();
-        emitJumpIfFalse(m_auditsAreOff.get(), asTypedCode.get());
+        emitJumpIfFalse(m_auditsDisabledRegister.get(), asTypedCode.get());
         OpPutByVal::emit(this, base, emitLoad(nullptr, property), value, ecmaMode());
         emitJump(done.get());
         emitLabel(asTypedCode.get());

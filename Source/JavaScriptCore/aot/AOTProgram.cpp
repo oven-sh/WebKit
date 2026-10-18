@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
-#include "AOTOpcodeTraits.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "ImmutableIntrinsics.h"
@@ -51,6 +50,20 @@ const Vector<uint32_t>* programConstantIndicesFor(UnlinkedCodeBlock* codeBlock)
     return it == s_programConstantIndices->end() ? nullptr : &it->value;
 }
 
+static bool readsArgumentList(OpcodeID opcode)
+{
+    switch (opcode) {
+    case op_create_scoped_arguments:
+    case op_create_direct_arguments:
+    case op_create_cloned_arguments:
+    case op_create_rest:
+    case op_argument_count:
+        return true;
+    default:
+        return false;
+    }
+}
+
 Convention conventionOf(UnlinkedCodeBlock* codeBlock)
 {
     Convention result;
@@ -58,7 +71,7 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
     bool takesList = false;
     result.usesThis = codeBlock->isConstructor();
     for (const auto& instruction : codeBlock->instructions()) {
-        takesList |= !!(traitsOf(instruction->opcodeID()) & OpcodeTraits::ReadsArgumentList);
+        takesList |= readsArgumentList(instruction->opcodeID());
         if (instruction->opcodeID() == op_get_argument)
             numberOfParameters = std::max<unsigned>(numberOfParameters, instruction->as<OpGetArgument>().m_index);
         for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints() && !result.usesThis; ++checkpoint) {

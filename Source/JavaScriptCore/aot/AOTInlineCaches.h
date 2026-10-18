@@ -33,9 +33,9 @@ void cacheInheritedSetter(JSGlobalObject*, Instance&, JSObject* base, Structure*
 bool cacheNativeSetter(JSGlobalObject*, Instance&, JSObject* base, Structure* structureBeforeStore, const Identifier&, const PutPropertySlot&);
 void cachePrivateNameTransition(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue name, std::optional<PropertyOffset>);
 void cacheKeyedAccess(Slot& entry, Structure*, JSCell* key, std::optional<PropertyOffset>);
-enum class StorageAfterAddition : uint8_t { Unsupported, Stays, IsFirst, Doubled };
+enum class OutOfLineStorageChange : uint8_t { Unsupported, Stays, IsFirst, Doubled };
 bool hasOnlyNamedOutOfLineStorage(Structure* before, Structure* after);
-StorageAfterAddition storageAfterAddition(Structure* before, Structure* after, PropertyOffset);
+OutOfLineStorageChange outOfLineStorageChange(Structure* before, Structure* after, PropertyOffset);
 void cacheKeyedDefinition(Instance*, VM&, Structure* before, Structure* after, JSCell* key, UniquedStringImpl*, unsigned definedAttributes = 0, uintptr_t keyTagBits = 0);
 void cacheKeyedExtraPropertyAddition(Instance*, Structure* before, Structure* after, JSCell* key, PropertyOffset, bool createsExtraProperties);
 void recordKeyedExtraPropertyAddition(Instance::KeyedAddition&, Structure* before, JSCell* key);

@@ -31,7 +31,7 @@ std::optional<Operand> Lowering::lowerInlineTypedArray(InlineBuiltin which, Valu
 {
     if (which != InlineBuiltin::TypedArrayByteLength && which != InlineBuiltin::TypedArrayByteOffset)
         return lowerContainerBuiltin(which, result, value, inlinePath);
-    TypedArrayReceiver view = typedArrayReceiver(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
+    TypedArrayReceiver view = typedArrayReceiver(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID)));
     Type sizeType = Type::integer({ 0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE) });
     bool isElementSizeKnown = value.engineClass() != Format::none;
     Word32 isInline = which == InlineBuiltin::TypedArrayByteOffset || isElementSizeKnown ? hasFixedLength(view) : boolean(false);

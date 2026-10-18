@@ -283,7 +283,7 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_moduleLoader);
 #if ENABLE(AOT)
     if (JSModuleLoader* loader = thisObject->m_moduleLoader.get(); loader && loader->aotInstance())
-        visitor.appendUnbarriered(AOT::tokenOf(loader->aotInstance()));
+        visitor.appendUnbarriered(AOT::livenessToken(loader->aotInstance()));
 #endif
     visitor.append(thisObject->m_moduleScopeSymbolTables.begin(), thisObject->m_moduleScopeSymbolTables.end());
     {

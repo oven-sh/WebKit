@@ -2181,7 +2181,7 @@ constexpr BuiltinNameData builtinNames[numberOfBuiltinNames] = {
     { "zipKeyed"_s, noClass, noClass, noOperation, false, false, false },
 };
 
-constexpr EngineClass engineClasses[numberOfEngineClasses] = {
+constexpr BuiltinClass builtinClasses[numberOfEngineClasses] = {
     { "Array"_s, 0, Name(16), Name(16), NotTypedArray, ArrayType, 0, 0 },
     { "ArrayBuffer"_s, 1, Name(17), Name(17), NotTypedArray, ArrayBufferType, 0, 1 },
     { "SharedArrayBuffer"_s, 2, Name(258), Name(258), NotTypedArray, ArrayBufferType, 1, 1 },

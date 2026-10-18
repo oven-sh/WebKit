@@ -251,18 +251,18 @@ static NEVER_INLINE JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, 
         auto characters = source->span8();
         auto inserted = replacementText.span8();
         Latin1Character first = atom.span8()[0];
-        Vector<unsigned, 32> places;
+        Vector<unsigned, 32> matchStarts;
         do {
-            if (!places.tryAppend(static_cast<unsigned>(found))) [[unlikely]] {
+            if (!matchStarts.tryAppend(static_cast<unsigned>(found))) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
             found = atomLength == 1 ? WTF::find(characters, first, found + 1) : source->find(atom, found + atomLength);
         } while (found != notFound);
 
-        CheckedUint32 length = places.size();
+        CheckedUint32 length = matchStarts.size();
         length *= inserted.size();
-        length += sourceLength - places.size() * atomLength;
+        length += sourceLength - matchStarts.size() * atomLength;
         if (length.hasOverflowed() || length.value() > String::MaxLength) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return nullptr;
@@ -274,15 +274,15 @@ static NEVER_INLINE JSString* tryReplaceEveryAtom(JSGlobalObject* globalObject, 
             return nullptr;
         }
         unsigned copied = 0;
-        for (unsigned place : places) {
-            StringImpl::copyCharacters(buffer, characters.subspan(copied, place - copied));
-            skip(buffer, place - copied);
+        for (unsigned matchStart : matchStarts) {
+            StringImpl::copyCharacters(buffer, characters.subspan(copied, matchStart - copied));
+            skip(buffer, matchStart - copied);
             StringImpl::copyCharacters(buffer, inserted);
             skip(buffer, inserted.size());
-            copied = place + atomLength;
+            copied = matchStart + atomLength;
         }
         StringImpl::copyCharacters(buffer, characters.subspan(copied));
-        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { places.last(), places.last() + atomLength }, false);
+        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult { matchStarts.last(), matchStarts.last() + atomLength }, false);
         return jsString(vm, String { impl.releaseNonNull() });
     }
 
@@ -643,7 +643,7 @@ static std::optional<CharacterClassSeparator> characterClassSeparatorOf(const Pr
 {
     if (split.arguments.size() != 1)
         return std::nullopt;
-    auto& separator = function.at(program.originOf(function, split.arguments[0]));
+    auto& separator = function.at(program.underlyingValue(function, split.arguments[0]));
     if (function.sourceOfSeparatorPassed && separator.opcode == Opcode::Parameter)
         return parseCharacterClassSeparator(program.string(function.sourceOfSeparatorPassed));
     auto key = regExpLiteralKey(program, function, separator);
@@ -659,7 +659,7 @@ StringID sourceOfCharacterClassSeparator(const Program& program, const Function&
     auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
     if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::StringSplit || !characterClassSeparatorOf(program, function, value))
         return { };
-    return StringID(static_cast<uint32_t>(*regExpLiteralKey(program, function, function.at(program.originOf(function, value.arguments[0]))) >> 32));
+    return StringID(static_cast<uint32_t>(*regExpLiteralKey(program, function, function.at(program.underlyingValue(function, value.arguments[0]))) >> 32));
 }
 
 bool Lowering::isUnreferenced(ValueID literal, bool isGlobal)
@@ -752,7 +752,7 @@ bool Lowering::isUnreferenced(ValueID literal, bool isGlobal)
 
 static bool isRegExp(const Type& type)
 {
-    auto* engineClass = type.singleEngineClass();
+    auto* engineClass = type.singleBuiltinClass();
     return engineClass && engineClass->type == RegExpObjectType && !type.primitives;
 }
 
@@ -798,9 +798,9 @@ bool Lowering::isNamedLastIndex(StringID name) const
 
 CellPointer Lowering::regExpObjectOrElse(Boxed value, LBasicBlock otherwise)
 {
-    orElse(isCell(value), otherwise);
+    branchUnless(isCell(value), otherwise);
     CellPointer cell = asCell(value);
-    orElse(equal(loadCellType(cell), word32(RegExpObjectType)), otherwise);
+    branchUnless(equal(loadCellType(cell), word32(RegExpObjectType)), otherwise);
     return cell;
 }
 
@@ -822,7 +822,7 @@ void Lowering::putLastIndex(Boxed base, StringID name, Boxed value)
     LBasicBlock continuation = m_out.newBlock();
     CellPointer regExp = regExpObjectOrElse(base, otherwise);
     LValue regExpAndFlags = m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, regExp.value(), RegExpObject::offsetOfRegExpAndFlags()));
-    orElse(Word32(m_out.testIsZero64(regExpAndFlags, m_out.constInt64(RegExpObject::lastIndexIsNotWritableFlag))), otherwise);
+    branchUnless(Word32(m_out.testIsZero64(regExpAndFlags, m_out.constInt64(RegExpObject::lastIndexIsNotWritableFlag))), otherwise);
     didEmitWrite(Writes::RuntimeState);
     m_out.store64(value.value(), m_out.address(m_heaps.AOTTyped_runtimeState, regExp.value(), RegExpObject::offsetOfLastIndex()));
     m_out.branch(isCell(value).value(), rarely(storesCell), usually(continuation));
@@ -846,7 +846,7 @@ std::optional<Operand> Lowering::lowerMatchOnlyTakenApart(ValueID result, const 
     }
     auto& builtin = m_builtins.at(value.builtin());
     bool isExec = builtin.implementation.inlined == InlineBuiltin::RegExpExec;
-    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(builtin.nameID));
     CellPointer regExpObject = isExec ? receiver : in<CellPointer>(value.arguments[0]);
     CellPointer string = isExec ? toStringCell(value.arguments[0]) : receiver;
     Word32 isFound = AOT_TYPED_OPERATION(RegExpFind, regExpObject, string);
@@ -882,7 +882,7 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
         Rep rep = repOf(type);
         LBasicBlock callsFunction = newBlockForGenericCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
-        orElse(Word32(m_out.notZero64(yielded.value)), callsFunction);
+        branchUnless(Word32(m_out.notZero64(yielded.value)), callsFunction);
         join.add(ensure(yielded, guarantee, type));
         if (!isSharedGenericPath(callsFunction)) {
             m_out.appendTo(callsFunction);
@@ -906,14 +906,14 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
             auto& source = m_function.at(constant);
             int32_t wordIndex = -1;
             if (auto key = regExpLiteralKey(m_program, m_function, value)) {
-                if (auto place = m_program.sharedRegExpObjectOffsets.find(*key); place != m_program.sharedRegExpObjectOffsets.end()) {
-                    wordIndex = place->value;
+                if (auto iterator = m_program.sharedRegExpObjectOffsets.find(*key); iterator != m_program.sharedRegExpObjectOffsets.end()) {
+                    wordIndex = iterator->value;
                     if (isUnreferenced(result, flags.contains(Yarr::Flags::Global))) {
-                        LValue shared = m_out.load64(inStatics(m_heaps.AOTTyped_collectorState, place->value));
+                        LValue shared = m_out.load64(inStatics(m_heaps.AOTTyped_collectorState, iterator->value));
                         return ensure(either<CellPointer>(Word32(m_out.notZero64(shared)), [&] {
                             return CellPointer(shared);
                         }, [&] {
-                            return AOT_TYPED_OPERATION(SharedRegExpLiteral, word32(place->value), word32(source.string().index()), rawFlags);
+                            return AOT_TYPED_OPERATION(SharedRegExpLiteral, word32(iterator->value), word32(source.string().index()), rawFlags);
                         }), regExpClass, type);
                     }
                 }
@@ -923,7 +923,7 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
         return ensure(AOT_TYPED_OPERATION(NewRegExp, in<CellPointer>(arguments[0]), rawFlags), regExpClass, type);
     }
 
-    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(builtin.nameName));
+    CellPointer receiver = nonNullish(value.child(0), m_program.stringOf(builtin.nameID));
     auto limit = [&] {
         return arguments.size() > 1 ? low32(in<Integer>(arguments[1])) : word32(-1);
     };

@@ -331,7 +331,7 @@ std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* 
     return std::nullopt;
 }
 
-std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
+std::span<const Latin1Character> BuiltinExecutables::sourceOf(unsigned index)
 {
     switch (static_cast<BuiltinCodeIndex>(index)) {
 #define SOURCE_OF(name, functionName, overriddenName, length) \

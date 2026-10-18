@@ -183,22 +183,22 @@ struct PropertyAsStored {
 
 static ProgramLocation programLocation(VM& vm)
 {
-    ProgramLocation place;
+    ProgramLocation location;
     if (!vm.topCallFrame)
-        return place;
+        return location;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (!visitor->hasCode() || visitor->isBuiltinFunction()) {
-            place.isCalledFromEngineFunction = true;
+            location.isCalledFromEngineFunction = true;
             return IterationStatus::Continue;
         }
-        place.functionName = visitor->functionName();
-        place.sourceURL = visitor->sourceURL();
-        place.position = visitor->computeLineAndColumn();
+        location.functionName = visitor->functionName();
+        location.sourceURL = visitor->sourceURL();
+        location.position = visitor->computeLineAndColumn();
         if (auto* executable = visitor->ownerExecutable())
-            place.isStrict = executable->isInStrictContext();
+            location.isStrict = executable->isInStrictContext();
         return IterationStatus::Done;
     });
-    return place;
+    return location;
 }
 
 static PropertyAsStored propertyAsStored(VM& vm, JSObject* object, PropertyName name)
@@ -358,29 +358,29 @@ static ASCIILiteral kindOfWrite(VM& vm, JSObject* object)
 static void reportRefusal(JSGlobalObject* globalObject, ASCIILiteral kind, ASCIILiteral reflectFunctionName, JSObject* object, PropertyName name, const String& error, std::optional<bool> shouldThrow)
 {
     VM& vm = globalObject->vm();
-    ProgramLocation place = programLocation(vm);
+    ProgramLocation location = programLocation(vm);
     String objectDescription = describeIntrinsic(vm, object);
     String touched = name.isNull() ? objectDescription : makeString(objectDescription, describeKey(vm, name));
     String message;
-    if (shouldThrow.value_or(place.isStrict && !place.isCalledFromEngineFunction))
+    if (shouldThrow.value_or(location.isStrict && !location.isCalledFromEngineFunction))
         message = makeString(touched, ": "_s, error);
-    else if (place.isCalledFromEngineFunction) {
+    else if (location.isCalledFromEngineFunction) {
         if (name.isNull())
-            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, "): answers false"_s);
+            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, "): returns false"_s);
         else
-            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, ", "_s, describeKeyAsArgument(vm, name), "): answers false"_s);
+            message = makeString("Reflect."_s, reflectFunctionName, '(', objectDescription, ", "_s, describeKeyAsArgument(vm, name), "): returns false"_s);
     } else if (!shouldThrow)
-        message = makeString("delete "_s, touched, ": answers false"_s);
+        message = makeString("delete "_s, touched, ": returns false"_s);
     else
         message = makeString(touched, ": ignored ("_s, error, ')');
     {
         static Lock lock;
         static NeverDestroyed<UncheckedKeyHashSet<String>> reported;
         Locker locker { lock };
-        if (!reported->add(makeString(place.sourceURL, ':', place.position.line, ':', place.position.column, ' ', message)).isNewEntry)
+        if (!reported->add(makeString(location.sourceURL, ':', location.position.line, ':', location.position.column, ' ', message)).isNewEntry)
             return;
     }
-    vm.immutableIntrinsicsAuditReporter()(globalObject, kind, message, place.functionName, place.sourceURL, place.position.line, place.position.column);
+    vm.immutableIntrinsicsAuditReporter()(globalObject, kind, message, location.functionName, location.sourceURL, location.position.line, location.position.column);
 }
 
 void ImmutableIntrinsicsAudit::willPut(JSGlobalObject* globalObject, JSObject* receiver, PropertyName name, PutPropertySlot& slot)
@@ -535,13 +535,13 @@ void ImmutableIntrinsicsAudit::willReplacePrototypeProperty(JSGlobalObject* glob
 
 void ImmutableIntrinsicsAudit::didAccessCallerOrArguments(JSGlobalObject* globalObject, JSFunction* function, PropertyName name)
 {
-    reportRefusal(globalObject, "function-caller-arguments"_s, "get"_s, function, name, "answers null"_s, true);
+    reportRefusal(globalObject, "function-caller-arguments"_s, "get"_s, function, name, "returns null"_s, true);
 }
 
 void ImmutableIntrinsicsAudit::didRefuseChange(JSGlobalObject* globalObject, const String& refusal, VM::ImmutableIntrinsicsAuditReporter reporter)
 {
-    ProgramLocation place = programLocation(globalObject->vm());
-    reporter(globalObject, "refused-change"_s, refusal, place.functionName, place.sourceURL, place.position.line, place.position.column);
+    ProgramLocation location = programLocation(globalObject->vm());
+    reporter(globalObject, "refused-change"_s, refusal, location.functionName, location.sourceURL, location.position.line, location.position.column);
 }
 
 } // namespace JSC

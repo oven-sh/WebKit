@@ -1005,15 +1005,15 @@ static void testNarrowExtendedWordPhisThroughPhiInRareBlock()
         BasicBlock* innerJoin = proc.addBlock(innerPathFrequency);
         BasicBlock* join = proc.addBlock();
         auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t>(proc, root);
-        Value* way = arguments[0];
+        Value* selector = arguments[0];
         Value* word = arguments[1];
         Value* otherWord = arguments[2];
         Value* innerPhi = graph.phi(innerJoin, Int64);
         Value* phi = graph.phi(join, Int64);
-        graph.branch(root, graph.make(root, Equal, way, root->appendNew<Const32Value>(proc, Origin(), 0)), direct, split);
+        graph.branch(root, graph.make(root, Equal, selector, root->appendNew<Const32Value>(proc, Origin(), 0)), direct, split);
         graph.upsilon(direct, graph.make(direct, SExt32, word), phi);
         graph.jump(direct, join);
-        graph.branch(split, graph.make(split, Equal, way, split->appendNew<Const32Value>(proc, Origin(), 1)), left, right);
+        graph.branch(split, graph.make(split, Equal, selector, split->appendNew<Const32Value>(proc, Origin(), 1)), left, right);
         graph.upsilon(left, graph.make(left, SExt32, otherWord), innerPhi);
         graph.jump(left, innerJoin);
         graph.upsilon(right, graph.int64(right, -9), innerPhi);
@@ -1233,11 +1233,11 @@ static void testVersionLoopsKeepsDeepChainTargetInFastVersion()
     graph.increase(hot, loop.sum, loaded);
     BasicBlock* test = hot;
     double frequency = 1;
-    for (unsigned arm = 0; arm < 6; ++arm) {
+    for (unsigned caseIndex = 0; caseIndex < 6; ++caseIndex) {
         frequency /= 2;
         BasicBlock* targetBlock = proc.addBlock(frequency);
-        BasicBlock* next = arm < 5 ? proc.addBlock(frequency) : join;
-        graph.branch(test, graph.make(test, Equal, graph.make(test, BitAnd, graph.get(test, loop.index), graph.int64(test, 7)), graph.int64(test, arm)), targetBlock, next);
+        BasicBlock* next = caseIndex < 5 ? proc.addBlock(frequency) : join;
+        graph.branch(test, graph.make(test, Equal, graph.make(test, BitAnd, graph.get(test, loop.index), graph.int64(test, 7)), graph.int64(test, caseIndex)), targetBlock, next);
         graph.store(targetBlock, graph.get(targetBlock, loop.index), loop.pointer, 8, secondHeap);
         graph.jump(targetBlock, join);
         test = next;
@@ -1418,7 +1418,7 @@ static void testVersionLoopsReloadsSingleInputPhiInExcursion()
     Procedure proc;
     Graph graph { proc };
     TopTestedLoop loop(graph);
-    BasicBlock* given = proc.addBlock();
+    BasicBlock* extraCase = proc.addBlock();
     BasicBlock* replaced = proc.addBlock();
     BasicBlock* merged = proc.addBlock();
     BasicBlock* unexpected = proc.addBlock();
@@ -1426,9 +1426,9 @@ static void testVersionLoopsReloadsSingleInputPhiInExcursion()
     Variable* key = proc.addVariable(Int64);
     Value* first = graph.load(loop.body, Int64, loop.pointer, 0, firstHeap);
     Value* second = graph.load(loop.body, Int64, loop.pointer, 8, firstHeap);
-    graph.branch(loop.body, graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 3)), graph.int64(loop.body, 2)), rarely(replaced), FrequentedBlock(given));
-    graph.set(given, key, loop.extra);
-    graph.jump(given, merged);
+    graph.branch(loop.body, graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), graph.int64(loop.body, 3)), graph.int64(loop.body, 2)), rarely(replaced), FrequentedBlock(extraCase));
+    graph.set(extraCase, key, loop.extra);
+    graph.jump(extraCase, merged);
     graph.set(replaced, key, graph.int64(replaced, 5));
     graph.jump(replaced, merged);
     graph.branch(merged, graph.make(merged, Equal, graph.get(merged, key), first), FrequentedBlock(hot), rarely(unexpected));
@@ -1501,7 +1501,7 @@ static void testVersionLoopsResolvesSingleInputPhiInUncountedLoop()
         BasicBlock* root = proc.addBlock();
         BasicBlock* preHeader = proc.addBlock();
         BasicBlock* header = proc.addBlock();
-        BasicBlock* given = proc.addBlock();
+        BasicBlock* extraCase = proc.addBlock();
         BasicBlock* fetched = proc.addBlock();
         BasicBlock* merged = proc.addBlock();
         BasicBlock* unexpected = proc.addBlock();
@@ -1521,11 +1521,11 @@ static void testVersionLoopsResolvesSingleInputPhiInUncountedLoop()
         graph.branch(root, graph.make(root, LessThan, graph.int64(root, 0), bound), preHeader, exit);
         graph.jump(preHeader, header);
         if (keyHasOneInput)
-            graph.branch(header, extra, FrequentedBlock(given), rarely(fetched));
+            graph.branch(header, extra, FrequentedBlock(extraCase), rarely(fetched));
         else
-            graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 2)), given, fetched);
-        graph.set(given, key, extra);
-        graph.jump(given, merged);
+            graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 2)), extraCase, fetched);
+        graph.set(extraCase, key, extra);
+        graph.jump(extraCase, merged);
         graph.set(fetched, key, graph.int64(fetched, 5));
         graph.jump(fetched, merged);
         graph.branch(merged, graph.make(merged, Equal, graph.get(merged, key), graph.load(merged, Int64, pointer, 0, firstHeap)), FrequentedBlock(expected), rarely(unexpected));
@@ -1809,10 +1809,10 @@ static void checkFirstStripEnd(B3::Opcode relation, bool boundIsZeroExtended, in
     graph.ret(root, appendStripEnd(proc, root, loop, graph.int64(root, start), bound, true));
     CHECK_EQ(numberOfValues(proc, Select), numberOfSelects);
     auto code = compileProc(proc);
-    for (int64_t given : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(5), maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1, 20 * maxIterationsPerStrip }) {
-        int64_t end = invoke<int64_t>(*code, given);
-        if (holds(relation, start, given))
-            CHECK_EQ(end, std::min(given, start + maxIterationsPerStrip));
+    for (int64_t limit : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(5), maxIterationsPerStrip - 1, maxIterationsPerStrip, maxIterationsPerStrip + 1, 20 * maxIterationsPerStrip }) {
+        int64_t end = invoke<int64_t>(*code, limit);
+        if (holds(relation, start, limit))
+            CHECK_EQ(end, std::min(limit, start + maxIterationsPerStrip));
         else
             CHECK(!holds(relation, start + 1, end));
     }
@@ -3378,10 +3378,10 @@ static void testSeparateIntegerPathsInsideLoop()
     validate(proc);
     CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
     auto code = compileProc(proc);
-    int32_t given[5] = { 1, -1001, 20, -1001, 300 };
-    CHECK_EQ(invoke<int64_t>(*code, given, 4000.75, 5), 8321);
-    CHECK_EQ(invoke<int64_t>(*code, given, 4000.75, 1), 1);
-    CHECK_EQ(invoke<int64_t>(*code, given, -0.5, 2), 1);
+    int32_t inputs[5] = { 1, -1001, 20, -1001, 300 };
+    CHECK_EQ(invoke<int64_t>(*code, inputs, 4000.75, 5), 8321);
+    CHECK_EQ(invoke<int64_t>(*code, inputs, 4000.75, 1), 1);
+    CHECK_EQ(invoke<int64_t>(*code, inputs, -0.5, 2), 1);
 }
 
 static void testComparisonsOfConvertedIntegersWithUnorderedResults()
@@ -3714,13 +3714,13 @@ static void testReduceStrengthMergesBlockChain()
             blocks.append(proc.addBlock());
         Value* pointer = cCallArgumentValues<int64_t*>(proc, blocks[0])[0];
         for (unsigned i = 0; i < numberOfBlocksInChain; ++i) {
-            unsigned place = (i * 7) % numberOfBlocksInChain;
+            unsigned blockIndex = (i * 7) % numberOfBlocksInChain;
             unsigned nextPlace = ((i + 1) * 7) % numberOfBlocksInChain;
-            graph.store(blocks[place], graph.int64(blocks[place], i), pointer, i * 8, firstHeap);
+            graph.store(blocks[blockIndex], graph.int64(blocks[blockIndex], i), pointer, i * 8, firstHeap);
             if (i + 1 < numberOfBlocksInChain)
-                graph.jump(blocks[place], blocks[nextPlace]);
+                graph.jump(blocks[blockIndex], blocks[nextPlace]);
             else
-                graph.ret(blocks[place], pointer);
+                graph.ret(blocks[blockIndex], pointer);
         }
         reduceStrengthOnce(proc, isPositionIndependent);
         CHECK_EQ(numberOfBlocks(proc), 1u);
@@ -3915,14 +3915,14 @@ struct TailWithTwoPredecessors {
         graph.ret(notTaken, graph.int64(notTaken, 20));
     }
 
-    void duplicate(Graph& graph, bool onlyDecidedTests = false)
+    void duplicate(Graph& graph)
     {
         graph.jump(left, tail);
         graph.jump(right, tail);
         graph.proc.resetReachability();
         validate(graph.proc);
         graph.proc.setPositionIndependent();
-        duplicateTails(graph.proc, onlyDecidedTests);
+        duplicateTails(graph.proc);
         graph.proc.setPositionIndependent(false);
         fixSSA(graph.proc);
         validate(graph.proc);
@@ -3941,32 +3941,26 @@ struct TailWithTwoPredecessors {
 
 static void testDuplicateTailsThreadsJumpOnConstantPhi()
 {
-    for (bool onlyDecidedTests : { false, true }) {
-        Procedure proc;
-        Graph graph { proc };
-        TailWithTwoPredecessors blocks(graph);
-        Value* phi = graph.phi(blocks.tail, Int64);
-        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
-        graph.upsilon(blocks.left, graph.int64(blocks.left, 0), phi);
-        graph.upsilon(blocks.right, blocks.second, phi);
-        graph.branch(blocks.tail, phi, blocks.taken, blocks.notTaken);
-        blocks.duplicate(graph, onlyDecidedTests);
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    Value* phi = graph.phi(blocks.tail, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 0), phi);
+    graph.upsilon(blocks.right, blocks.second, phi);
+    graph.branch(blocks.tail, phi, blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
 
-        CHECK(blocks.left->last()->opcode() == Jump);
-        CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
-        if (onlyDecidedTests)
-            CHECK(blocks.right->successorBlock(0) == blocks.tail);
-        else {
-            CHECK(blocks.right->last()->opcode() == Branch);
-            CHECK(blocks.right->successorBlock(0) == blocks.taken);
-            CHECK(blocks.right->successorBlock(1) == blocks.notTaken);
-        }
-        auto code = compileProc(proc);
-        int64_t memory[1];
-        CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 20);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
-    }
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
+    CHECK(blocks.right->last()->opcode() == Branch);
+    CHECK(blocks.right->successorBlock(0) == blocks.taken);
+    CHECK(blocks.right->successorBlock(1) == blocks.notTaken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
 }
 
 static void testDuplicateTailsThreadsJumpDecidedByDominatingBranch()
@@ -3991,31 +3985,29 @@ static void testDuplicateTailsThreadsJumpDecidedByDominatingBranch()
 
 static void testDuplicateTailsFollowsTestsOfSameValue()
 {
-    for (bool onlyDecidedTests : { false, true }) {
-        Procedure proc;
-        Graph graph { proc };
-        TailWithTwoPredecessors blocks(graph);
-        BasicBlock* secondTest = proc.addBlock();
-        BasicBlock* thirdTest = proc.addBlock();
-        Value* phi = graph.phi(blocks.tail, Int64);
-        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
-        graph.upsilon(blocks.left, graph.int64(blocks.left, 8), phi);
-        graph.upsilon(blocks.right, blocks.second, phi);
-        graph.branch(blocks.tail, graph.make(blocks.tail, BitAnd, phi, graph.int64(blocks.tail, 1)), blocks.taken, secondTest);
-        graph.branch(secondTest, graph.make(secondTest, BitAnd, phi, graph.int64(secondTest, 2)), blocks.taken, thirdTest);
-        graph.branch(thirdTest, graph.make(thirdTest, BitAnd, phi, graph.int64(thirdTest, 4)), blocks.taken, blocks.notTaken);
-        blocks.duplicate(graph, onlyDecidedTests);
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* secondTest = proc.addBlock();
+    BasicBlock* thirdTest = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 8), phi);
+    graph.upsilon(blocks.right, blocks.second, phi);
+    graph.branch(blocks.tail, graph.make(blocks.tail, BitAnd, phi, graph.int64(blocks.tail, 1)), blocks.taken, secondTest);
+    graph.branch(secondTest, graph.make(secondTest, BitAnd, phi, graph.int64(secondTest, 2)), blocks.taken, thirdTest);
+    graph.branch(thirdTest, graph.make(thirdTest, BitAnd, phi, graph.int64(thirdTest, 4)), blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
 
-        CHECK(blocks.left->last()->opcode() == Jump);
-        CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
-        auto code = compileProc(proc);
-        int64_t memory[1];
-        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 20);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 8, memory), 20);
-    }
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 8, memory), 20);
 }
 
 static void testDuplicateTailsFollowsTestsThroughPhisOnPath()
@@ -4050,30 +4042,28 @@ static void testDuplicateTailsFollowsTestsThroughPhisOnPath()
 
 static void testDuplicateTailsThreadsJumpOnVariableSetOnPath()
 {
-    for (bool onlyDecidedTests : { false, true }) {
-        Procedure proc;
-        Graph graph { proc };
-        TailWithTwoPredecessors blocks(graph);
-        BasicBlock* secondTest = proc.addBlock();
-        Variable* flag = proc.addVariable(Int64);
-        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
-        graph.set(blocks.left, flag, graph.int64(blocks.left, 1));
-        graph.set(blocks.right, flag, blocks.second);
-        graph.store(blocks.tail, blocks.second, blocks.pointer, 8, firstHeap);
-        graph.branch(blocks.tail, graph.get(blocks.tail, flag), secondTest, blocks.notTaken);
-        graph.branch(secondTest, graph.make(secondTest, BitAnd, graph.get(secondTest, flag), graph.int64(secondTest, 2)), blocks.notTaken, blocks.taken);
-        blocks.duplicate(graph, onlyDecidedTests);
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* secondTest = proc.addBlock();
+    Variable* flag = proc.addVariable(Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.set(blocks.left, flag, graph.int64(blocks.left, 1));
+    graph.set(blocks.right, flag, blocks.second);
+    graph.store(blocks.tail, blocks.second, blocks.pointer, 8, firstHeap);
+    graph.branch(blocks.tail, graph.get(blocks.tail, flag), secondTest, blocks.notTaken);
+    graph.branch(secondTest, graph.make(secondTest, BitAnd, graph.get(secondTest, flag), graph.int64(secondTest, 2)), blocks.notTaken, blocks.taken);
+    blocks.duplicate(graph);
 
-        CHECK(blocks.left->last()->opcode() == Jump);
-        CHECK(blocks.left->successorBlock(0) == blocks.taken);
-        auto code = compileProc(proc);
-        int64_t memory[2] = { 0, 0 };
-        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 10);
-        CHECK_EQ(memory[1], 7);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 3, memory), 20);
-    }
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == blocks.taken);
+    auto code = compileProc(proc);
+    int64_t memory[2] = { 0, 0 };
+    CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 10);
+    CHECK_EQ(memory[1], 7);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 3, memory), 20);
 }
 
 static void testDuplicateTailsReadsLastSetBeforeGet()
@@ -4119,10 +4109,8 @@ static void testDuplicateTailsKeepsTestOfVariableNotSetOnPath()
     graph.set(blocks.left, other, graph.int64(blocks.left, 1));
     graph.set(blocks.right, other, graph.int64(blocks.right, 0));
     graph.branch(blocks.tail, graph.get(blocks.tail, flag), blocks.taken, blocks.notTaken);
-    blocks.duplicate(graph, true);
+    blocks.duplicate(graph);
 
-    CHECK(blocks.left->successorBlock(0) == blocks.tail);
-    CHECK(blocks.right->successorBlock(0) == blocks.tail);
     auto code = compileProc(proc);
     int64_t memory[1];
     CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 10);
@@ -4210,49 +4198,42 @@ static void testDuplicateTailsStopsFollowingAtUndecidedTest()
 
 static void testDuplicateTailsFollowsTestsAfterUndecidedCopiedTest()
 {
-    for (bool onlyDecidedTests : { false, true }) {
-        Procedure proc;
-        Graph graph { proc };
-        TailWithTwoPredecessors blocks(graph);
-        BasicBlock* repeated = proc.addBlock();
-        BasicBlock* asked = proc.addBlock();
-        BasicBlock* other = proc.addBlock();
-        Value* phi = graph.phi(blocks.tail, Int32);
-        Value* flag = graph.make(blocks.root, BitAnd, blocks.first, graph.int64(blocks.root, 1));
-        graph.branch(blocks.root, flag, blocks.right, blocks.left);
-        graph.upsilon(blocks.left, graph.make(blocks.left, Equal, blocks.second, graph.int64(blocks.left, 5)), phi);
-        graph.upsilon(blocks.right, graph.make(blocks.right, Above, blocks.second, graph.int64(blocks.right, 100)), phi);
-        graph.branch(blocks.tail, phi, repeated, asked);
-        graph.branch(repeated, graph.make(repeated, Equal, blocks.second, graph.int64(repeated, 5)), blocks.taken, other);
-        graph.branch(asked, flag, other, blocks.notTaken);
-        graph.ret(other, graph.int64(other, 30));
-        blocks.duplicate(graph, onlyDecidedTests);
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* repeated = proc.addBlock();
+    BasicBlock* secondTest = proc.addBlock();
+    BasicBlock* other = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int32);
+    Value* flag = graph.make(blocks.root, BitAnd, blocks.first, graph.int64(blocks.root, 1));
+    graph.branch(blocks.root, flag, blocks.right, blocks.left);
+    graph.upsilon(blocks.left, graph.make(blocks.left, Equal, blocks.second, graph.int64(blocks.left, 5)), phi);
+    graph.upsilon(blocks.right, graph.make(blocks.right, Above, blocks.second, graph.int64(blocks.right, 100)), phi);
+    graph.branch(blocks.tail, phi, repeated, secondTest);
+    graph.branch(repeated, graph.make(repeated, Equal, blocks.second, graph.int64(repeated, 5)), blocks.taken, other);
+    graph.branch(secondTest, flag, other, blocks.notTaken);
+    graph.ret(other, graph.int64(other, 30));
+    blocks.duplicate(graph);
 
-        auto resolveJumps = [](BasicBlock* block) {
-            while (block->size() == 1 && block->last()->opcode() == Jump)
-                block = block->successorBlock(0);
-            return block;
-        };
-        if (onlyDecidedTests) {
-            CHECK(blocks.left->successorBlock(0) == blocks.tail);
-            CHECK(blocks.right->successorBlock(0) == blocks.tail);
-        } else {
-            CHECK(blocks.left->last()->opcode() == Branch);
-            CHECK(resolveJumps(blocks.left->successorBlock(0)) == blocks.taken);
-            CHECK(resolveJumps(blocks.left->successorBlock(1)) == blocks.notTaken);
-            CHECK(blocks.right->last()->opcode() == Branch);
-            CHECK(resolveJumps(blocks.right->successorBlock(0)) == repeated);
-            CHECK(resolveJumps(blocks.right->successorBlock(1)) == other);
-            CHECK_EQ(numberOfValues(proc, Branch), 4u);
-        }
-        auto code = compileProc(proc);
-        int64_t memory[1];
-        CHECK_EQ(invoke<int64_t>(*code, 0, 5, memory), 10);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 6, memory), 20);
-        CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 20);
-        CHECK_EQ(invoke<int64_t>(*code, 1, 200, memory), 30);
-        CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 30);
-    }
+    auto resolveJumps = [](BasicBlock* block) {
+        while (block->size() == 1 && block->last()->opcode() == Jump)
+            block = block->successorBlock(0);
+        return block;
+    };
+    CHECK(blocks.left->last()->opcode() == Branch);
+    CHECK(resolveJumps(blocks.left->successorBlock(0)) == blocks.taken);
+    CHECK(resolveJumps(blocks.left->successorBlock(1)) == blocks.notTaken);
+    CHECK(blocks.right->last()->opcode() == Branch);
+    CHECK(resolveJumps(blocks.right->successorBlock(0)) == repeated);
+    CHECK(resolveJumps(blocks.right->successorBlock(1)) == other);
+    CHECK_EQ(numberOfValues(proc, Branch), 4u);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 0, 5, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 6, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 200, memory), 30);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 30);
 }
 
 static void testDuplicateTailsFollowsTestsAfterDecidedAndCopiedTests()
@@ -4299,7 +4280,7 @@ static bool duplicateTailsMakesVariables(Graph& graph, TailWithTwoPredecessors& 
     graph.proc.resetReachability();
     validate(graph.proc);
     graph.proc.setPositionIndependent();
-    duplicateTails(graph.proc, false);
+    duplicateTails(graph.proc);
     graph.proc.setPositionIndependent(false);
     validate(graph.proc);
     bool result = !graph.proc.variables().isEmpty();
@@ -4512,14 +4493,14 @@ static void testEstimateFrequenciesCarriesWeightsBackward()
         Procedure proc;
         Graph graph { proc };
         BasicBlock* root = proc.addBlock();
-        BasicBlock* answers = proc.addBlock();
+        BasicBlock* earlyReturn = proc.addBlock();
         BasicBlock* asksAgain = proc.addBlock();
         BasicBlock* givesUp = proc.addBlock();
         BasicBlock* givesUpToo = proc.addBlock();
         BasicBlock* slowPath = proc.addBlock(slowPathWeight);
         auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
-        graph.branch(root, arguments[0], answers, asksAgain);
-        graph.ret(answers, graph.int64(answers, 1));
+        graph.branch(root, arguments[0], earlyReturn, asksAgain);
+        graph.ret(earlyReturn, graph.int64(earlyReturn, 1));
         graph.branch(asksAgain, arguments[1], givesUp, givesUpToo);
         graph.jump(givesUp, slowPath);
         graph.jump(givesUpToo, slowPath);
@@ -4531,7 +4512,7 @@ static void testEstimateFrequenciesCarriesWeightsBackward()
         };
         double share = slowPathWeight ? slowPathWeight / (1 + slowPathWeight) : 1.0 / 1024;
         CHECK(isNear(root->frequency(), 1));
-        CHECK(isNear(answers->frequency(), 1 - share));
+        CHECK(isNear(earlyReturn->frequency(), 1 - share));
         CHECK(isNear(asksAgain->frequency(), share));
         CHECK(isNear(slowPath->frequency(), share));
         CHECK(root->successor(1).isRare() == !slowPathWeight);
@@ -4598,13 +4579,13 @@ static void testEstimateFrequenciesFollowsJoinedAnswers()
             BasicBlock* whenTrue = proc.addBlock(trueSideIsCold ? 0 : 1);
             BasicBlock* whenFalse = proc.addBlock(trueSideIsCold ? 1 : 0);
             auto arguments = cCallArgumentValues<int64_t>(proc, root);
-            Value* answer = graph.phi(join, Int32);
+            Value* phi = graph.phi(join, Int32);
             graph.branch(root, arguments[0], saysYes, saysNo);
-            graph.upsilon(saysYes, graph.int32(saysYes, 1), answer);
+            graph.upsilon(saysYes, graph.int32(saysYes, 1), phi);
             graph.jump(saysYes, join);
-            graph.upsilon(saysNo, graph.int32(saysNo, 0), answer);
+            graph.upsilon(saysNo, graph.int32(saysNo, 0), phi);
             graph.jump(saysNo, join);
-            graph.branch(join, isNegated ? graph.make(join, BitXor, answer, graph.int32(join, 1)) : answer, whenTrue, whenFalse);
+            graph.branch(join, isNegated ? graph.make(join, BitXor, phi, graph.int32(join, 1)) : phi, whenTrue, whenFalse);
             graph.ret(whenTrue, graph.int64(whenTrue, 1));
             graph.ret(whenFalse, graph.int64(whenFalse, 2));
 
@@ -5309,14 +5290,14 @@ static void testBranchOnExactSumFitsInt32()
         Value* right = testCase.right == Right::IsWord ? graph.make(root, SExt32, graph.make(root, Trunc, arguments[1])) : graph.int64(root, testCase.right == Right::IsConstant ? constant : wideConstant);
         Value* exact = graph.make(root, testCase.opcode, left, right);
         Value* low = graph.make(root, Trunc, exact);
-        Value* wanted = testCase.sumIsWantedInBlock ? graph.make(root, ZExt32, low) : nullptr;
+        Value* extendedSum = testCase.sumIsWantedInBlock ? graph.make(root, ZExt32, low) : nullptr;
         Value* isInt32 = graph.make(root, testCase.comparison, graph.make(root, SExt32, low), exact);
         if (testCase.comparison == Equal)
             graph.branch(root, isInt32, FrequentedBlock(fits), rarely(overflows));
         else
             graph.branch(root, isInt32, rarely(overflows), FrequentedBlock(fits));
-        graph.ret(fits, wanted ? wanted : graph.make(fits, ZExt32, low));
-        graph.ret(overflows, graph.make(overflows, Add, wanted ? wanted : graph.make(overflows, ZExt32, low), graph.int64(overflows, overflowMarker)));
+        graph.ret(fits, extendedSum ? extendedSum : graph.make(fits, ZExt32, low));
+        graph.ret(overflows, graph.make(overflows, Add, extendedSum ? extendedSum : graph.make(overflows, ZExt32, low), graph.int64(overflows, overflowMarker)));
         proc.resetReachability();
         proc.setPositionIndependent(isPositionIndependent);
     };
@@ -6607,31 +6588,31 @@ private:
         int64_t stride = 1 + pick(2);
         double scale = 1.0 / (numberOfCases + 1);
         BasicBlock* join = newBlock();
-        Vector<BasicBlock*, 10> arms;
+        Vector<BasicBlock*, 10> caseBlocks;
         Vector<int64_t, 10> caseValues;
         for (unsigned i = 0; i <= numberOfCases; ++i)
-            arms.append(newBlock(scale));
+            caseBlocks.append(newBlock(scale));
         for (unsigned i = 0; i < numberOfCases; ++i)
             caseValues.append(firstCase + i * stride);
         if (chance(10))
             caseValues[pick(numberOfCases)] = chance(50) ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
         for (unsigned begin = 0; begin < numberOfCases;) {
             unsigned end = chance(60) ? numberOfCases : begin + 1 + pick(numberOfCases - begin);
-            BasicBlock* next = end < numberOfCases ? newBlock() : arms.last();
+            BasicBlock* next = end < numberOfCases ? newBlock() : caseBlocks.last();
             if (chance(50)) {
                 SwitchValue* switchValue = m_block->appendNew<SwitchValue>(m_proc, Origin(), subject);
                 switchValue->setFallThrough(FrequentedBlock(next));
                 for (unsigned i = begin; i < end; ++i)
-                    switchValue->appendCase(SwitchCase(caseValues[i], FrequentedBlock(chance(10) ? arms[pick(arms.size())] : arms[i])));
+                    switchValue->appendCase(SwitchCase(caseValues[i], FrequentedBlock(chance(10) ? caseBlocks[pick(caseBlocks.size())] : caseBlocks[i])));
             } else {
                 for (unsigned i = begin; i < end; ++i) {
                     BasicBlock* nextTest = i + 1 < end ? newBlock() : next;
                     Value* tested = chance(6) ? expression(1) : subject;
                     int64_t caseValue = chance(6) ? caseValues[pick(numberOfCases)] : caseValues[i];
                     if (chance(20))
-                        branch(make(NotEqual, tested, int64(caseValue)), FrequentedBlock(nextTest), FrequentedBlock(arms[i]));
+                        branch(make(NotEqual, tested, int64(caseValue)), FrequentedBlock(nextTest), FrequentedBlock(caseBlocks[i]));
                     else
-                        branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(arms[i]), FrequentedBlock(nextTest));
+                        branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(caseBlocks[i]), FrequentedBlock(nextTest));
                     m_block = nextTest;
                     if (chance(8))
                         set(randomVariable(), expression(1));
@@ -6640,7 +6621,7 @@ private:
             m_block = next;
             begin = end;
         }
-        for (BasicBlock* block : arms)
+        for (BasicBlock* block : caseBlocks)
             branchTarget(block, scale, std::min(depth, 1u), join);
         m_block = join;
     }
@@ -6654,11 +6635,11 @@ private:
         unsigned oddTestIndex = chance(50) ? pick(numberOfTests) : numberOfTests;
         unsigned oddTestKind = pick(3);
         BasicBlock* join = newBlock();
-        Vector<BasicBlock*, 5> arms;
+        Vector<BasicBlock*, 5> caseBlocks;
         for (unsigned i = 0; i < 5; ++i)
-            arms.append(newBlock(0.2));
+            caseBlocks.append(newBlock(0.2));
         for (unsigned i = 0; i < numberOfTests; ++i) {
-            BasicBlock* next = i + 1 < numberOfTests ? newBlock() : arms.last();
+            BasicBlock* next = i + 1 < numberOfTests ? newBlock() : caseBlocks.last();
             Value* tested = subject;
             int64_t caseValue = i * stride % 256;
             if (i == oddTestIndex) {
@@ -6667,10 +6648,10 @@ private:
                 else
                     caseValue = oddTestKind == 1 ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
             }
-            branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(arms[pick(4)]), FrequentedBlock(next));
+            branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(caseBlocks[pick(4)]), FrequentedBlock(next));
             m_block = next;
         }
-        for (BasicBlock* block : arms)
+        for (BasicBlock* block : caseBlocks)
             branchTarget(block, 0.2, 0, join);
         m_block = join;
     }

@@ -95,16 +95,16 @@ private:
         StringID name;
     };
 
-    struct Refuted {
+    struct FailedGuard {
         ValueID receiver;
         uint32_t engineClass { Format::none };
     };
 
     const Type& typeOf(ValueID value) const { return m_program.typeOf(m_function, value); }
 
-    ValueID originOf(ValueID value) const
+    ValueID underlyingValue(ValueID value) const
     {
-        return m_program.originOf(m_function, value);
+        return m_program.underlyingValue(m_function, value);
     }
 
     std::optional<Site> siteOf(const Value& value) const
@@ -113,15 +113,15 @@ private:
             return Site { value.child(0), value.string() };
         if (value.opcode != Opcode::Call)
             return std::nullopt;
-        auto& read = m_function.at(originOf(value.child(0)));
-        if (read.opcode != Opcode::GetById || originOf(read.child(0)) != originOf(value.child(1)))
+        auto& read = m_function.at(underlyingValue(value.child(0)));
+        if (read.opcode != Opcode::GetById || underlyingValue(read.child(0)) != underlyingValue(value.child(1)))
             return std::nullopt;
         return Site { value.child(1), read.string() };
     }
 
     BuiltinName globalNameOf(ValueID id) const
     {
-        auto& value = m_function.at(originOf(id));
+        auto& value = m_function.at(underlyingValue(id));
         if (value.opcode != Opcode::GetGlobal)
             return { };
         BuiltinName name = m_program.builtinName(value.string());
@@ -162,17 +162,17 @@ private:
         auto isStringOrNullish = [](const Type& type) {
             return type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
         };
-        ValueID given = construct.arguments[0];
-        auto& list = m_function.at(originOf(given));
+        ValueID iterable = construct.arguments[0];
+        auto& list = m_function.at(underlyingValue(iterable));
         if (list.opcode == Opcode::NewArray && !list.arguments.isEmpty()) {
             return std::ranges::all_of(list.arguments, [&](ValueID item) {
                 return isStringOrNullish(typeOf(item));
             });
         }
-        for (TypeID type : { m_function.at(given).type, m_function.at(given).prediction(), list.prediction() }) {
+        for (TypeID type : { m_function.at(iterable).type, m_function.at(iterable).prediction(), list.prediction() }) {
             if (!type)
                 continue;
-            auto* engineClass = m_program.at(type).singleEngineClass();
+            auto* engineClass = m_program.at(type).singleBuiltinClass();
             if (engineClass && engineClass->type == ArrayType && m_program.at(type).elements && isStringOrNullish(m_program.at(m_program.at(type).elements)))
                 return true;
         }
@@ -225,18 +225,18 @@ private:
         return std::nullopt;
     }
 
-    bool isStringClass(const EngineClass& engineClass) const { return engineClass.index == m_builtins.stringClass().index; }
+    bool isStringClass(const BuiltinClass& engineClass) const { return engineClass.index == m_builtins.stringClass().index; }
 
-    const EngineClass* classSpeculatedFor(ValueID receiver, BuiltinName name) const
+    const BuiltinClass* classSpeculatedFor(ValueID receiver, BuiltinName name) const
     {
         auto& type = typeOf(receiver);
-        const EngineClass* speculated;
+        const BuiltinClass* speculated;
         if (TypeID prediction = m_function.at(receiver).prediction()) {
             Type expected = m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull);
-            speculated = expected.isString() ? &m_builtins.stringClass() : expected.singleEngineClass();
+            speculated = expected.isString() ? &m_builtins.stringClass() : expected.singleBuiltinClass();
             if (!speculated) {
                 speculated = m_builtins.classSpeculatedFor(name);
-                if (speculated && !(isStringClass(*speculated) ? expected.primitives & Primitive::String : expected.anyObject || expected.engineClasses.contains(speculated->index)))
+                if (speculated && !(isStringClass(*speculated) ? expected.primitives & Primitive::String : expected.anyObject || expected.builtinClasses.contains(speculated->index)))
                     speculated = nullptr;
             }
         } else
@@ -247,7 +247,7 @@ private:
             return type.primitives & Primitive::String ? speculated : nullptr;
         if (!speculated->canCheckOriginalStructure())
             return nullptr;
-        return type.anyObject || type.engineClasses.contains(speculated->index) ? speculated : nullptr;
+        return type.anyObject || type.builtinClasses.contains(speculated->index) ? speculated : nullptr;
     }
 
     bool unboxDateTimes(BlockID block, unsigned index)
@@ -277,15 +277,15 @@ private:
         default:
             return false;
         }
-        const EngineClass* dateClass = nullptr;
+        const BuiltinClass* dateClass = nullptr;
         for (ValueID operand : operands) {
-            dateClass = typeOf(operand).singleEngineClass();
+            dateClass = typeOf(operand).singleBuiltinClass();
             if (TypeID prediction = m_function.at(operand).prediction(); !dateClass && prediction && typeOf(operand).anyObject)
-                dateClass = m_program.at(prediction).singleEngineClass();
+                dateClass = m_program.at(prediction).singleBuiltinClass();
             if (!dateClass || dateClass->type != JSDateType || !dateClass->canCheckOriginalStructure())
                 return false;
         }
-        BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, *dateClass, m_builtins.nameOf(asBytes("getTime"_s.span8()))), { });
+        BuiltinID entry = resolveBuiltinOverload(m_builtins.findForInstance(BuiltinKind::Method, *dateClass, m_builtins.nameOf(asBytes("getTime"_s.span8()))), { });
         TypeID typeOfClass = m_program.engineClassTypes[dateClass->index];
         if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic || !typeOfClass)
             return false;
@@ -296,7 +296,7 @@ private:
         Vector<ValueID, 2> times;
         for (ValueID operand : operands) {
             Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
-            guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), dateClass->index };
+            guard.immediates = { m_builtins.originalStructureCheckOperation().index(), dateClass->index };
             guard.arguments.append(operand);
             otherwise.append(branch(append(WTF::move(guard))));
             Value call = make(Opcode::CallBuiltin, m_program.types.number);
@@ -341,10 +341,10 @@ private:
         TypeID prediction = m_function.at(receiver).prediction();
         if (!prediction || !typeOf(receiver).anyObject)
             return false;
-        auto* engineClass = m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).singleEngineClass();
+        auto* engineClass = m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).singleBuiltinClass();
         if (!engineClass || engineClass->type == ArrayType || !engineClass->canCheckOriginalStructure())
             return false;
-        if (auto& refuted = m_refuted[block.index()]; refuted.engineClass == engineClass->index && refuted.receiver == originOf(receiver))
+        if (auto& refuted = m_failedGuards[block.index()]; refuted.engineClass == engineClass->index && refuted.receiver == underlyingValue(receiver))
             return false;
         BuiltinName name = m_program.builtinName(read.string());
         BuiltinID entry = name ? m_builtins.findForInstance(BuiltinKind::Getter, *engineClass, name) : BuiltinID();
@@ -365,7 +365,7 @@ private:
         Value original = read;
         open(block, index);
         Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
-        guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), engineClass->index };
+        guard.immediates = { m_builtins.originalStructureCheckOperation().index(), engineClass->index };
         guard.arguments.append(receiver);
         guard.guardsFastPath = true;
         BlockID slow = branch(append(WTF::move(guard)));
@@ -377,7 +377,7 @@ private:
         finish(appendThrowing(WTF::move(onObject)));
 
         moveTo(slow);
-        m_refuted[slow.index()] = { originOf(receiver), engineClass->index };
+        m_failedGuards[slow.index()] = { underlyingValue(receiver), engineClass->index };
         original.isOnSlowPath = true;
         finish(appendThrowing(WTF::move(original)));
         return true;
@@ -446,7 +446,7 @@ private:
     std::optional<ObjectLiteral> literalUsedOnlyBy(ValueID object, BlockID block, size_t user) const
     {
         constexpr unsigned maxBlocks = 32;
-        if (auto& made = m_function.at(object); made.opcode != Opcode::NewObject && (made.opcode != Opcode::NewObjectWithShape || m_program.at(made.layout()).kind != LayoutKind::Record))
+        if (auto& allocation = m_function.at(object); allocation.opcode != Opcode::NewObject && (allocation.opcode != Opcode::NewObjectWithShape || m_program.at(allocation.layout()).kind != LayoutKind::Record))
             return std::nullopt;
         BlockID handler = m_function.at(block).terminator.kind == TerminatorKind::Invoke ? m_function.at(block).terminator.targets[1].block : BlockID();
         ObjectLiteral literal;
@@ -574,7 +574,7 @@ private:
     {
         constexpr unsigned maxBlocks = 32;
         for (unsigned visited = 0; block && visited < maxBlocks; ++visited) {
-            if (m_calleesThatFailedGuard[block.index()] == callee)
+            if (m_failedGuardCallees[block.index()] == callee)
                 return true;
             block = fallThroughPredecessor(block);
         }
@@ -744,11 +744,11 @@ private:
         uint32_t inlineFrame = m_inlineFrame;
         uint32_t inliningDepth = m_inliningDepth;
         bool isInTailPosition = m_isInTailPosition;
-        BlockID asWritten = addBlock();
-        m_calleesThatFailedGuard[asWritten.index()] = callee;
+        BlockID fallback = addBlock();
+        m_failedGuardCallees[fallback.index()] = callee;
         m_function.at(m_block).terminator.kind = TerminatorKind::Jump;
-        m_function.at(m_block).terminator.targets.append(Target { asWritten, { } });
-        moveTo(asWritten);
+        m_function.at(m_block).terminator.targets.append(Target { fallback, { } });
+        moveTo(fallback);
         finish(appendThrowing(Value(original)));
 
         open(read->block, static_cast<unsigned>(m_function.at(read->block).values.reverseFind(read->id)));
@@ -791,7 +791,7 @@ private:
         Value isSame = make(Opcode::StrictEq, m_program.types.boolean);
         isSame.children = { copyOf(original.arguments[1]), response };
         BlockID readsLate = addBlock();
-        m_calleesThatFailedGuard[readsLate.index()] = copyOf(callee);
+        m_failedGuardCallees[readsLate.index()] = copyOf(callee);
         branchOrElse(append(WTF::move(isSame)), readsLate);
         Value call = make(Opcode::CallBuiltin, original.type);
         call.immediates[0] = Operations::NewResponseFromResponse.index();
@@ -870,11 +870,11 @@ private:
         uint32_t inlineFrame = m_inlineFrame;
         uint32_t inliningDepth = m_inliningDepth;
         bool isInTailPosition = m_isInTailPosition;
-        BlockID asWritten = addBlock();
-        m_calleesThatFailedGuard[asWritten.index()] = headers;
+        BlockID fallback = addBlock();
+        m_failedGuardCallees[fallback.index()] = headers;
         m_function.at(m_block).terminator.kind = TerminatorKind::Jump;
-        m_function.at(m_block).terminator.targets.append(Target { asWritten, { } });
-        moveTo(asWritten);
+        m_function.at(m_block).terminator.targets.append(Target { fallback, { } });
+        moveTo(fallback);
         finish(appendThrowing(Value(original)));
 
         open(read->block, static_cast<unsigned>(m_function.at(read->block).values.reverseFind(read->id)));
@@ -913,7 +913,7 @@ private:
         isUnanswered.children = { header, append(make(Opcode::Undefined, m_program.types.undefined)) };
         BlockID answered = branch(append(WTF::move(isUnanswered)));
         original.children[0] = appendThrowing(Value(headersRead));
-        m_calleesThatFailedGuard[m_block.index()] = original.children[0];
+        m_failedGuardCallees[m_block.index()] = original.children[0];
         original.arguments[0] = copyOf(original.arguments[0]);
         finish(appendThrowing(WTF::move(original)));
 
@@ -1077,14 +1077,14 @@ private:
         open(block, index);
         BlockID calls = addBlock();
         ValueID headersOrHolder = addParameter(calls, m_program.types.anything);
-        BlockID asWritten = addBlock();
-        ValueID object = addParameter(asWritten, m_program.types.anything);
-        branchOnHeaders(original.child(0), standsForHeaders, calls, asWritten);
+        BlockID fallback = addBlock();
+        ValueID object = addParameter(fallback, m_program.types.anything);
+        branchOnHeaders(original.child(0), standsForHeaders, calls, fallback);
 
         moveTo(calls);
         finish(appendHeadersMethodCall(method, headersOrHolder, original));
 
-        moveTo(asWritten);
+        moveTo(fallback);
         original.children[0] = object;
         finish(appendThrowing(WTF::move(original)));
     }
@@ -1101,14 +1101,14 @@ private:
         ValueID hasOriginalMethod = addParameter(m_after, m_program.types.boolean);
         BlockID isOriginal = addBlock();
         ValueID headersOrHolder = addParameter(isOriginal, m_program.types.anything);
-        BlockID asWritten = addBlock();
-        ValueID object = addParameter(asWritten, m_program.types.anything);
-        branchOnHeaders(read.child(0), standsForHeaders, isOriginal, asWritten);
+        BlockID fallback = addBlock();
+        ValueID object = addParameter(fallback, m_program.types.anything);
+        branchOnHeaders(read.child(0), standsForHeaders, isOriginal, fallback);
 
         moveTo(isOriginal);
         finish(append(make(Opcode::Undefined, m_program.types.undefined)), { headersOrHolder, yes });
 
-        moveTo(asWritten);
+        moveTo(fallback);
         read.children[0] = object;
         finish(appendThrowing(WTF::move(read)), { object, no });
 
@@ -1192,7 +1192,7 @@ private:
                 auto& value = m_function.at(id);
                 if (value.opcode != Opcode::Construct || !m_program.at(value.type).anyObject)
                     continue;
-                auto& callee = m_function.at(originOf(value.child(0)));
+                auto& callee = m_function.at(underlyingValue(value.child(0)));
                 if (callee.opcode != Opcode::GetGlobal || !equalSpans(m_program.string(callee.string()), asBytes("Headers"_s.span8())))
                     continue;
                 leaders.append(members.size());
@@ -1306,7 +1306,7 @@ private:
             if (taken[site.group] || (hasRead[site.group] && !hasMoreThanALoneGet(site.group)))
                 return false;
             ValueID name = m_function.at(site.id).arguments[0];
-            return knownHeaderName(name) != unknownHeaderName || m_function.blocks[0].parameters.contains(originOf(name));
+            return knownHeaderName(name) != unknownHeaderName || m_function.blocks[0].parameters.contains(underlyingValue(name));
         };
         if (!taken.contains(true) && !sites.containsIf(isCalledOnObject))
             return 0;
@@ -1396,7 +1396,7 @@ private:
         guard.children[0] = original.child(0);
         guard.immediates[1] = global.index();
         BlockID slow = branch(append(WTF::move(guard)));
-        m_calleesThatFailedGuard[slow.index()] = original.child(0);
+        m_failedGuardCallees[slow.index()] = original.child(0);
         finish(appendThrowing(callWithResponseInit(Operations::NewResponse, original.type, original.arguments[0], *init)));
 
         moveTo(slow);
@@ -1418,7 +1418,7 @@ private:
         for (ValueID argument : m_function.at(id).arguments)
             argumentTypes.append(typeOf(argument));
         if (m_mode == Mode::Prelude) {
-            BuiltinID entry = applicableEntry(firstGlobalEntryCalledBy(m_function.at(id)), argumentTypes.span());
+            BuiltinID entry = resolveBuiltinOverload(firstGlobalEntryCalledBy(m_function.at(id)), argumentTypes.span());
             FunctionID callee = preludeFunctionOf(entry);
             if (!callee)
                 callee = functionThatFillsSet(entry, m_function.at(id));
@@ -1437,17 +1437,17 @@ private:
         if (!name)
             return false;
         if (BuiltinName holder = replaceableGlobalNameOf(site->receiver))
-            return m_mode == Mode::Speculation && guardCallee(block, index, *site, applicableEntry(m_builtins.find(BuiltinKind::StaticFunction, holder, name), argumentTypes.span()));
+            return m_mode == Mode::Speculation && guardCallee(block, index, *site, resolveBuiltinOverload(m_builtins.find(BuiltinKind::StaticFunction, holder, name), argumentTypes.span()));
         auto& receiver = typeOf(site->receiver);
-        if (BuiltinID method = m_builtins.hasOwnProperty(name); method && receiver.hasObjects() && !receiver.singleEngineClass()) {
+        if (BuiltinID method = m_builtins.hasOwnProperty(name); method && receiver.hasObjects() && !receiver.singleBuiltinClass()) {
             argumentTypes.insert(0, receiver);
-            BuiltinID takingReceiver = applicableEntry(m_builtins.hasOwn(), argumentTypes.span());
+            BuiltinID takingReceiver = resolveBuiltinOverload(m_builtins.hasOwn(), argumentTypes.span());
             bool isCalledAsValue = !takingReceiver && argumentTypes.size() == 2 && m_builtins.hasCell(method);
             return m_mode == Mode::Speculation && guardCallee(block, index, *site, method, isCalledAsValue ? std::nullopt : std::optional(takingReceiver), isCalledAsValue);
         }
         if (m_mode == Mode::Speculation && splitOnNumber(block, index, *site, name, argumentTypes.span()))
             return true;
-        const EngineClass* engineClass = receiver.singleEngineClass();
+        const BuiltinClass* engineClass = receiver.singleBuiltinClass();
         if (!receiver.hasObjects()) {
             if (m_mode != Mode::Prelude || !(receiver.primitives & Primitive::String) || !receiver.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull))
                 return false;
@@ -1456,17 +1456,17 @@ private:
         bool isKnown = engineClass;
         if (isKnown ? !(isStringClass(*engineClass) || engineClass->canCheckOriginalStructure()) : !(engineClass = classSpeculatedFor(site->receiver, name)))
             return false;
-        auto& refuted = m_refuted[block.index()];
-        if (refuted.engineClass == engineClass->index && refuted.receiver == originOf(site->receiver))
+        auto& refuted = m_failedGuards[block.index()];
+        if (refuted.engineClass == engineClass->index && refuted.receiver == underlyingValue(site->receiver))
             return false;
 
         BuiltinID first = m_builtins.findForInstance(BuiltinKind::Method, *engineClass, name);
-        BuiltinID entry = applicableEntry(first, argumentTypes.span());
+        BuiltinID entry = resolveBuiltinOverload(first, argumentTypes.span());
         bool stubChecksArgument = false;
         if (!entry && !isKnown && engineClass->type == RegExpObjectType && m_mode == Mode::Speculation && (m_function.at(id).opcode == Opcode::CallMethod || m_function.at(id).opcode == Opcode::Call)) {
             Vector<Type, 4> strings;
             strings.fill(m_program.at(m_program.types.string), argumentTypes.size());
-            entry = applicableEntry(first, strings.span());
+            entry = resolveBuiltinOverload(first, strings.span());
             if (entry && speculatedMethod(entry, m_function.at(id).arguments) == SpeculatedMethod::None)
                 return false;
             stubChecksArgument = !!entry;
@@ -1526,7 +1526,7 @@ private:
             return true;
         }
         Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
-        guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), engineClass->index };
+        guard.immediates = { m_builtins.originalStructureCheckOperation().index(), engineClass->index };
         guard.arguments.append(site->receiver);
         BlockID slow = branch(append(WTF::move(guard)));
 
@@ -1541,7 +1541,7 @@ private:
         }
 
         moveTo(slow);
-        m_refuted[slow.index()] = { originOf(site->receiver), engineClass->index };
+        m_failedGuards[slow.index()] = { underlyingValue(site->receiver), engineClass->index };
         original.isInTailPosition &= !m_function.isGuardedPreludeEntry;
         finish(appendThrowing(WTF::move(original)));
         return true;
@@ -1605,7 +1605,7 @@ private:
         return uses;
     }
 
-    bool keepMethodRead(ValueID id, BuiltinID entry, const EngineClass& engineClass)
+    bool keepMethodRead(ValueID id, BuiltinID entry, const BuiltinClass& engineClass)
     {
         auto& call = m_function.at(id);
         auto& implementation = m_builtins.at(entry).implementation;
@@ -1667,9 +1667,9 @@ private:
         if (!(receiver.primitives & Primitive::Number) || receiver.isNumber() || !(isNumberOrNullish || (prediction && m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).isNumber())))
             return false;
         auto& numberClass = m_builtins.numberClass();
-        if (auto& refuted = m_refuted[block.index()]; refuted.engineClass == numberClass.index && refuted.receiver == originOf(site.receiver))
+        if (auto& refuted = m_failedGuards[block.index()]; refuted.engineClass == numberClass.index && refuted.receiver == underlyingValue(site.receiver))
             return false;
-        BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, numberClass, name), argumentTypes);
+        BuiltinID entry = resolveBuiltinOverload(m_builtins.findForInstance(BuiltinKind::Method, numberClass, name), argumentTypes);
         if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic)
             return false;
 
@@ -1679,7 +1679,7 @@ private:
             Value guard = make(Opcode::IsUndefinedOrNull, m_program.types.boolean);
             guard.children[0] = site.receiver;
             BlockID fast = branch(append(WTF::move(guard)));
-            m_refuted[m_block.index()] = { originOf(site.receiver), numberClass.index };
+            m_failedGuards[m_block.index()] = { underlyingValue(site.receiver), numberClass.index };
             finish(appendThrowing(Value { original }));
 
             moveTo(fast);
@@ -1702,14 +1702,14 @@ private:
         finish(appendThrowing(WTF::move(call)));
 
         moveTo(slow);
-        m_refuted[slow.index()] = { originOf(site.receiver), numberClass.index };
+        m_failedGuards[slow.index()] = { underlyingValue(site.receiver), numberClass.index };
         finish(appendThrowing(WTF::move(original)));
         return true;
     }
 
     BuiltinName replaceableGlobalNameOf(ValueID id) const
     {
-        auto& value = m_function.at(originOf(id));
+        auto& value = m_function.at(underlyingValue(id));
         if (value.opcode != Opcode::GetGlobal)
             return { };
         BuiltinName name = m_program.builtinName(value.string());
@@ -1783,18 +1783,18 @@ private:
         moveTo(slow);
         if (responseInit)
             appendToSlowPath(*responseInit);
-        Value general = make(Opcode::Call, original.type);
-        general.children = { method, site.receiver, ValueID() };
-        general.immediates[1] = m_inliningDepth;
-        general.arguments = WTF::move(original.arguments);
-        finish(appendThrowing(WTF::move(general)));
+        Value genericCall = make(Opcode::Call, original.type);
+        genericCall.children = { method, site.receiver, ValueID() };
+        genericCall.immediates[1] = m_inliningDepth;
+        genericCall.arguments = WTF::move(original.arguments);
+        finish(appendThrowing(WTF::move(genericCall)));
         return true;
     }
 
     void recordRefutedReceivers()
     {
-        m_refuted.fill(Refuted { }, m_function.blocks.size());
-        m_calleesThatFailedGuard.fill(ValueID(), m_function.blocks.size());
+        m_failedGuards.fill(FailedGuard { }, m_function.blocks.size());
+        m_failedGuardCallees.fill(ValueID(), m_function.blocks.size());
         m_keepsOriginalDates.fill(false, m_function.blocks.size());
         m_remainingValueCounts.fill(0, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
@@ -1802,15 +1802,15 @@ private:
                 continue;
             auto& condition = m_function.at(block.terminator.value);
             if (condition.comparedGlobal())
-                m_calleesThatFailedGuard[block.terminator.targets[1].block.index()] = condition.child(0);
-            if (condition.opcode == Opcode::CallBuiltin && condition.builtin() == m_builtins.hasOriginalStructureOperation())
-                m_refuted[block.terminator.targets[1].block.index()] = { originOf(condition.arguments[0]), condition.engineClass() };
+                m_failedGuardCallees[block.terminator.targets[1].block.index()] = condition.child(0);
+            if (condition.opcode == Opcode::CallBuiltin && condition.builtin() == m_builtins.originalStructureCheckOperation())
+                m_failedGuards[block.terminator.targets[1].block.index()] = { underlyingValue(condition.arguments[0]), condition.engineClass() };
             if (condition.opcode == Opcode::TypeOfIs && condition.typeofType() == TypeofType::Number)
-                m_refuted[block.terminator.targets[1].block.index()] = { originOf(condition.child(0)), m_builtins.numberClass().index };
+                m_failedGuards[block.terminator.targets[1].block.index()] = { underlyingValue(condition.child(0)), m_builtins.numberClass().index };
         }
     }
 
-    Arguments passedTo(FunctionID id, ValueID receiver, std::span<const ValueID> given)
+    Arguments argumentsFor(FunctionID id, ValueID receiver, std::span<const ValueID> callArguments)
     {
         auto& callee = m_program.at(id);
         Arguments all;
@@ -1819,8 +1819,8 @@ private:
             ValueID argument;
             if (!k && receiver)
                 argument = receiver;
-            else if (taken < given.size())
-                argument = given[taken++];
+            else if (taken < callArguments.size())
+                argument = callArguments[taken++];
             else
                 argument = append(make(Opcode::Undefined, m_program.types.undefined));
             all.append(held(argument, callee.parameterTypes[k]));
@@ -1831,7 +1831,7 @@ private:
     void callDirectly(FunctionID callee, ValueID receiver, const Value& original)
     {
         Value call = make(Opcode::CallDirect, m_program.at(callee).resultType ? m_program.at(callee).resultType : m_program.types.anything);
-        call.arguments = passedTo(callee, receiver, original.arguments.span());
+        call.arguments = argumentsFor(callee, receiver, original.arguments.span());
         call.immediates = { callee.index(), m_inliningDepth };
         finish(held(appendThrowing(WTF::move(call)), original.type));
     }
@@ -1848,7 +1848,7 @@ private:
         FunctionID sort = callee == prelude(PreludeFunction::ArraySort) ? prelude(PreludeFunction::ArraySortByKey) : callee == prelude(PreludeFunction::ArrayToSorted) ? prelude(PreludeFunction::ArrayToSortedByKey) : FunctionID();
         if (!sort || call.arguments.size() != 1)
             return std::nullopt;
-        auto& passedComparator = m_function.at(originOf(call.arguments[0]));
+        auto& passedComparator = m_function.at(underlyingValue(call.arguments[0]));
         if (passedComparator.opcode != Opcode::FunctionReference && passedComparator.opcode != Opcode::NewClosure)
             return std::nullopt;
         auto& comparator = m_program.at(passedComparator.function());
@@ -2025,8 +2025,8 @@ private:
     BlockID addBlock()
     {
         m_function.blocks.append(Block { });
-        m_refuted.append(Refuted { });
-        m_calleesThatFailedGuard.append(ValueID());
+        m_failedGuards.append(FailedGuard { });
+        m_failedGuardCallees.append(ValueID());
         m_keepsOriginalDates.append(false);
         m_remainingValueCounts.append(0);
         if (!m_isStaticallyCold.isEmpty())
@@ -2154,8 +2154,8 @@ private:
     Function& m_function;
     const Builtins& m_builtins;
     Mode m_mode;
-    Vector<Refuted> m_refuted;
-    Vector<ValueID> m_calleesThatFailedGuard;
+    Vector<FailedGuard> m_failedGuards;
+    Vector<ValueID> m_failedGuardCallees;
     Vector<bool> m_keepsOriginalDates;
     Vector<unsigned> m_remainingValueCounts;
     Vector<bool> m_isStaticallyCold;
@@ -2292,7 +2292,7 @@ private:
 
     bool isGuard(const Value& value) const
     {
-        return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.hasOriginalStructureOperation();
+        return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.originalStructureCheckOperation();
     }
 
     ValueID rootOf(ValueID id)
@@ -2304,7 +2304,7 @@ private:
             return known;
         ValueID root = id;
         for (;;) {
-            root = m_program.originOf(m_function, root);
+            root = m_program.underlyingValue(m_function, root);
             auto& value = m_function.at(root);
             if (value.opcode != Opcode::CallBuiltin)
                 break;
@@ -2444,7 +2444,7 @@ private:
                 return false;
             uint16_t uses = 0;
             for (; entry; entry = m_builtins.next(entry))
-                uses |= m_builtins.at(entry).thisUses;
+                uses |= m_builtins.at(entry).receiverUses;
             return !(uses & (OperandUse::WritesProperties | OperandUse::Keeps | OperandUse::Calls | OperandUse::MayBeResult | OperandUse::EscapesToUserCode));
         }
         case Opcode::GetByVal:
@@ -2461,7 +2461,7 @@ private:
                 return !std::ranges::any_of(user.arguments.subspan(0, 2), aliasesReceiver);
             if (aliasesReceiver(user.child(1)) || aliasesReceiver(user.child(2)) || (aliasesReceiver(user.child(0)) && !builtin.hasReceiver()))
                 return false;
-            uint16_t uses = aliasesReceiver(user.child(0)) ? builtin.thisUses : 0;
+            uint16_t uses = aliasesReceiver(user.child(0)) ? builtin.receiverUses : 0;
             bool isPassedAsArgument = false;
             for (unsigned i = 0; i < user.arguments.size(); ++i) {
                 if (!aliasesReceiver(user.arguments[i]))
@@ -2641,7 +2641,7 @@ private:
             ++eliminated;
         }
         for (ValueID cast : receiver.casts) {
-            auto* engineClass = m_program.at(m_function.at(cast).type).singleEngineClass();
+            auto* engineClass = m_program.at(m_function.at(cast).type).singleBuiltinClass();
             m_function.at(cast).operandClassIsProven = engineClass && engineClass->index == receiver.engineClass;
         }
         return eliminated;
@@ -2801,14 +2801,14 @@ public:
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Cast) {
-                    auto* engineClass = m_program.at(value.type).singleEngineClass();
+                    auto* engineClass = m_program.at(value.type).singleBuiltinClass();
                     if (engineClass && isProven(value.child(0), engineClass->index))
                         value.operandClassIsProven = true;
                     continue;
                 }
                 if (value.opcode != Opcode::CallBuiltin || value.engineClass() == Format::none)
                     continue;
-                if (value.builtin() == m_builtins.hasOriginalStructureOperation()) {
+                if (value.builtin() == m_builtins.originalStructureCheckOperation()) {
                     if (!isProven(value.arguments[0], value.engineClass()))
                         continue;
                     if (Options::validateAOTTypedFacts()) [[unlikely]] {
@@ -2876,7 +2876,7 @@ private:
     {
         auto& value = m_function.at(id);
         if (value.opcode == Opcode::Cast)
-            return m_program.originOf(m_function, id) == id ? ValueID() : value.child(0);
+            return m_program.underlyingValue(m_function, id) == id ? ValueID() : value.child(0);
         if (value.opcode != Opcode::CallBuiltin)
             return { };
         auto& result = m_builtins.at(value.builtin()).result;
@@ -2903,7 +2903,7 @@ private:
             if (terminator.kind != TerminatorKind::Branch || terminator.targets[0].block == terminator.targets[1].block)
                 continue;
             auto& guard = m_function.at(terminator.value);
-            if (guard.opcode != Opcode::CallBuiltin || guard.builtin() != m_builtins.hasOriginalStructureOperation())
+            if (guard.opcode != Opcode::CallBuiltin || guard.builtin() != m_builtins.originalStructureCheckOperation())
                 continue;
             uint32_t variable = variableOf(guard.arguments[0]);
             if (variable == none || m_facts.classes[variable] != guard.engineClass())
@@ -2941,7 +2941,7 @@ private:
 
     bool isRetainedOnlyByReturnedIterator(const Builtin& builtin) const
     {
-        return builtin.kind == BuiltinKind::Method && builtin.thisUses == OperandUse::Keeps && (builtin.name == "entries"_s || builtin.name == "keys"_s || builtin.name == "values"_s || builtin.name == "@@iterator"_s);
+        return builtin.kind == BuiltinKind::Method && builtin.receiverUses == OperandUse::Keeps && (builtin.name == "entries"_s || builtin.name == "keys"_s || builtin.name == "values"_s || builtin.name == "@@iterator"_s);
     }
 
     bool readsUnnamedArguments(FunctionID id) const
@@ -2966,7 +2966,7 @@ private:
 
     bool takesAtMostTwoArguments(ValueID id) const
     {
-        auto& callback = m_function.at(m_program.originOf(m_function, id));
+        auto& callback = m_function.at(m_program.underlyingValue(m_function, id));
         if (callback.opcode != Opcode::NewClosure && callback.opcode != Opcode::FunctionReference)
             return false;
         auto& callee = m_program.at(callback.function());
@@ -3013,7 +3013,7 @@ private:
                 return false;
             uint16_t uses = 0;
             for (; entry; entry = m_builtins.next(entry))
-                uses |= isRetainedOnlyByReturnedIterator(m_builtins.at(entry)) ? 0 : m_builtins.at(entry).thisUses;
+                uses |= isRetainedOnlyByReturnedIterator(m_builtins.at(entry)) ? 0 : m_builtins.at(entry).receiverUses;
             return !(uses & (harmfulUses | OperandUse::MayBeResult));
         }
         case Opcode::GetByVal:
@@ -3023,7 +3023,7 @@ private:
             return engineClass == m_builtins.arrayClass().index && !aliases(user.child(1)) && !aliases(user.child(2)) && key.isInteger() && key.integers.isSubsetOf(Range::length());
         }
         case Opcode::CallBuiltin: {
-            if (user.builtin() == m_builtins.hasOriginalStructureOperation())
+            if (user.builtin() == m_builtins.originalStructureCheckOperation())
                 return true;
             auto& builtin = m_builtins.at(user.builtin());
             if (builtin.implementation.kind == BuiltinImplementation::Inline && builtin.implementation.inlined == InlineBuiltin::AwaitBySavingFrame)
@@ -3039,7 +3039,7 @@ private:
                 uses |= builtin.argumentUses(i);
             }
             if (aliases(user.child(0)))
-                uses |= isRetainedOnlyByReturnedIterator(builtin) ? 0 : builtin.thisUses;
+                uses |= isRetainedOnlyByReturnedIterator(builtin) ? 0 : builtin.receiverUses;
             if (uses & harmfulUses)
                 return false;
             if (uses & OperandUse::MayBeResult && !aliases(sameObjectAs(id)))
@@ -3061,9 +3061,9 @@ private:
                 return false;
             auto& builtin = m_builtins.at(entry);
             auto* holder = m_builtins.classNamed(builtin.holderName);
-            if (!holder || holder->index != engineClass || builtin.thisUses & (harmfulUses & ~OperandUse::EscapesToUserCode) || builtin.thisUses & OperandUse::MayBeResult)
+            if (!holder || holder->index != engineClass || builtin.receiverUses & (harmfulUses & ~OperandUse::EscapesToUserCode) || builtin.receiverUses & OperandUse::MayBeResult)
                 return false;
-            return !(builtin.thisUses & OperandUse::EscapesToUserCode) || (user.arguments.size() > 1 && takesAtMostTwoArguments(user.arguments[1]));
+            return !(builtin.receiverUses & OperandUse::EscapesToUserCode) || (user.arguments.size() > 1 && takesAtMostTwoArguments(user.arguments[1]));
         }
         default:
             return false;
@@ -3209,7 +3209,7 @@ unsigned callGuardedPreludeEntries(const Program& program, FunctionID id, Functi
         if (block.terminator.kind != TerminatorKind::Branch || block.values.isEmpty() || block.terminator.value != block.values.last())
             continue;
         auto& guard = function.at(block.terminator.value);
-        if (guard.opcode != Opcode::CallBuiltin || guard.builtin() != builtins.hasOriginalStructureOperation() || guard.arguments.size() != 1)
+        if (guard.opcode != Opcode::CallBuiltin || guard.builtin() != builtins.originalStructureCheckOperation() || guard.arguments.size() != 1)
             continue;
         auto& fastEdge = block.terminator.targets[0];
         auto& slowEdge = block.terminator.targets[1];
@@ -3401,7 +3401,7 @@ void compareHeaderNamesWithPassedConstants(Program& program)
     static constexpr OpcodeSet calls { Opcode::CallDirect, Opcode::CallMethod, Opcode::Call };
 
     auto entryParameterOf = [&](const Function& function, ValueID id) -> std::optional<unsigned> {
-        id = program.originOf(function, id);
+        id = program.underlyingValue(function, id);
         if (function.at(id).opcode != Opcode::Parameter)
             return std::nullopt;
         auto parameters = function.blocks[0].parameters.span();
@@ -3477,7 +3477,7 @@ void compareHeaderNamesWithPassedConstants(Program& program)
                 if (call.opcode == Opcode::CallMethod)
                     calledName = call.string();
                 else if (call.opcode == Opcode::Call) {
-                    auto& callee = function.at(program.originOf(function, call.child(0)));
+                    auto& callee = function.at(program.underlyingValue(function, call.child(0)));
                     if (callee.opcode != Opcode::GetById)
                         return;
                     calledName = callee.string();
@@ -3496,7 +3496,7 @@ void compareHeaderNamesWithPassedConstants(Program& program)
                     }
                     if (position >= call.arguments.size())
                         continue;
-                    ValueID argument = program.originOf(function, call.arguments[position]);
+                    ValueID argument = program.underlyingValue(function, call.arguments[position]);
                     if (function.at(argument).opcode == Opcode::String)
                         found[i].append({ c, function.at(argument).string(), 0, UINT_MAX });
                     else if (auto parameter = entryParameterOf(function, argument))
@@ -3800,7 +3800,7 @@ void eliminateGuardsOnUnescapedModuleVariables(Program& program)
         for (auto& value : function.values) {
             if (value.opcode != Opcode::CallDirect || value.arguments.size() < 2 || functions[value.function().index()].module != function.module || facts.loweredMethods[value.function().index()])
                 continue;
-            if (program.originOf(function, value.arguments[0]) == function.blocks[0].parameters[0] && program.originOf(function, value.arguments[1]) == function.blocks[0].parameters[1])
+            if (program.underlyingValue(function, value.arguments[0]) == function.blocks[0].parameters[0] && program.underlyingValue(function, value.arguments[1]) == function.blocks[0].parameters[1])
                 facts.loweredMethods[value.function().index()] = facts.loweredMethods[prelude.index()];
         }
     }

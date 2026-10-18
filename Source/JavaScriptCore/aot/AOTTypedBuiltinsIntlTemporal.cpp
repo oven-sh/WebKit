@@ -446,10 +446,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewConstantFormatter, JSCell*, (Instan
     bool isMadeByThisICU = isInNamedTimeZone ? areFormatPatternsMadeByThisICU(instance) : instance->formatPatternsOrigin == FormatPatternsOrigin::ThisICU;
     auto use = isMadeByThisICU ? FormatPatternUse::Formats : FormatPatternUse::MustBePlannedAgain;
     if (header.kind == FormatPatternKind::Number) {
+        if (!ensureNumberFormattingIsAvailable(globalObject)) [[unlikely]]
+            OPERATION_RETURN(scope, nullptr);
         auto* formatter = IntlNumberFormat::create(vm, globalObject->numberFormatStructure());
         formatter->setCompiledPattern(&header, use);
         OPERATION_RETURN(scope, formatter);
     }
+    if (!ensureDateFormattingIsAvailable(globalObject)) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
     auto* formatter = IntlDateTimeFormat::create(vm, globalObject->dateTimeFormatStructure());
     formatter->setCompiledPattern(&header, use);
     if (header.timeZone == FormatPatternTimeZone::Default || (isInNamedTimeZone && !isMadeByThisICU))
@@ -1155,8 +1159,8 @@ private:
         auto* list = dynamicDowncast<JSArray>(formatter.formatToParts(m_globalObject, number));
         if (hasException() || !list)
             return std::nullopt;
-        enum class Place : uint8_t { Prefix, Integer, Fraction, Suffix };
-        Place place = Place::Prefix;
+        enum class Section : uint8_t { Prefix, Integer, Fraction, Suffix };
+        Section section = Section::Prefix;
         NumberParts parts;
         StringBuilder prefix;
         StringBuilder suffix;
@@ -1172,33 +1176,33 @@ private:
             String kind = asString(type)->value(m_globalObject);
             String text = asString(value)->value(m_globalObject);
             if (kind == "integer"_s) {
-                if (place > Place::Integer)
+                if (section > Section::Integer)
                     return std::nullopt;
-                place = Place::Integer;
+                section = Section::Integer;
                 parts.groupLengths.append(text.length());
                 digits.append(text);
             } else if (kind == "group"_s) {
-                if (place != Place::Integer || (!parts.groupSeparator.isNull() && parts.groupSeparator != text))
+                if (section != Section::Integer || (!parts.groupSeparator.isNull() && parts.groupSeparator != text))
                     return std::nullopt;
                 parts.groupSeparator = text;
             } else if (kind == "decimal"_s) {
-                if (place != Place::Integer)
+                if (section != Section::Integer)
                     return std::nullopt;
-                place = Place::Fraction;
+                section = Section::Fraction;
                 parts.decimalSeparator = text;
             } else if (kind == "fraction"_s) {
-                if (place != Place::Fraction || parts.fractionLength)
+                if (section != Section::Fraction || parts.fractionLength)
                     return std::nullopt;
                 parts.fractionLength = text.length();
                 digits.append(text);
-            } else if (place == Place::Prefix)
+            } else if (section == Section::Prefix)
                 prefix.append(text);
             else {
-                place = Place::Suffix;
+                section = Section::Suffix;
                 suffix.append(text);
             }
         }
-        if (place == Place::Prefix)
+        if (section == Section::Prefix)
             return std::nullopt;
         parts.prefix = prefix.toString();
         parts.suffix = suffix.toString();
@@ -1416,10 +1420,10 @@ private:
 
     std::optional<FormatPatternKind> kindConstructedBy(const Function& function, const Value& construction) const
     {
-        auto& constructor = function.at(m_program.originOf(function, construction.child(0)));
+        auto& constructor = function.at(m_program.underlyingValue(function, construction.child(0)));
         if (constructor.opcode != Opcode::GetById)
             return std::nullopt;
-        auto& holder = function.at(m_program.originOf(function, constructor.child(0)));
+        auto& holder = function.at(m_program.underlyingValue(function, constructor.child(0)));
         if (holder.opcode != Opcode::GetGlobal || !isNamed(holder.string(), "Intl"_s))
             return std::nullopt;
         if (isNamed(constructor.string(), "DateTimeFormat"_s))
@@ -1431,7 +1435,7 @@ private:
 
     std::optional<ConstantOption> constantOption(const Function& function, StringID name, ValueID id) const
     {
-        auto& value = function.at(m_program.originOf(function, id));
+        auto& value = function.at(m_program.underlyingValue(function, id));
         ConstantOption option { textOf(name), ConstantOption::Kind::Number, { }, 0 };
         switch (value.opcode) {
         case Opcode::String:
@@ -1455,7 +1459,7 @@ private:
 
     bool collectOptions(unsigned index, const Function& function, ValueID user, ValueID argument, FormatterRequest& request) const
     {
-        ValueID object = m_program.originOf(function, argument);
+        ValueID object = m_program.underlyingValue(function, argument);
         if (function.at(object).opcode == Opcode::Undefined)
             return true;
         request.hasOptions = true;
@@ -1476,7 +1480,7 @@ private:
             return false;
         auto& builtins = Builtins::singleton();
         auto isObject = [&](ValueID id) {
-            return id && m_program.originOf(function, id) == object;
+            return id && m_program.underlyingValue(function, id) == object;
         };
         auto uses = [&](const Value& value) {
             bool result = false;
@@ -1538,7 +1542,7 @@ private:
         auto& user = function.at(id);
         if (!kind || user.arguments.isEmpty() || user.arguments.size() > 2)
             return std::nullopt;
-        auto& locale = function.at(m_program.originOf(function, user.arguments[0]));
+        auto& locale = function.at(m_program.underlyingValue(function, user.arguments[0]));
         if (locale.opcode != Opcode::String)
             return std::nullopt;
         FormatterRequest request { *kind, textOf(locale.string()) };
@@ -1606,7 +1610,7 @@ private:
                 switch (value.opcode) {
                 case Opcode::PutModuleVariable: {
                     WTF::atomicExchangeAdd(&m_numberOfStores[value.variable().index()], 1u, std::memory_order_relaxed);
-                    ValueID origin = m_program.originOf(function, value.child(0));
+                    ValueID origin = m_program.underlyingValue(function, value.child(0));
                     ConstantOptions options;
                     if (collectOptionsOfLiteral(function, id, origin, options))
                         found.append({ index, CandidateKind::StoreOfConstantOptions, id, makeUniqueWithoutFastMallocCheck<ConstantOptions>(WTF::move(options)) });
@@ -1810,7 +1814,7 @@ private:
             auto& store = function.at(candidate.value);
             if (m_numberOfStores[store.variable().index()] != 1)
                 return;
-            auto construction = m_constructions.find(keyOf(index, m_program.originOf(function, store.child(0))));
+            auto construction = m_constructions.find(keyOf(index, m_program.underlyingValue(function, store.child(0))));
             if (construction != m_constructions.end() && m_requests[construction->value].pattern)
                 m_variables.add(store.variable().index(), construction->value);
         });
@@ -1818,7 +1822,7 @@ private:
 
     std::optional<unsigned> requestOfFormatter(unsigned index, const Function& function, ValueID id) const
     {
-        ValueID origin = m_program.originOf(function, id);
+        ValueID origin = m_program.underlyingValue(function, id);
         auto& value = function.at(origin);
         if (value.opcode == Opcode::GetModuleVariable) {
             if (auto found = m_variables.find(value.variable().index()); found != m_variables.end())
@@ -1846,7 +1850,7 @@ private:
             auto& call = function.at(id);
             ValueID readID = call.child(0);
             auto& read = function.at(readID);
-            if (m_program.originOf(function, read.child(0)) != m_program.originOf(function, call.child(1)))
+            if (m_program.underlyingValue(function, read.child(0)) != m_program.underlyingValue(function, call.child(1)))
                 return;
             auto request = requestOfFormatter(index, function, read.child(0));
             if (!request || !canReadMethodAtCall(function, readID, id))
@@ -1987,7 +1991,7 @@ private:
             auto& function = m_program.functions[site.function];
             ValueID constantID = insertPatternIndexBefore(function, site.value, *request.pattern);
             auto& construction = function.at(site.value);
-            ValueID options = construction.arguments.size() == 2 ? m_program.originOf(function, construction.arguments[1]) : ValueID();
+            ValueID options = construction.arguments.size() == 2 ? m_program.underlyingValue(function, construction.arguments[1]) : ValueID();
             becomeOperation(construction, Operations::NewConstantFormatter, { constantID });
             removeUnusedOperands(function, options);
         }
@@ -2046,7 +2050,7 @@ private:
                     case Opcode::GetGlobal:
                         return isNamed(value.string(), "Intl"_s);
                     case Opcode::GetById: {
-                        auto& holder = function.at(m_program.originOf(function, value.child(0)));
+                        auto& holder = function.at(m_program.underlyingValue(function, value.child(0)));
                         return holder.opcode == Opcode::GetGlobal && isNamed(holder.string(), "Intl"_s) && (isNamed(value.string(), "DateTimeFormat"_s) || isNamed(value.string(), "NumberFormat"_s));
                     }
                     default:
@@ -2106,11 +2110,11 @@ std::optional<Operand> Lowering::lowerInlineIntlTemporal(InlineBuiltin which, Va
         if (formatsNumber)
             text = AOT_TYPED_OPERATION(FormatNumberWithPattern, pattern, in<Number>(value.child(0)));
         else {
-            CellPointer date = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+            CellPointer date = nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID));
             Number timeValue(m_out.loadDouble(m_out.address(m_heaps.AOTTyped_runtimeState, date.value(), DateInstance::offsetOfInternalNumber())));
             text = AOT_TYPED_OPERATION(FormatTimeValueWithPattern, pattern, timeValue);
         }
-        orElse(Word32(m_out.notNull(text.value())), slowPath);
+        branchUnless(Word32(m_out.notNull(text.value())), slowPath);
         join.add(ensure(text, m_program.at(m_program.types.string), type));
         if (!isSharedGenericPath(slowPath)) {
             m_out.appendTo(slowPath);
@@ -2128,7 +2132,7 @@ std::optional<Operand> Lowering::lowerInlineIntlTemporal(InlineBuiltin which, Va
         return ensure(callMethodGeneric(in<Boxed>(formatter), m_program.nameOfFormatMethod, Arguments { argument }), type);
     };
     auto stringResult = [&](CellPointer text, LBasicBlock slowPath) {
-        orElse(Word32(m_out.notNull(text.value())), slowPath);
+        branchUnless(Word32(m_out.notNull(text.value())), slowPath);
         return ensure(text, m_program.at(m_program.types.string), type);
     };
     if (which == InlineBuiltin::FormatNumber || typeOf(argument).isNumber()) {

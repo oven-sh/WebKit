@@ -228,7 +228,6 @@ public:
 
     JS_EXPORT_PRIVATE void convertCompactTable();
     JS_EXPORT_PRIVATE void copyCompactTableOf(VM&, JSOrderedHashTable*);
-    JS_EXPORT_PRIVATE uint32_t sizeOfCompactTable();
     JS_EXPORT_PRIVATE void clearCompactTable();
     JS_EXPORT_PRIVATE JSValue findInCompactTable(JSGlobalObject*, JSValue key);
     JS_EXPORT_PRIVATE bool removeFromCompactTable(JSGlobalObject*, JSValue key);

@@ -46,7 +46,7 @@ class GlobalPropertyWatchpoint;
 namespace Typed {
 
 class Extension;
-struct EngineClass;
+struct BuiltinClass;
 struct ExtraPropertiesHandle;
 struct State;
 struct PropertyListEntry {
@@ -106,7 +106,7 @@ public:
     static constexpr unsigned readKindShift = 24;
     static uint32_t readKindAndOffset(const FieldData&);
     JSValue readInline(uint32_t readKindAndOffset, const Invocable<const FieldData&()> auto& field) const;
-    static JSValue tryGetOwnData(VM&, JSCell*, PropertyName);
+    static JSValue tryGetOwnDataProperty(VM&, JSCell*, PropertyName);
     bool isDiscriminant(const FieldData&) const;
     void positionExtraKey(State&, PropertyName, uint32_t position);
     void positionExtraKeys(State&, std::span<const std::pair<UniquedStringImpl*, uint32_t>> namesAndPositions);
@@ -162,14 +162,13 @@ public:
         JSValue value;
     };
     static JSObject* createExtraProperties(JSGlobalObject* realm, std::span<const ExtraProperty> inOrder);
-    void initializeExtraProperties(VM&, std::span<const ExtraProperty> inOrder);
     void didChangeExtraProperties(VM&);
-    struct KeyOrderAtBirth {
+    struct InitialKeyOrder {
         uint32_t orderAndCount;
         Structure* withExtraProperties;
     };
-    std::optional<KeyOrderAtBirth> keyOrderAtBirth(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
-    void setKeyOrderAtBirth(VM& vm, KeyOrderAtBirth order, JSObject* extraProperties)
+    std::optional<InitialKeyOrder> initialKeyOrder(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
+    void setInitialKeyOrder(VM& vm, InitialKeyOrder order, JSObject* extraProperties)
     {
         at<uint32_t>(offsetOfOrderWord) = (at<uint32_t>(offsetOfOrderWord) & ~orderAndCountMask) | order.orderAndCount;
         if (extraProperties)
@@ -829,7 +828,7 @@ public:
 
     JSValue toString(JSGlobalObject*) const;
     Format::FunctionKind kind() const;
-    bool isDeclaredAs(uint8_t) const;
+    bool hasFunctionFlag(uint8_t) const;
     bool sharesPrototypeProperty() const;
     bool createsFixedLayoutObjects() const;
     bool hasImmutablePrototypeProperty() const;
@@ -1135,7 +1134,7 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
-    static Generator* create(VM&, Structure*, Closure*, bool hasUnmodifiedIteration, uint32_t offsetOfState);
+    static Generator* create(VM&, Structure*, Closure*, bool hasUnmodifiedIteratorProtocol, uint32_t offsetOfState);
     static uint32_t offsetOfStateIn(Closure* resumeClosure);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
 
@@ -1145,10 +1144,9 @@ public:
     enum class ResumeMode : uint8_t { Next, Throw, Return };
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue);
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue, bool& isDone);
-    static bool hasUnmodifiedIteration(JSGlobalObject*, Structure*);
-    bool hasUnmodifiedIteration(JSGlobalObject*) const { return !m_hasOtherPrototype && !butterfly(); }
+    static bool hasUnmodifiedIteratorProtocol(JSGlobalObject*, Structure*);
+    bool hasUnmodifiedIteratorProtocol(JSGlobalObject*) const { return !m_hasOtherPrototype && !butterfly(); }
     bool isSuspendedAtStart() const;
-    bool isCompleted() const;
 
     enum class StepCheck : uint8_t { None, IsUnmodifiedUnlessNext, IsUnmodified, IsGenerator, IsUnmodifiedGenerator };
     static constexpr int32_t didYield = 0;
@@ -1306,7 +1304,7 @@ public:
     void didThrow(VM&, JSValue);
     static AsyncGenerator* forBodyFrame(const Instance&, const uint64_t* frame);
     static bool bodyCapturesExceptions(uint32_t resumeFunction);
-    bool hasUnmodifiedIteration(JSGlobalObject*);
+    bool hasUnmodifiedIteratorProtocol(JSGlobalObject*);
     bool isAwaitingDriver() const { return m_target.pointer() == this && !is(isDrainingBeforeDriverFlag); }
     void setDriver(VM&, JSObject* driver, JSValue asyncContext);
     void willSuspendAtAwait() { set(isSuspendingAtAwaitFlag, true); }
@@ -1479,8 +1477,8 @@ struct State {
     }
     const RuntimeType& typeOf(const FieldData& field) const { return *data.at<RuntimeType>(field.type()); }
     const RuntimeType& ownTypeOf(const FieldData& field) const { return *data.at<RuntimeType>(field.ownType()); }
-    uint8_t kindAndDeclarationOf(uint32_t function) const { return data.at<uint8_t>(data.functionKindsOffset)[function]; }
-    Format::FunctionKind kindOf(uint32_t function) const { return static_cast<Format::FunctionKind>(kindAndDeclarationOf(function) & functionKindMask); }
+    uint8_t functionKindByte(uint32_t function) const { return data.at<uint8_t>(data.functionKindsOffset)[function]; }
+    Format::FunctionKind kindOf(uint32_t function) const { return static_cast<Format::FunctionKind>(functionKindByte(function) & functionKindMask); }
     const LayoutData* classWithIndex(uint32_t) const;
     Structure* structure(VM&, uint32_t shape);
     Structure* structureFor(VM&, uint32_t shape, JSValue prototype, bool hasExtraProperties = false);
@@ -1509,7 +1507,7 @@ struct State {
     struct GeneratorStructure {
         Structure* structure { nullptr };
         uint32_t offsetOfState { 0 };
-        bool hasUnmodifiedIteration { false };
+        bool hasUnmodifiedIteratorProtocol { false };
     };
     GeneratorStructure& generatorStructure(VM&, uint32_t resumeFunction, bool isAsync);
     void setGeneratorTemplate(uint32_t index, uint32_t numberOfTemplates, Generator::Template);
@@ -1594,7 +1592,7 @@ struct State {
 
     const FieldData* field(VM&, const LayoutData&, UniquedStringImpl*);
     bool isPrivate(const FieldData&) const;
-    bool hasSymbolKey(const FieldData& field) const { return data.stringFacts(field.name) & Data::stringIsConstantSymbol; }
+    bool hasSymbolKey(const FieldData& field) const { return data.stringHashAndFlags(field.name) & Data::stringIsConstantSymbol; }
     bool hasStringKey(const FieldData& field) const { return !isPrivate(field) && !hasSymbolKey(field); }
     bool hasFieldsWithSymbolKeys(const LayoutData& layout) const { return layout.hasFieldsWithSymbolKeys(); }
     bool isPublicSymbolThatKeysNoField(UniquedStringImpl* name) const { return name->isSymbol() && !static_cast<SymbolImpl*>(name)->isPrivate() && !fieldNameIndex(name); }
@@ -1811,14 +1809,14 @@ struct State {
         std::array<uint32_t, maxNumberOfParts> parts { };
     };
     static_assert(sizeof(KeyByParts) == 32);
-    ALWAYS_INLINE JSString* tryFindKeyByParts(const KeyByParts& wanted) const
+    ALWAYS_INLINE JSString* tryFindKeyByParts(const KeyByParts& parts) const
     {
         size_t numberOfPlaces = m_keysByParts.size();
         if (!numberOfPlaces) [[unlikely]]
             return nullptr;
-        const KeyByParts* pair = m_keysByParts.span().data() + (wanted.hash & (numberOfPlaces - 1) & ~static_cast<size_t>(1));
+        const KeyByParts* pair = m_keysByParts.span().data() + (parts.hash & (numberOfPlaces - 1) & ~static_cast<size_t>(1));
         for (size_t i = 0; i < 2; ++i) {
-            if (pair[i].hasSameParts(wanted))
+            if (pair[i].hasSameParts(parts))
                 return uncheckedDowncast<JSString>(MarkedBlockCage::decode(pair[i].key));
         }
         return nullptr;
@@ -1828,14 +1826,14 @@ struct State {
         size_t numberOfPlaces = m_keysByParts.size();
         if (!numberOfPlaces || !MarkedBlockCage::contains(key)) [[unlikely]]
             return cacheFirstKeyByParts(taken, key);
-        KeyByParts* place = m_keysByParts.mutableSpan().data() + (taken.hash & (numberOfPlaces - 1) & ~static_cast<size_t>(1));
+        KeyByParts* entry = m_keysByParts.mutableSpan().data() + (taken.hash & (numberOfPlaces - 1) & ~static_cast<size_t>(1));
         bool overwrites = false;
-        if (place->countAndKinds) {
-            overwrites = place[1].countAndKinds;
-            place += overwrites ? taken.hash >> 31 : 1;
+        if (entry->countAndKinds) {
+            overwrites = entry[1].countAndKinds;
+            entry += overwrites ? taken.hash >> 31 : 1;
         }
-        *place = taken;
-        place->key = MarkedBlockCage::encode(key);
+        *entry = taken;
+        entry->key = MarkedBlockCage::encode(key);
         if (overwrites && ++m_keysByPartsEvictionCount > numberOfPlaces / 4) [[unlikely]]
             growKeysByParts();
     }
@@ -2025,23 +2023,23 @@ struct State {
     };
     const PlainCopyPlan& plainCopyPlan(VM&, const LayoutData&, uint32_t orderWord);
     struct AssignmentPlan {
-        enum class Kind : uint8_t { Int32OrNumberBox, Boxed, Cell32, Double, Boolean, General };
+        enum class Kind : uint8_t { Int32OrNumberBox, Boxed, Cell32, OptionalCell32, Double, OptionalDouble, Boolean, OptionalBoolean, General };
         static constexpr uint8_t holdsUntypedObjects = 128;
         static constexpr uint8_t holdsAnyObject = 1;
         static constexpr uint32_t widthOf(Kind kind)
         {
-            constexpr std::array<uint8_t, 6> widths { 4, 8, 4, 8, 1, 0 };
+            constexpr std::array<uint8_t, 9> widths { 4, 8, 4, 4, 8, 8, 1, 1, 0 };
             return widths[static_cast<unsigned>(kind)];
         }
         struct FieldStore {
             uint32_t read;
             Kind kind;
             uint8_t acceptedKinds;
-            uint8_t objectsHeldAsTheyAre;
+            uint8_t objectsStoredUnconverted;
             bool acceptsWhatSourceHolds : 1;
             bool isOutOfLine : 1;
             bool isAbsentWhenEmpty : 1;
-            StructureID lastStructureHeldAsItIs;
+            StructureID lastStructureStoredUnconverted;
             uint32_t offset;
             const FieldData* from;
             const FieldData* to;
@@ -2242,10 +2240,10 @@ struct State {
     void setPropertiesWithSupertypes(VM&, Structure*, const PropertiesWithSupertypes&);
     std::optional<bool> mayConvertNestedValue(JSValue, const RuntimeType& ofField, bool leavesUntypedObjects) const;
     bool isUnchangedByCoercion(VM&, JSObject*, const RuntimeType&);
-    template<unsigned places> static unsigned placeOf(uint64_t key)
+    template<unsigned tableSize> static unsigned placeOf(uint64_t key)
     {
-        static_assert(hasOneBitSet(places));
-        return WTF::intHash(key) % places;
+        static_assert(hasOneBitSet(tableSize));
+        return WTF::intHash(key) % tableSize;
     }
     template<unsigned maxEntries> struct AdaptiveIndexMask {
         static_assert(maxEntries >= 64);
@@ -2443,6 +2441,8 @@ private:
     static constexpr unsigned numberOfAssignmentPlans = 64;
     std::unique_ptr<std::array<AssignmentPlan, numberOfAssignmentPlans>> m_assignmentPlans;
     bool m_hasAssignmentPlans { false };
+    static unsigned placeOfAssignmentPlan(StructureID target, StructureID source, StructureID extraProperties, uint32_t sourceOrderWord) { return ((target.bits() >> 4) + (source.bits() >> 4) * 31 + (extraProperties.bits() >> 4) * 7 + sourceOrderWord) % numberOfAssignmentPlans; }
+    AssignmentPlan& makeAssignmentPlan(VM&, Object& target, JSObject* extraProperties, JSObject* source, uint32_t sourceOrderWord);
     void fillAssignmentPlan(VM&, AssignmentPlan&, Object& target, JSObject* extraProperties, JSObject* source);
     struct LastCoercionPlanLookup {
         Structure* structure { nullptr };

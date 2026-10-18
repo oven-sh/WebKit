@@ -70,7 +70,7 @@ public:
                 continue;
             if (!block.terminator.value)
                 return { };
-            auto& returned = callee.at(m_program.originOf(callee, block.terminator.value));
+            auto& returned = callee.at(m_program.underlyingValue(callee, block.terminator.value));
             if ((returned.opcode != Opcode::NewClosure && returned.opcode != Opcode::FunctionReference) || (only && only != returned.function()))
                 return { };
             only = returned.function();
@@ -80,7 +80,7 @@ public:
 
     FunctionID functionHeldBy(const Function& function, ValueID value) const
     {
-        auto& definition = function.at(m_program.originOf(function, value));
+        auto& definition = function.at(m_program.underlyingValue(function, value));
         switch (definition.opcode) {
         case Opcode::FunctionReference:
         case Opcode::NewClosure:
@@ -96,7 +96,7 @@ public:
     {
         if (!m_program.typeOf(function, value).mayBeUndefinedOrNull())
             return true;
-        ValueID origin = m_program.originOf(function, value);
+        ValueID origin = m_program.underlyingValue(function, value);
         return function.at(origin).opcode == Opcode::NewObjectWithShape || !m_program.typeOf(function, origin).mayBeUndefinedOrNull();
     }
 
@@ -248,29 +248,29 @@ public:
         if (!blocksInLoops(function).isEmpty())
             return refuse("a loop"_s);
 
-        Facts facts;
+        Facts summary;
         BitVector isNeverNullishValue(function.values.size());
         for (unsigned k = 0; k < function.parameterTypes.size(); ++k) {
             if (parametersNeverNullish >> k & 1)
                 isNeverNullishValue.set(entry[captureCount + k].index());
         }
-        auto originOf = [&](ValueID value) {
-            return m_program.originOf(function, value);
+        auto underlyingValue = [&](ValueID value) {
+            return m_program.underlyingValue(function, value);
         };
         auto isObject = [&](ValueID value) {
-            return isNeverNullish(function, value) || isNeverNullishValue.get(originOf(value).index());
+            return isNeverNullish(function, value) || isNeverNullishValue.get(underlyingValue(value).index());
         };
         auto needsObject = [&](ValueID value) {
             if (isObject(value))
                 return true;
-            size_t at = entry.find(originOf(value));
+            size_t at = entry.find(underlyingValue(value));
             if (at == notFound || at < captureCount)
                 return false;
-            facts.nullableParametersRead |= 1 << (at - captureCount);
+            summary.nullableParametersRead |= 1 << (at - captureCount);
             return true;
         };
         auto functionIn = [&](ValueID value) -> FunctionID {
-            ValueID origin = originOf(value);
+            ValueID origin = underlyingValue(value);
             if (function.at(origin).opcode == Opcode::FunctionReference)
                 return function.at(origin).function();
             size_t at = entry.find(origin);
@@ -313,7 +313,7 @@ public:
                 switch (value.opcode) {
                 case Opcode::Call: {
                     FunctionID callee = functionIn(value.child(0));
-                    if (!callee || function.at(originOf(value.child(1))).opcode != Opcode::Undefined)
+                    if (!callee || function.at(underlyingValue(value.child(1))).opcode != Opcode::Undefined)
                         return refuse("a call of a function that is not known"_s);
                     if (!call(valueID, callee, { }, value.arguments.span()))
                         return std::nullopt;
@@ -365,13 +365,13 @@ public:
             case TerminatorKind::Unreachable:
                 break;
             case TerminatorKind::Return:
-                facts.resultIsNeverNullish &= block.terminator.value && isObject(block.terminator.value);
+                summary.resultIsNeverNullish &= block.terminator.value && isObject(block.terminator.value);
                 break;
             default:
                 return refuse("throw or a handler"_s);
             }
         }
-        return facts;
+        return summary;
     }
 
 private:
@@ -476,7 +476,7 @@ private:
     }
 
     const Type& typeOf(ValueID value) const { return m_program.typeOf(m_function, value); }
-    ValueID originOf(ValueID value) const { return m_program.originOf(m_function, value); }
+    ValueID underlyingValue(ValueID value) const { return m_program.underlyingValue(m_function, value); }
 
     bool isSlice(const Value& value) const
     {
@@ -512,7 +512,7 @@ private:
     bool mayBeArray(ValueID value) const
     {
         auto& type = typeOf(value);
-        return type.anyObject || type.engineClasses.contains(m_builtins.arrayClass().index);
+        return type.anyObject || type.builtinClasses.contains(m_builtins.arrayClass().index);
     }
 
     bool staysAheadOfLoop(const Value& value, ValueID current, ValueID methodRead) const
@@ -561,7 +561,7 @@ private:
         bool isEnded = false;
         for (unsigned index = firstIndex; index < values.size() && !isEnded; ++index) {
             auto& value = m_function.at(values[index]);
-            if (current && !methodRead && value.opcode == Opcode::Cast && value.child(0) == current && useCountOf(current) == 1 && (value.castReason() == CastReason::Upcast || value.castReason() == CastReason::As) && m_program.at(value.type).singleEngineClass() == &m_builtins.arrayClass()) {
+            if (current && !methodRead && value.opcode == Opcode::Cast && value.child(0) == current && useCountOf(current) == 1 && (value.castReason() == CastReason::Upcast || value.castReason() == CastReason::As) && m_program.at(value.type).singleBuiltinClass() == &m_builtins.arrayClass()) {
                 chain.moved.append(index);
                 current = values[index];
                 continue;
@@ -600,7 +600,7 @@ private:
             }
             BuiltinName name = m_program.builtinName(callsWhatWasRead ? m_function.at(methodRead).string() : value.string());
             methodRead = { };
-            auto& callback = m_function.at(originOf(value.arguments[0]));
+            auto& callback = m_function.at(underlyingValue(value.arguments[0]));
             bool isLiteral = callback.opcode == Opcode::FunctionReference || callback.opcode == Opcode::NewClosure;
             Link link;
             link.index = index;
@@ -668,7 +668,7 @@ private:
         CallbackAnalysis analysis(m_program);
         auto functionsCapturedBy = [&](ValueID callback) {
             Vector<FunctionID, 4> functions;
-            auto& definition = m_function.at(originOf(callback));
+            auto& definition = m_function.at(underlyingValue(callback));
             if (definition.opcode == Opcode::NewClosure) {
                 for (ValueID capture : definition.arguments)
                     functions.append(analysis.functionHeldBy(m_function, capture));
@@ -677,17 +677,17 @@ private:
         };
         bool inputIsNeverNullish = false;
         for (auto& stage : chain.stages) {
-            auto facts = analysis.factsOf(stage.function, functionsCapturedBy(stage.callback).span(), inputIsNeverNullish, 1);
-            if (!facts) {
+            auto summary = analysis.factsOf(stage.function, functionsCapturedBy(stage.callback).span(), inputIsNeverNullish, 1);
+            if (!summary) {
                 reason = analysis.reason();
                 return false;
             }
-            if (facts->nullableParametersRead & 1) {
+            if (summary->nullableParametersRead & 1) {
                 stage.testsInput = true;
                 inputIsNeverNullish = true;
             }
             if (!stage.isFilter)
-                inputIsNeverNullish = facts->resultIsNeverNullish;
+                inputIsNeverNullish = summary->resultIsNeverNullish;
             if (!stage.isFlatMap)
                 continue;
             auto greatest = analysis.greatestLiteralReturnedBy(stage.function);
@@ -701,25 +701,25 @@ private:
             return true;
         auto functions = functionsCapturedBy(chain.last.callback);
         if (chain.end != ChainEnd::Reduce) {
-            auto facts = analysis.factsOf(chain.last.function, functions.span(), inputIsNeverNullish, 1);
-            if (!facts) {
+            auto summary = analysis.factsOf(chain.last.function, functions.span(), inputIsNeverNullish, 1);
+            if (!summary) {
                 reason = analysis.reason();
                 return false;
             }
-            chain.last.testsInput = facts->nullableParametersRead & 1;
+            chain.last.testsInput = summary->nullableParametersRead & 1;
             return true;
         }
         bool accumulatorIsNeverNullish = analysis.isNeverNullish(m_function, chain.initial);
-        auto facts = analysis.factsOf(chain.last.function, functions.span(), accumulatorIsNeverNullish | inputIsNeverNullish << 1, 2);
-        if (facts && accumulatorIsNeverNullish && !facts->resultIsNeverNullish)
-            facts = analysis.factsOf(chain.last.function, functions.span(), inputIsNeverNullish << 1, 2);
-        if (!facts) {
+        auto summary = analysis.factsOf(chain.last.function, functions.span(), accumulatorIsNeverNullish | inputIsNeverNullish << 1, 2);
+        if (summary && accumulatorIsNeverNullish && !summary->resultIsNeverNullish)
+            summary = analysis.factsOf(chain.last.function, functions.span(), inputIsNeverNullish << 1, 2);
+        if (!summary) {
             reason = analysis.reason();
             return false;
         }
-        chain.testsAccumulator = facts->nullableParametersRead & 1;
-        chain.last.testsInput = facts->nullableParametersRead >> 1 & 1;
-        if (facts->resultIsNeverNullish)
+        chain.testsAccumulator = summary->nullableParametersRead & 1;
+        chain.last.testsInput = summary->nullableParametersRead >> 1 & 1;
+        if (summary->resultIsNeverNullish)
             findAccumulatorStores(chain, analysis);
         return true;
     }
@@ -839,7 +839,7 @@ public:
         moveTo(site);
         auto& arrayClass = m_builtins.arrayClass();
         Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
-        guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), arrayClass.index };
+        guard.immediates = { m_builtins.originalStructureCheckOperation().index(), arrayClass.index };
         guard.arguments.append(chain.receiver);
         continueIf(append(WTF::move(guard)));
         m_arrayType = m_program.engineClassTypes[arrayClass.index];
@@ -1036,7 +1036,7 @@ private:
         auto& callee = m_program.at(link.function);
         Value value = make(Opcode::CallDirect, m_program.types.undefined);
         value.immediates = { link.functionReturningParts.index(), Format::none };
-        auto& closure = m_function.at(m_program.originOf(m_function, link.callback));
+        auto& closure = m_function.at(m_program.underlyingValue(m_function, link.callback));
         if (closure.opcode == Opcode::NewClosure)
             value.arguments = closure.arguments;
         if (!callee.parameterTypes.isEmpty()) {
@@ -1104,9 +1104,9 @@ private:
             unsigned factor = std::max(flattened->greatestNumberOfParts, 1u);
             capacity = binary(Opcode::Mul, m_types.index, unary(Opcode::ToNumeric, m_types.lengthMultiplied, capacity), integer(factor, m_types.numberOfParts[factor]));
         }
-        ValueID made;
+        ValueID newArray;
         if (chain.end == ChainEnd::Array)
-            made = operation(countsResults ? Operations::NewArrayWithCapacity : Operations::NewArrayWithSpecies, m_arrayType, { capacity, m_array });
+            newArray = operation(countsResults ? Operations::NewArrayWithCapacity : Operations::NewArrayWithSpecies, m_arrayType, { capacity, m_array });
 
         Vector<TypeID, 4> stateTypes;
         Arguments initialState;
@@ -1195,7 +1195,7 @@ private:
         moveTo(done);
         switch (chain.end) {
         case ChainEnd::Array:
-            finish(operation(Operations::TruncateNewArray, m_arrayType, { made, countsResults ? state[countState] : length }));
+            finish(operation(Operations::TruncateNewArray, m_arrayType, { newArray, countsResults ? state[countState] : length }));
             break;
         case ChainEnd::Length:
             if (sumsParts) {
@@ -1257,7 +1257,7 @@ private:
                 ValueID countBehindPart = addParameter(behindPart, m_types.index);
                 branch(binary(Opcode::Less, m_program.types.boolean, integer(k, m_types.numberOfParts[k]), numberOfParts), { hasPart, { } }, { behindPart, { changed[countState] } });
                 moveTo(hasPart);
-                continueIf(operation(Operations::TryPutByValDirect, m_program.types.boolean, { made, changed[countState], resultAt(element, k + 1, m_program.types.anything) }));
+                continueIf(operation(Operations::TryPutByValDirect, m_program.types.boolean, { newArray, changed[countState], resultAt(element, k + 1, m_program.types.anything) }));
                 jump(behindPart, { plusOne(changed[countState]) });
                 moveTo(behindPart);
                 changed[countState] = countBehindPart;
@@ -1267,7 +1267,7 @@ private:
         }
         switch (chain.end) {
         case ChainEnd::Array:
-            continueIf(operation(Operations::TryPutByValDirect, m_program.types.boolean, { made, countsResults ? state[countState] : index, element }));
+            continueIf(operation(Operations::TryPutByValDirect, m_program.types.boolean, { newArray, countsResults ? state[countState] : index, element }));
             if (countsResults)
                 changed[countState] = plusOne(state[countState]);
             break;
@@ -1297,13 +1297,13 @@ private:
         default: {
             if (chain.last.testsInput)
                 continueUnlessNullish(element);
-            ValueID answer = unary(Opcode::ToBoolean, m_program.types.boolean, call(chain.last, { element }));
+            ValueID predicateResult = unary(Opcode::ToBoolean, m_program.types.boolean, call(chain.last, { element }));
             BlockID decided = addBlock();
             BlockID undecided = addBlock();
             if (chain.end == ChainEnd::Every)
-                branch(answer, { undecided, { } }, { decided, { } });
+                branch(predicateResult, { undecided, { } }, { decided, { } });
             else
-                branch(answer, { decided, { } }, { undecided, { } });
+                branch(predicateResult, { decided, { } }, { undecided, { } });
             moveTo(decided);
             ValueID found = chain.end == ChainEnd::Some ? boolean(true) : chain.end == ChainEnd::Every ? boolean(false) : chain.end == ChainEnd::Find ? element : countsResults ? state[countState] : index;
             if (visitsAllElements) {

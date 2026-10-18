@@ -47,9 +47,6 @@ inline size_t IndexingHeader::indexingPayloadSizeInBytes(Structure* structure)
     case ALL_DOUBLE_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
         return vectorLength() * sizeof(EncodedJSValue);
-
-    case ArrayWithTypedContiguous:
-        return vectorLength() * sizeof(uint32_t);
         
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
         return ArrayStorage::sizeFor(arrayStorage()->vectorLength());

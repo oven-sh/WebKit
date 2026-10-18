@@ -38,7 +38,6 @@
 
 namespace JSC { namespace AOT {
 
-#if CPU(ARM64) || CPU(X86_64)
 
 void estimateFrequencies(B3::Procedure& proc, bool returnsAreUnlikely)
 {
@@ -374,7 +373,6 @@ void dropPaddingAtEnd(CompiledFunctionInfo& info, const void* start, B3::Air::Co
 #endif
 }
 
-#endif // CPU(ARM64) || CPU(X86_64)
 
 } } // namespace JSC::AOT
 

@@ -57,7 +57,7 @@ void ArrayAllocationProfile::updateProfile()
     JSArray* lastArray = storage.pointer();
     IndexingTypeAndVectorLength current = storage.type();
     // An array that has become ArrayStorage does not tell us which type it had, so we learn nothing from it.
-    if (!lastArray || hasArrayStorage(lastArray->indexingType()) || hasTypedContiguous(lastArray->indexingType()))
+    if (!lastArray || hasArrayStorage(lastArray->indexingType()))
         return;
     if (Options::useArrayAllocationProfiling()) [[likely]] {
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.

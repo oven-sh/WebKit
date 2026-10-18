@@ -31,130 +31,6 @@ macro loadPC()
     loadi CallSiteIndex[cfr], PC
 end
 
-macro withRegisterOperands(action)
-    macro loadConstantOrVariable(size, index, value)
-        loadq [cfr, index, 8], value
-    end
-
-    action()
-end
-
-macro withPredecodedInstructions(action)
-    macro nextInstruction()
-        jmp [PC]
-    end
-
-    macro dispatch(advance)
-        addp advance + PredecodedOperands - OpcodeIDWide32SizeJS, PC
-        nextInstruction()
-    end
-
-    macro dispatchIndirect(offsetReg)
-        addp offsetReg, PC
-        nextInstruction()
-    end
-
-    macro dispatchToBytecodeOffset(offsetReg)
-        loadi PredecodedBytecodeOffset[PC], PC
-        addi offsetReg, PC
-        loadp PredecodedOffsets[PB], t7
-        loadi [t7, PC, 4], PC
-        addp PB, PC
-        nextInstruction()
-    end
-
-    macro jumpImpl(dispatchIndirect, targetOffsetReg)
-        dispatchIndirect(targetOffsetReg)
-    end
-
-    macro getuOperandWide32JS(opcodeStruct, fieldName, dst)
-        loadi constexpr %opcodeStruct%_%fieldName%_index * 4 + PredecodedOperands[PC], dst
-    end
-
-    macro getOperandWide32JS(opcodeStruct, fieldName, dst)
-        loadis constexpr %opcodeStruct%_%fieldName%_index * 4 + PredecodedOperands[PC], dst
-    end
-
-    macro metadata(size, opcode, dst, scratch)
-        getu(size, opcode, m_metadataID, dst)
-        addp metadataTable, dst
-    end
-
-    macro valueProfile(size, opcodeStruct, profileName, value, scratch)
-    end
-
-    macro arrayProfile(offset, cell, metadata, scratch)
-    end
-
-    macro updateUnaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
-    end
-
-    macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
-    end
-
-    macro checkSwitchToJIT(increment, action)
-    end
-
-    macro arrayProfileForCall()
-    end
-
-    macro restoreStackPointerAfterCall()
-        loadp PredecodedStackPointerOffset[PB], t2
-        addp cfr, t2
-        move t2, sp
-    end
-
-    macro skipIfIsRememberedOrInEden(cell, slowPath)
-        loadp PredecodedBarrierThreshold[PB], t7
-        loadi [t7], t7
-        bba JSCell::m_cellState[cell], t7, .done
-        memfence
-        bba JSCell::m_cellState[cell], BlackThreshold, .done
-        slowPath()
-    .done:
-    end
-
-    macro defineReturnLabel(opcodeName, size)
-    end
-
-    macro defineTrampolineLabel(opcodeName, size)
-    end
-
-    macro storePC()
-        loadi PredecodedBytecodeOffset[PC], t7
-        storei t7, CallSiteIndex[cfr]
-    end
-
-    macro loadPC()
-        loadi CallSiteIndex[cfr], PC
-        loadp PredecodedOffsets[PB], t7
-        loadi [t7, PC, 4], PC
-        addp PB, PC
-    end
-
-    macro prepareStateForCCall()
-        loadi PredecodedBytecodeOffset[PC], PC
-        loadp PredecodedBytecode[PB], t7
-        addp t7, PC
-    end
-
-    macro restoreStateAfterCCallWithoutExceptionCheck()
-        move r0, PC
-        loadp PredecodedBytecode[PB], t7
-        subp t7, PC
-        loadp PredecodedOffsets[PB], t7
-        loadi [t7, PC, 4], PC
-        addp PB, PC
-    end
-
-    macro restoreStateAfterCCall()
-        bpeq r1, -1, _llint_throw_from_slow_path_trampoline
-        restoreStateAfterCCallWithoutExceptionCheck()
-    end
-
-    action()
-end
-
 macro getuOperandNarrow(opcodeStruct, fieldName, dst)
     loadb constexpr %opcodeStruct%_%fieldName%_index + OpcodeIDNarrowSize[PB, PC, 1], dst
 end
@@ -595,7 +471,7 @@ macro callTrapHandler(throwHandler)
     move PC, a1
     cCall2(_llint_slow_path_handle_traps)
     btpnz r0, throwHandler
-    loadPC()
+    loadi CallSiteIndex[cfr], PC
 end
 
 if JIT
@@ -988,25 +864,8 @@ _llint_op_enter:
 
 .opEnterDispatch:
     checkTraps(macro()
-        if not C_LOOP
-            loadp CodeBlock[cfr], t2
-            loadp CodeBlock::m_rareData[t2], t2
-            btpnz t2, .opEnterHasRareData
-        end
         dispatchOp(narrow, op_enter)
     end)
-
-if not C_LOOP
-.opEnterHasRareData:
-    loadp CodeBlock::RareData::m_predecodedInstructions[t2], t2
-    btpnz t2, .opEnterPredecoded
-    dispatchOp(narrow, op_enter)
-
-.opEnterPredecoded:
-    move t2, PB
-    move t2, PC
-    jmp [PC]
-end
 
 .opEnterSlow:
     callSlowPath(_slow_path_enter)
@@ -2509,333 +2368,6 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
 end)
 
 
-if not C_LOOP
-
-macro predecodedOperand(opcodeStruct, fieldName, dst)
-    loadis constexpr %opcodeStruct%_%fieldName%_index * 4 + PredecodedOperands[PC], dst
-end
-
-macro predecodedUnsignedOperand(opcodeStruct, fieldName, dst)
-    loadi constexpr %opcodeStruct%_%fieldName%_index * 4 + PredecodedOperands[PC], dst
-end
-
-macro loadPredecodedRegister(opcodeStruct, fieldName, scratch, dst)
-    predecodedOperand(opcodeStruct, fieldName, scratch)
-    loadq [cfr, scratch, 8], dst
-end
-
-macro storePredecodedRegister(opcodeStruct, fieldName, scratch, value)
-    predecodedOperand(opcodeStruct, fieldName, scratch)
-    storeq value, [cfr, scratch, 8]
-end
-
-macro predecodedDispatch(opcodeName)
-    addp (constexpr %opcodeName%_length) * 4 + PredecodedOperands, PC
-    jmp [PC]
-end
-
-macro predecodedJump(opcodeStruct)
-    predecodedOperand(opcodeStruct, m_targetLabel, t0)
-    addp t0, PC
-    jmp [PC]
-end
-
-op(llint_predecoded_mov_constant, macro ()
-    predecodedUnsignedOperand(OpMov, m_src, t1)
-    loadp PredecodedConstants[PB], t2
-    loadq [t2, t1, 8], t2
-    storePredecodedRegister(OpMov, m_dst, t1, t2)
-    predecodedDispatch(op_mov)
-end)
-
-const PredecodedResolveScopeSize = (constexpr op_resolve_scope_length) * 4 + PredecodedOperands
-const PredecodedGetFromScopeSize = (constexpr op_get_from_scope_length) * 4 + PredecodedOperands
-const PredecodedCheckTdzSize = (constexpr op_check_tdz_length) * 4 + PredecodedOperands
-
-macro predecodedGetClosureVar()
-    loadPredecodedRegister(OpResolveScope, m_scope, t0, t0)
-    predecodedUnsignedOperand(OpResolveScope, m_localScopeDepth, t2)
-    btiz t2, .found
-.walk:
-    loadp JSScope::m_next[t0], t0
-    subi 1, t2
-    btinz t2, .walk
-.found:
-    storePredecodedRegister(OpResolveScope, m_dst, t1, t0)
-    addp PredecodedResolveScopeSize, PC
-    predecodedUnsignedOperand(OpGetFromScope, m_var, t1)
-    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
-    storePredecodedRegister(OpGetFromScope, m_dst, t1, t0)
-end
-
-op(llint_predecoded_get_closure_var, macro ()
-    predecodedGetClosureVar()
-    addp PredecodedGetFromScopeSize, PC
-    jmp [PC]
-end)
-
-op(llint_predecoded_get_closure_var_checked, macro ()
-    predecodedGetClosureVar()
-    bqeq t0, ValueEmpty, .inDeadZone
-    addp PredecodedGetFromScopeSize + PredecodedCheckTdzSize, PC
-    jmp [PC]
-.inDeadZone:
-    addp PredecodedGetFromScopeSize, PC
-    jmp [PC]
-end)
-
-# What follows a comparison is what is done where the two are not equal.
-macro predecodedCompareWithImmediate(opcodeStruct, equal, notEqual)
-    loadPredecodedRegister(opcodeStruct, m_lhs, t0, t0)
-    predecodedOperand(opcodeStruct, m_rhs, t1)
-    bqeq t0, t1, equal
-end
-
-macro predecodedCompareWithInt32(opcodeStruct, equal, notEqual)
-    loadPredecodedRegister(opcodeStruct, m_lhs, t0, t0)
-    predecodedOperand(opcodeStruct, m_rhs, t1)
-    bqaeq t0, numberTag, .int32
-    btqz t0, numberTag, notEqual
-    addq numberTag, t0
-    fq2d t0, ft0
-    ci2ds t1, ft1
-    bdeq ft0, ft1, equal
-    jmp notEqual
-.int32:
-    bieq t0, t1, equal
-end
-
-macro predecodedStrictEquality(label, compare, opcodeName, opcodeStruct, ifEqual, ifNotEqual)
-    op(label, macro ()
-        compare(opcodeStruct, .equal, .notEqual)
-    .notEqual:
-        move ifNotEqual, t0
-        storePredecodedRegister(opcodeStruct, m_dst, t1, t0)
-        predecodedDispatch(opcodeName)
-    .equal:
-        move ifEqual, t0
-        storePredecodedRegister(opcodeStruct, m_dst, t1, t0)
-        predecodedDispatch(opcodeName)
-    end)
-end
-
-macro predecodedJumpIfEqual(label, compare, opcodeName, opcodeStruct)
-    op(label, macro ()
-        compare(opcodeStruct, .equal, .notEqual)
-    .notEqual:
-        predecodedDispatch(opcodeName)
-    .equal:
-        predecodedJump(opcodeStruct)
-    end)
-end
-
-macro predecodedJumpIfNotEqual(label, compare, opcodeName, opcodeStruct)
-    op(label, macro ()
-        compare(opcodeStruct, .equal, .notEqual)
-    .notEqual:
-        predecodedJump(opcodeStruct)
-    .equal:
-        predecodedDispatch(opcodeName)
-    end)
-end
-
-predecodedJumpIfEqual(llint_predecoded_jstricteq_immediate, predecodedCompareWithImmediate, op_jstricteq, OpJstricteq)
-predecodedJumpIfNotEqual(llint_predecoded_jnstricteq_immediate, predecodedCompareWithImmediate, op_jnstricteq, OpJnstricteq)
-predecodedJumpIfEqual(llint_predecoded_jstricteq_int32, predecodedCompareWithInt32, op_jstricteq, OpJstricteq)
-predecodedJumpIfNotEqual(llint_predecoded_jnstricteq_int32, predecodedCompareWithInt32, op_jnstricteq, OpJnstricteq)
-predecodedStrictEquality(llint_predecoded_stricteq_immediate, predecodedCompareWithImmediate, op_stricteq, OpStricteq, ValueTrue, ValueFalse)
-predecodedStrictEquality(llint_predecoded_nstricteq_immediate, predecodedCompareWithImmediate, op_nstricteq, OpNstricteq, ValueFalse, ValueTrue)
-predecodedStrictEquality(llint_predecoded_stricteq_int32, predecodedCompareWithInt32, op_stricteq, OpStricteq, ValueTrue, ValueFalse)
-predecodedStrictEquality(llint_predecoded_nstricteq_int32, predecodedCompareWithInt32, op_nstricteq, OpNstricteq, ValueFalse, ValueTrue)
-
-# The base is left in t3 and the byte offset in t1.
-macro predecodedGetById(label, load)
-    op(label, macro ()
-        loadPredecodedRegister(OpGetById, m_base, t0, t3)
-        btqnz t3, notCellMask, _llint_predecoded_registers_op_get_by_id
-        predecodedUnsignedOperand(OpGetById, m_property, t1)
-        bineq t1, JSCell::m_structureID[t3], _llint_predecoded_registers_op_get_by_id
-        predecodedOperand(OpGetById, m_valueProfile, t1)
-        load()
-        storePredecodedRegister(OpGetById, m_dst, t1, t0)
-        predecodedDispatch(op_get_by_id)
-    end)
-end
-
-predecodedGetById(llint_predecoded_get_by_id_inline, macro ()
-    loadq [t3, t1, 1], t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_out_of_line, macro ()
-    loadp JSObjectWithButterfly::m_butterfly[t3], t3
-    loadq [t3, t1, 1], t0
-end)
-
-macro loadPredecodedPrototype()
-    predecodedUnsignedOperand(OpGetById, m_metadataID, t3)
-    addp metadataTable, t3
-    loadp OpGetById::Metadata::m_modeMetadata.protoLoadMode.cachedSlot[t3], t3
-end
-
-predecodedGetById(llint_predecoded_get_by_id_prototype_inline, macro ()
-    loadPredecodedPrototype()
-    loadq [t3, t1, 1], t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_prototype_out_of_line, macro ()
-    loadPredecodedPrototype()
-    loadp JSObjectWithButterfly::m_butterfly[t3], t3
-    loadq [t3, t1, 1], t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_unset, macro ()
-    move ValueUndefined, t0
-end)
-
-op(llint_predecoded_get_by_id_custom_accessor, macro ()
-    withPredecodedInstructions(macro ()
-        loadPredecodedRegister(OpGetById, m_base, t0, t3)
-        btqnz t3, notCellMask, _llint_predecoded_registers_op_get_by_id
-        predecodedUnsignedOperand(OpGetById, m_property, t1)
-        bineq t1, JSCell::m_structureID[t3], _llint_predecoded_registers_op_get_by_id
-        storePC()
-        move t3, a1
-        predecodedUnsignedOperand(OpGetById, m_metadataID, a2)
-        addp metadataTable, a2
-        predecodedUnsignedOperand(OpGetById, m_valueProfile, a3)
-        move cfr, a0
-        cCall4(_llint_call_cached_custom_accessor)
-        bpeq r1, -1, _llint_throw_from_slow_path_trampoline
-        loadPC()
-        btpnz r1, _llint_predecoded_registers_op_get_by_id
-        storePredecodedRegister(OpGetById, m_dst, t5, r0)
-        predecodedDispatch(op_get_by_id)
-    end)
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_cell32, macro ()
-    loadi [t3, t1, 1], t0
-    bia t0, constexpr getByIdMaxCell32Immediate, .cell
-    btiz t0, _llint_predecoded_registers_op_get_by_id
-    jmp .done
-.cell:
-    btpnz t3, (constexpr PreciseAllocation::halfAlignment), _llint_predecoded_registers_op_get_by_id
-    lshiftq constexpr getByIdCell32Shift, t0
-    urshiftq constexpr getByIdMarkedBlockCageBits, t3
-    lshiftq constexpr getByIdMarkedBlockCageBits, t3
-    addq t3, t0
-.done:
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_int32_or_number_box, macro ()
-    loadi [t3, t1, 1], t0
-    bilt t0, constexpr getByIdMinInlineInt32, _llint_predecoded_registers_op_get_by_id
-    orq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_js_value, macro ()
-    loadq [t3, t1, 1], t0
-    btqz t0, _llint_predecoded_registers_op_get_by_id
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_double, macro ()
-    loadd [t3, t1, 1], ft0
-    bdnequn ft0, ft0, _llint_predecoded_registers_op_get_by_id
-    fd2q ft0, t0
-    subq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_boolean, macro ()
-    loadb [t3, t1, 1], t0
-    orq ValueFalse, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_int32, macro ()
-    loadi [t3, t1, 1], t0
-    orq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_uint8, macro ()
-    loadb [t3, t1, 1], t0
-    orq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_int8, macro ()
-    loadbsi [t3, t1, 1], t0
-    orq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_uint16, macro ()
-    loadh [t3, t1, 1], t0
-    orq numberTag, t0
-end)
-
-predecodedGetById(llint_predecoded_get_by_id_int16, macro ()
-    loadhsi [t3, t1, 1], t0
-    orq numberTag, t0
-end)
-
-op(llint_predecoded_get_length, macro ()
-    loadPredecodedRegister(OpGetLength, m_base, t0, t3)
-    btqnz t3, notCellMask, _llint_predecoded_registers_op_get_length
-    loadb JSCell::m_indexingTypeAndMisc[t3], t0
-    btiz t0, IsArray, _llint_predecoded_registers_op_get_length
-    btiz t0, IndexingShapeMask, _llint_predecoded_registers_op_get_length
-    loadp JSObjectWithButterfly::m_butterfly[t3], t0
-    loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], t0
-    bilt t0, 0, _llint_predecoded_registers_op_get_length
-    orq numberTag, t0
-    storePredecodedRegister(OpGetLength, m_dst, t1, t0)
-    predecodedDispatch(op_get_length)
-end)
-
-# The base is left in t0, the value in t2 and the byte offset in t1.
-macro predecodedPutById(label, store)
-    op(label, macro ()
-        loadPredecodedRegister(OpPutById, m_base, t3, t0)
-        btqnz t0, notCellMask, _llint_predecoded_registers_op_put_by_id
-        predecodedUnsignedOperand(OpPutById, m_property, t1)
-        bineq t1, JSCell::m_structureID[t0], _llint_predecoded_registers_op_put_by_id
-        loadPredecodedRegister(OpPutById, m_value, t1, t2)
-        predecodedOperand(OpPutById, m_flags, t1)
-        store()
-        predecodedDispatch(op_put_by_id)
-    end)
-end
-
-macro predecodedPutByIdTransition()
-    predecodedUnsignedOperand(OpPutById, m_metadataID, t3)
-    addp metadataTable, t3
-    loadi OpPutById::Metadata::m_newStructureID[t3], t3
-    storei t3, JSCell::m_structureID[t0]
-end
-
-predecodedPutById(llint_predecoded_put_by_id_replace_inline, macro ()
-    storeq t2, [t0, t1, 1]
-    writeBarrierOnCellAndValueWithReload(t0, t2, macro () end)
-end)
-
-predecodedPutById(llint_predecoded_put_by_id_replace_out_of_line, macro ()
-    loadp JSObjectWithButterfly::m_butterfly[t0], t3
-    storeq t2, [t3, t1, 1]
-    writeBarrierOnCellAndValueWithReload(t0, t2, macro () end)
-end)
-
-predecodedPutById(llint_predecoded_put_by_id_transition_inline, macro ()
-    predecodedPutByIdTransition()
-    storeq t2, [t0, t1, 1]
-    writeBarrierOnCellWithReload(t0, macro () end)
-end)
-
-predecodedPutById(llint_predecoded_put_by_id_transition_out_of_line, macro ()
-    predecodedPutByIdTransition()
-    loadp JSObjectWithButterfly::m_butterfly[t0], t3
-    storeq t2, [t3, t1, 1]
-    writeBarrierOnCellWithReload(t0, macro () end)
-end)
-
-end
-
 llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     macro finishGetByVal(result, scratch)
         get(m_dst, scratch)
@@ -3490,13 +3022,13 @@ llintOpWithJump(op_switch_imm, OpSwitchImm, macro (size, get, jump, dispatch)
     biaeq t1, Int32FixedVector::Storage::m_size[t3], .opSwitchImmFallThrough
     loadis (constexpr (Int32FixedVector::Storage::offsetOfData()))[t3, t1, 4], t1
     btiz t1, .opSwitchImmFallThrough
-    dispatchToBytecodeOffset(t1)
+    dispatchIndirect(t1)
 
 .opSwitchImmNotInt:
     btqnz t1, numberTag, .opSwitchImmSlow   # Go slow if it's a double.
 .opSwitchImmFallThrough:
     loadis UnlinkedSimpleJumpTable::m_defaultOffset[t2], t1
-    dispatchToBytecodeOffset(t1)
+    dispatchIndirect(t1)
 
 .opSwitchImmSlow:
     callSlowPath(_llint_slow_path_switch_imm)
@@ -3538,11 +3070,11 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     biaeq t0, Int32FixedVector::Storage::m_size[t3], .opSwitchCharFallThrough
     loadis (constexpr (Int32FixedVector::Storage::offsetOfData()))[t3, t0, 4], t1
     btiz t1, .opSwitchCharFallThrough
-    dispatchToBytecodeOffset(t1)
+    dispatchIndirect(t1)
 
 .opSwitchCharFallThrough:
     loadis UnlinkedSimpleJumpTable::m_defaultOffset[t2], t1
-    dispatchToBytecodeOffset(t1)
+    dispatchIndirect(t1)
 
 .opSwitchOnRope:
     bineq JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t1], 1, .opSwitchCharFallThrough

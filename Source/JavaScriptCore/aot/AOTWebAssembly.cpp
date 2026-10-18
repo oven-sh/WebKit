@@ -48,13 +48,13 @@ void addWebAssemblyModules(VM& vm, const Typed::Program& program, ImageBuilder& 
         auto digest = Wasm::CodeInImage::digestOf(source);
         if (!seen.add(String(byteCast<Latin1Character>(std::span<const uint8_t> { digest }))).isNewEntry)
             return;
-        String whyDeclined;
-        auto module = Wasm::CodeInImage::compile(vm, source, whyDeclined);
+        String declineReason;
+        auto module = Wasm::CodeInImage::compile(vm, source, declineReason);
         if (Options::verboseAOTCompilation()) [[unlikely]] {
             if (module)
                 dataLogLn("AOT: a WebAssembly module of ", source.size(), " bytes is compiled: ", module->entries.size() - 1, " functions, ", module->code.size(), " bytes of code");
             else
-                dataLogLn("AOT: a WebAssembly module of ", source.size(), " bytes is left to the interpreter: ", whyDeclined);
+                dataLogLn("AOT: a WebAssembly module of ", source.size(), " bytes is left to the interpreter: ", declineReason);
         }
         if (module)
             modules.append(WTF::move(*module));

@@ -29,7 +29,6 @@
 #include "CodeBlockInlines.h"
 #include "Instruction.h"
 #include "JSCellInlines.h"
-#include "LLIntData.h"
 #include "StructureInlinesLight.h"
 
 namespace JSC {
@@ -84,7 +83,6 @@ void LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal(VM& vm, const F
     switch (instruction->opcodeID()) {
     case op_get_by_id:
         clearLLIntGetByIdCache(instruction->as<OpGetById>().metadata(m_owner.get()).m_modeMetadata);
-        LLInt::copyInlineCacheIntoPredecodedInstruction(m_owner.get(), instruction.ptr());
         break;
 
     case op_get_length:
@@ -97,7 +95,6 @@ void LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal(VM& vm, const F
         metadata.m_offset = 0;
         metadata.m_newStructureID = StructureID();
         metadata.m_structureChain.clear();
-        LLInt::copyInlineCacheIntoPredecodedInstruction(m_owner.get(), instruction.ptr());
         break;
     }
 

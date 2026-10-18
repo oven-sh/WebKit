@@ -19,7 +19,7 @@ enum class LockedOperation : uint8_t { Change, Delete, ChangePrototype };
 #if ENABLE(AOT)
 JS_EXPORT_PRIVATE String lockedOperationErrorMessage(VM&, JSObject*, LockedOperation, UniquedStringImpl* name = nullptr);
 #else
-inline String lockedOperationErrorMessage(VM&, JSObject*, LockedOperation, UniquedStringImpl* = nullptr) { return "Cannot change a built-in: built-ins are locked"_s; }
+inline String lockedOperationErrorMessage(VM&, JSObject*, LockedOperation, UniquedStringImpl* = nullptr) { return "Cannot change a built-in object because built-in objects are read-only"_s; }
 #endif
 
 } // namespace AOT

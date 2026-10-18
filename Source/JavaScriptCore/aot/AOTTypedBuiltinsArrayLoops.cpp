@@ -207,7 +207,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
                 }
                 keyValue = lastField ? uncheckedDowncast<Typed::Object>(cell)->readInline(*lastField) : JSValue();
                 if (!keyValue)
-                    keyValue = Typed::Object::tryGetOwnData(vm, cell, ident);
+                    keyValue = Typed::Object::tryGetOwnDataProperty(vm, cell, ident);
             } else
                 keyValue = asObject(cell)->getDirect(lastOffset);
         }
@@ -230,6 +230,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
         OPERATION_RETURN(scope, JSValue::encode(array));
     numbers.shrink(numberCount);
     if (flags & Typed::sortComparesByLocale) {
+        if (!ensureCollationIsAvailable(globalObject)) [[unlikely]]
+            OPERATION_RETURN(scope, encodedJSValue());
         IntlCollator* collator = globalObject->defaultCollator();
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         bool mayCompareASCII = globalObject->canDoASCIIUCADUCETLocaleCompare();
@@ -238,7 +240,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
                 if (auto result = compareASCIIWithUCADUCET(a.span8(), b.span8()))
                     return *result < 0;
             }
-            return collator->compareStrings(globalObject, a, b) < 0;
+            UCollationResult result = collator->compareStrings(globalObject, a, b);
+            if (scope.exception()) [[unlikely]]
+                return false;
+            return result < 0;
         };
         std::stable_sort(strings.begin(), strings.end(), [&](const WithString& a, const WithString& b) {
             return isDescending ? isBefore(b.key, a.key) : isBefore(a.key, b.key);
@@ -377,7 +382,7 @@ IndexingType Lowering::indexingTypeAtCreation(ValueID newArray) const
     bool areInt32 = true;
     for (auto& block : m_program.at(m_id).blocks) {
         for (ValueID id : block.values) {
-            if (!isInlineBuiltin(id, InlineBuiltin::TryPutByValDirect) || originOf(m_function.at(id).arguments[0]) != newArray)
+            if (!isInlineBuiltin(id, InlineBuiltin::TryPutByValDirect) || underlyingValue(m_function.at(id).arguments[0]) != newArray)
                 continue;
             auto& stored = m_program.at(m_function.at(m_function.at(id).arguments[2]).type);
             isStoredTo = true;
@@ -405,9 +410,9 @@ CellPointer Lowering::newArrayWithHoles(ValueID result, const Value& value, bool
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    CellPointer made(m_out.phi(Int64, fast, slow));
-    ensureStillAliveHere(CellPointer(butterflyOf(made).value()));
-    return made;
+    CellPointer newArray(m_out.phi(Int64, fast, slow));
+    ensureStillAliveHere(CellPointer(butterflyOf(newArray).value()));
+    return newArray;
 }
 
 std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, ValueID result, const Value& value, Writes inlinePath)
@@ -452,9 +457,9 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         Operand operand = get(object);
         if (!holdsCells(operand.rep) || !typeOf(object).hasObjects())
             return booleanResult(boolean(false), type);
-        LValue objectPrototype = fixedPointer(Instance::offsetOfObjectPrototype());
+        LValue objectPrototype = loadImmutablePointer(Instance::offsetOfObjectPrototype());
         CellPointer cell = operand.rep == Rep::Cell ? operand.as<CellPointer>() : CellPointer(m_out.select(isCell(operand.as<Boxed>()).value(), asCell(operand.as<Boxed>()).value(), objectPrototype));
-        LValue structure = structureWithID(loadField<Word32>(cell, m_heaps.JSCell_structureID).value());
+        LValue structure = decodeStructureID(loadField<Word32>(cell, m_heaps.JSCell_structureID).value());
         if (!view || m_program.at(view).kind != LayoutKind::Record) {
             using Seen = Structure::SeenProperties;
             if constexpr (sizeof(Seen) != sizeof(void*))
@@ -473,7 +478,7 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         return booleanResult(logicalAnd(isPlain, passes(shapeWordOf(cell), m_program.at(view).test)), type);
     }
     case InlineBuiltin::IsKnownFunction: {
-        Opcode origin = m_function.at(originOf(arguments[0])).opcode;
+        Opcode origin = m_function.at(underlyingValue(arguments[0])).opcode;
         return booleanResult(boolean(origin == Opcode::NewClosure || origin == Opcode::NewClosureOnce || origin == Opcode::FunctionReference), type);
     }
     case InlineBuiltin::IsDoubleArray:
@@ -512,7 +517,7 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::NewArrayWithCapacity:
         return ensure(newArrayWithHoles(result, value, which == InlineBuiltin::NewArrayWithCapacity), Type::engineClass(m_builtins.arrayClass()), type);
     case InlineBuiltin::TryPutByValDirect: {
-        ValueID newArray = originOf(arguments[0]);
+        ValueID newArray = underlyingValue(arguments[0]);
         if (!isInlineBuiltin(newArray, InlineBuiltin::NewArrayWithSpecies) && !isInlineBuiltin(newArray, InlineBuiltin::NewArrayWithCapacity))
             return booleanResult(boolean(false), type);
         CellPointer array = arrayOperand(arguments[0]);
@@ -577,18 +582,18 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         didEmitWrite(inlinePath);
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
         Word32 kind = binary<Word32>(&Output::sub, anyArrayIndexingMode(array, IndexingShapeAndWritabilityMask), word32(Int32Shape));
-        orElse(belowOrEqual(kind, word32(ContiguousShape - Int32Shape)), slowPath);
+        branchUnless(belowOrEqual(kind, word32(ContiguousShape - Int32Shape)), slowPath);
         static_assert(OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithDoubleHeader) == OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithInt32Header) + sizeof(uint64_t) && OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithContiguousHeader) == OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithInt32Header) + 2 * sizeof(uint64_t));
         LValue headers = m_out.add(m_instance, m_out.shl(m_out.zeroExtPtr(kind.value()), m_out.constInt32(2)));
         LValue underConstructionHeader = m_out.load64(TypedPointer(m_heaps.AOTInstance_mutableFields, m_out.add(headers, m_out.constIntPtr(Instance::offsetOfArrayUnderConstructionHeaders()))));
-        orElse(Word32(m_out.equal(m_out.load32(array.value(), m_heaps.JSCell_structureID), m_out.castToInt32(underConstructionHeader))), slowPath);
+        branchUnless(Word32(m_out.equal(m_out.load32(array.value(), m_heaps.JSCell_structureID), m_out.castToInt32(underConstructionHeader))), slowPath);
         LValue original = m_out.load64(TypedPointer(m_heaps.AOTInstance_mutableFields, m_out.add(headers, m_out.constIntPtr(Instance::offsetOfNewArrayHeader(ArrayWithInt32)))));
-        orElse(Word32(m_out.notZero64(original)), slowPath);
+        branchUnless(Word32(m_out.notZero64(original)), slowPath);
         m_out.store32(m_out.castToInt32(original), array.value(), m_heaps.JSCell_structureID);
         Pointer butterfly = butterflyOf(array);
         constexpr int64_t smallUnusedCapacity = 8;
         Integer unusedCapacity = sub(publicLength(butterfly), length);
-        orElse(logicalOr(belowOrEqual(unusedCapacity, integer(smallUnusedCapacity)), belowOrEqual(unusedCapacity, length)), slowPath);
+        branchUnless(logicalOr(belowOrEqual(unusedCapacity, integer(smallUnusedCapacity)), belowOrEqual(unusedCapacity, length)), slowPath);
         storeField(butterfly, m_heaps.Butterfly_publicLength, low32(length));
         ValueFromBlock fast = m_out.anchor(array.value());
         m_out.jump(continuation);

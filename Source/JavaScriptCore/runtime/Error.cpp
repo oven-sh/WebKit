@@ -425,13 +425,22 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-String withAOTErrorNote(const String& message)
+static String withNoteOnFirstLine(const String& message, ASCIILiteral note)
 {
-    constexpr auto note = " (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)"_s;
     size_t endOfFirstLine = message.find('\n');
     if (endOfFirstLine == notFound)
         return makeString(message, note);
     return makeString(StringView(message).left(endOfFirstLine), note, StringView(message).substring(endOfFirstLine));
+}
+
+String withAOTErrorNote(const String& message)
+{
+    return withNoteOnFirstLine(message, " (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s);
+}
+
+String withAOTTypeCheckNote(const String& message)
+{
+    return withNoteOnFirstLine(message, " (bun compile checks types at run time: https://bun.com/docs/bundler/aot-troubleshooting)"_s);
 }
 #endif
 

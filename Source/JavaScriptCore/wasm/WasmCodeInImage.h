@@ -114,7 +114,7 @@ public:
 
 #if ENABLE(AOT)
     JS_EXPORT_PRIVATE static std::array<uint8_t, 20> digestOf(std::span<const uint8_t> source);
-    JS_EXPORT_PRIVATE static std::optional<ModuleForImage> compile(VM&, std::span<const uint8_t> source, String& whyDeclined);
+    JS_EXPORT_PRIVATE static std::optional<ModuleForImage> compile(VM&, std::span<const uint8_t> source, String& declineReason);
     JS_EXPORT_PRIVATE static std::pair<Vector<uint8_t>, Vector<uint8_t>> layOut(Vector<ModuleForImage>&&);
 #endif
     static constexpr uint16_t functionUsesVectors = 1 << 15;

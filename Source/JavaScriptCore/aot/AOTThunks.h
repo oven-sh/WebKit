@@ -50,11 +50,9 @@ void forEachOperationFrontEnd(const Functor& functor)
 #undef AOT_FRONT_END
 }
 
-#if CPU(ARM64) || CPU(X86_64)
 #define AOT_DECLARE_FRONT_END(name) void generateFrontEnd##name(CCallHelpers&);
 FOR_EACH_AOT_OPERATION_WITH_FRONT_END(AOT_DECLARE_FRONT_END)
 #undef AOT_DECLARE_FRONT_END
-#endif
 
 } } // namespace JSC::AOT
 

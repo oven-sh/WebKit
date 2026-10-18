@@ -88,12 +88,12 @@ static ALWAYS_INLINE Typed::CompactTable::Quickly tryFindSubstringQuickly(Instan
                 return Quickly::Absent;
             auto* compactTable = uncheckedDowncast<Typed::CompactTable>(table->m_compactTable.get());
             uint32_t entry;
-            Quickly answer = compactTable->tryFindCharactersQuickly(text, hash, entry);
-            if (answer == Quickly::Found) {
+            Quickly quickResult = compactTable->tryFindCharactersQuickly(text, hash, entry);
+            if (quickResult == Quickly::Found) {
                 value = compactTable->valueAt(entry);
                 useCharactersOf(*compactTable->keyAt(entry)->tryGetValueImpl());
             }
-            return answer;
+            return quickResult;
         }
         auto& storage = table->storageRef();
         for (JSValue next = Helper::get(storage, Helper::bucketIndex(Helper::capacity(storage), hash)); !next.isEmpty();) {
@@ -153,8 +153,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance
     if (auto* table = tableInImageAskedForFlatString<JSMap>(map, key))
         return { JSValue::encode(jsBoolean(!!table->tableInImage().find(*asString(JSValue::decode(key))->tryGetValueImpl()))), nullptr };
     JSValue value;
-    if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSMap>(map), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
-        return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };
+    if (auto quickResult = tryFindSubstringQuickly(instance, uncheckedDowncast<JSMap>(map), JSValue::decode(key), value); quickResult != Typed::CompactTable::Quickly::Unknown)
+        return { JSValue::encode(jsBoolean(quickResult == Typed::CompactTable::Quickly::Found)), nullptr };
     [[clang::musttail]] return mapHasGeneric(instance, map, key);
 }
 
@@ -163,8 +163,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance
     if (auto* table = tableInImageAskedForFlatString<JSSet>(set, key))
         return { JSValue::encode(jsBoolean(!!table->tableInImage().find(*asString(JSValue::decode(key))->tryGetValueImpl()))), nullptr };
     JSValue value;
-    if (auto answer = tryFindSubstringQuickly(instance, uncheckedDowncast<JSSet>(set), JSValue::decode(key), value); answer != Typed::CompactTable::Quickly::Unknown)
-        return { JSValue::encode(jsBoolean(answer == Typed::CompactTable::Quickly::Found)), nullptr };
+    if (auto quickResult = tryFindSubstringQuickly(instance, uncheckedDowncast<JSSet>(set), JSValue::decode(key), value); quickResult != Typed::CompactTable::Quickly::Unknown)
+        return { JSValue::encode(jsBoolean(quickResult == Typed::CompactTable::Quickly::Found)), nullptr };
     [[clang::musttail]] return setHasGeneric(instance, set, key);
 }
 

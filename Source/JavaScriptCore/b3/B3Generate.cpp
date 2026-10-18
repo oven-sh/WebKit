@@ -173,10 +173,6 @@ void generateToAir(Procedure& procedure)
     } else if (procedure.optLevel() >= 1) {
         // FIXME: Explore better "quick mode" optimizations.
         reduceStrength(procedure, ReduceStrengthPass::Initial);
-#if USE(BUN_JSC_ADDITIONS)
-        if (procedure.positionIndependent())
-            duplicateTails(procedure, true);
-#endif
         fixSSA(procedure);
     } else
         fixSSA(procedure);

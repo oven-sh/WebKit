@@ -92,15 +92,9 @@ public:
             jump(taken.weight().value() ? taken.target() : notTaken.target());
             return;
         }
-        if (m_forcesNextGuard) [[unlikely]] {
-            m_forcesNextGuard = false;
-            jump(taken.weight().value() ? notTaken.target() : taken.target());
-            return;
-        }
         FTL::Output::branch(condition, taken, notTaken);
     }
     void dropNextGuardForTesting() { m_dropsNextGuard = true; }
-    void forceNextGuardForTesting() { m_forcesNextGuard = true; }
 
     LBasicBlock newBlock()
     {
@@ -231,7 +225,6 @@ private:
     ConstantsAtHead<int64_t> m_doublesAtHead;
     AddressLikeIntegers* m_foldedConstants { nullptr };
     bool m_dropsNextGuard { false };
-    bool m_forcesNextGuard { false };
 };
 
 class Emitter {
@@ -277,21 +270,18 @@ protected:
     LValue numberToDouble(LValue jsNumber);
     LValue cellType(LValue cell) { return m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType); }
     LValue isCellOfType(LValue cell, JSType type) { return m_out.equal(cellType(cell), m_out.constInt32(type)); }
-    LValue isObjectCell(LValue cell) { return m_out.aboveOrEqual(cellType(cell), m_out.constInt32(ObjectType)); }
     LValue registerOnEntry(Reg);
-    LValue structureOf(LValue cell);
-    LValue structureWithID(LValue structureID);
-    LValue entry(Entry);
+    LValue loadStructure(LValue cell);
+    LValue decodeStructureID(LValue structureID);
 
-    void orElse(LValue condition, LBasicBlock otherwise);
-    template<typename Functor> void forEachUpTo(LValue count, const Functor&);
+    void branchUnless(LValue condition, LBasicBlock otherwise);
 
-    LValue fixedPointer(ptrdiff_t offset);
+    LValue loadImmutablePointer(ptrdiff_t offset);
     LValue vm() { return m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm); }
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
     LValue fixed64(ptrdiff_t offset);
-    LValue changing64(ptrdiff_t offset);
+    LValue loadMutable64(ptrdiff_t offset);
 
     LValue allocateHeapCell(LValue allocator, LBasicBlock slowPath);
     LValue allocateHeapCell(LValue nonNullAllocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
@@ -299,40 +289,20 @@ protected:
     LValue allocatorForSize(LValue subspace, LValue size, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, size_t);
     void storeHeader(LValue cell, LValue header);
-    void storeStructure(LValue cell, LValue structure);
     void splatWords(LValue base, LValue begin, LValue end, LValue, const B3::AbstractHeap&);
     void mutatorFence();
-    struct ArrayValues {
-        LValue array;
-        LValue butterfly;
-    };
-    ArrayValues allocateJSArray(LValue publicLength, LValue vectorLength, LValue header, LBasicBlock slowPath);
     static uint32_t arrayTypeInfoBlob(IndexingType);
 
     LValue isRopeString(LValue string) { return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer)); }
     LValue singleCharacterString(LValue character);
-    LValue emptyString() { return fixedPointer(Instance::offsetOfEmptyString()); }
+    LValue emptyString() { return loadImmutablePointer(Instance::offsetOfEmptyString()); }
 
-    LValue newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp);
     LValue allocateObject(Instance::InlineAllocation, LBasicBlock giveUp);
     LValue newPromise(LBasicBlock giveUp);
-    LValue newResolvedPromise(LValue, LBasicBlock giveUp);
-    LValue newArrayWithSize(LValue length, LBasicBlock giveUp);
-    struct StringParts {
-        LValue base;
-        LValue impl;
-        LValue length;
-        LValue offset;
-    };
-    StringParts stringParts(LValue string, LBasicBlock giveUp);
-    LValue substringOf(LValue string, const StringParts&, LValue from, LValue to, LBasicBlock giveUp);
-    LValue stringSlice(LValue string, LValue start, LValue end, LBasicBlock giveUp);
-    LValue stringSubstring(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
     LValue int32ToString(LValue, LBasicBlock giveUp);
     LValue stringOrInt32ToString(LValue, LBasicBlock giveUp);
     LValue addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp);
-    LValue concatenate(LValue values, LValue count, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell);
 
     B3::Procedure& m_proc;
@@ -340,7 +310,6 @@ protected:
     B3::AbstractHeapRepository& m_heaps;
     Output m_out;
     LValue m_instance { nullptr };
-    LValue m_table { nullptr };
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
     LValue m_cellCageBase { nullptr };

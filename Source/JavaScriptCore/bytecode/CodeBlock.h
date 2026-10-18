@@ -910,8 +910,6 @@ public:
         Vector<HandlerInfo> m_exceptionHandlers;
 
         DirectEvalCodeCache m_directEvalCodeCache;
-
-        void* m_predecodedInstructions { nullptr };
     };
 
     void clearExceptionHandlers()
@@ -961,12 +959,6 @@ public:
 
     MetadataTable* metadataTable() { return m_metadata.get(); }
     const void* instructionsRawPointer() { return m_instructionsRawPointer; }
-    void* predecodedInstructions() { return m_rareData ? m_rareData->m_predecodedInstructions : nullptr; }
-    void setPredecodedInstructions(void* instructions)
-    {
-        createRareDataIfNecessary();
-        m_rareData->m_predecodedInstructions = instructions;
-    }
 
     static constexpr ptrdiff_t offsetOfMetadataTable() { return OBJECT_OFFSETOF(CodeBlock, m_metadata); }
     static constexpr ptrdiff_t offsetOfInstructionsRawPointer() { return OBJECT_OFFSETOF(CodeBlock, m_instructionsRawPointer); }

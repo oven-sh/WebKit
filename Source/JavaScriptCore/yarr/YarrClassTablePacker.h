@@ -232,8 +232,8 @@ private:
         }
         size_t poolAt = m_bytes.size();
         m_bytes.grow(poolAt + pool.size() * ClassTableLayout::bytesInBlock);
-        for (size_t place = 0; place < pool.size(); ++place)
-            memcpy(m_bytes.mutableSpan().data() + poolAt + place * ClassTableLayout::bytesInBlock, blockContents[pool[place]]->data(), ClassTableLayout::bytesInBlock);
+        for (size_t poolIndex = 0; poolIndex < pool.size(); ++poolIndex)
+            memcpy(m_bytes.mutableSpan().data() + poolAt + poolIndex * ClassTableLayout::bytesInBlock, blockContents[pool[poolIndex]]->data(), ClassTableLayout::bytesInBlock);
         for (size_t i : cluster) {
             auto& table = m_tables[i];
             for (auto& entry : table.entries) {

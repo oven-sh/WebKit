@@ -6069,7 +6069,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (!isTypedEntry(index) || !AOT::Typed::compile(vm, *typedProgram, typedEntryOf(index), code)) {
                 declined.add(jobs[index].codeBlock);
-                fail(makeString("internal error: the entry function of a module was not compiled"_s, code.whyDeclined.isEmpty() ? ""_s : ": "_s, code.whyDeclined), pathOf(jobs[index].module));
+                fail(makeString("internal error: the entry function of a module was not compiled"_s, code.declineReason.isEmpty() ? ""_s : ": "_s, code.declineReason), pathOf(jobs[index].module));
                 return;
             }
             code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
@@ -6112,7 +6112,7 @@ struct BytecodeLinkEncoder::Impl {
             Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
             for (auto& entry : identifierIndices)
                 inOrder.append({ entry.key, entry.value });
-            AOT::Typed::sortOnPool(inOrder.mutableSpan(), [](auto& a, auto& b) {
+            AOT::Typed::parallelSort(inOrder.mutableSpan(), [](auto& a, auto& b) {
                 if (a.second != b.second)
                     return a.second > b.second;
                 if (auto order = codePointCompare(StringView { *a.first }, StringView { *b.first }); order != std::weak_ordering::equivalent)
@@ -6252,7 +6252,7 @@ struct BytecodeLinkEncoder::Impl {
                 uint32_t shapeHash = function.values.size() <= maxValuesToOrderByShape ? AOT::Typed::shapeHashForCompilationOrder(function) : 0;
                 sizesAndIndices[index] = { static_cast<uint64_t>(UINT32_MAX - function.values.size()) << 32 | shapeHash, index };
             });
-            AOT::Typed::sortOnPool(sizesAndIndices.mutableSpan(), std::less<std::pair<uint64_t, uint32_t>> { });
+            AOT::Typed::parallelSort(sizesAndIndices.mutableSpan(), std::less<std::pair<uint64_t, uint32_t>> { });
             Vector<uint32_t> largestFirst;
             largestFirst.reserveInitialCapacity(numberOfTypedFunctions);
             for (auto [sizeAndShape, number] : sizesAndIndices) {
@@ -6268,7 +6268,7 @@ struct BytecodeLinkEncoder::Impl {
                 code.instructions.shrinkToFit();
                 code.dataInCode.shrinkToFit();
                 auto& info = code.info;
-                info.indexReferences.shrinkToFit();
+                info.indexRelocations.shrinkToFit();
                 info.spreadSites.shrinkToFit();
                 info.inlineFrames.shrinkToFit();
                 info.stubCalls.shrinkToFit();
@@ -6432,7 +6432,7 @@ struct BytecodeLinkEncoder::Impl {
                     String path = declined.module ? String::fromUTF8(typedProgram->string(typedProgram->modules[declined.module.index()].displayPath)) : String();
                     bool isModuleBody = declined.kind == AOT::Typed::Format::FunctionKind::Module || declined.has(AOT::Typed::Format::FunctionIsModuleBody);
                     String what = isModuleBody ? String("the top-level code"_s) : makeString('`', nameOf(id), '`');
-                    fail(makeString(what, " cannot be compiled ahead of time: "_s, result->code.whyDeclined), WTF::move(path), position);
+                    fail(makeString(what, " cannot be compiled ahead of time: "_s, result->code.declineReason), WTF::move(path), position);
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
@@ -6447,7 +6447,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (numberOfDeclinedFunctions)
                 return { };
-            AOT::Typed::sortOnPool(orderedLocations.mutableSpan(), [](const SortKey& a, const SortKey& b) {
+            AOT::Typed::parallelSort(orderedLocations.mutableSpan(), [](const SortKey& a, const SortKey& b) {
                 return std::tie(a.rank, a.start, a.kind) < std::tie(b.rank, b.start, b.kind);
             });
             Vector<uint32_t> finalIndices(numberToAdd);
@@ -6663,7 +6663,7 @@ void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, s
     }
     auto findings = AOT::Typed::optimize(*prepared.program);
     for (auto& finding : findings)
-        prepared.failures.append(makeString("internal error: the types of the program do not hold: "_s, finding));
+        prepared.failures.append(makeString("internal error: the typed program is not valid: "_s, finding));
     if (!findings.isEmpty()) {
         prepared.program = nullptr;
         return;

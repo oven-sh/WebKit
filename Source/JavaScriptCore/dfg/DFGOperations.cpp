@@ -3989,6 +3989,8 @@ JSC_DEFINE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGloba
             OPERATION_RETURN(scope, toUCPUStrictInt32(*result));
     }
 
+    if (!ensureCollationIsAvailable(globalObject)) [[unlikely]]
+        OPERATION_RETURN(scope, 0);
     auto* collator = globalObject->defaultCollator();
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 

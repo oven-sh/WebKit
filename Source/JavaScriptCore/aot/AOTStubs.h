@@ -45,12 +45,9 @@ static constexpr unsigned minCodeGranuleShift = 6;
 static constexpr unsigned maxCodeGranuleShift = 12;
 
 #define FOR_EACH_AOT_OPERATION_WITH_HELPER(v) \
-    v(NewArray, operationAOTNewArray) \
     v(ValueAdd, operationAOTValueAdd) \
 
 #define FOR_EACH_AOT_HELPER(v) \
-    v(HelperNewArray) \
-    v(HelperNewInt32Array) \
     v(HelperAddStrings) \
 
 #define FOR_EACH_AOT_STUB(v) \
@@ -88,15 +85,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
     v(CallBoundFunction) \
-    v(OperationValue) \
-    v(OperationVoid) \
-    v(OperationDouble) \
     v(OperationValueWithGlobalObject) \
     v(OperationValueWithInstance) \
     v(OperationVoidWithInstance) \
     v(OperationDoubleWithInstance) \
-    v(UncheckedOperationWithInstance) \
-    v(UncheckedOperationDoubleWithInstance) \
     v(ThrowAtSite) \
     v(LeafThrowAtSite) \
     v(ThrowAtSiteByWord) \
@@ -119,8 +111,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafColdPlainOperationWithoutFPRs) \
     v(ColdPlainOperationWithoutInstance) \
     v(LeafColdPlainOperationWithoutInstance) \
-    v(ColdPlainOperationDouble) \
-    v(LeafColdPlainOperationDouble) \
     v(ColdPlainOperationDoubleWithoutInstance) \
     v(LeafColdPlainOperationDoubleWithoutInstance) \
     v(ColdOperationDouble) \
@@ -303,7 +293,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafStringEqualsLiteralOfLength8) \
     v(StringReplaceRegExpStringMayNotMatch) \
     v(NewRegExpLiteral) \
-    v(UncheckedNewRegExpLiteral) \
     v(RegExpExecWithFastPath) \
     v(RegExpTestWithFastPath) \
     v(RegExpFindWithFastPath) \
@@ -311,12 +300,9 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(StringMatchRegExpWithFastPath) \
     v(StringToLowerCase) \
     v(StringToUpperCase) \
-    v(UncheckedStringToLowerCase) \
-    v(UncheckedStringToUpperCase) \
     v(StringToNumber8) \
     v(ParseInt8) \
     v(NewTypedArray) \
-    v(UncheckedNewTypedArray) \
     v(CoerceToType) \
     v(LeafCoerceToType) \
     v(CastInRegister) \
@@ -765,7 +751,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(DefineByNameWithDirectColumnPreservingTwo) \
     v(TryGetByNameAndStructure) \
     v(GetByNameUncached) \
-    v(TryPutByNameAndStructure) \
     v(PutByNameUncached) \
     v(PutByNameUncachedSloppy) \
     v(DefineOwnProperty) \
@@ -881,7 +866,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(RejectInFrame) \
     v(VirtualCall) \
     v(VirtualConstruct) \
-    v(VirtualTailCall) \
     v(FrontEndGetById) \
     v(FrontEndGetByVal) \
     v(FrontEndPutById) \
@@ -907,7 +891,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ConvertByPlan) \
     v(FrontEndTypedConstructSuper) \
     FOR_EACH_AOT_HELPER(v) \
-    v(NewArrayWithFastPath) \
     v(ValueAddWithFastPath) \
     v(NewObjectLiteral0) \
     v(NewObjectLiteral1) \
@@ -962,7 +945,7 @@ static_assert(static_cast<unsigned>(Stub::TypedStringCachedInBlock7) == static_c
 ASCIILiteral nameOf(Stub);
 static constexpr Stub checkingReceiver(Stub stub) { return static_cast<Stub>(static_cast<unsigned>(stub) - 1); }
 static_assert(checkingReceiver(Stub::MapGet) == Stub::MapGetCheckingReceiver && checkingReceiver(Stub::MapHas) == Stub::MapHasCheckingReceiver && checkingReceiver(Stub::MapSet) == Stub::MapSetCheckingReceiver && checkingReceiver(Stub::SetHas) == Stub::SetHasCheckingReceiver && checkingReceiver(Stub::SetAdd) == Stub::SetAddCheckingReceiver && checkingReceiver(Stub::MapSetWithStringKey) == Stub::MapSetWithStringKeyCheckingReceiver && checkingReceiver(Stub::SetAddWithStringKey) == Stub::SetAddWithStringKeyCheckingReceiver && checkingReceiver(Stub::MapGetWithStringKey) == Stub::MapGetWithStringKeyCheckingReceiver && checkingReceiver(Stub::MapHasWithStringKey) == Stub::MapHasWithStringKeyCheckingReceiver && checkingReceiver(Stub::SetHasWithStringKey) == Stub::SetHasWithStringKeyCheckingReceiver);
-static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
+static constexpr bool isHelper(Stub stub) { return stub == Stub::HelperAddStrings; }
 static constexpr unsigned maxArgumentsUnboxedByStub = 4;
 static constexpr Stub unboxNumberArgumentStub(unsigned argument, unsigned fpr, bool isLeaf) { return static_cast<Stub>(static_cast<unsigned>(Stub::UnboxNumberArgument0ToFPR0) + 2 * (argument * (argument + 1) / 2 + fpr) + isLeaf); }
 static_assert(unboxNumberArgumentStub(maxArgumentsUnboxedByStub - 1, maxArgumentsUnboxedByStub - 1, true) == Stub::LeafUnboxNumberArgument3ToFPR3 && unboxNumberArgumentStub(2, 1, false) == Stub::UnboxNumberArgument2ToFPR1);
@@ -1077,9 +1060,9 @@ static constexpr unsigned operationShift = 32;
 static constexpr unsigned registerShift = 56;
 static constexpr unsigned returnsValueShift = 48;
 static constexpr uint64_t returnsValue = 1ull << returnsValueShift;
-inline uint64_t word(uint32_t argument, unsigned offsetOfOperation, bool operationReturnsValue, GPRReg held)
+inline uint64_t word(uint32_t argument, unsigned offsetOfOperation, bool operationReturnsValue, GPRReg reg)
 {
-    return argument | static_cast<uint64_t>(offsetOfOperation) << operationShift | (operationReturnsValue ? returnsValue : 0) | static_cast<uint64_t>(held) << registerShift;
+    return argument | static_cast<uint64_t>(offsetOfOperation) << operationShift | (operationReturnsValue ? returnsValue : 0) | static_cast<uint64_t>(reg) << registerShift;
 }
 }
 struct OutlinedSite {
@@ -1134,7 +1117,7 @@ struct StubBlob {
     Vector<uint8_t> bytes;
     unsigned offsets[numberOfStubs];
     Vector<unsigned> thunkOffsets;
-    Vector<unsigned> returnsIntoAdapters;
+    Vector<unsigned> adapterReturnAddressOffsets;
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
     BitVector entriesUsed;
@@ -1153,7 +1136,7 @@ struct IndexReference {
     bool isSiteCacheWord { false };
     bool isAddress { false };
 };
-class IndexReferences {
+class IndexRelocations {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
@@ -1211,9 +1194,7 @@ static constexpr GPRReg throwWordGPR = ARM64Registers::x16;
 static constexpr GPRReg functionIndexGPR = X86Registers::r10;
 static constexpr GPRReg throwWordGPR = X86Registers::r11;
 #endif
-#if CPU(ARM64) || CPU(X86_64)
 void loadFunctionIndexAt(CCallHelpers&, GPRReg pc);
-#endif
 
 class StubCalls {
 public:
@@ -1280,11 +1261,11 @@ inline bool trapAtPrologueMakesFrameRecord(const uint8_t* trap)
     return trap[-4] == 0x55 && trap[-3] == 0x48 && trap[-2] == 0x89 && trap[-1] == 0xe5 && trap[1] == 0x5d;
 }
 
-inline uint8_t* afterStackCheckBranchingTo(uint8_t* startOfFunction, uint8_t* arm)
+inline uint8_t* afterStackCheckBranchingTo(uint8_t* startOfFunction, uint8_t* branchTarget)
 {
 #if OS(LINUX)
-    if (static_cast<size_t>(arm - startOfFunction) > 4 && trapAtPrologueMakesFrameRecord(arm))
-        arm -= 4;
+    if (static_cast<size_t>(branchTarget - startOfFunction) > 4 && trapAtPrologueMakesFrameRecord(branchTarget))
+        branchTarget -= 4;
 #endif
     constexpr unsigned sizeOfConditionalJump = 6;
     constexpr unsigned sizeOfShortJump = 2;
@@ -1296,9 +1277,9 @@ inline uint8_t* afterStackCheckBranchingTo(uint8_t* startOfFunction, uint8_t* ar
         instruction += sizeOfShortJump + static_cast<int8_t>(instruction[1]);
     constexpr unsigned maxBytesInStackCheck = 40;
     for (unsigned i = 0; i < maxBytesInStackCheck; ++i, ++instruction) {
-        if (instruction[0] == 0x0f && instruction[1] == 0x82 && instruction + sizeOfConditionalJump + relative(instruction + 2) == arm)
+        if (instruction[0] == 0x0f && instruction[1] == 0x82 && instruction + sizeOfConditionalJump + relative(instruction + 2) == branchTarget)
             return instruction + sizeOfConditionalJump;
-        if (instruction[0] == 0x72 && instruction + sizeOfShortJump + static_cast<int8_t>(instruction[1]) == arm)
+        if (instruction[0] == 0x72 && instruction + sizeOfShortJump + static_cast<int8_t>(instruction[1]) == branchTarget)
             return instruction + sizeOfShortJump;
     }
     return nullptr;

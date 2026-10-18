@@ -356,12 +356,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPlainQueryEntries, EncodedJSValue, (In
     forEachPlainQueryPair(*text, [&](auto name, size_t value, size_t end) {
         auto iterationKind = static_cast<IterationKind>(kind);
         JSString* key = iterationKind == IterationKind::Values ? nullptr : keyString(vm, name);
-        JSString* held = iterationKind == IterationKind::Keys ? nullptr : jsString(vm, String(text->subspan(value, end - value)));
-        JSValue entry = key ? key : held;
+        JSString* valueString = iterationKind == IterationKind::Keys ? nullptr : jsString(vm, String(text->subspan(value, end - value)));
+        JSValue entry = key ? key : valueString;
         if (iterationKind == IterationKind::Entries) {
             JSArray* pair = JSArray::create(vm, structure, 2);
             pair->setIndexQuickly(vm, 0, key);
-            pair->setIndexQuickly(vm, 1, held);
+            pair->setIndexQuickly(vm, 1, valueString);
             entry = pair;
         }
         entries->setIndexQuickly(vm, index++, entry);
@@ -492,26 +492,26 @@ bool Lowering::isHostObjectCacheTest(const Value& value) const
 
 void Lowering::branchOnHostObjectCache(const Value& value, LBasicBlock isCached, LBasicBlock isNot)
 {
-    auto integer32 = [&](unsigned index) {
+    auto constantInt32At = [&](unsigned index) {
         ValueID id = value.arguments[index];
         while (m_function.at(id).opcode == Opcode::Cast)
             id = m_function.at(id).child(0);
         RELEASE_ASSERT(m_function.at(id).opcode == Opcode::Integer);
         return static_cast<uint32_t>(m_function.at(id).integer());
     };
-    if (integer32(1) >= Instance::numberOfHostClasses) {
+    if (constantInt32At(1) >= Instance::numberOfHostClasses) {
         m_out.jump(isNot);
         return;
     }
     Boxed receiver = in<Boxed>(value.arguments[0]);
-    orElse(isCell(receiver), isNot);
+    branchUnless(isCell(receiver), isNot);
     CellPointer cell = asCell(receiver);
-    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfHostClassStructureID(integer32(1))))), isNot);
+    branchUnless(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfHostClassStructureID(constantInt32At(1))))), isNot);
     if (value.arguments.size() == 2) {
         m_out.jump(isCached);
         return;
     }
-    Boxed cached(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, cell.value(), sizeof(JSDestructibleObject) + integer32(2))));
+    Boxed cached(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, cell.value(), sizeof(JSDestructibleObject) + constantInt32At(2))));
     m_out.branch(isNotEmpty(cached).value(), unsure(isCached), unsure(isNot));
 }
 
@@ -525,7 +525,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
             id = m_function.at(id).child(0);
         return m_function.at(id);
     };
-    auto integer32 = [&](unsigned index) {
+    auto constantInt32At = [&](unsigned index) {
         RELEASE_ASSERT(constant(index).opcode == Opcode::Integer);
         return static_cast<uint32_t>(constant(index).integer());
     };
@@ -542,7 +542,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         }), type);
     };
     auto internalField = [&] {
-        return m_out.address(asCell(in<Boxed>(arguments[0])).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[integer32(1)]);
+        return m_out.address(asCell(in<Boxed>(arguments[0])).value(), m_heaps.JSInternalFieldObjectImpl_internalFields[constantInt32At(1)]);
     };
 
     switch (which) {
@@ -551,9 +551,9 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
             return aboveOrEqual(loadCellType(cell), word32(ObjectType));
         });
     case InlineBuiltin::HasJSType: {
-        RELEASE_ASSERT(integer32(1) < std::size(jsTypes) && integer32(2) < std::size(jsTypes));
-        JSType first = jsTypes[integer32(1)];
-        JSType last = jsTypes[integer32(2)];
+        RELEASE_ASSERT(constantInt32At(1) < std::size(jsTypes) && constantInt32At(2) < std::size(jsTypes));
+        JSType first = jsTypes[constantInt32At(1)];
+        JSType last = jsTypes[constantInt32At(2)];
         RELEASE_ASSERT(first <= last);
         return ofCell([&](CellPointer cell) {
             if (first == last)
@@ -596,7 +596,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     case InlineBuiltin::FindInPlainQuery:
         return ensure(AOT_TYPED_OPERATION(FindInPlainQuery, in<Boxed>(arguments[0]), in<Boxed>(arguments[1])), m_program.at(m_program.types.number), type);
     case InlineBuiltin::PlainQueryEntries:
-        return ensure(AOT_TYPED_OPERATION(PlainQueryEntries, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), word32(integer32(2))), type);
+        return ensure(AOT_TYPED_OPERATION(PlainQueryEntries, in<Boxed>(arguments[0]), in<Boxed>(arguments[1]), word32(constantInt32At(2))), type);
     case InlineBuiltin::ToLength: {
         Boxed operand = in<Boxed>(arguments[0]);
         return ensure(either<Boxed>(isInt32(operand), [&] {
@@ -647,19 +647,19 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         return booleanResult(join.finish().as<Word32>(), type);
     }
     case InlineBuiltin::IsGlobalCachedAsBuiltin: {
-        BuiltinName global(integer32(0));
+        BuiltinName global(constantInt32At(0));
         uint32_t cacheNumber = m_program.globalPropertyCacheNumber(m_program.stringOf(global), false);
         if (!cacheNumber)
             return booleanResult(boolean(false), type);
         return booleanResult(equal(Boxed(globalPropertyCacheWord(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value))), box(builtinCell(m_builtins.cellOf(global)))), type);
     }
     case InlineBuiltin::HostObjectHasCachedValue:
-        return booleanResult(isNotEmpty(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1))))), type);
+        return booleanResult(isNotEmpty(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + constantInt32At(1))))), type);
     case InlineBuiltin::HostObjectCachedValue:
-        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + integer32(1)))), type);
+        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, asCell(in<Boxed>(arguments[0])).value(), sizeof(JSDestructibleObject) + constantInt32At(1)))), type);
     case InlineBuiltin::LinkTimeConstant: {
-        RELEASE_ASSERT(integer32(0) < std::size(linkTimeConstants));
-        auto constant = static_cast<uint32_t>(linkTimeConstants[integer32(0)]);
+        RELEASE_ASSERT(constantInt32At(0) < std::size(linkTimeConstants));
+        auto constant = static_cast<uint32_t>(linkTimeConstants[constantInt32At(0)]);
         if (!m_out.m_block->frequency())
             return ensure(box(AOT_TYPED_OPERATION(LinkTimeConstant, word32(constant))), type);
         LBasicBlock isNotFetched = newColdBlock();
@@ -674,9 +674,9 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
         return ensure(box(CellPointer(m_out.phi(Int64, fast, slow))), type);
     }
     case InlineBuiltin::RequireBuiltinModule:
-        return ensure(AOT_TYPED_OPERATION(RequireBuiltinModule, word32(integer32(0))), type);
+        return ensure(AOT_TYPED_OPERATION(RequireBuiltinModule, word32(constantInt32At(0))), type);
     case InlineBuiltin::NativeBinding:
-        return ensure(AOT_TYPED_OPERATION(NativeBinding, word32(integer32(0))), type);
+        return ensure(AOT_TYPED_OPERATION(NativeBinding, word32(constantInt32At(0))), type);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

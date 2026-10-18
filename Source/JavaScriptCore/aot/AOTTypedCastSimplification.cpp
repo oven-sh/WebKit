@@ -47,16 +47,16 @@ private:
 
     ValueID resolve(ValueID value) const
     {
-        while (m_replaced[value.index()] != value)
-            value = m_replaced[value.index()];
+        while (m_replacements[value.index()] != value)
+            value = m_replacements[value.index()];
         return value;
     }
 
     void resetReplacements()
     {
-        m_replaced.resize(m_function.values.size());
-        for (unsigned i = 0; i < m_replaced.size(); ++i)
-            m_replaced[i] = ValueID(i);
+        m_replacements.resize(m_function.values.size());
+        for (unsigned i = 0; i < m_replacements.size(); ++i)
+            m_replacements[i] = ValueID(i);
     }
 
     void rewrite()
@@ -155,7 +155,7 @@ private:
                 if ((cast.accessedName() || cast.castReason() == CastReason::NonNull) && typeOf(operand).mayBeUndefinedOrNull())
                     continue;
                 if (!predictionIsNarrowerThanType(cast, operand) && canReplaceWithOperand(id, typeOf(operand), typeOf(id))) {
-                    m_replaced[id.index()] = operand;
+                    m_replacements[id.index()] = operand;
                     block.values[i] = ValueID();
                     removedAny = true;
                 } else if (cast.castReason() != CastReason::Upcast)
@@ -361,7 +361,7 @@ private:
                         add(id);
                     continue;
                 }
-                m_replaced[id.index()] = earlier;
+                m_replacements[id.index()] = earlier;
                 block.values[i] = ValueID();
                 ++changed;
                 if (isWatched) {
@@ -483,17 +483,17 @@ private:
             if (!fits || numberChecked > 1 || numberChecked == jumps.size())
                 continue;
             for (unsigned from : jumps) {
-                ValueID given = m_function.blocks[from].terminator.targets[0].arguments[index];
-                if (m_program.castIsRedundant(typeOf(withoutUpcasts(given)), to, cast))
-                    given = withoutUpcasts(given);
+                ValueID edgeArgument = m_function.blocks[from].terminator.targets[0].arguments[index];
+                if (m_program.castIsRedundant(typeOf(withoutUpcasts(edgeArgument)), to, cast))
+                    edgeArgument = withoutUpcasts(edgeArgument);
                 else {
                     Value onEdge(cast);
-                    onEdge.children[0] = given;
-                    given = ValueID(m_function.values.size());
+                    onEdge.children[0] = edgeArgument;
+                    edgeArgument = ValueID(m_function.values.size());
                     m_function.values.append(WTF::move(onEdge));
-                    m_function.blocks[from].values.append(given);
+                    m_function.blocks[from].values.append(edgeArgument);
                 }
-                m_function.blocks[from].terminator.targets[0].arguments[index] = given;
+                m_function.blocks[from].terminator.targets[0].arguments[index] = edgeArgument;
             }
             m_function.at(parameter).type = cast.type;
             m_function.at(parameter).rep = cast.rep;
@@ -526,7 +526,7 @@ private:
             for (ValueID parameter : m_function.blocks[b].parameters)
                 numberOf[parameter.index()] = numberOfParameters++;
         }
-        Vector<Vector<ValueID, 2>> given(numberOfParameters);
+        Vector<Vector<ValueID, 2>> incomingArguments(numberOfParameters);
         BitVector staysAsDeclared(numberOfParameters);
         for (unsigned k = 0; k < m_function.blocks[0].parameters.size(); ++k)
             staysAsDeclared.set(k);
@@ -543,7 +543,7 @@ private:
                     if (target.arguments.size() != count)
                         staysAsDeclared.set(firstParameter[b] + i);
                     else
-                        given[firstParameter[b] + i].append(withoutUpcasts(target.arguments[i]));
+                        incomingArguments[firstParameter[b] + i].append(withoutUpcasts(target.arguments[i]));
                 }
             }
         }
@@ -560,7 +560,7 @@ private:
                     TypeID declared = m_function.at(parameters[i]).type;
                     TypeID common = found[k];
                     bool fails = !declared;
-                    for (ValueID argument : given[k]) {
+                    for (ValueID argument : incomingArguments[k]) {
                         unsigned other = numberOf[argument.index()];
                         if (other == k)
                             continue;
@@ -626,7 +626,7 @@ private:
         return changed;
     }
 
-    ValueID originOf(ValueID value) const
+    ValueID underlyingValue(ValueID value) const
     {
         while (m_function.at(value).opcode == Opcode::Cast)
             value = m_function.at(value).child(0);
@@ -705,7 +705,7 @@ private:
             auto& value = m_function.at(block.values[i]);
             bool usesObject = false;
             value.forEachChild([&](ValueID child) {
-                usesObject |= originOf(child) == object;
+                usesObject |= underlyingValue(child) == object;
             });
             bool storesToTargetField = value.opcode == Opcode::PutById && value.child(0) == object && value.child(1) != object && !from.fieldNamed(value.string()) && to.fieldNamed(value.string()) && !mayInheritAtCreation(m_program, m_function, object, value.string());
             if (usesObject && !(value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast) && !isInitializingStore(m_program, m_function, block, i) && !storesToTargetField)
@@ -837,14 +837,14 @@ private:
         }
 
         Vector<std::pair<LayoutID, BitVector>, 4> askedFor;
-        auto noteAsked = [&](LayoutID asked, unsigned block) {
+        auto noteAsked = [&](LayoutID requestedLayout, unsigned block) {
             for (auto& [layout, blocks] : askedFor) {
-                if (layout == asked) {
+                if (layout == requestedLayout) {
                     blocks.set(block);
                     return;
                 }
             }
-            askedFor.append({ asked, BitVector(m_function.blocks.size()) });
+            askedFor.append({ requestedLayout, BitVector(m_function.blocks.size()) });
             askedFor.last().second.set(block);
         };
         Vector<ValueID, 8> storesIntoObject;
@@ -859,8 +859,8 @@ private:
                 if (!usesValue)
                     continue;
                 if (value.opcode == Opcode::Cast) {
-                    if (LayoutID asked = targetOf(value); asked && asked != created && std::ranges::binary_search(from.specializations, asked))
-                        noteAsked(asked, b);
+                    if (LayoutID requestedLayout = targetOf(value); requestedLayout && requestedLayout != created && std::ranges::binary_search(from.specializations, requestedLayout))
+                        noteAsked(requestedLayout, b);
                     continue;
                 }
                 if ((value.opcode != Opcode::PutById && value.opcode != Opcode::PutField) || !isSameObject.get(value.child(0).index()) || isSameObject.get(value.child(1).index()))
@@ -869,11 +869,11 @@ private:
             }
         }
         LayoutID target;
-        for (auto& [asked, blocks] : askedFor) {
-            auto& candidate = m_program.at(asked);
-            if (!m_program.isUpcast(asked, created) || candidate.kind != LayoutKind::Record || candidate.isAbstract || !allReturnsPassThrough(allocationSite, blocks))
+        for (auto& [requestedLayout, blocks] : askedFor) {
+            auto& candidate = m_program.at(requestedLayout);
+            if (!m_program.isUpcast(requestedLayout, created) || candidate.kind != LayoutKind::Record || candidate.isAbstract || !allReturnsPassThrough(allocationSite, blocks))
                 continue;
-            target = asked;
+            target = requestedLayout;
             break;
         }
         if (!target)
@@ -994,7 +994,7 @@ private:
 
     const Program& m_program;
     Function& m_function;
-    Vector<ValueID> m_replaced;
+    Vector<ValueID> m_replacements;
     BitVector m_isStoredThrough;
 };
 

@@ -311,8 +311,8 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
         m_out.branch(isCell(operand).value(), unsure(isCellCase), unsure(isOther));
         m_out.appendTo(isCellCase);
         LValue cell = asCell(operand).value();
-        LValue classInfo = m_out.loadPtr(structureOf(cell), m_heaps.Structure_classInfo);
-        m_out.branch(m_out.equal(classInfo, m_out.loadPtr(at(fixedPointer(Instance::offsetOfRuntimeTable()), offsetInTable(Entry::GeneratorClassInfo)))), unsure(isGenerator), unsure(isOther));
+        LValue classInfo = m_out.loadPtr(loadStructure(cell), m_heaps.Structure_classInfo);
+        m_out.branch(m_out.equal(classInfo, m_out.loadPtr(at(loadImmutablePointer(Instance::offsetOfRuntimeTable()), offsetInTable(Entry::GeneratorClassInfo)))), unsure(isGenerator), unsure(isOther));
         m_out.appendTo(isGenerator);
         m_out.branch(m_out.isZero32(m_out.load8ZeroExt32(at(cell, Generator::offsetOfHasOtherPrototype()))), usually(hasItsPrototype), rarely(isOther));
         m_out.appendTo(hasItsPrototype);
@@ -324,25 +324,25 @@ std::optional<Operand> Lowering::lowerInlineEngine(InlineBuiltin which, ValueID 
     case InlineBuiltin::DeclaredGenerator:
         return valueResult(arguments[0], type);
     case InlineBuiltin::DrivenIteratorMarker:
-        return ensure(Boxed(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfRuntimeTable()), m_out.constIntPtr(offsetInTable(Entry::DrivenIteratorMarker)))))), type);
+        return ensure(Boxed(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(loadImmutablePointer(Instance::offsetOfRuntimeTable()), m_out.constIntPtr(offsetInTable(Entry::DrivenIteratorMarker)))))), type);
     case InlineBuiltin::MakeIteratorResult: {
         constexpr size_t sizeOfResult = JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue);
         static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
-        Boxed held = in<Boxed>(arguments[0]);
+        Boxed iteratorValue = in<Boxed>(arguments[0]);
         LValue isDone = in<Word32>(arguments[1]).value();
         LBasicBlock slowPath = newColdBlock();
         Join join(m_out, Rep::Cell, Int64);
-        LValue allocator = m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfCellSpace()), m_out.constIntPtr(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfResult) * sizeof(Allocator)))));
-        Emitter::orElse(m_out.notNull(allocator), slowPath);
+        LValue allocator = m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(loadImmutablePointer(Instance::offsetOfCellSpace()), m_out.constIntPtr(CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeOfResult) * sizeof(Allocator)))));
+        Emitter::branchUnless(m_out.notNull(allocator), slowPath);
         CellPointer result = allocateCell(allocator, sizeOfResult, slowPath);
-        m_out.store64(changing64(Instance::offsetOfIteratorResultHeader()), result.value(), m_heaps.JSCell_header);
+        m_out.store64(loadMutable64(Instance::offsetOfIteratorResultHeader()), result.value(), m_heaps.JSCell_header);
         m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
-        m_out.store64(held.value(), inlineProperty(result, iteratorResultObjectValuePropertyOffset));
+        m_out.store64(iteratorValue.value(), inlineProperty(result, iteratorResultObjectValuePropertyOffset));
         m_out.store64(m_out.bitOr(m_out.constInt64(JSValue::ValueFalse), m_out.zeroExt(isDone, Int64)), inlineProperty(result, iteratorResultObjectDonePropertyOffset));
         fenceAfterInitialization();
         join.add(result);
         m_out.appendTo(slowPath);
-        join.add(AOT_TYPED_OPERATION(CreateIteratorResult, held, Word32(isDone)));
+        join.add(AOT_TYPED_OPERATION(CreateIteratorResult, iteratorValue, Word32(isDone)));
         return ensure(join.finish(), m_program.at(m_program.types.object), type);
     }
     default:

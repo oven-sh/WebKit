@@ -73,7 +73,7 @@ SourceCode name##Source();
 
     std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const;
     static_assert(numberOfBuiltinCodes < 0x10000);
-    static std::span<const Latin1Character> textOf(unsigned index);
+    static std::span<const Latin1Character> sourceOf(unsigned index);
     bool hasCompiledFunction(BuiltinCodeIndex);
     BuiltinCode codeFor(BuiltinCodeIndex, Intrinsic);
 

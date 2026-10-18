@@ -78,7 +78,7 @@ public:
     static CompactTable* createInImage(VM&, Structure*, const TableInImage&, Typed::State*);
     static JSSet* createSetInImage(JSGlobalObject*, const TableInImage&);
     static JSMap* createMapInImage(JSGlobalObject*, const TableInImage&);
-    bool isInImage() const { return m_keysShift & keysAreInImage; }
+    bool isInImage() const { return m_keysShiftAndFlags & keysAreInImage; }
     const TableInImage& tableInImage() const { return **at<const TableInImage*>(offsetOfIndex()); }
     template<typename Traits> static CompactTable* moveToHeap(VM&, JSOrderedHashTable<Traits>*);
     template<typename Traits> static CompactTable* heapTableOf(JSOrderedHashTable<Traits>* owner)
@@ -90,7 +90,7 @@ public:
     uint32_t size() const { return m_alive; }
     uint32_t used() const { return m_used; }
     uint32_t capacity() const { return m_capacity; }
-    Width keyWidth() const { return m_keysShift & keysAreWide ? Width::Wide : Width::Narrow; }
+    Width keyWidth() const { return m_keysShiftAndFlags & keysAreWide ? Width::Wide : Width::Narrow; }
     Width valueWidth() const { return m_valueWidth; }
     State state() const { return m_state; }
     bool isLive() const { return m_state <= State::Iterated; }
@@ -174,7 +174,7 @@ public:
     template<typename CharacterType>
     ALWAYS_INLINE Quickly tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash, uint32_t& found) const
     {
-        if (m_keysShift & (keysAreWide | keysAreInImage))
+        if (m_keysShiftAndFlags & (keysAreWide | keysAreInImage))
             return Quickly::Unknown;
         auto isAt = [&](const uint32_t* keys, uint32_t entry) ALWAYS_INLINE_LAMBDA {
             uint32_t candidate = keys[entry];
@@ -228,7 +228,7 @@ public:
             return Quickly::Absent;
         JSString* key = asString(value);
         const StringImpl* impl = key->tryGetValueImpl();
-        if (!impl || !impl->hasHash() || m_keysShift & (keysAreWide | keysAreInImage))
+        if (!impl || !impl->hasHash() || m_keysShiftAndFlags & (keysAreWide | keysAreInImage))
             return Quickly::Unknown;
         unsigned hash = impl->existingHash();
         uint32_t narrowKey = static_cast<uint32_t>(std::bit_cast<uintptr_t>(key) >> MarkedBlockCage::shift);
@@ -319,7 +319,7 @@ public:
     static constexpr ptrdiff_t offsetOfAlive() { return OBJECT_OFFSETOF(CompactTable, m_alive); }
     static constexpr ptrdiff_t offsetOfCapacity() { return OBJECT_OFFSETOF(CompactTable, m_capacity); }
     static constexpr ptrdiff_t offsetOfIndexBits() { return OBJECT_OFFSETOF(CompactTable, m_indexBits); }
-    static constexpr ptrdiff_t offsetOfKeysShift() { return OBJECT_OFFSETOF(CompactTable, m_keysShift); }
+    static constexpr ptrdiff_t offsetOfKeysShift() { return OBJECT_OFFSETOF(CompactTable, m_keysShiftAndFlags); }
     static constexpr ptrdiff_t offsetOfValueWidth() { return OBJECT_OFFSETOF(CompactTable, m_valueWidth); }
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(CompactTable, m_state); }
     static constexpr size_t initialSize(Width value) { return sizeof(CompactTable) + maxCapacityWithTags + initialCapacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(value)); }
@@ -342,7 +342,7 @@ private:
     static size_t allocationSize(uint32_t capacity, Width key, Width value);
 
     template<typename T> T* at(size_t offset) const { return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(const_cast<CompactTable*>(this)) + offset); }
-    size_t offsetOfKeys() const { return offsetOfIndex() + (static_cast<size_t>(2) << (m_keysShift & ~keysAreWide)); }
+    size_t offsetOfKeys() const { return offsetOfIndex() + (static_cast<size_t>(2) << (m_keysShiftAndFlags & ~keysAreWide)); }
     size_t offsetOfValues() const { return offsetOfKeys() + static_cast<size_t>(m_capacity) * static_cast<size_t>(keyWidth()); }
     bool hasTags() const { return !m_indexBits; }
     uint32_t deleted() const { return m_used - m_alive; }
@@ -371,7 +371,7 @@ private:
     uint32_t m_alive { 0 };
     uint32_t m_capacity { 0 };
     uint8_t m_indexBits { 0 };
-    uint8_t m_keysShift { 0 };
+    uint8_t m_keysShiftAndFlags { 0 };
     Width m_valueWidth { Width::Wide };
     State m_state { State::Live };
 };
@@ -481,15 +481,15 @@ public:
     static constexpr unsigned numberOfWords = 5;
     static constexpr unsigned firstPartWord = numberOfWords;
     static constexpr unsigned numberOfWordsWithParts = firstPartWord + 2;
-    struct InFrame {
-        static InFrame* at(EncodedJSValue* words) { return reinterpret_cast<InFrame*>(words); }
+    struct StackRecord {
+        static StackRecord* at(EncodedJSValue* words) { return reinterpret_cast<StackRecord*>(words); }
         JSValue get(unsigned word) const { return JSValue::decode(words[word]); }
         void setIndex(VM&, unsigned word, JSValue value) { words[word] = JSValue::encode(value); }
         EncodedJSValue words[numberOfWordsWithParts];
     };
-    static bool tryOpen(JSGlobalObject*, JSValue iterable, InFrame*);
-    static bool isOne(InFrame* record) { return record->get(1).isInt32(); }
-    static bool step(JSGlobalObject*, InFrame*);
+    static bool tryOpen(JSGlobalObject*, JSValue iterable, StackRecord*);
+    static bool isOne(StackRecord* record) { return record->get(1).isInt32(); }
+    static bool step(JSGlobalObject*, StackRecord*);
     static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepQuickly(Instance*, EncodedJSValue* words);
     static constexpr int32_t mayBeSteppedQuickly = 1024;
     static constexpr int32_t hasFastStepAfterStart = 2048;
@@ -498,7 +498,7 @@ public:
         static_assert(std::endian::native == std::endian::little && mayBeSteppedQuickly >> 8 && mayBeSteppedQuickly >> 8 <= UINT8_MAX);
         return reinterpret_cast<const uint8_t*>(words + 1)[1] & mayBeSteppedQuickly >> 8;
     }
-    static void close(JSGlobalObject*, InFrame*);
+    static void close(JSGlobalObject*, StackRecord*);
     static constexpr int32_t iteratesArrayEntriesByIndex = 256;
     static constexpr int32_t iteratesGenerator = 16;
     static constexpr int32_t iterationKindMask = 3;

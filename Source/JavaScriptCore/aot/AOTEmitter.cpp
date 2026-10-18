@@ -33,12 +33,10 @@ void Emitter::findPinnedRegisters()
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(numberTagArgumentGPR);
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
-#if CPU(ARM64) || CPU(X86_64)
     m_cellCageBase = registerOnEntry(cellCageBaseGPR);
-#endif
 }
 
-void Emitter::orElse(LValue condition, LBasicBlock otherwise)
+void Emitter::branchUnless(LValue condition, LBasicBlock otherwise)
 {
     LBasicBlock next = m_out.newBlock();
     m_out.branch(condition, usually(next), rarely(otherwise));
@@ -51,7 +49,7 @@ static LValue notControlDependent(LValue load)
     return load;
 }
 
-LValue Emitter::fixedPointer(ptrdiff_t offset)
+LValue Emitter::loadImmutablePointer(ptrdiff_t offset)
 {
     return notControlDependent(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset)));
 }
@@ -71,38 +69,19 @@ LValue Emitter::fixed64(ptrdiff_t offset)
     return notControlDependent(m_out.load64(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset)));
 }
 
-LValue Emitter::changing64(ptrdiff_t offset)
+LValue Emitter::loadMutable64(ptrdiff_t offset)
 {
     return notControlDependent(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset)));
 }
 
-LValue Emitter::structureWithID(LValue structureID)
+LValue Emitter::decodeStructureID(LValue structureID)
 {
-    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
-}
-
-template<typename Functor>
-void Emitter::forEachUpTo(LValue count, const Functor& body)
-{
-    LBasicBlock head = m_out.newBlock();
-    LBasicBlock inside = m_out.newBlock();
-    LBasicBlock done = m_out.newBlock();
-    LValue limit = m_out.zeroExtPtr(count);
-    ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
-    m_out.jump(head);
-    m_out.appendTo(head);
-    LValue index = m_out.phi(pointerType(), start);
-    m_out.branch(m_out.below(index, limit), unsure(inside), unsure(done));
-    m_out.appendTo(inside);
-    body(index);
-    m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.intPtrOne)));
-    m_out.jump(head);
-    m_out.appendTo(done);
+    return m_out.bitOr(m_out.zeroExtPtr(structureID), loadImmutablePointer(Instance::offsetOfStructureIDBase()));
 }
 
 LValue Emitter::allocateHeapCell(LValue allocator, LBasicBlock slowPath)
 {
-    orElse(m_out.notNull(allocator), slowPath);
+    branchUnless(m_out.notNull(allocator), slowPath);
     return allocateHeapCell(allocator, std::nullopt, slowPath);
 }
 
@@ -203,7 +182,7 @@ LValue Emitter::allocateHeapCell(LValue allocator, std::optional<size_t> cellSiz
 
 LValue Emitter::allocateAdjacentHeapCells(LValue allocator, size_t cellSize, unsigned count, LBasicBlock slowPath)
 {
-    orElse(m_out.notNull(allocator), slowPath);
+    branchUnless(m_out.notNull(allocator), slowPath);
     LBasicBlock continuation = m_out.newBlock();
     PatchpointValue* allocation = m_out.patchpoint(pointerType());
     allocation->effects.terminal = true;
@@ -248,7 +227,7 @@ LValue Emitter::allocatorForSize(LValue subspace, LValue size, LBasicBlock slowP
     static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
     unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
     LValue sizeClassIndex = m_out.lShr(m_out.add(size, m_out.constIntPtr(MarkedSpace::sizeStep - 1)), m_out.constInt32(stepShift));
-    orElse(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift)), slowPath);
+    branchUnless(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift)), slowPath);
     return m_out.loadPtr(m_out.baseIndex(m_heaps.CompleteSubspace_allocatorForSizeStep, subspace, sizeClassIndex));
 }
 
@@ -262,12 +241,6 @@ void Emitter::storeHeader(LValue cell, LValue header)
 {
     static_assert(!JSCell::structureIDOffset());
     m_out.store64(header, cell, m_heaps.JSCell_header);
-}
-
-void Emitter::storeStructure(LValue cell, LValue structure)
-{
-    m_out.store32(m_out.castToInt32(structure), cell, m_heaps.JSCell_structureID);
-    m_out.store32(m_out.load32(structure, m_heaps.Structure_indexingModeIncludingHistory), cell, m_heaps.JSCell_usefulBytes);
 }
 
 void Emitter::splatWords(LValue base, LValue begin, LValue end, LValue value, const AbstractHeap& heap)
@@ -310,38 +283,6 @@ uint32_t Emitter::arrayTypeInfoBlob(IndexingType indexingType)
     return TypeInfoBlob(indexingType, TypeInfo(ArrayType, JSArray::StructureFlags)).blob();
 }
 
-Emitter::ArrayValues Emitter::allocateJSArray(LValue publicLength, LValue vectorLength, LValue header, LBasicBlock slowPath)
-{
-    orElse(m_out.notZero64(header), slowPath);
-    LValue size = m_out.add(m_out.shl(m_out.zeroExtPtr(vectorLength), m_out.constInt32(3)), m_out.constIntPtr(sizeof(IndexingHeader)));
-    LValue startOfStorage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size, slowPath), slowPath);
-    LValue butterfly = m_out.add(startOfStorage, m_out.constIntPtr(sizeof(IndexingHeader)));
-    m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
-    m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);
-    splatWords(butterfly, publicLength, vectorLength, m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
-    LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), slowPath);
-    storeHeader(array, header);
-    m_out.storePtr(butterfly, array, m_heaps.JSObject_butterfly);
-    return { array, butterfly };
-}
-
-static LValue vectorLengthFor(FTL::Output& out, LValue count)
-{
-    LValue least = out.select(out.isZero32(count), out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY), out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN));
-    return out.bitOr(out.select(out.above(count, least), count, least), out.int32One);
-}
-
-LValue Emitter::newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp)
-{
-    auto [array, butterfly] = allocateJSArray(count, vectorLengthFor(m_out, count), changing64(Instance::offsetOfNewArrayHeader(areInt32 ? ArrayWithInt32 : ArrayWithContiguous)), giveUp);
-    LValue elements = butterfly;
-    forEachUpTo(count, [&](LValue index) {
-        m_out.store64(m_out.load64(m_out.baseIndex(m_heaps.variables, values, index)), m_out.baseIndex(m_heaps.indexedContiguousProperties, elements, index));
-    });
-    mutatorFence();
-    return array;
-}
-
 LValue Emitter::allocateObject(Instance::InlineAllocation kind, LBasicBlock giveUp)
 {
     LValue result = allocateHeapCell(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind))), giveUp);
@@ -359,22 +300,6 @@ LValue Emitter::newPromise(LBasicBlock giveUp)
     return result;
 }
 
-LValue Emitter::newResolvedPromise(LValue value, LBasicBlock giveUp)
-{
-    LBasicBlock isCellCase = m_out.newBlock();
-    LBasicBlock isNotObject = m_out.newBlock();
-    m_out.branch(isCell(value), unsure(isCellCase), unsure(isNotObject));
-    m_out.appendTo(isCellCase);
-    m_out.branch(isObjectCell(value), unsure(giveUp), unsure(isNotObject));
-    m_out.appendTo(isNotObject);
-    LValue result = allocateObject(Instance::InlineAllocation::Promise, giveUp);
-    static_assert(CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer == 48);
-    m_out.store64(m_out.constInt64((static_cast<uint64_t>(JSPromise::Status::Fulfilled) | JSPromise::isFirstResolvingFunctionCalledFlag) << 48), result, m_heaps.JSPromise_packed);
-    m_out.store64(value, result, m_heaps.JSPromise_slot);
-    mutatorFence();
-    return result;
-}
-
 LValue Emitter::isOriginalArray(LValue cell)
 {
     LValue kind = m_out.bitAnd(m_out.lShr(m_out.load8ZeroExt32(cell, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(Instance::arrayKindShift)), m_out.constInt32(Instance::numberOfArrayKinds - 1));
@@ -383,136 +308,9 @@ LValue Emitter::isOriginalArray(LValue cell)
     return m_out.equal(m_out.load32(cell, m_heaps.JSCell_structureID), expected);
 }
 
-LValue Emitter::newArrayWithSize(LValue length, LBasicBlock giveUp)
-{
-    orElse(isInt32(length), giveUp);
-    LValue count = unboxInt32(length);
-    orElse(m_out.below(count, m_out.constInt32(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))), giveUp);
-    auto [result, butterfly] = allocateJSArray(m_out.int32Zero, vectorLengthFor(m_out, count), changing64(Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), giveUp);
-    m_out.store32(count, butterfly, m_heaps.Butterfly_publicLength);
-    mutatorFence();
-    return result;
-}
-
 LValue Emitter::singleCharacterString(LValue character)
 {
-    return m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, fixedPointer(Instance::offsetOfSingleCharacterStrings()), m_out.zeroExtPtr(character)));
-}
-
-Emitter::StringParts Emitter::stringParts(LValue string, LBasicBlock giveUp)
-{
-    LBasicBlock flat = m_out.newBlock();
-    LBasicBlock rope = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    LValue fiber0 = m_out.loadPtr(string, m_heaps.JSString_value);
-    m_out.branch(m_out.testNonZeroPtr(fiber0, m_out.constIntPtr(JSString::isRopeInPointer)), unsure(rope), unsure(flat));
-
-    m_out.appendTo(flat);
-    ValueFromBlock flatBase = m_out.anchor(string);
-    ValueFromBlock flatImpl = m_out.anchor(fiber0);
-    ValueFromBlock flatLength = m_out.anchor(m_out.load32NonNegative(fiber0, m_heaps.StringImpl_length));
-    ValueFromBlock flatOffset = m_out.anchor(m_out.int32Zero);
-    m_out.jump(continuation);
-
-    m_out.appendTo(rope);
-    orElse(m_out.testNonZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::isSubstringInPointer)), giveUp);
-    LValue fiber1 = m_out.load64(string, m_heaps.JSRopeString_fiber1);
-    LValue fiber2 = m_out.load64(string, m_heaps.JSRopeString_fiber2);
-    LValue base = m_out.bitOr(m_out.lShr(fiber1, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(fiber2, m_out.constInt64(0xffff)), m_out.constInt32(32)));
-    ValueFromBlock sliceBase = m_out.anchor(base);
-    ValueFromBlock sliceImpl = m_out.anchor(m_out.loadPtr(base, m_heaps.JSString_value));
-    ValueFromBlock sliceLength = m_out.anchor(m_out.castToInt32(fiber1));
-    ValueFromBlock sliceOffset = m_out.anchor(m_out.castToInt32(m_out.lShr(fiber2, m_out.constInt32(16))));
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    return { m_out.phi(pointerType(), flatBase, sliceBase), m_out.phi(pointerType(), flatImpl, sliceImpl), m_out.phi(Int32, flatLength, sliceLength), m_out.phi(Int32, flatOffset, sliceOffset) };
-}
-
-LValue Emitter::substringOf(LValue string, const StringParts& pieces, LValue from, LValue to, LBasicBlock giveUp)
-{
-    LBasicBlock emptyCase = m_out.newBlock();
-    LBasicBlock notEmptyCase = m_out.newBlock();
-    LBasicBlock oneCharCase = m_out.newBlock();
-    LBasicBlock is8Bit = m_out.newBlock();
-    LBasicBlock is16Bit = m_out.newBlock();
-    LBasicBlock bitsContinuation = m_out.newBlock();
-    LBasicBlock multiCharCase = m_out.newBlock();
-    LBasicBlock isPartial = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    Vector<ValueFromBlock, 4> results;
-
-    LValue span = m_out.sub(to, from);
-    LValue start = m_out.add(from, pieces.offset);
-    m_out.branch(m_out.lessThanOrEqual(span, m_out.int32Zero), unsure(emptyCase), unsure(notEmptyCase));
-
-    m_out.appendTo(emptyCase);
-    results.append(m_out.anchor(emptyString()));
-    m_out.jump(continuation);
-
-    m_out.appendTo(notEmptyCase);
-    LValue flags = m_out.load32(pieces.impl, m_heaps.StringImpl_hashAndFlags);
-    m_out.branch(m_out.equal(span, m_out.int32One), unsure(oneCharCase), unsure(multiCharCase));
-
-    m_out.appendTo(oneCharCase);
-    LValue storage = m_out.loadPtr(pieces.impl, m_heaps.StringImpl_data);
-    m_out.branch(m_out.testIsZero32(flags, m_out.constInt32(StringImpl::flagIs8Bit())), unsure(is16Bit), unsure(is8Bit));
-
-    m_out.appendTo(is8Bit);
-    ValueFromBlock char8Bit = m_out.anchor(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, storage, m_out.zeroExtPtr(start))));
-    m_out.jump(bitsContinuation);
-
-    m_out.appendTo(is16Bit);
-    LValue char16BitValue = m_out.load16ZeroExt32(m_out.baseIndex(m_heaps.characters16, storage, m_out.zeroExtPtr(start)));
-    ValueFromBlock char16Bit = m_out.anchor(char16BitValue);
-    m_out.branch(m_out.above(char16BitValue, m_out.constInt32(maxSingleCharacterString)), rarely(giveUp), usually(bitsContinuation));
-
-    m_out.appendTo(bitsContinuation);
-    results.append(m_out.anchor(singleCharacterString(m_out.phi(Int32, char8Bit, char16Bit))));
-    m_out.jump(continuation);
-
-    m_out.appendTo(multiCharCase);
-    results.append(m_out.anchor(string));
-    m_out.branch(m_out.equal(span, pieces.length), unsure(continuation), unsure(isPartial));
-
-    m_out.appendTo(isPartial);
-    orElse(m_out.notEqual(span, m_out.constInt32(2)), giveUp);
-    LValue rope = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), giveUp);
-    storeHeader(rope, fixed64(Instance::offsetOfStringHeader()));
-    LValue baseIs8BitFlag = m_out.bitAnd(flags, m_out.constInt32(StringImpl::flagIs8Bit()));
-    static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
-    m_out.storePtr(m_out.bitOr(m_out.constIntPtr(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), m_out.zeroExtPtr(baseIs8BitFlag)), rope, m_heaps.JSRopeString_fiber0);
-    m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(span), m_out.shl(pieces.base, m_out.constInt32(32))), rope, m_heaps.JSRopeString_fiber1);
-    m_out.storePtr(m_out.bitOr(m_out.lShr(pieces.base, m_out.constInt32(32)), m_out.shl(m_out.zeroExtPtr(start), m_out.constInt32(16))), rope, m_heaps.JSRopeString_fiber2);
-    mutatorFence();
-    results.append(m_out.anchor(rope));
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    return m_out.phi(pointerType(), results);
-}
-
-LValue Emitter::stringSlice(LValue string, LValue start, LValue end, LBasicBlock giveUp)
-{
-    StringParts pieces = stringParts(string, giveUp);
-    LValue length = pieces.length;
-    auto pickIndex = [&](LValue index) {
-        return m_out.select(m_out.greaterThanOrEqual(index, m_out.int32Zero),
-            m_out.select(m_out.above(index, length), length, index),
-            m_out.select(m_out.lessThan(m_out.add(length, index), m_out.int32Zero), m_out.int32Zero, m_out.add(length, index)));
-    };
-    return substringOf(string, pieces, pickIndex(start), pickIndex(end), giveUp);
-}
-
-LValue Emitter::stringSubstring(LValue string, LValue start, LValue end, LBasicBlock giveUp)
-{
-    StringParts pieces = stringParts(string, giveUp);
-    LValue length = pieces.length;
-    auto clampIndex = [&](LValue index) {
-        return m_out.select(m_out.lessThan(index, m_out.int32Zero), m_out.int32Zero, m_out.select(m_out.greaterThan(index, length), length, index));
-    };
-    LValue isReversed = m_out.greaterThan(start, end);
-    return substringOf(string, pieces, clampIndex(m_out.select(isReversed, end, start)), clampIndex(m_out.select(isReversed, start, end)), giveUp);
+    return m_out.loadPtr(m_out.baseIndex(m_heaps.singleCharacterStrings, loadImmutablePointer(Instance::offsetOfSingleCharacterStrings()), m_out.zeroExtPtr(character)));
 }
 
 LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock giveUp)
@@ -551,7 +349,7 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
         flags = m_out.bitAnd(flags, thirdInfo.flags);
         utf16Length = m_out.add(utf16Length, m_out.zeroExtPtr(thirdInfo.length));
     }
-    orElse(m_out.belowOrEqual(utf16Length, m_out.constIntPtr(JSString::MaxLength)), giveUp);
+    branchUnless(m_out.belowOrEqual(utf16Length, m_out.constIntPtr(JSString::MaxLength)), giveUp);
     LValue length = m_out.castToInt32(utf16Length);
 
     LBasicBlock make = m_out.newBlock();
@@ -570,7 +368,7 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
     }
 
     m_out.appendTo(make);
-    LValue result = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), giveUp);
+    LValue result = allocateHeapCell(loadImmutablePointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), giveUp);
     storeHeader(result, fixed64(Instance::offsetOfStringHeader()));
     m_out.storePtr(m_out.bitOr(m_out.bitOr(first, m_out.constIntPtr(JSString::isRopeInPointer)), m_out.bitAnd(m_out.constIntPtr(JSRopeString::is8BitInPointer), m_out.zeroExtPtr(flags))), result, m_heaps.JSRopeString_fiber0);
     m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(length), m_out.shl(second, m_out.constInt32(32))), result, m_heaps.JSRopeString_fiber1);
@@ -594,7 +392,7 @@ LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
     m_out.branch(m_out.below(value, m_out.constInt32(NumericStrings::cacheSize)), unsure(smallIntCase), unsure(intCacheCase));
 
     m_out.appendTo(smallIntCase);
-    LValue smallIntString = m_out.loadPtr(m_out.baseIndex(m_heaps.SmallIntCache, fixedPointer(Instance::offsetOfSmallIntStrings()), m_out.zeroExtPtr(value), JSValue(), NumericStrings::StringWithJSString::offsetOfJSString()));
+    LValue smallIntString = m_out.loadPtr(m_out.baseIndex(m_heaps.SmallIntCache, loadImmutablePointer(Instance::offsetOfSmallIntStrings()), m_out.zeroExtPtr(value), JSValue(), NumericStrings::StringWithJSString::offsetOfJSString()));
     ValueFromBlock smallIntResult = m_out.anchor(smallIntString);
     m_out.branch(m_out.isNull(smallIntString), unsure(giveUp), unsure(continuation));
 
@@ -604,10 +402,10 @@ LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
     LValue second = m_out.bitXor(wide, fixed64(Instance::offsetOfHashSecrets() + sizeof(uint64_t)));
     LValue hash = m_out.castToInt32(m_out.bitXor(m_out.mul(first, second), m_out.uMulHigh(first, second)));
     LValue index = m_out.zeroExtPtr(m_out.bitAnd(hash, m_out.constInt32(NumericStrings::cacheSize - 1)));
-    LValue cache = fixedPointer(Instance::offsetOfIntStrings());
+    LValue cache = loadImmutablePointer(Instance::offsetOfIntStrings());
     LValue key = m_out.load32(m_out.baseIndex(m_heaps.IntCache, cache, index, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfKey()));
     LValue cachedString = m_out.loadPtr(m_out.baseIndex(m_heaps.IntCache, cache, index, JSValue(), NumericStrings::CacheEntryWithJSString<int>::offsetOfJSString()));
-    orElse(m_out.equal(key, value), giveUp);
+    branchUnless(m_out.equal(key, value), giveUp);
     ValueFromBlock intCacheResult = m_out.anchor(cachedString);
     m_out.branch(m_out.isNull(cachedString), unsure(giveUp), unsure(continuation));
 
@@ -627,7 +425,7 @@ LValue Emitter::stringOrInt32ToString(LValue value, LBasicBlock giveUp)
     m_out.branch(isCellOfType(value, StringType), usually(continuation), rarely(giveUp));
 
     m_out.appendTo(notCellCase);
-    orElse(isInt32(value), giveUp);
+    branchUnless(isInt32(value), giveUp);
     ValueFromBlock converted = m_out.anchor(int32ToString(unboxInt32(value), giveUp));
     m_out.jump(continuation);
 
@@ -637,51 +435,9 @@ LValue Emitter::stringOrInt32ToString(LValue value, LBasicBlock giveUp)
 
 LValue Emitter::addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp)
 {
-    orElse(m_out.bitOr(isCell(first), isCell(second)), giveUp);
+    branchUnless(m_out.bitOr(isCell(first), isCell(second)), giveUp);
     LValue firstString = stringOrInt32ToString(first, giveUp);
     return makeRope(firstString, stringOrInt32ToString(second, giveUp), nullptr, giveUp);
-}
-
-LValue Emitter::concatenate(LValue values, LValue count, LBasicBlock giveUp)
-{
-    auto at = [&](unsigned i) {
-        return stringOrInt32ToString(m_out.load64(m_out.baseIndex(m_heaps.variables, values, m_out.constIntPtr(i))), giveUp);
-    };
-    orElse(m_out.below(m_out.sub(count, m_out.constInt32(2)), m_out.constInt32(4)), giveUp);
-    LBasicBlock twoCase = m_out.newBlock();
-    LBasicBlock atLeastThreeCase = m_out.newBlock();
-    LBasicBlock atLeastFourCase = m_out.newBlock();
-    LBasicBlock fourCase = m_out.newBlock();
-    LBasicBlock fiveCase = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    Vector<ValueFromBlock, 4> results;
-    LValue first = at(0);
-    LValue second = at(1);
-    m_out.branch(m_out.equal(count, m_out.constInt32(2)), unsure(twoCase), unsure(atLeastThreeCase));
-
-    m_out.appendTo(twoCase);
-    results.append(m_out.anchor(makeRope(first, second, nullptr, giveUp)));
-    m_out.jump(continuation);
-
-    m_out.appendTo(atLeastThreeCase);
-    LValue firstThree = makeRope(first, second, at(2), giveUp);
-    results.append(m_out.anchor(firstThree));
-    m_out.branch(m_out.equal(count, m_out.constInt32(3)), unsure(continuation), unsure(atLeastFourCase));
-
-    m_out.appendTo(atLeastFourCase);
-    LValue fourth = at(3);
-    m_out.branch(m_out.equal(count, m_out.constInt32(4)), unsure(fourCase), unsure(fiveCase));
-
-    m_out.appendTo(fourCase);
-    results.append(m_out.anchor(makeRope(firstThree, fourth, nullptr, giveUp)));
-    m_out.jump(continuation);
-
-    m_out.appendTo(fiveCase);
-    results.append(m_out.anchor(makeRope(firstThree, fourth, at(4), giveUp)));
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    return m_out.phi(pointerType(), results);
 }
 
 namespace {
@@ -705,16 +461,9 @@ public:
         LValue arguments[4];
         for (unsigned i = 0; i < std::size(arguments); ++i)
             arguments[i] = registerOnEntry(GPRInfo::toArgumentRegister(i));
-        auto int32At = [&](unsigned i) { return m_out.castToInt32(arguments[i]); };
 
         LValue result = nullptr;
         switch (stub) {
-        case Stub::HelperNewArray:
-            result = newArrayFromValues(arguments[0], int32At(1), false, giveUp);
-            break;
-        case Stub::HelperNewInt32Array:
-            result = newArrayFromValues(arguments[0], int32At(1), true, giveUp);
-            break;
         case Stub::HelperAddStrings:
             result = addStringsOrInt32s(arguments[0], arguments[1], giveUp);
             break;
@@ -835,24 +584,9 @@ LValue Emitter::registerOnEntry(Reg reg)
     return m_out.m_block->appendNew<ArgumentRegValue>(m_proc, Origin(), reg);
 }
 
-LValue Emitter::structureOf(LValue cell)
+LValue Emitter::loadStructure(LValue cell)
 {
-    return structureWithID(m_out.load32(cell, m_heaps.JSCell_structureID));
-}
-
-LValue Emitter::entry(Entry which)
-{
-    if (!m_table) {
-        auto& atHead = m_proc.at(0)->values();
-        size_t afterInstance = atHead.find(m_instance) + 1;
-        RELEASE_ASSERT(afterInstance);
-        m_table = m_proc.add<MemoryValue>(B3::Load, B3::pointerType(), Origin(), m_instance, static_cast<int32_t>(m_heaps.AOTInstance_runtimeTable.offset()));
-        m_heaps.decorateMemory(&m_heaps.AOTInstance_runtimeTable, m_table);
-        atHead.insert(afterInstance, m_table);
-    }
-    LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[offsetInTable(which) / sizeof(void*)]));
-    static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
-    return result;
+    return decodeStructureID(m_out.load32(cell, m_heaps.JSCell_structureID));
 }
 
 LValue Emitter::numberToDouble(LValue value)

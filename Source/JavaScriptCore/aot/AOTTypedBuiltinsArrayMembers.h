@@ -4,8 +4,8 @@
  */
 
     IndexingType indexingTypeAtCreation(const Type& array) const;
-    static int64_t holeIn(IndexingType);
-    const B3::AbstractHeap& elementsOf(IndexingType);
+    static int64_t holeValueFor(IndexingType);
+    const B3::AbstractHeap& elementHeapFor(IndexingType);
     LValue allocateStorage(LValue size, LBasicBlock slowPath);
     CellPointer allocateArrayWithHoles(Integer length, IndexingType, LBasicBlock slowPath, bool isUnderConstruction = false);
     IndexingType literalIndexingType(const Arguments& elements, const Type&) const;

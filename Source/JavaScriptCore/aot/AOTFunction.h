@@ -84,7 +84,6 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& scratchHandler) const;
     JS_EXPORT_PRIVATE void* catchEntrypointAddress(unsigned bytecodeOffset) const;
-    const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
 
     JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const;
@@ -284,7 +283,7 @@ struct ReturnAddressTrace {
     std::span<const uint32_t> returnAddresses() const { return { reinterpret_cast<const uint32_t*>(this + 1), numberOfReturnAddresses }; }
     static constexpr uint32_t isConstructedRoot = 1u << 31;
     static uint32_t keep(const void* address, uintptr_t imageCodeStart) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(address) - imageCodeStart); }
-    static const void* addressOf(uint32_t kept, uintptr_t imageCodeStart) { return std::bit_cast<const void*>(imageCodeStart + (kept & ~isConstructedRoot)); }
+    static const void* addressOf(uint32_t encodedOffset, uintptr_t imageCodeStart) { return std::bit_cast<const void*>(imageCodeStart + (encodedOffset & ~isConstructedRoot)); }
 };
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
 void writePerfMap();

@@ -72,10 +72,10 @@
     void appendNumber(JSONOutput&, Number);
     void appendBoolean(JSONOutput&, Word32);
     void appendString(JSONOutput&, CellPointer);
-    void appendDate(JSONOutput&, CellPointer, const EngineClass&, JSONPosition, JSONExit& nothing);
+    void appendDate(JSONOutput&, CellPointer, const BuiltinClass&, JSONPosition, JSONExit& nothing);
     void appendGeneric(JSONOutput&, Boxed, JSONPosition, JSONExit& nothing);
     void appendNullishOrOmit(JSONOutput&, Word32 isNull, const Type&, JSONPosition, JSONExit& nothing, JSONExit& continuation);
-    void appendCell(JSONOutput&, CellPointer, const Type&, bool typeIsFact, unsigned depth, JSONPosition, JSONExit& nothing);
+    void appendCell(JSONOutput&, CellPointer, const Type&, bool typeIsProven, unsigned depth, JSONPosition, JSONExit& nothing);
     void appendBySerializer(JSONOutput&, CellPointer, FunctionID);
     void appendObjectOutOfLine(JSONOutput&, CellPointer, const Type&, JSONPosition, JSONExit& nothing);
     void appendObject(JSONOutput&, CellPointer, const Type&, unsigned depth, JSONPosition, JSONExit& nothing);
@@ -83,7 +83,7 @@
     Operand lowerAppendJSON(const Value&);
     void appendField(JSONOutput&, CellPointer, const Field&, unsigned depth, JSONExit& nothing);
     void appendArray(JSONOutput&, CellPointer, const Type&, unsigned depth, JSONPosition, JSONExit& nothing);
-    void appendValue(JSONOutput&, Operand, const Type&, bool typeIsFact, unsigned depth, JSONPosition, JSONExit& nothing);
+    void appendValue(JSONOutput&, Operand, const Type&, bool typeIsProven, unsigned depth, JSONPosition, JSONExit& nothing);
     bool appendArgument(JSONOutput&, ValueID);
     Operand lowerJSONStringify(ValueID result, const Value&);
     Operand lowerResponseJSON(ValueID result, const Value&);

@@ -185,13 +185,13 @@ public:
             for (auto& block : function.blocks) {
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
-                    Arguments kept;
+                    Arguments remainingArguments;
                     for (unsigned i = 0; i < target.arguments.size(); ++i) {
                         if (!isRemoved.get(parameters[i].index()))
-                            kept.append(target.arguments[i]);
+                            remainingArguments.append(target.arguments[i]);
                     }
-                    if (kept.size() != target.arguments.size())
-                        target.arguments = WTF::move(kept);
+                    if (remainingArguments.size() != target.arguments.size())
+                        target.arguments = WTF::move(remainingArguments);
                 }
             }
             for (unsigned b = 1; b < function.blocks.size(); ++b) {
@@ -257,7 +257,7 @@ public:
             while (begin && sites[begin - 1].block == sites[end - 1].block)
                 --begin;
             auto& block = function.blocks[sites[begin].block];
-            uint64_t place = block.values.size();
+            uint64_t indexInBlock = block.values.size();
             uint32_t ordinal = 0;
             auto use = [&](ValueID used) {
                 uint32_t number = ordinal++;
@@ -265,9 +265,9 @@ public:
                     return;
                 if (!isLive.set(used.index()))
                     live.append(used);
-                else if (firstUse[used.index()] >> 32 == place)
+                else if (firstUse[used.index()] >> 32 == indexInBlock)
                     return;
-                firstUse[used.index()] = place << 32 | number;
+                firstUse[used.index()] = indexInBlock << 32 | number;
             };
             use(block.terminator.value);
             for (auto& target : block.terminator.targets) {
@@ -277,26 +277,26 @@ public:
                     use(ValueID(atHead));
             }
             size_t site = end;
-            while (place-- > sites[begin].index) {
-                ValueID id = block.values[place];
+            while (indexInBlock-- > sites[begin].index) {
+                ValueID id = block.values[indexInBlock];
                 isLive.clear(id.index());
-                if (site > begin && sites[site - 1].index == place) {
+                if (site > begin && sites[site - 1].index == indexInBlock) {
                     --site;
-                    Arguments kept = function.at(id).arguments;
-                    kept.shrink(2);
+                    Arguments newArguments = function.at(id).arguments;
+                    newArguments.shrink(2);
                     live.removeAllMatching([&](ValueID one) {
                         return !isLive.get(one.index());
                     });
                     listed.shrink(0);
                     for (ValueID one : live) {
-                        if (one != kept[1] && program.at(function.at(one).type).hasCells() && !isAlwaysRematerialized(program, function.at(one)))
+                        if (one != newArguments[1] && program.at(function.at(one).type).hasCells() && !isAlwaysRematerialized(program, function.at(one)))
                             listed.append(one);
                     }
                     std::ranges::sort(listed, { }, [&](ValueID one) {
                         return firstUse[one.index()];
                     });
-                    kept.appendVector(listed);
-                    retainedAt[site] = WTF::move(kept);
+                    newArguments.appendVector(listed);
+                    retainedAt[site] = WTF::move(newArguments);
                 }
                 ordinal = 0;
                 std::as_const(function.at(id)).forEachChild(use);
@@ -413,7 +413,7 @@ public:
         m_frameLayout = m_numbers.frameLayout;
         m_frameType = m_numbers.frameType;
         m_resumeModeType = m_numbers.resumeModeType;
-        m_driverType = m_numbers.driverType;
+        m_coroutineObjectType = m_numbers.driverType;
         m_resumeFunctionResultType = m_program.types.anything;
         m_resume = m_numbers.resume;
         auto& fields = m_program.at(m_frameLayout).fields;
@@ -430,8 +430,6 @@ public:
         m_body.values = WTF::move(body.values);
         m_body.inlineFrames = WTF::move(body.inlineFrames);
         m_body.allocations = WTF::move(body.allocations);
-        m_body.allocationNotes = WTF::move(body.allocationNotes);
-        m_body.allocationNoteIndices = WTF::move(body.allocationNoteIndices);
         m_body.cleanUpMovedStores = body.cleanUpMovedStores;
         createDispatchBlock();
         RELEASE_ASSERT(m_argumentTypes == argumentTypes);
@@ -586,7 +584,7 @@ private:
         m_frameLayout = m_numbers.frameLayout;
         m_frameType = m_numbers.frameType;
         m_resumeModeType = m_numbers.resumeModeType;
-        m_driverType = m_numbers.driverType;
+        m_coroutineObjectType = m_numbers.driverType;
         m_resumeFunctionResultType = m_isGenerator ? types.anything : types.undefined;
 
         Layout layout;
@@ -597,13 +595,13 @@ private:
         m_program.at(m_frameLayout) = WTF::move(layout);
         static_assert(!CoroutineFrame::stateField);
         RELEASE_ASSERT(addFrameField("state"_s, types.int32) == CoroutineFrame::stateField);
-        RELEASE_ASSERT(addFrameField("promise"_s, m_driverType, fieldIsImmutable) == CoroutineFrame::promiseField);
+        RELEASE_ASSERT(addFrameField("promise"_s, m_coroutineObjectType, fieldIsImmutable) == CoroutineFrame::promiseField);
         RELEASE_ASSERT(addFrameField("resumeClosure"_s, types.function, fieldIsImmutable) == CoroutineFrame::resumeClosureField);
     }
 
-    static uint32_t flagsForSplitFunction(const Function& ramp, uint32_t kept)
+    static uint32_t flagsForSplitFunction(const Function& ramp, uint32_t inheritedFlags)
     {
-        return (ramp.flags & (kept | Format::FunctionIsModuleBody | Format::FunctionIsSloppy)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsPartOfHiddenCoroutine : 0)
+        return (ramp.flags & (inheritedFlags | Format::FunctionIsModuleBody | Format::FunctionIsSloppy)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsPartOfHiddenCoroutine : 0)
             | (ramp.has(Format::FunctionIsAsync) && !ramp.has(Format::FunctionIsGenerator) ? FunctionIsPartOfAsyncFunction : 0);
     }
 
@@ -741,7 +739,7 @@ private:
     void keepBodyUnsplit()
     {
         auto& ramp = m_program.at(m_ramp);
-        m_driverType = m_numbers.driverType;
+        m_coroutineObjectType = m_numbers.driverType;
         auto& function = m_startBody;
         function.name = ramp.name;
         function.module = ramp.module;
@@ -774,8 +772,8 @@ private:
             ValueID argument = addParameter(function, entry, type);
             function.at(entry).terminator.targets[0].arguments.append(argument);
         }
-        function.parameterTypes.append(m_driverType);
-        ValueID promise = addParameter(function, entry, m_driverType);
+        function.parameterTypes.append(m_coroutineObjectType);
+        ValueID promise = addParameter(function, entry, m_coroutineObjectType);
         for (ValueID argument : CompactList<ValueID>(function.at(first).parameters))
             function.at(argument).immediates[0] = first.index();
 
@@ -794,12 +792,12 @@ private:
             ValueID resumedValue = suspension;
             if (isHeld) {
                 resumedValue = addValue(function, WTF::move(awaited));
-                Value held = cast(resumedValue, original.type, CastReason::Claim);
-                held.immediates[1] |= Value::castChecksAwaitResult;
-                held.position = m_position;
-                held.setAssertedType(original.assertedType());
-                held.copyPredictionFrom(original);
-                function.at(suspension) = WTF::move(held);
+                Value resultCast = cast(resumedValue, original.type, CastReason::Claim);
+                resultCast.immediates[1] |= Value::castChecksAwaitResult;
+                resultCast.position = m_position;
+                resultCast.setAssertedType(original.assertedType());
+                resultCast.copyPredictionFrom(original);
+                function.at(suspension) = WTF::move(resultCast);
             } else {
                 awaited.position = m_position;
                 awaited.copyPredictionFrom(original);
@@ -966,12 +964,12 @@ private:
                 returnedValue = addParameter(m_body, mergeBlock, m_program.types.anything);
             }
             if (isHeld) {
-                Value held = cast(returnedValue, type, CastReason::Claim);
+                Value resultCast = cast(returnedValue, type, CastReason::Claim);
                 if (!isYield)
-                    held.immediates[1] |= Value::castChecksAwaitResult;
-                held.setAssertedType(original.assertedType());
-                held.copyPredictionFrom(original);
-                returnedValue = append(m_body, from, WTF::move(held));
+                    resultCast.immediates[1] |= Value::castChecksAwaitResult;
+                resultCast.setAssertedType(original.assertedType());
+                resultCast.copyPredictionFrom(original);
+                returnedValue = append(m_body, from, WTF::move(resultCast));
             }
             auto& terminator = m_body.at(from).terminator;
             terminator.kind = isHeld && handler ? TerminatorKind::Invoke : TerminatorKind::Jump;
@@ -1071,7 +1069,7 @@ private:
             }
             Value read = getField(m_frame, CoroutineFrame::promiseField);
             if (isReachedByFirstActivation.get(b))
-                read.setPrediction(m_driverType);
+                read.setPrediction(m_coroutineObjectType);
             ValueID promise = append(m_body, block, WTF::move(read));
             append(m_body, block, operation(Operations::ResolvePromise, m_program.types.undefined, { promise, result }));
             m_body.at(block).terminator.value = append(m_body, block, undefined());
@@ -1343,7 +1341,7 @@ private:
         }
     }
 
-    ValueID definitionAtHead(Definitions& definitions, BlockID asked)
+    ValueID definitionAtHead(Definitions& definitions, BlockID requestedBlock)
     {
         struct Pending {
             BlockID block;
@@ -1351,11 +1349,11 @@ private:
             unsigned answered { 0 };
         };
         Vector<Pending, 32> pending;
-        ValueID answer;
+        ValueID definition;
         auto lookupAtHead = [&](BlockID block) {
             auto found = definitions.atHead.find(block.index());
             if (found != definitions.atHead.end()) {
-                answer = found->value;
+                definition = found->value;
                 return true;
             }
             auto& predecessors = m_predecessors[block.index()];
@@ -1377,13 +1375,13 @@ private:
         auto lookupAtTail = [&](BlockID block) {
             auto found = definitions.atTail.find(block.index());
             if (found != definitions.atTail.end()) {
-                answer = found->value;
+                definition = found->value;
                 return true;
             }
             return lookupAtHead(block);
         };
-        if (lookupAtHead(asked))
-            return answer;
+        if (lookupAtHead(requestedBlock))
+            return definition;
         bool isAnswered = false;
         while (!pending.isEmpty()) {
             BlockID block = pending.last().block;
@@ -1394,7 +1392,7 @@ private:
                 if (phi) {
                     for (auto& target : m_body.at(predecessors[index]).terminator.targets) {
                         if (target.block == block)
-                            target.arguments.append(answer);
+                            target.arguments.append(definition);
                     }
                 }
             }
@@ -1403,13 +1401,13 @@ private:
                 continue;
             }
             if (phi)
-                answer = phi;
+                definition = phi;
             else
-                definitions.atHead.add(block.index(), answer);
+                definitions.atHead.add(block.index(), definition);
             pending.removeLast();
             isAnswered = true;
         }
-        return answer;
+        return definition;
     }
 
     struct Use {
@@ -1767,8 +1765,8 @@ private:
             if (before < 3)
                 continue;
             before += asBefore.clearsAtHead.bitCount() + asBefore.clearsAtTail.bitCount();
-            ReloadPlan kept = planReloads(defining, field, variableUses, true, holdsCells, liveResumeBlocks);
-            unsigned inField = !!defining + kept.reloadBlocks.bitCount() + kept.clearsAtHead.bitCount() + kept.clearsAtTail.bitCount();
+            ReloadPlan fieldResidentPlan = planReloads(defining, field, variableUses, true, holdsCells, liveResumeBlocks);
+            unsigned inField = !!defining + fieldResidentPlan.reloadBlocks.bitCount() + fieldResidentPlan.clearsAtHead.bitCount() + fieldResidentPlan.clearsAtTail.bitCount();
             if (holdsCells && defining) {
                 auto nonRareCount = [&](const BitVector& blocks) {
                     unsigned result = 0;
@@ -1780,7 +1778,7 @@ private:
                 for (unsigned k : pointsCrossedBy.find(index)->value)
                     parks += !isRare.get(m_suspensionPoints[k].suspendBlock.index());
                 unsigned clearsOnBothPaths = nonRareCount(asBefore.clearsAtHead) + nonRareCount(asBefore.clearsAtTail);
-                unsigned clears = nonRareCount(kept.clearsAtHead) + nonRareCount(kept.clearsAtTail);
+                unsigned clears = nonRareCount(fieldResidentPlan.clearsAtHead) + nonRareCount(fieldResidentPlan.clearsAtTail);
                 unsigned paid = (isRare.get(defining.index()) ? 0 : storeAtCreationCost) + (clears > clearsOnBothPaths ? clears - clearsOnBothPaths : 0);
                 if (parks * parkSavings <= paid) {
                     for (unsigned k : pointsCrossedBy.find(index)->value)
@@ -1827,12 +1825,12 @@ private:
         }
         for (unsigned i : plan.spillsToRemove)
             m_body.at(uses[i].block).values.removeFirst(uses[i].user);
-        unsigned kept = 0;
+        unsigned targetIndex = 0;
         for (unsigned i = 0; i < uses.size(); ++i) {
             if (!plan.spillsToRemove.get(i))
-                uses[kept++] = uses[i];
+                uses[targetIndex++] = uses[i];
         }
-        uses.shrink(kept);
+        uses.shrink(targetIndex);
 
         for (unsigned b : plan.reloadBlocks) {
             RELEASE_ASSERT(plan.isLiveAtHead.get(b));
@@ -1894,8 +1892,8 @@ private:
             ValueID argument = addParameter(function, entry, type);
             function.at(entry).terminator.targets[0].arguments.append(argument);
         }
-        function.parameterTypes.append(m_driverType);
-        ValueID promise = addParameter(function, entry, m_driverType);
+        function.parameterTypes.append(m_coroutineObjectType);
+        ValueID promise = addParameter(function, entry, m_coroutineObjectType);
         auto arguments = function.at(first).parameters;
         for (ValueID argument : arguments)
             function.at(argument).immediates[0] = first.index();
@@ -1984,10 +1982,10 @@ private:
 
     void returnFrom(Function& ramp, BlockID block, ValueID driver)
     {
-        if (ramp.resultType && !m_program.at(m_driverType).isSubsetOf(m_program.at(ramp.resultType), m_program))
+        if (ramp.resultType && !m_program.at(m_coroutineObjectType).isSubsetOf(m_program.at(ramp.resultType), m_program))
             driver = append(ramp, block, cast(driver, ramp.resultType, CastReason::Store));
         else
-            ramp.resultType = m_driverType;
+            ramp.resultType = m_coroutineObjectType;
         ramp.at(block).terminator.kind = TerminatorKind::Return;
         ramp.at(block).terminator.value = driver;
     }
@@ -2002,7 +2000,7 @@ private:
             arguments.append(addParameter(ramp, entry, type));
 
         if (m_hasStartFunction) {
-            ValueID promise = append(ramp, entry, operation(Operations::NewPromise, m_driverType, { }));
+            ValueID promise = append(ramp, entry, operation(Operations::NewPromise, m_coroutineObjectType, { }));
             Value start = typed(Opcode::CallDirect, m_program.types.undefined);
             start.immediates[0] = ramp.startFunction.index();
             start.arguments.appendVector(arguments);
@@ -2014,7 +2012,7 @@ private:
 
         ValueID promise;
         if (!m_isGenerator)
-            promise = append(ramp, entry, operation(Operations::NewPromise, m_driverType, { }));
+            promise = append(ramp, entry, operation(Operations::NewPromise, m_coroutineObjectType, { }));
         ValueID notStarted = append(ramp, entry, integer(0, m_program.types.int32));
         Value allocation = typed(Opcode::NewObjectWithShape, m_frameType);
         allocation.immediates[0] = m_frameLayout.index();
@@ -2037,7 +2035,7 @@ private:
             return;
         }
 
-        ValueID generator = append(ramp, entry, operation(m_isAsync ? Operations::NewAsyncGenerator : Operations::NewGenerator, m_driverType, { resumeClosure }));
+        ValueID generator = append(ramp, entry, operation(m_isAsync ? Operations::NewAsyncGenerator : Operations::NewGenerator, m_coroutineObjectType, { resumeClosure }));
         if (m_isAsync)
             append(ramp, entry, putField(frame, CoroutineFrame::promiseField, generator));
         if (m_startsEagerly && m_isAsync)
@@ -2059,7 +2057,7 @@ private:
     LayoutID m_frameLayout;
     TypeID m_frameType;
     TypeID m_resumeModeType;
-    TypeID m_driverType;
+    TypeID m_coroutineObjectType;
     TypeID m_resumeFunctionResultType;
     Vector<TypeID> m_argumentTypes;
     Vector<ValueID> m_arguments;
@@ -2171,13 +2169,13 @@ static ValueID removablePromiseOf(const Function& function)
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             auto& user = function.at(id);
-            unsigned place = isInlineBuiltin(user, InlineBuiltin::AwaitBySavingFrame) ? 1 : isLanguageOperation(user, LanguageOperation::ResolvePromise) && id == block.values.last() && endsFunction(block) ? 0 : UINT_MAX;
+            unsigned promiseArgumentIndex = isInlineBuiltin(user, InlineBuiltin::AwaitBySavingFrame) ? 1 : isLanguageOperation(user, LanguageOperation::ResolvePromise) && id == block.values.last() && endsFunction(block) ? 0 : UINT_MAX;
             for (ValueID child : user.children) {
                 if (child == promise)
                     return { };
             }
             for (unsigned i = 0; i < user.arguments.size(); ++i) {
-                if (user.arguments[i] == promise && i != place)
+                if (user.arguments[i] == promise && i != promiseArgumentIndex)
                     return { };
             }
         }
@@ -2239,8 +2237,8 @@ void awaitDirectCallsWithoutPromises(Program& program)
                         continue;
                     callsOfPromiseAll[i].append(id);
                     for (ValueID element : literal.arguments) {
-                        auto& made = function.at(element);
-                        if (made.opcode == Opcode::CallDirect && !made.isJumpToContinuation() && promises[made.function().index()] && useCountOf(element) == 1)
+                        auto& elementValue = function.at(element);
+                        if (elementValue.opcode == Opcode::CallDirect && !elementValue.isJumpToContinuation() && promises[elementValue.function().index()] && useCountOf(element) == 1)
                             awaitedCalls[i].append(element);
                     }
                 }

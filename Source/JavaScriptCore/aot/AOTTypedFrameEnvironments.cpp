@@ -26,10 +26,10 @@ bool isTransparentCast(const Program& program, const Value& value)
         return true;
     if (value.castReason() == CastReason::Coerce && type.anyObject && program.at(value.coercedType()).objectLayouts.isEmpty())
         return true;
-    return !type.anyObject && type.objectLayouts.isEmpty() && type.engineClasses.isEmpty();
+    return !type.anyObject && type.objectLayouts.isEmpty() && type.builtinClasses.isEmpty();
 }
 
-ValueID originOf(const Program& program, const Function& function, ValueID id)
+ValueID underlyingValue(const Program& program, const Function& function, ValueID id)
 {
     while (isTransparentCast(program, function.at(id)))
         id = function.at(id).child(0);
@@ -169,7 +169,7 @@ BitVector blocksInCycles(const Function& function)
 }
 
 template<typename OriginOf, typename IsClosureInFrame>
-bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, unsigned allocationBlock, const OriginOf& originOf, const IsClosureInFrame& isStackAllocatedClosure)
+bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, unsigned allocationBlock, const OriginOf& underlyingValue, const IsClosureInFrame& isStackAllocatedClosure)
 {
     BitVector isAlias(function.values.size());
     isAlias.quickSet(allocationSite.index());
@@ -181,7 +181,7 @@ bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, u
                 auto& value = function.at(id);
                 if (!isStackAllocatedClosure(id) || isAlias.quickGet(id.index()))
                     continue;
-                if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return isAlias.quickGet(originOf(captured).index()); })) {
+                if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return isAlias.quickGet(underlyingValue(captured).index()); })) {
                     isAlias.quickSet(id.index());
                     changed = true;
                 }
@@ -189,7 +189,7 @@ bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, u
             for (auto& target : block.terminator.targets) {
                 auto& parameters = function.at(target.block).parameters;
                 for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                    if (isAlias.quickGet(originOf(target.arguments[k]).index()) && !isAlias.quickSet(parameters[k].index())) {
+                    if (isAlias.quickGet(underlyingValue(target.arguments[k]).index()) && !isAlias.quickSet(parameters[k].index())) {
                         aliases.append({ parameters[k], target.block.index() });
                         changed = true;
                     }
@@ -203,7 +203,7 @@ bool mayOutliveLoopIteration(const Function& function, ValueID allocationSite, u
         auto isUsedIn = [&, alias = alias](const Block& block) {
             bool result = false;
             auto use = [&](ValueID id) {
-                result |= originOf(id) == alias;
+                result |= underlyingValue(id) == alias;
             };
             for (ValueID id : block.values)
                 function.at(id).forEachChild(use);
@@ -476,7 +476,7 @@ private:
                     auto& value = m_function.at(id);
                     if (!value.isStackAllocatedClosure() || result.quickGet(id.index()))
                         continue;
-                    if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return result.quickGet(originOf(m_program, m_function, captured).index()); })) {
+                    if (std::ranges::any_of(value.arguments, [&](ValueID captured) { return result.quickGet(underlyingValue(m_program, m_function, captured).index()); })) {
                         result.quickSet(id.index());
                         changed = true;
                     }
@@ -484,7 +484,7 @@ private:
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = m_function.at(target.block).parameters;
                     for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                        if (result.quickGet(originOf(m_program, m_function, target.arguments[k]).index()) && !result.quickSet(parameters[k].index()))
+                        if (result.quickGet(underlyingValue(m_program, m_function, target.arguments[k]).index()) && !result.quickSet(parameters[k].index()))
                             changed = true;
                     }
                 }
@@ -511,7 +511,7 @@ private:
         auto isUsedIn = [&](const Block& block, size_t first) {
             bool result = false;
             auto use = [&](ValueID id) {
-                result |= isAlias.quickGet(originOf(m_program, m_function, id).index());
+                result |= isAlias.quickGet(underlyingValue(m_program, m_function, id).index());
             };
             for (size_t i = first; i < block.values.size(); ++i)
                 m_function.at(block.values[i]).forEachChild(use);
@@ -557,7 +557,7 @@ uint64_t operandsWithOtherUses(const Program& program, const Function& function,
     for (size_t i = 0; i < operands.size(); ++i)
         mayBe[operands[i].index()] |= 1ull << i;
     auto possibleObjectsOf = [&](ValueID id) -> uint64_t {
-        uint64_t result = mayBe[originOf(program, function, id).index()];
+        uint64_t result = mayBe[underlyingValue(program, function, id).index()];
         return result && program.typeOf(function, id).hasObjects() ? result : 0;
     };
     for (bool changed = true; changed;) {
@@ -707,12 +707,12 @@ void findCalledOnlyOperands(Program& program)
             if (!hasOtherUses[i])
                 return;
             auto& function = program.functions.atKeepingValueIndex(i);
-            Vector<Operand, 16> said;
+            Vector<Operand, 16> trackedOperands;
             forEachCalledOnlyOperand(function, [&](ValueID, Operand operand) {
-                said.append(operand);
+                trackedOperands.append(operand);
             });
             for (uint64_t rest = hasOtherUses[i]; rest; rest &= rest - 1) {
-                auto& operand = said[WTF::ctz(rest)];
+                auto& operand = trackedOperands[WTF::ctz(rest)];
                 (operand.isCapture ? function.calledOnlyCaptures : function.calledOnlyParameters).clear(operand.index);
             }
         });
@@ -742,7 +742,7 @@ void verifyCalledOnlyParameters(const Program& program, Vector<String>& findings
                 derivesFromParameter.quickSet(entryParameters[first + k].index());
         }
         auto is = [&](ValueID id) {
-            return derivesFromParameter.quickGet(originOf(program, function, id).index()) && program.typeOf(function, id).hasObjects();
+            return derivesFromParameter.quickGet(underlyingValue(program, function, id).index()) && program.typeOf(function, id).hasObjects();
         };
         for (bool changed = true; changed;) {
             changed = false;
@@ -764,7 +764,7 @@ void verifyCalledOnlyParameters(const Program& program, Vector<String>& findings
                 auto& described = program.modules[module.index()];
                 out.print(String::fromUTF8(program.string(described.displayPath ? described.displayPath : described.path)), ":", location.line, ":", location.column, ": ");
             }
-            out.print("f", i, " ", String::fromUTF8(program.string(function.name)), ": a parameter that is said to be only called comes to ", operation);
+            out.print("f", i, " ", String::fromUTF8(program.string(function.name)), ": a parameter marked as only called is used by ", operation);
             Locker locker { lock };
             findings.append(out.toString());
         };
@@ -844,7 +844,7 @@ void findStackAllocatedClosures(Program& program)
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
                     for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                        ValueID origin = originOf(program, function, target.arguments[k]);
+                        ValueID origin = underlyingValue(program, function, target.arguments[k]);
                         if (!mayAlias.quickGet(origin.index()))
                             continue;
                         flowsThroughPhi.quickSet(origin.index());
@@ -867,11 +867,11 @@ void findStackAllocatedClosures(Program& program)
                 if (isTransparentCast(program, user))
                     continue;
                 user.forEachChild([&](ValueID child) {
-                    ValueID alias = originOf(program, function, child);
+                    ValueID alias = underlyingValue(program, function, child);
                     if (!mayAlias.quickGet(alias.index()) || isEscaping.quickGet(alias.index()))
                         return;
                     auto is = [&](ValueID operand) {
-                        return originOf(program, function, operand) == alias;
+                        return underlyingValue(program, function, operand) == alias;
                     };
                     if (isCandidate.quickGet(id.index()) && isCapturedOnlyToBeCalled(program, user, is)) {
                         captures.append({ alias, id });
@@ -884,11 +884,11 @@ void findStackAllocatedClosures(Program& program)
                 });
             }
             if (block.terminator.value)
-                isEscaping.quickSet(originOf(program, function, block.terminator.value).index());
+                isEscaping.quickSet(underlyingValue(program, function, block.terminator.value).index());
         }
         std::optional<BitVector> inCycles;
         auto originInFunction = [&](ValueID operand) {
-            return originOf(program, function, operand);
+            return underlyingValue(program, function, operand);
         };
         auto canBeStackAllocated = [&](ValueID id) {
             return isCandidate.quickGet(id.index()) && !isEscaping.quickGet(id.index());
@@ -947,7 +947,7 @@ void findStackAllocatedClosures(Program& program)
                 for (auto& target : block.terminator.targets) {
                     auto& parameters = function.at(target.block).parameters;
                     for (unsigned k = 0; k < target.arguments.size(); ++k) {
-                        if (isStackAllocated.quickGet(originOf(program, function, target.arguments[k]).index()) && !isStackAllocated.quickSet(parameters[k].index()))
+                        if (isStackAllocated.quickGet(underlyingValue(program, function, target.arguments[k]).index()) && !isStackAllocated.quickSet(parameters[k].index()))
                             changed = true;
                     }
                 }
@@ -983,7 +983,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
         function.stackAllocatedEnvironments.clearAll();
         BitVector isCapturedByHeapClosure;
         BitVector flowsThroughPhi;
-        auto markEscaped = [&](ValueID id, ASCIILiteral operation, const Value& at) {
+        auto markEscaped = [&](ValueID id) {
             TypeID type = function.at(id).type;
             if (!type)
                 return;
@@ -997,8 +997,8 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
             if (known == No)
                 return;
             for (LayoutID supertype : program.at(type).objectLayouts) {
-                if (!WTF::atomicLoad(&doesEscape[supertype.index()], std::memory_order_relaxed) && !WTF::atomicExchange(&doesEscape[supertype.index()], static_cast<uint8_t>(1), std::memory_order_relaxed) && program.recordsAllocations)
-                    program.environmentHeapReasons.add(supertype.index(), Program::EnvironmentUse { operation, FunctionID(i), at.inlineFrame, at.position });
+                if (!WTF::atomicLoad(&doesEscape[supertype.index()], std::memory_order_relaxed))
+                    WTF::atomicStore(&doesEscape[supertype.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
             }
         };
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
@@ -1006,7 +1006,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 auto markOperandEscaped = [&](ValueID operand) {
-                    markEscaped(operand, nameOf(value.opcode), value);
+                    markEscaped(operand);
                 };
                 switch (value.opcode) {
                 case Opcode::NewObjectWithShape:
@@ -1047,7 +1047,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
                 }
             }
             if (block.terminator.value)
-                markEscaped(block.terminator.value, "Return"_s, function.at(block.terminator.value));
+                markEscaped(block.terminator.value);
             for (auto& target : block.terminator.targets) {
                 for (ValueID argument : target.arguments)
                     flowsThroughPhi.set(argument.index());
@@ -1058,11 +1058,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
             allocationSite.flowsThroughPhi = flowsThroughPhi.get(allocationSite.environment.index());
         }
     };
-    if (program.recordsAllocations) {
-        for (unsigned i = 0; i < program.functions.size(); ++i)
-            scan(i);
-    } else
-        forEachIndexInParallel(program.functions.size(), scan);
+    forEachIndexInParallel(program.functions.size(), scan);
     BitVector escapes(program.layouts.size());
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         if (doesEscape[i])
@@ -1071,8 +1067,8 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
 
     Vector<uint8_t> mayBeStackAllocated(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
     Vector<uint8_t> hasHeapAllocation(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
-    auto say = [](Vector<uint8_t>& said, unsigned index) {
-        WTF::atomicStore(&said[index], static_cast<uint8_t>(1), std::memory_order_relaxed);
+    auto say = [](Vector<uint8_t>& flags, unsigned index) {
+        WTF::atomicStore(&flags[index], static_cast<uint8_t>(1), std::memory_order_relaxed);
     };
     Vector<Vector<ValueID>> materializedIn(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
@@ -1087,7 +1083,7 @@ void findStackAllocatedEnvironments(Program& program, Vector<String>& findings)
                 continue;
             if (!inCycles)
                 inCycles = blocksInCycles(function);
-            bool allocatesOnHeap = inCycles->quickGet(allocationSite.block) && mayOutliveLoopIteration(function, allocationSite.environment, allocationSite.block, [&](ValueID operand) { return originOf(program, function, operand); }, [&](ValueID id) { return function.at(id).isStackAllocatedClosure(); });
+            bool allocatesOnHeap = inCycles->quickGet(allocationSite.block) && mayOutliveLoopIteration(function, allocationSite.environment, allocationSite.block, [&](ValueID operand) { return underlyingValue(program, function, operand); }, [&](ValueID id) { return function.at(id).isStackAllocatedClosure(); });
             if (allocationSite.isCapturedByHeapClosure && !allocatesOnHeap) {
                 if (!allocationSite.flowsThroughPhi && EnvironmentMaterialization(program, function, allocationSite.environment).canRun())
                     materializedIn[i].append(allocationSite.environment);

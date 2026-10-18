@@ -36,7 +36,7 @@ static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
 static constexpr unsigned numberOfAdapters = 9;
-static constexpr unsigned numberOfTargetFindingStubs = 3;
+static constexpr unsigned numberOfTargetFindingStubs = 2;
 static constexpr unsigned maxReturnsIntoHostFunctionFrames = numberOfTargetFindingStubs + 1;
 
 struct ImageHeader {
@@ -83,7 +83,7 @@ struct ImageHeader {
     uint32_t stubsSize;
     uint32_t numberOfStubCopies;
     uint32_t stubCopies[maxStubCopiesPerImage];
-    uint32_t returnsIntoAdapters[numberOfAdapters];
+    uint32_t adapterReturnAddressOffsets[numberOfAdapters];
     uint32_t returnsFromFindingTargets[maxReturnsIntoHostFunctionFrames];
     uint32_t stubOffsets[numberOfStubs];
     uint32_t codeGranuleShift;
@@ -135,7 +135,7 @@ struct CompiledCode {
     Vector<DataInCode> dataInCode;
     uint32_t appendedEntriesStart { std::numeric_limits<uint32_t>::max() };
     CompiledFunctionInfo info;
-    String whyDeclined;
+    String declineReason;
     String bytesByOperation;
     bool mayBeDumped { true };
     bool isRewritten { false };

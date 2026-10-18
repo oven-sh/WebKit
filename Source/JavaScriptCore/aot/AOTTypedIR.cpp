@@ -407,7 +407,7 @@ private:
         case Opcode::CallBuiltin: {
             auto& builtin = Builtins::singleton().at(value.builtin());
             m_out.print(" ", builtin.holder, builtin.holder.isEmpty() ? "" : ".", builtin.name, "#", value.builtin().index());
-            if (value.builtin() == Builtins::singleton().hasOriginalStructureOperation() && value.engineClass() != Format::none)
+            if (value.builtin() == Builtins::singleton().originalStructureCheckOperation() && value.engineClass() != Format::none)
                 m_out.print(" ", Builtins::singleton().classes()[value.engineClass()].text);
             if (value.receiverHasOriginalStructure)
                 m_out.print(" original structure");
@@ -653,7 +653,7 @@ void Program::dump(PrintStream& out, const Type& type) const
         text(at(id).name);
         out.print(".", id.index());
     }
-    for (uint16_t index : type.engineClasses) {
+    for (uint16_t index : type.builtinClasses) {
         out.print(bar, Builtins::singleton().classes()[index].text);
         if (type.elements && index == Builtins::singleton().arrayClass().index) {
             out.print("<");
@@ -666,12 +666,6 @@ void Program::dump(PrintStream& out, const Type& type) const
     }
     if (type.isNever())
         out.print("never");
-}
-
-void Functions::buildValueIndex()
-{
-    m_isIndexed.clear();
-    rebuildInvalidatedValueIndex();
 }
 
 void Functions::rebuildInvalidatedValueIndex()

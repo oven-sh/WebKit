@@ -135,13 +135,13 @@ struct FunctionForImage {
     Vector<std::pair<uint32_t, uint32_t>> calls;
     Vector<uint32_t> callsToThrowStub;
     SavedRegistersInImage savedRegisters { 0, 0, 0 };
-    String whyDeclined;
+    String declineReason;
 };
 
 static void compileFunction(Module& module, CalleeGroup& group, const ModuleInformation& info, MemoryMode mode, FunctionCodeIndex functionIndex, FunctionForImage& result)
 {
     if (info.usesExceptions(functionIndex)) {
-        result.whyDeclined = "it throws or catches exceptions"_s;
+        result.declineReason = "it throws or catches exceptions"_s;
         return;
     }
     FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(functionIndex);
@@ -154,15 +154,15 @@ static void compileFunction(Module& module, CalleeGroup& group, const ModuleInfo
     context.codeForImage = &codeForImage;
     auto compiled = parseAndCompileOMG(context, profiledCallee.get(), callee.get(), info.functions[functionIndex], signature, unlinkedCalls, module, group, info, mode, CompilationMode::OMGMode, functionIndex, UINT32_MAX);
     if (!compiled) {
-        result.whyDeclined = compiled.error();
+        result.declineReason = compiled.error();
         return;
     }
-    if (!codeForImage.whyDeclined.isNull()) {
-        result.whyDeclined = codeForImage.whyDeclined;
+    if (!codeForImage.declineReason.isNull()) {
+        result.declineReason = codeForImage.declineReason;
         return;
     }
     if (!(*compiled)->exceptionHandlers.isEmpty()) {
-        result.whyDeclined = "it catches exceptions"_s;
+        result.declineReason = "it catches exceptions"_s;
         return;
     }
     result.bytes = link(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmOMG, [&](const uint8_t* start) {
@@ -173,7 +173,7 @@ static void compileFunction(Module& module, CalleeGroup& group, const ModuleInfo
     auto& savedRegisters = (*compiled)->entrypoint.calleeSaveRegisters;
     for (auto& entry : savedRegisters) {
         if (entry.width() != conservativeWidthWithoutVectors(entry.reg())) {
-            result.whyDeclined = "it saves a whole vector register"_s;
+            result.declineReason = "it saves a whole vector register"_s;
             return;
         }
         result.savedRegisters.registers |= 1ull << entry.reg().index();
@@ -185,7 +185,7 @@ static void compileFunction(Module& module, CalleeGroup& group, const ModuleInfo
     for (size_t index = 0; isSame && index < read.registerCount(); ++index)
         isSame = read.at(index) == savedRegisters.at(index);
     if (!isSame)
-        result.whyDeclined = "its saved registers are not in the usual order"_s;
+        result.declineReason = "its saved registers are not in the usual order"_s;
 }
 
 static void linkCall(Vector<uint8_t>& code, size_t endOfCall, size_t target)
@@ -217,36 +217,36 @@ std::array<uint8_t, 20> CodeInImage::digestOf(std::span<const uint8_t> source)
     return digest;
 }
 
-std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8_t> source, String& whyDeclined)
+std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8_t> source, String& declineReason)
 {
     if (!isX86_64() && !isARM64()) {
-        whyDeclined = "this CPU is not supported"_s;
+        declineReason = "this CPU is not supported"_s;
         return std::nullopt;
     }
     auto validated = Module::validateSync(vm, Vector<uint8_t>(source));
     if (!validated) {
-        whyDeclined = validated.error();
+        declineReason = validated.error();
         return std::nullopt;
     }
     Ref<Module> module = WTF::move(*validated);
     const ModuleInformation& info = module->moduleInformation();
     unsigned numberOfFunctions = info.internalFunctionCount();
     if (!numberOfFunctions) {
-        whyDeclined = "it has no functions"_s;
+        declineReason = "it has no functions"_s;
         return std::nullopt;
     }
     if (info.hasGCObjectTypes()) {
-        whyDeclined = "it has types of objects"_s;
+        declineReason = "it has types of objects"_s;
         return std::nullopt;
     }
     if (info.exceptionIndexSpaceSize()) {
-        whyDeclined = "it has exceptions"_s;
+        declineReason = "it has exceptions"_s;
         return std::nullopt;
     }
     MemoryMode mode = info.memoryCount() && !info.memory(0).isMemory64() ? MemoryMode::Signaling : MemoryMode::BoundsChecking;
     Ref<CalleeGroup> group = module->compileSync(vm, mode);
     if (!group->runnable()) {
-        whyDeclined = group->errorMessage();
+        declineReason = group->errorMessage();
         return std::nullopt;
     }
 
@@ -265,8 +265,8 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
         compileFunction(module.get(), group.get(), info, mode, FunctionCodeIndex(index), functions[index]);
     });
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        if (!functions[index].whyDeclined.isNull()) {
-            whyDeclined = makeString("function "_s, index, ": "_s, functions[index].whyDeclined);
+        if (!functions[index].declineReason.isNull()) {
+            declineReason = makeString("function "_s, index, ": "_s, functions[index].declineReason);
             return std::nullopt;
         }
     }
@@ -275,15 +275,15 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
     result.digest = digestOf(source);
     result.sourceSize = safeCast<uint32_t>(source.size());
     result.isForSignalingMemory = mode == MemoryMode::Signaling;
-    auto place = [&](const Vector<uint8_t>& bytes) {
+    auto appendCode = [&](const Vector<uint8_t>& bytes) {
         result.code.insertFill(result.code.size(), isX86() ? 0xcc : 0, WTF::roundUpToMultipleOf<codeAlignment>(result.code.size()) - result.code.size());
         uint32_t at = safeCast<uint32_t>(result.code.size());
         result.code.appendVector(bytes);
         return at;
     };
-    uint32_t throwStub = place(generateThrowStub());
+    uint32_t throwStub = appendCode(generateThrowStub());
     for (unsigned index = 0; index < info.importFunctionCount(); ++index)
-        result.importStubs.append(place(generateImportStub(info, index)));
+        result.importStubs.append(appendCode(generateImportStub(info, index)));
     for (auto& exported : info.exports) {
         if (exported.kind != ExternalKind::Function || exported.kindIndex < info.importFunctionCount())
             continue;
@@ -291,13 +291,13 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
         const RTT& rtt = info.rtt(TypeSignatureIndex(type));
         if (!rtt.mayHaveICEntrypointInImage() || result.jsEntrypoints.containsIf([&](auto& entry) { return &info.rtt(TypeSignatureIndex(entry.type)) == &rtt; }))
             continue;
-        uint32_t code = place(generateJSEntrypoint(info, rtt, result.jsEntrypoints.size()));
+        uint32_t code = appendCode(generateJSEntrypoint(info, rtt, result.jsEntrypoints.size()));
         result.jsEntrypoints.append({ type, code });
     }
     for (auto& function : functions) {
         bool functionHasVectors = info.usesSIMD(FunctionCodeIndex(result.entries.size()));
         result.usesVectors |= functionHasVectors;
-        result.entries.append(place(function.bytes));
+        result.entries.append(appendCode(function.bytes));
         size_t savedRegisters = result.savedRegisters.find(function.savedRegisters);
         if (savedRegisters == notFound) {
             savedRegisters = result.savedRegisters.size();
@@ -308,7 +308,7 @@ std::optional<ModuleForImage> CodeInImage::compile(VM& vm, std::span<const uint8
     }
     result.entries.append(safeCast<uint32_t>(result.code.size()));
     if (result.code.size() > GB) {
-        whyDeclined = "its code is too large"_s;
+        declineReason = "its code is too large"_s;
         return std::nullopt;
     }
     for (unsigned index = 0; index < numberOfFunctions; ++index) {

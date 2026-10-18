@@ -205,7 +205,7 @@ public:
                         return "the single function of a field is not a function of the program"_s;
                     field.singleFunction = FunctionID(from.singleFunction);
                     field.singleFunctionIsProven = field.singleFunction && layout.kind == LayoutKind::Environment && from.singleFunctionFlags & Format::SingleFunctionIsProven;
-                    field.singleFunctionOrNullish = field.singleFunction && layout.kind == LayoutKind::Environment && from.singleFunctionFlags & Format::SingleFunctionOrNullish;
+                    field.isSingleFunctionOrNullish = field.singleFunction && layout.kind == LayoutKind::Environment && from.singleFunctionFlags & Format::SingleFunctionOrNullish;
                     layout.fields.append(WTF::move(field));
                 }
                 for (auto& method : slice(m_methods, shape.methods)) {
@@ -292,7 +292,7 @@ public:
                 return "the single function of a variable is not a function of the program"_s;
             variable.singleFunction = FunctionID(from.singleFunction);
             variable.singleFunctionIsProven = variable.singleFunction && from.singleFunctionFlags & Format::SingleFunctionIsProven;
-            variable.singleFunctionOrNullish = variable.singleFunction && from.singleFunctionFlags & Format::SingleFunctionOrNullish;
+            variable.isSingleFunctionOrNullish = variable.singleFunction && from.singleFunctionFlags & Format::SingleFunctionOrNullish;
             m_program.variables.append(WTF::move(variable));
         }
         for (auto& layout : m_program.layouts) {
@@ -338,12 +338,12 @@ public:
         {
             constexpr size_t pageBytes = 4 * KB;
             constexpr size_t bytesInChunk = MB;
-            auto* room = reinterpret_cast<volatile uint8_t*>(m_program.functions.begin());
+            auto* storage = reinterpret_cast<volatile uint8_t*>(m_program.functions.begin());
             size_t size = functions.size() * sizeof(Function);
             forEachIndexInParallel(static_cast<unsigned>((size + bytesInChunk - 1) / bytesInChunk), [&](unsigned chunk) {
                 size_t end = std::min(size, (static_cast<size_t>(chunk) + 1) * bytesInChunk);
                 for (size_t at = static_cast<size_t>(chunk) * bytesInChunk; at < end; at += pageBytes)
-                    room[at] = 0;
+                    storage[at] = 0;
             });
         }
 #endif
@@ -546,7 +546,7 @@ private:
             auto& layout = m_program.at(id);
             TypeID type = layout.environment ? m_program.at(layout.environment).fields[key].type : m_program.variables[key].type;
             if (!type || !m_program.at(type).hasOnlyPrimitives(Primitive::Symbol))
-                return "the variable of a computed name that is declared to be a symbol holds other values too"_s;
+                return "the variable for a computed method name that is marked as a symbol is not typed as a symbol"_s;
         }
         for (unsigned i = 0; i < m_program.types.size(); ++i) {
             for (LayoutID supertype : m_program.at(TypeID(i)).objectLayouts) {
@@ -676,24 +676,24 @@ private:
         Type type = m_program.at(a);
         Type other = m_program.at(b);
         uint16_t arrayClass = Builtins::singleton().arrayClass().index;
-        if (other.engineClasses.contains(arrayClass))
-            type.elements = type.engineClasses.contains(arrayClass) ? unionOf(type.elements, other.elements) : other.elements;
+        if (other.builtinClasses.contains(arrayClass))
+            type.elements = type.builtinClasses.contains(arrayClass) ? unionOf(type.elements, other.elements) : other.elements;
         type.primitives |= other.primitives;
         type.integers = type.integers.unionWith(other.integers);
         type.anyObject |= other.anyObject;
         type.anyFunction |= other.anyFunction || type.anyObject;
         type.objectLayouts.appendVector(other.objectLayouts);
-        type.engineClasses.appendVector(other.engineClasses);
+        type.builtinClasses.appendVector(other.builtinClasses);
         type.normalizeLiteralString();
         if (type.anyObject) {
             type.objectLayouts.clear();
-            type.engineClasses.clear();
+            type.builtinClasses.clear();
             type.elements = { };
         }
         std::ranges::sort(type.objectLayouts);
         type.objectLayouts.shrink(std::unique(type.objectLayouts.begin(), type.objectLayouts.end()) - type.objectLayouts.begin());
-        std::ranges::sort(type.engineClasses);
-        type.engineClasses.shrink(std::unique(type.engineClasses.begin(), type.engineClasses.end()) - type.engineClasses.begin());
+        std::ranges::sort(type.builtinClasses);
+        type.builtinClasses.shrink(std::unique(type.builtinClasses.begin(), type.builtinClasses.end()) - type.builtinClasses.begin());
         return m_program.types.intern(type);
     }
 
@@ -770,8 +770,8 @@ private:
                 type.objectLayouts.append(LayoutID(part.shapeOrName));
                 break;
             case Format::ObjectPartKind::Array: {
-                bool hasArrayPart = type.engineClasses.contains(builtins.arrayClass().index);
-                type.engineClasses.append(builtins.arrayClass().index);
+                bool hasArrayPart = type.builtinClasses.contains(builtins.arrayClass().index);
+                type.builtinClasses.append(builtins.arrayClass().index);
                 auto arguments = slice(m_words, part.typeArguments);
                 TypeID elements = arguments.size() == 1 ? typeAt(arguments[0]) : TypeID();
                 type.elements = hasArrayPart ? unionOf(type.elements, elements) : elements;
@@ -788,7 +788,7 @@ private:
                     if (builtins.classNamed(name)->type == CellType)
                         type.anyObject = true;
                     else
-                        type.engineClasses.append(builtins.classNamed(name)->index);
+                        type.builtinClasses.append(builtins.classNamed(name)->index);
                     break;
                 case GlobalInterface::Function:
                     type.anyFunction = true;
@@ -819,20 +819,20 @@ private:
         if (type.anyObject) {
             type.anyFunction = true;
             type.objectLayouts.clear();
-            type.engineClasses.clear();
+            type.builtinClasses.clear();
             type.elements = { };
         }
         std::ranges::sort(type.objectLayouts);
-        std::ranges::sort(type.engineClasses);
-        type.engineClasses.shrink(std::unique(type.engineClasses.begin(), type.engineClasses.end()) - type.engineClasses.begin());
+        std::ranges::sort(type.builtinClasses);
+        type.builtinClasses.shrink(std::unique(type.builtinClasses.begin(), type.builtinClasses.end()) - type.builtinClasses.begin());
         return type;
     }
 
     bool readNeedsCheck(uint32_t readType, uint32_t slotType)
     {
-        TypeID wanted = typeAt(readType);
-        TypeID held = typeAt(slotType);
-        return wanted && !(held ? m_program.at(held) : Type::anything()).isSubsetOf(m_program.at(wanted), m_program);
+        TypeID expectedType = typeAt(readType);
+        TypeID declaredType = typeAt(slotType);
+        return expectedType && !(declaredType ? m_program.at(declaredType) : Type::anything()).isSubsetOf(m_program.at(expectedType), m_program);
     }
 
     void prepareForAudit(Value& value, const Format::Value& from, const Function& function)
@@ -1026,7 +1026,7 @@ private:
             }
             if (value.opcode == Opcode::Operation) {
                 uint32_t operation = value.immediates[0];
-                if (operation >= numberOfBuiltins || Builtins::singleton().operationNamed(Builtins::singleton().at(BuiltinID(operation)).nameName) != BuiltinID(operation)) {
+                if (operation >= numberOfBuiltins || Builtins::singleton().operationNamed(Builtins::singleton().at(BuiltinID(operation)).nameID) != BuiltinID(operation)) {
                     m_failed = true;
                     break;
                 }

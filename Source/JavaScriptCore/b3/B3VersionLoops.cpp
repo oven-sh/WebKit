@@ -261,11 +261,11 @@ private:
         }
 
         IndexSet<BasicBlock*> comeBack;
-        IndexSet<BasicBlock*> asked;
+        IndexSet<BasicBlock*> visited;
         Vector<BasicBlock*, 16> worklist { loop.header() };
         while (!worklist.isEmpty()) {
             for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
-                if (predecessor == loop.header() || !loops.belongsTo(predecessor, loop) || !asked.add(predecessor))
+                if (predecessor == loop.header() || !loops.belongsTo(predecessor, loop) || !visited.add(predecessor))
                     continue;
                 bool canBeCloned = true;
                 if (!hotBlocks.contains(predecessor)) {
@@ -494,13 +494,13 @@ private:
         }
         UncheckedKeyHashMap<Value*, Value*> repeatedLoads;
         auto& repeatedValues = m_resolvesSingleInputPhis ? version.repeatedValues : repeatedLoads;
-        auto withoutRepetition = [&](Value* value) {
+        auto canonicalValue = [&](Value* value) {
             Value* repeated = repeatedValues.get(value);
             return repeated ? repeated : value;
         };
         auto isSameValue = [&](Value* a, Value* b) {
-            a = withoutRepetition(a);
-            b = withoutRepetition(b);
+            a = canonicalValue(a);
+            b = canonicalValue(b);
             return a == b || (a->hasInt() && b->hasInt() && a->type() == b->type() && a->asInt() == b->asInt());
         };
         auto repeatsHoistedLoad = [&](Value* value) {
@@ -511,9 +511,9 @@ private:
                 auto* other = hoisted->as<MemoryValue>();
                 if (!other || other->opcode() != load->opcode() || other->type() != load->type() || other->offset() != load->offset())
                     continue;
-                if (withoutRepetition(other->lastChild()) != withoutRepetition(load->lastChild()))
+                if (canonicalValue(other->lastChild()) != canonicalValue(load->lastChild()))
                     continue;
-                repeatedValues.add(value, withoutRepetition(hoisted));
+                repeatedValues.add(value, canonicalValue(hoisted));
                 return true;
             }
             return false;
@@ -567,7 +567,7 @@ private:
             for (UpsilonValue* upsilon : *upsilons) {
                 if (loops.belongsTo(upsilon->owner, loop) && !hotBlocks.contains(upsilon->owner))
                     continue;
-                Value* child = withoutRepetition(upsilon->child(0));
+                Value* child = canonicalValue(upsilon->child(0));
                 if (result && result != child)
                     return nullptr;
                 result = child;
@@ -585,7 +585,7 @@ private:
             std::optional<int64_t> endOfUpper;
             for (Value* hoisted : valuesBeforeFastLoop) {
                 auto* other = hoisted->as<MemoryValue>();
-                if (!other || !other->isLoad() || version.repeatedValues.contains(hoisted) || withoutRepetition(other->lastChild()) != withoutRepetition(load->lastChild()))
+                if (!other || !other->isLoad() || version.repeatedValues.contains(hoisted) || canonicalValue(other->lastChild()) != canonicalValue(load->lastChild()))
                     continue;
                 int64_t beginOfOther = other->offset();
                 int64_t endOfOther = beginOfOther + other->accessByteSize();
@@ -632,7 +632,7 @@ private:
                 return false;
             for (Value* hoisted : valuesBeforeFastLoop) {
                 auto* other = hoisted->as<MemoryValue>();
-                if (other && other->isLoad() && other->isInAlignedHeader() && withoutRepetition(other->lastChild()) == withoutRepetition(load->lastChild()))
+                if (other && other->isLoad() && other->isInAlignedHeader() && canonicalValue(other->lastChild()) == canonicalValue(load->lastChild()))
                     return true;
             }
             static constexpr unsigned maxDominatorsToScan = 24;
@@ -644,7 +644,7 @@ private:
                     if (!valueBudget--)
                         return false;
                     auto* other = before->as<MemoryValue>();
-                    if (other && other->isLoad() && other->isInAlignedHeader() && other->lastChild() == withoutRepetition(load->lastChild()))
+                    if (other && other->isLoad() && other->isInAlignedHeader() && other->lastChild() == canonicalValue(load->lastChild()))
                         return true;
                 }
             }
@@ -688,7 +688,7 @@ private:
         IndexSet<Value*> hoistedPastRemainingGuards;
         UncheckedKeyHashMap<Value*, bool> remainingGuardConditions;
         std::optional<IndexSet<BasicBlock*>> rejoiningBlocks;
-        auto slowPathRejoinsLoop = [&](BasicBlock* asked) {
+        auto slowPathRejoinsLoop = [&](BasicBlock* slowPath) {
             if (!rejoiningBlocks) {
                 rejoiningBlocks.emplace();
                 IndexSet<BasicBlock*> seen;
@@ -709,7 +709,7 @@ private:
                     }
                 }
             }
-            return rejoiningBlocks->contains(asked);
+            return rejoiningBlocks->contains(slowPath);
         };
         auto shouldKeepGuardInLoop = [&](BasicBlock* block, BasicBlock* likelySuccessor) {
             bool usesValueHoistedPastGuards = false;
@@ -768,15 +768,15 @@ private:
                         continue;
                     isPastRemainingGuards = true;
                 }
-                isPastRemainingGuards |= hoistedPastRemainingGuards.contains(withoutRepetition(value));
+                isPastRemainingGuards |= hoistedPastRemainingGuards.contains(canonicalValue(value));
                 for (Value* child : value->children())
                     isPastRemainingGuards |= hoistedPastRemainingGuards.contains(child);
                 if (isPastRemainingGuards && hoistedPastRemainingGuards.add(value))
                     version.numberOfValuesHoistedPastGuards += emitsInstructions(value);
                 repeatsHoistedComputation(value);
                 if (value->opcode() == Select) {
-                    if (auto known = hoistedGuardConditions.find(withoutRepetition(value->child(0))); known != hoistedGuardConditions.end())
-                        version.repeatedValues.add(value, withoutRepetition(value->child(known->value ? 1 : 2)));
+                    if (auto known = hoistedGuardConditions.find(canonicalValue(value->child(0))); known != hoistedGuardConditions.end())
+                        version.repeatedValues.add(value, canonicalValue(value->child(known->value ? 1 : 2)));
                 }
                 hoist(value);
             }
@@ -797,7 +797,7 @@ private:
                 hoistsGuard = true;
                 version.hoistedGuardLikelySuccessors.add(block->last(), likelySuccessor);
                 if (block->last()->opcode() == Branch)
-                    hoistedGuardConditions.add(withoutRepetition(block->last()->child(0)), likelySuccessor == block->successorBlock(0));
+                    hoistedGuardConditions.add(canonicalValue(block->last()->child(0)), likelySuccessor == block->successorBlock(0));
             } else if (!endsWithPoll(block)) {
                 if (!version.firstIterationSlowPath && block->last()->opcode() == Branch) {
                     auto valueOnFirstIteration = [&](auto& self, Value* value) -> std::optional<int64_t> {
@@ -848,7 +848,7 @@ private:
                 }
                 if (block->last()->opcode() == Branch) {
                     bool isTaken = likelySuccessor == block->successorBlock(0);
-                    auto known = remainingGuardConditions.add(withoutRepetition(block->last()->child(0)), isTaken);
+                    auto known = remainingGuardConditions.add(canonicalValue(block->last()->child(0)), isTaken);
                     if (!known.isNewEntry && known.iterator->value == isTaken) {
                         version.hoistedValueSet.add(block->last());
                         version.hoistedGuardLikelySuccessors.add(block->last(), likelySuccessor);
@@ -934,8 +934,8 @@ private:
             auto isBound = [&](Value* value) {
                 Value* other = bound;
                 while (true) {
-                    value = withoutRepetition(value);
-                    other = withoutRepetition(other);
+                    value = canonicalValue(value);
+                    other = canonicalValue(other);
                     if (value == other)
                         return true;
                     if (value->opcode() != other->opcode() || value->type() != other->type())
@@ -1046,7 +1046,7 @@ private:
                         continue;
                     if (isStoredInLoop(limit))
                         continue;
-                    limit = withoutRepetition(limit);
+                    limit = canonicalValue(limit);
                     size_t found = version.indexLimits.findIf([&](auto& indexLimit) { return indexLimit.limit == limit; });
                     if (found == notFound) {
                         if (version.indexLimits.size() == maxNumberOfLimits)

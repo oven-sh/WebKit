@@ -156,19 +156,19 @@ public:
     T& last() LIFETIME_BOUND { return at(size() - 1); }
     const T& last() const LIFETIME_BOUND { return at(size() - 1); }
 
-    void reserveCapacity(size_t wanted)
+    void reserveCapacity(size_t newCapacity)
     {
-        if (wanted <= capacity())
+        if (newCapacity <= capacity())
             return;
-        RELEASE_ASSERT(wanted <= UINT32_MAX);
+        RELEASE_ASSERT(newCapacity <= UINT32_MAX);
         bool wasEmpty = m_storage == emptyStorage();
-        auto* storage = static_cast<Storage*>(fastRealloc(wasEmpty ? nullptr : m_storage, sizeof(Storage) + wanted * sizeof(T)));
+        auto* storage = static_cast<Storage*>(fastRealloc(wasEmpty ? nullptr : m_storage, sizeof(Storage) + newCapacity * sizeof(T)));
         if (wasEmpty)
             storage->size = 0;
-        storage->capacity = wanted;
+        storage->capacity = newCapacity;
         m_storage = storage;
     }
-    void reserveInitialCapacity(size_t wanted) { reserveCapacity(wanted); }
+    void reserveInitialCapacity(size_t initialCapacity) { reserveCapacity(initialCapacity); }
     void shrinkToFit()
     {
         if (!size()) {
@@ -285,8 +285,8 @@ public:
     bool containsIf(NOESCAPE const Invocable<bool(const T&)> auto& matches) const { return findIf(matches) != notFound; }
     size_t removeAllMatching(NOESCAPE const Invocable<bool(const T&)> auto& matches)
     {
-        auto* kept = std::remove_if(begin(), end(), matches);
-        size_t removed = end() - kept;
+        auto* newEnd = std::remove_if(begin(), end(), matches);
+        size_t removed = end() - newEnd;
         shrink(size() - removed);
         return removed;
     }
@@ -595,27 +595,6 @@ constexpr uint8_t inlineReasonForLetter(char letter)
 }
 
 enum class AllocationKind : uint8_t { Object, Environment, CoroutineFrame, Array, Closure, Rest, Arguments };
-enum class AllocationOutcome : uint8_t { Removed, BuiltLate, Unchanged };
-
-struct AllocationNote {
-    AllocationKind kind { AllocationKind::Object };
-    Opcode opcode { Opcode::Undefined };
-    uint32_t inlineFrame { 0 };
-    uint32_t position { 0 };
-    LayoutID layout;
-    FunctionID closureOf;
-    AllocationOutcome outcome { AllocationOutcome::Unchanged };
-    Vector<ValueID, 1> left;
-    ASCIILiteral forcedBy;
-    uint32_t forcedByInlineFrame { 0 };
-    uint32_t forcedByPosition { 0 };
-    BuiltinID forcedByBuiltin;
-    FunctionID forcedByCallee;
-    uint32_t forcedByArgument { 0 };
-    ValueID forcedIntoValue;
-    Vector<ValueID, 2> referencedBy;
-    ASCIILiteral why;
-};
 
 struct BuiltinPath {
     bool isGlobalObject { false };
@@ -747,8 +726,6 @@ struct Function {
     Vector<Block, 0, CrashOnOverflow, 2> blocks;
     Vector<Value, 0, CrashOnOverflow, 4> values;
     Vector<InlineFrame> inlineFrames;
-    Vector<AllocationNote> allocationNotes;
-    UncheckedKeyHashMap<uint64_t, unsigned, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> allocationNoteIndices;
 
     bool has(uint32_t flag) const { return flags & flag; }
     bool isGenericEntrypoint() const { return has(FunctionIsGenericEntrypoint); }
@@ -809,7 +786,7 @@ struct Field {
     StringID typeSource;
     SlotID slot;
     TypeID stored;
-    TypeID storedInSlot;
+    TypeID slotType;
     Store store { Store::JSValue };
     uint32_t offset { 0 };
     bool isOutOfLine { false };
@@ -827,7 +804,7 @@ struct Field {
     bool holdsIntegralNumbers { false };
     FunctionID singleFunction;
     bool singleFunctionIsProven { false };
-    bool singleFunctionOrNullish { false };
+    bool isSingleFunctionOrNullish { false };
     FunctionID otherFunction;
     FunctionID lazyClosure;
     PredictedBuiltins predictedBuiltins;
@@ -944,7 +921,7 @@ struct Variable {
     bool mayBeReadUninitialized() const { return !startsUndefined && !isNeverReadUninitialized && !startsZero; }
     FunctionID singleFunction;
     bool singleFunctionIsProven { false };
-    bool singleFunctionOrNullish { false };
+    bool isSingleFunctionOrNullish { false };
     Vector<FunctionID, 2> functionsCapturedBySingleFunction;
     PredictedBuiltins predictedBuiltins;
     BuiltinID predictedStaticOfReplaceableGlobal;
@@ -1046,7 +1023,6 @@ public:
     void reserveInitialCapacity(size_t size) { m_functions.reserveInitialCapacity(size); }
     auto map(NOESCAPE const auto& functor) const { return m_functions.map(functor); }
 
-    void buildValueIndex();
     void rebuildInvalidatedValueIndex();
     void adoptValueIndexRows(std::span<const ValueIndexRows>);
     void verifyValueIndex() const;
@@ -1055,19 +1031,19 @@ public:
     void releaseValueIndex();
     bool isIndexed(size_t index) const { return index < m_isIndexed.size() && WTF::atomicLoad(&m_isIndexed[index], std::memory_order_relaxed); }
 
-    bool mayContain(size_t index, const OpcodeSet& wanted) const { return !isIndexed(index) || m_contents[index].opcodes.intersects(wanted); }
+    bool mayContain(size_t index, const OpcodeSet& requestedOpcodes) const { return !isIndexed(index) || m_contents[index].opcodes.intersects(requestedOpcodes); }
     bool mayEndWith(size_t index, TerminatorKind kind) const { return !isIndexed(index) || m_contents[index].terminatorKinds >> static_cast<unsigned>(kind) & 1; }
     bool mayContainPredictedClosure(size_t index) const { return !isIndexed(index) || m_contents[index].containsPredictedClosure; }
 
-    void forEachIndexedValue(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
+    void forEachIndexedValue(size_t index, const OpcodeSet& requestedOpcodes, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
     {
         if (isIndexed(index)) {
-            if (!m_contents[index].opcodes.intersects(wanted))
+            if (!m_contents[index].opcodes.intersects(requestedOpcodes))
                 return;
             auto opcodes = indexedOpcodes(index);
             auto ids = m_indexedValues.items<&IndexedValue::id>().subspan(m_firstIndexedValue[index], opcodes.size());
             for (size_t k = 0; k < opcodes.size(); ++k) {
-                if (wanted.contains(opcodes[k]))
+                if (requestedOpcodes.contains(opcodes[k]))
                     functor(ids[k]);
             }
             return;
@@ -1075,24 +1051,24 @@ public:
         auto& function = m_functions[index];
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
-                if (wanted.contains(function.at(id).opcode))
+                if (requestedOpcodes.contains(function.at(id).opcode))
                     functor(id);
             }
         }
     }
 
-    void forEachIndexedValueWithBlock(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(unsigned, unsigned, ValueID)> auto& functor) const
+    void forEachIndexedValueWithBlock(size_t index, const OpcodeSet& requestedOpcodes, NOESCAPE const Invocable<void(unsigned, unsigned, ValueID)> auto& functor) const
     {
         auto& function = m_functions[index];
         if (isIndexed(index)) {
-            if (!m_contents[index].opcodes.intersects(wanted))
+            if (!m_contents[index].opcodes.intersects(requestedOpcodes))
                 return;
             auto opcodes = indexedOpcodes(index);
             auto ids = m_indexedValues.items<&IndexedValue::id>().subspan(m_firstIndexedValue[index], opcodes.size());
             unsigned block = 0;
             size_t blockStart = 0;
             for (size_t k = 0; k < opcodes.size(); ++k) {
-                if (!wanted.contains(opcodes[k]))
+                if (!requestedOpcodes.contains(opcodes[k]))
                     continue;
                 while (k - blockStart >= function.blocks[block].values.size())
                     blockStart += function.blocks[block++].values.size();
@@ -1103,27 +1079,27 @@ public:
         for (unsigned block = 0; block < function.blocks.size(); ++block) {
             auto& values = function.blocks[block].values;
             for (unsigned k = 0; k < values.size(); ++k) {
-                if (wanted.contains(function.at(values[k]).opcode))
+                if (requestedOpcodes.contains(function.at(values[k]).opcode))
                     functor(block, k, values[k]);
             }
         }
     }
 
-    void forEachValue(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
+    void forEachValue(size_t index, const OpcodeSet& requestedOpcodes, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
     {
         if (isIndexed(index)) {
-            if (!m_contents[index].opcodes.intersects(wanted))
+            if (!m_contents[index].opcodes.intersects(requestedOpcodes))
                 return;
             auto opcodes = m_valueOpcodes.span().subspan(m_firstIndexedValue[index], m_valueCount[index]);
             for (size_t k = 0; k < opcodes.size(); ++k) {
-                if (wanted.contains(opcodes[k]))
+                if (requestedOpcodes.contains(opcodes[k]))
                     functor(ValueID(k));
             }
             return;
         }
         auto& values = m_functions[index].values;
         for (size_t k = 0; k < values.size(); ++k) {
-            if (wanted.contains(values[k].opcode))
+            if (requestedOpcodes.contains(values[k].opcode))
                 functor(ValueID(k));
         }
     }
@@ -1220,7 +1196,7 @@ public:
     }
     bool isUpcast(LayoutID, LayoutID) const;
     ValueID constantOf(const Function&, ValueID) const;
-    ValueID originOf(const Function&, ValueID) const;
+    ValueID underlyingValue(const Function&, ValueID) const;
     PredictedBuiltins predictedBuiltins(const Function&, ValueID) const;
     BuiltinID predictedStaticCalledBy(const Function&, const Value& call) const;
     bool castIsRedundant(const Type& from, const Type& to, CastReason reason) const
@@ -1419,16 +1395,16 @@ public:
     };
     enum class ShapeTestKind : uint8_t { Members, SubtypesKeptByCast, RetagSources };
     UncheckedKeyHashMap<uint64_t, MultiLayoutShapeTest> multiLayoutShapeTests;
-    static uint64_t multiLayoutShapeTestKey(const Vector<LayoutID, 1>& objectLayouts, ShapeTestKind asked)
+    static uint64_t multiLayoutShapeTestKey(const Vector<LayoutID, 1>& objectLayouts, ShapeTestKind kind)
     {
-        uint64_t key = 0x9e3779b97f4a7c15ull + static_cast<uint64_t>(asked);
+        uint64_t key = 0x9e3779b97f4a7c15ull + static_cast<uint64_t>(kind);
         for (LayoutID supertype : objectLayouts)
             key = (key ^ supertype.index()) * 0x100000001b3ull;
         return key | 1;
     }
-    const ShapeTest* findMultiLayoutShapeTest(const Vector<LayoutID, 1>& objectLayouts, ShapeTestKind asked) const
+    const ShapeTest* findMultiLayoutShapeTest(const Vector<LayoutID, 1>& objectLayouts, ShapeTestKind kind) const
     {
-        auto found = multiLayoutShapeTests.find(multiLayoutShapeTestKey(objectLayouts, asked));
+        auto found = multiLayoutShapeTests.find(multiLayoutShapeTestKey(objectLayouts, kind));
         return found != multiLayoutShapeTests.end() && found->value.objectLayouts == objectLayouts ? &found->value.test : nullptr;
     }
     StringID emptyString;
@@ -1661,14 +1637,6 @@ public:
     uint32_t findStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const;
     uint32_t ensureStructureDescriptor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype);
     bool hasAllocationAssertions { false };
-    bool recordsAllocations { false };
-    struct EnvironmentUse {
-        ASCIILiteral operation;
-        FunctionID function;
-        uint32_t inlineFrame { 0 };
-        uint32_t position { 0 };
-    };
-    UncheckedKeyHashMap<uint32_t, EnvironmentUse, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> environmentHeapReasons;
 
 private:
     friend class Preparation;

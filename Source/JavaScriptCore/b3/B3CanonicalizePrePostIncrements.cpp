@@ -156,13 +156,9 @@ bool canonicalizePrePostIncrements(Procedure& proc)
     };
 
     IndexSet<Value*> handledValues;
-    for (BasicBlock* block : proc) {
-        auto candidates = blockToPrePostIndexCandidates.find(block);
-        if (candidates == blockToPrePostIndexCandidates.end())
-            continue;
-        Vector<MemoryValue*> memories = copyToVector(candidates->value);
-        std::ranges::sort(memories, { }, &Value::index);
-        for (MemoryValue* memory : memories) {
+    for (const auto& entry : blockToPrePostIndexCandidates) {
+        BasicBlock* block = entry.key;
+        for (MemoryValue* memory : entry.value) {
             //         PreIndex Load/Store Pattern        |             Canonical Form
             // --------------------------------------------------------------------------------------
             //     address = Add(base, offset)            |    address = Nop

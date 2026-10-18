@@ -175,7 +175,7 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         auto& receiver = typeOf(value.child(0));
         if (!receiver.hasCells())
             return valueResult(value.child(0), type);
-        return ensure(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)), receiver.withoutPrimitives(Primitive::UndefinedOrNull), type);
+        return ensure(nonNullish(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameID)), receiver.withoutPrimitives(Primitive::UndefinedOrNull), type);
     }
     case InlineBuiltin::HasOriginalStructure: {
         if (m_isFusedWithBranch.get(result.index()))
@@ -205,8 +205,8 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         CellPointer classObject = asCell(in<Boxed>(arguments[0]));
         LBasicBlock storedInCell = newColdBlock();
         Join join(m_out, Rep::JSValue, Int64);
-        Boxed parent(m_out.load64(structureOf(classObject.value()), m_heaps.Structure_prototype));
-        orElse(isNotEmpty(parent), storedInCell);
+        Boxed parent(m_out.load64(loadStructure(classObject.value()), m_heaps.Structure_prototype));
+        branchUnless(isNotEmpty(parent), storedInCell);
         join.add(parent);
         m_out.appendTo(storedInCell);
         join.add(AOT_TYPED_OPERATION(GetSuperConstructor, classObject));
@@ -232,7 +232,7 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
     }
 }
 
-ValueID Lowering::originOf(ValueID id) const
+ValueID Lowering::underlyingValue(ValueID id) const
 {
     while (m_function.at(id).opcode == Opcode::Cast)
         id = m_function.at(id).child(0);
@@ -263,8 +263,8 @@ Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
             return word32(0);
         });
         isFinal = either<Word32>(isFinal, [&] {
-            constexpr uint32_t asked = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_dictionaryKindBits;
-            return equal(bitAnd(Word32(m_out.load32(structureOf(asCell(object).value()), m_heaps.Structure_bitField)), word32(asked)), word32(Structure::s_isQuickPropertyAccessAllowedForEnumerationBits));
+            constexpr uint32_t testedBits = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_dictionaryKindBits;
+            return equal(bitAnd(Word32(m_out.load32(loadStructure(asCell(object).value()), m_heaps.Structure_bitField)), word32(testedBits)), word32(Structure::s_isQuickPropertyAccessAllowedForEnumerationBits));
         }, [&] {
             return word32(0);
         });
@@ -274,7 +274,7 @@ Operand Lowering::lowerForInKeys(ValueID result, const Value& value)
             return word32(0);
         });
         inlineCapacity = either<Integer>(isFinal, [&] {
-            return Integer(m_out.zeroExtPtr(m_out.load8ZeroExt32(structureOf(asCell(object).value()), m_heaps.Structure_inlineCapacity)));
+            return Integer(m_out.zeroExtPtr(m_out.load8ZeroExt32(loadStructure(asCell(object).value()), m_heaps.Structure_inlineCapacity)));
         }, [&] {
             return integer(0);
         });
@@ -302,7 +302,7 @@ bool Lowering::isForInStampCheck(const Value& value) const
 bool Lowering::isRequestedForFinalObject(ValueID keys) const
 {
     for (auto& value : m_function.values) {
-        if (isForInStampCheck(value) && m_function.at(value.arguments[1]).opcode == Opcode::Boolean && originOf(value.arguments[2]) == keys)
+        if (isForInStampCheck(value) && m_function.at(value.arguments[1]).opcode == Opcode::Boolean && underlyingValue(value.arguments[2]) == keys)
             return true;
     }
     return false;
@@ -311,11 +311,11 @@ bool Lowering::isRequestedForFinalObject(ValueID keys) const
 void Lowering::branchOnForInStamp(const Value& value, LBasicBlock isAsListed, LBasicBlock isNot)
 {
     for (auto& candidate : m_forInStamps) {
-        if (candidate.keys != originOf(value.arguments[2]))
+        if (candidate.keys != underlyingValue(value.arguments[2]))
             continue;
         if (m_function.at(value.arguments[1]).opcode == Opcode::Boolean) {
-            orElse(logicalNot(isZero(candidate.finalStructureID)), isNot);
-            orElse(equal(loadField<Word32>(asCell(in<Boxed>(value.arguments[0])), m_heaps.JSCell_structureID), candidate.finalStructureID), isNot);
+            branchUnless(logicalNot(isZero(candidate.finalStructureID)), isNot);
+            branchUnless(equal(loadField<Word32>(asCell(in<Boxed>(value.arguments[0])), m_heaps.JSCell_structureID), candidate.finalStructureID), isNot);
         } else
             isAsListedOrElse(candidate, in<Boxed>(value.arguments[0]), isNot);
         m_out.jump(isAsListed);
@@ -326,11 +326,11 @@ void Lowering::branchOnForInStamp(const Value& value, LBasicBlock isAsListed, LB
 
 auto Lowering::forInStampOf(ValueID object, ValueID key) const -> const ForInStamp*
 {
-    auto& read = m_function.at(m_program.originOf(m_function, key));
+    auto& read = m_function.at(m_program.underlyingValue(m_function, key));
     if (read.opcode != Opcode::GetByVal)
         return nullptr;
-    ValueID keys = originOf(read.child(0));
-    if (!isForInKeys(m_function.at(keys)) || originOf(m_function.at(keys).arguments[0]) != originOf(object))
+    ValueID keys = underlyingValue(read.child(0));
+    if (!isForInKeys(m_function.at(keys)) || underlyingValue(m_function.at(keys).arguments[0]) != underlyingValue(object))
         return nullptr;
     for (auto& candidate : m_forInStamps) {
         if (candidate.keys == keys)
@@ -341,10 +341,10 @@ auto Lowering::forInStampOf(ValueID object, ValueID key) const -> const ForInSta
 
 CellPointer Lowering::isAsListedOrElse(const ForInStamp& stamp, Boxed object, LBasicBlock otherwise)
 {
-    orElse(logicalNot(isZero(stamp.structureID)), otherwise);
+    branchUnless(logicalNot(isZero(stamp.structureID)), otherwise);
     CellPointer cell = asCell(object);
-    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), stamp.structureID), otherwise);
-    orElse(equal(orderWordOf(cell), stamp.orderWord), otherwise);
+    branchUnless(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), stamp.structureID), otherwise);
+    branchUnless(equal(orderWordOf(cell), stamp.orderWord), otherwise);
     return cell;
 }
 
@@ -370,13 +370,13 @@ Operand Lowering::lowerHasEnumerableProperty(ValueID result, const Value& value)
     };
     const ForInStamp* stamp = nullptr;
     for (auto& candidate : m_forInStamps) {
-        if (value.arguments.size() == 3 && candidate.keys == originOf(value.arguments[2]))
+        if (value.arguments.size() == 3 && candidate.keys == underlyingValue(value.arguments[2]))
             stamp = &candidate;
     }
     if (!stamp) {
-        Word32 answer = genericPath();
-        Operand yielded = booleanResult(answer, type);
-        m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
+        Word32 hasProperty = genericPath();
+        Operand yielded = booleanResult(hasProperty, type);
+        m_truthinessPhis.add(result.index(), Truthiness { yielded.value, hasProperty.value() });
         return yielded;
     }
     LBasicBlock slowPath = newColdBlock();
@@ -385,9 +385,9 @@ Operand Lowering::lowerHasEnumerableProperty(ValueID result, const Value& value)
     join.add(boolean(true));
     m_out.appendTo(slowPath);
     join.add(genericPath());
-    Word32 answer = join.finish().as<Word32>();
-    Operand yielded = booleanResult(answer, type);
-    m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
+    Word32 hasProperty = join.finish().as<Word32>();
+    Operand yielded = booleanResult(hasProperty, type);
+    m_truthinessPhis.add(result.index(), Truthiness { yielded.value, hasProperty.value() });
     return yielded;
 }
 
@@ -429,7 +429,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     bool isGet = which == InlineBuiltin::ArrayGetIndex;
     Rep rep = repOf(type);
     auto& booleanType = m_program.at(m_program.types.boolean);
-    if (Rep kept = get(object).rep; kept != Rep::Cell && kept != Rep::JSValue) {
+    if (Rep objectRep = get(object).rep; objectRep != Rep::Cell && objectRep != Rep::JSValue) {
         if (isGet)
             return ensure(genericGetByVal(object, key), type);
         return ensure(AOT_TYPED_OPERATION(HasKey, in<Boxed>(object), in<Boxed>(key)), booleanType, type);
@@ -446,8 +446,8 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
             m_out.appendTo(isCellCase);
             m_out.branch(logicalAnd(isPlainArray(asCell(base)), below(anyArrayIndexingMode(asCell(base), IndexingShapeMask), word32(ArrayStorageShape))).value(), unsure(isPlain), unsure(continuation));
             m_out.appendTo(isPlain);
-            Boxed general = genericGetByVal(object, key);
-            Word32 isSame = logicalOr(equal(element, general), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(general.value()))));
+            Boxed genericResult = genericGetByVal(object, key);
+            Word32 isSame = logicalOr(equal(element, genericResult), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(genericResult.value()))));
             m_out.branch(isSame.value(), usually(continuation), rarely(differs));
             m_out.appendTo(differs);
             AOT_TYPED_OPERATION(FactViolated, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
@@ -456,22 +456,22 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
             return ensure(element, type);
         }
         if (Options::validateAOTTypedFacts()) [[unlikely]] {
-            Boxed general = genericGetByVal(object, key);
+            Boxed genericResult = genericGetByVal(object, key);
             LBasicBlock differs = newColdBlock();
             LBasicBlock continuation = m_out.newBlock();
-            Word32 isSame = logicalOr(equal(element, general), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(general.value()))));
+            Word32 isSame = logicalOr(equal(element, genericResult), logicalAnd(Word32(Emitter::isNumber(element.value())), Word32(Emitter::isNumber(genericResult.value()))));
             m_out.branch(logicalOr(logicalNot(isNotEmpty(element)), isSame).value(), usually(continuation), rarely(differs));
             m_out.appendTo(differs);
             AOT_TYPED_OPERATION(FactViolated, element, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
-            return ensure(general, type);
+            return ensure(genericResult, type);
         }
         if (found.isAlwaysPresent)
             return ensure(element, type);
         LBasicBlock wasNotVisited = newColdBlock();
         Join join(m_out, rep, b3TypeOf(rep));
-        orElse(isNotEmpty(element), wasNotVisited);
+        branchUnless(isNotEmpty(element), wasNotVisited);
         join.add(ensure(element, type));
         m_out.appendTo(wasNotVisited);
         join.add(ensure(genericGetByVal(object, key), type));
@@ -499,7 +499,7 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
 
     Operand operand = get(object);
     if (operand.rep == Rep::JSValue)
-        orElse(isCell(operand.as<Boxed>()), generic);
+        branchUnless(isCell(operand.as<Boxed>()), generic);
     CellPointer array = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
     Integer index = indexOrElse(key, generic);
     Word32 shape = anyArrayIndexingMode(array, IndexingShapeMask);
@@ -509,9 +509,9 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
 
     m_out.appendTo(isDouble);
     Pointer doubles = butterflyOf(array);
-    orElse(below(index, publicLength(doubles)), absent);
+    branchUnless(below(index, publicLength(doubles)), absent);
     Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, doubles.value(), index.value())));
-    orElse(equal(asDouble, asDouble), absent);
+    branchUnless(equal(asDouble, asDouble), absent);
     if (isGet)
         join.add(ensure(asDouble, m_program.at(m_program.types.number), type));
     else {
@@ -521,12 +521,12 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     }
 
     m_out.appendTo(isNotDouble);
-    orElse(notEqual(shape, word32(UndecidedShape)), absent);
-    orElse(isContiguousOrInt32Shape(shape), generic);
+    branchUnless(notEqual(shape, word32(UndecidedShape)), absent);
+    branchUnless(isContiguousOrInt32Shape(shape), generic);
     Pointer values = butterflyOf(array);
-    orElse(below(index, publicLength(values)), absent);
+    branchUnless(below(index, publicLength(values)), absent);
     Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, values.value(), index.value())));
-    orElse(isNotEmpty(element), absent);
+    branchUnless(isNotEmpty(element), absent);
     if (isGet)
         join.add(ensure(element, type));
     else {
@@ -535,8 +535,8 @@ Operand Lowering::lowerIndexIntrinsic(InlineBuiltin which, const Value& value, c
     }
 
     m_out.appendTo(absent);
-    orElse(isPlainArray(array), generic);
-    orElse(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), generic);
+    branchUnless(isPlainArray(array), generic);
+    branchUnless(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), generic);
     if (isGet)
         join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
     else {

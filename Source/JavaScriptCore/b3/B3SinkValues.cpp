@@ -40,19 +40,19 @@ public:
             Value* comparisonFusedIntoBranch = nullptr;
             for (unsigned index = block->size(); index--;) {
                 Value* value = block->at(index);
-                Place place { block, index };
+                Position position { block, index };
                 const Uses& uses = m_uses[value];
                 if (uses.first.block && uses.first.block != block && canSink(value)) {
                     if (value == comparisonFusedIntoBranch)
-                        cloneForSlowPath(value, place, uses);
+                        cloneForSlowPath(value, position, uses);
                     else
-                        place = sink(value, place, uses);
+                        position = sink(value, position, uses);
                 }
                 if (index + 1 == block->size())
                     comparisonFusedIntoBranch = findComparisonFusedIntoBranch(block);
                 for (Value* child : value->children()) {
                     if (hasSinkableKind(child) && (child != comparisonFusedIntoBranch || index + 1 != block->size()))
-                        addUse(child, place);
+                        addUse(child, position);
                 }
             }
         }
@@ -105,18 +105,18 @@ private:
     static constexpr bool createsClones = true;
     static constexpr unsigned maxLoopsLeft = 8;
 
-    struct Place {
+    struct Position {
         BasicBlock* block { nullptr };
         unsigned index { 0 };
     };
 
     struct Uses {
-        Place first;
-        Place second;
+        Position first;
+        Position second;
     };
 
     struct Sunk {
-        Place place;
+        Position place;
         Value* value;
     };
 
@@ -125,7 +125,7 @@ private:
         BasicBlock* block { nullptr };
     };
 
-    static Place beforeTerminal(BasicBlock* block) { return { block, static_cast<unsigned>(block->size() - 1) }; }
+    static Position beforeTerminal(BasicBlock* block) { return { block, static_cast<unsigned>(block->size() - 1) }; }
 
     BasicBlock* nearestCommonDominator(BasicBlock* a, BasicBlock* b)
     {
@@ -152,36 +152,36 @@ private:
         return a;
     }
 
-    bool covers(Place& kept, Place place)
+    bool covers(Position& existing, Position position)
     {
-        if (kept.block == place.block) {
-            kept.index = std::min(kept.index, place.index);
+        if (existing.block == position.block) {
+            existing.index = std::min(existing.index, position.index);
             return true;
         }
-        return m_dominators.strictlyDominates(kept.block, place.block);
+        return m_dominators.strictlyDominates(existing.block, position.block);
     }
 
-    void addUse(Value* child, Place place)
+    void addUse(Value* child, Position position)
     {
         Uses& uses = m_uses[child];
         if (!uses.first.block) {
-            uses.first = place;
+            uses.first = position;
             return;
         }
-        if (covers(uses.first, place) || (uses.second.block && covers(uses.second, place)))
+        if (covers(uses.first, position) || (uses.second.block && covers(uses.second, position)))
             return;
-        bool isAboveSecond = uses.second.block && m_dominators.strictlyDominates(place.block, uses.second.block);
-        if (m_dominators.strictlyDominates(place.block, uses.first.block)) {
-            uses.first = place;
+        bool isAboveSecond = uses.second.block && m_dominators.strictlyDominates(position.block, uses.second.block);
+        if (m_dominators.strictlyDominates(position.block, uses.first.block)) {
+            uses.first = position;
             if (isAboveSecond)
                 uses.second = { };
             return;
         }
         if (isAboveSecond || (createsClones && !uses.second.block)) {
-            uses.second = place;
+            uses.second = position;
             return;
         }
-        BasicBlock* common = nearestCommonDominator(uses.first.block, place.block);
+        BasicBlock* common = nearestCommonDominator(uses.first.block, position.block);
         if (uses.second.block)
             common = nearestCommonDominator(common, uses.second.block);
         uses.first = beforeTerminal(common);
@@ -238,33 +238,33 @@ private:
         return block->values().contains(condition) ? condition : nullptr;
     }
 
-    void cloneForSlowPath(Value* value, Place from, Uses uses)
+    void cloneForSlowPath(Value* value, Position from, Uses uses)
     {
         if (uses.second.block)
             uses.first = beforeTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
-        Place place = uses.first;
-        if (place.block == from.block || !leaveLoops(from.block, place) || place.block == from.block || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(from.block, place.block))
+        Position position = uses.first;
+        if (position.block == from.block || !leaveLoops(from.block, position) || position.block == from.block || !isAtMostHalf(position.block->frequency(), from.block) || !isOrdered(from.block, position.block))
             return;
         if (!m_clones.size())
             m_clones.resize(m_uses.size());
         Value* clone = m_proc.clone(value);
-        m_clones[value] = { clone, place.block };
-        m_blocksBelowClones.add(place.block);
-        put(clone, place);
+        m_clones[value] = { clone, position.block };
+        m_blocksBelowClones.add(position.block);
+        put(clone, position);
         for (Value* child : value->children())
-            addUse(child, place);
+            addUse(child, position);
     }
 
-    bool leaveLoops(BasicBlock* from, Place& place)
+    bool leaveLoops(BasicBlock* from, Position& position)
     {
         auto& loops = m_proc.naturalLoops();
         for (unsigned left = 0; left <= maxLoopsLeft; ++left) {
             const NaturalLoop* outermost = nullptr;
-            for (auto* loop = loops.innerMostLoopOf(place.block); loop && !loops.belongsTo(from, *loop); loop = loops.innerMostOuterLoop(*loop))
+            for (auto* loop = loops.innerMostLoopOf(position.block); loop && !loops.belongsTo(from, *loop); loop = loops.innerMostOuterLoop(*loop))
                 outermost = loop;
             if (!outermost)
                 return true;
-            place = beforeTerminal(m_dominators.idom(outermost->header()));
+            position = beforeTerminal(m_dominators.idom(outermost->header()));
         }
         return false;
     }
@@ -324,13 +324,13 @@ private:
 
     static bool isAtMostHalf(double frequency, BasicBlock* of) { return frequency * 2 <= of->frequency(); }
 
-    void put(Value* value, Place place)
+    void put(Value* value, Position position)
     {
-        m_sunk.append(Sunk { place, value });
-        m_changedBlocks.add(place.block);
+        m_sunk.append(Sunk { position, value });
+        m_changedBlocks.add(position.block);
     }
 
-    Place move(Value* value, Place from, Place to)
+    Position move(Value* value, Position from, Position to)
     {
         from.block->at(from.index) = nullptr;
         m_changedBlocks.add(from.block);
@@ -338,11 +338,11 @@ private:
         return to;
     }
 
-    Place sink(Value* value, Place from, Uses uses)
+    Position sink(Value* value, Position from, Uses uses)
     {
         if (uses.second.block) {
-            Place first = uses.first;
-            Place second = uses.second;
+            Position first = uses.first;
+            Position second = uses.second;
             if ((value->opcode() != Patchpoint || value->as<PatchpointValue>()->pureFunctionKey) && value->opcode() != CCall
                 && leaveLoops(from.block, first) && leaveLoops(from.block, second)
                 && !m_dominators.dominates(first.block, second.block) && !m_dominators.dominates(second.block, first.block)
@@ -360,10 +360,10 @@ private:
             }
             uses.first = beforeTerminal(nearestCommonDominator(uses.first.block, uses.second.block));
         }
-        Place place = uses.first;
-        if (place.block == from.block || !leaveLoops(from.block, place) || !isAtMostHalf(place.block->frequency(), from.block) || !isOrdered(from.block, place.block))
+        Position position = uses.first;
+        if (position.block == from.block || !leaveLoops(from.block, position) || !isAtMostHalf(position.block->frequency(), from.block) || !isOrdered(from.block, position.block))
             return from;
-        return move(value, from, place);
+        return move(value, from, position);
     }
 
     Procedure& m_proc;

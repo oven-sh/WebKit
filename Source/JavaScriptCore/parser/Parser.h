@@ -1875,10 +1875,10 @@ private:
 
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression createResolveAndUseVariable(TreeBuilder&, const Identifier*, bool isEval, const JSTextPosition&, const JSTokenLocation&);
 
-    template <class TreeBuilder> ALWAYS_INLINE TreeExpression auditedIfListed(TreeBuilder& context, TreeExpression expression, unsigned start)
+    template <class TreeBuilder> ALWAYS_INLINE TreeExpression wrapInAuditIfNeeded(TreeBuilder& context, TreeExpression expression, unsigned start)
     {
         if (m_auditSites) [[unlikely]]
-            return context.auditedIfListed(*m_auditSites, expression, start, m_lastTokenLocation.endOffset);
+            return context.wrapInAuditIfNeeded(*m_auditSites, expression, start, m_lastTokenLocation.endOffset);
         return expression;
     }
 
@@ -2299,7 +2299,7 @@ NEVER_INLINE std::unique_ptr<ParsedNode> parse(
 
 #if USE(BUN_JSC_ADDITIONS)
     if (source.provider()->hasNoSourceText()) [[unlikely]] {
-        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
+        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the executable was built without its source code, so it can't run in this context."_s, source.firstLine().oneBasedInt());
         return nullptr;
     }
 #endif
