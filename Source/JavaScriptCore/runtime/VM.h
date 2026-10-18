@@ -1129,7 +1129,7 @@ public:
     bool disableTypeProfiler();
     TypeProfilerLog* typeProfilerLog() LIFETIME_BOUND { return m_typeProfilerLog.get(); }
     // Code that was generated for a profiler can run after the profiler is turned off: the body of a generator or an
-    // async function keeps its mode once it has run (ScriptExecutable::codeGenerationModeForResumableBody). Such code is
+    // async function keeps the code it started in (ScriptExecutable::newCodeBlockFor). Such code is
     // linked against the profiler, writes into it and is traced through it. So turning a profiler off does not destroy
     // it. It goes when all linked code has gone (releaseProfilersThatAreOff()), and code for it that is linked after
     // that makes it again (ensure...ForInstrumentedCode()). What links, compiles or traces such code asks for the

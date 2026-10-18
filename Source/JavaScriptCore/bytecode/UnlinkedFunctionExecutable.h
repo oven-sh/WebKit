@@ -205,6 +205,29 @@ public:
 
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
+    // One of the engine's own builtins, as opposed to an embedder's, whose source has a URL. It is hidden from stack
+    // traces and gets no debug hooks (BytecodeGenerator::shouldEmitDebugHooks). Its code for a debugger is marked as
+    // such all the same (UnlinkedCodeBlock::wasCompiledWithDebuggingOpcodes), and the mark is read: code with it and
+    // code without it are not interchangeable (unlinkedCodeBlockFor()).
+    static bool isPrivateBuiltinFunction(bool isBuiltinFunction, const SourceCode& source)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        return isBuiltinFunction && (!source.provider() || !source.provider()->sourceURL());
+#else
+        UNUSED_PARAM(source);
+        return isBuiltinFunction;
+#endif
+    }
+    // The part of a code generation mode that a caller of unlinkedCodeBlockFor() gets as it asks for it: the debug
+    // hooks, and the type profiler's instructions. The control flow profiler's part is left out. An embedder can turn
+    // that profiler on and keep the code that exists, so that only code generated from then on is instrumented: a
+    // function that has code then keeps running it, in every CodeBlock made for it.
+    // (None of this decides which code a suspended generator or async function resumes in:
+    // FunctionExecutable::codeOfStartedBody().)
+    static OptionSet<CodeGenerationMode> codeGenerationModeForSharing(OptionSet<CodeGenerationMode> mode)
+    {
+        return mode - CodeGenerationMode::ControlFlowProfiler;
+    }
     // The code blocks are still (or again) in the bytecode cache this was decoded from.
     bool isCached() const { return m_isCached; }
 #if USE(BUN_JSC_ADDITIONS)

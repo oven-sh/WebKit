@@ -89,6 +89,13 @@ static inline bool shouldKeepInConstraintSet(Visitor& visitor, CodeBlock* codeBl
     return (codeBlockForCall && !visitor.isMarked(codeBlockForCall)) || (codeBlockForConstruct && !visitor.isMarked(codeBlockForConstruct));
 }
 
+void FunctionExecutable::setCodeOfStartedBody(VM& vm, UnlinkedFunctionCodeBlock* unlinkedCodeBlock)
+{
+    ASSERT(isGeneratorOrAsyncFunctionBodyParseMode(parseMode()));
+    ASSERT(!m_codeOfStartedBody);
+    m_codeOfStartedBody.set(vm, this, unlinkedCodeBlock);
+}
+
 template<typename Visitor>
 void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -100,6 +107,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #endif
     visitor.append(thisObject->m_topLevelExecutable);
     visitor.append(thisObject->m_unlinkedExecutable);
+    visitor.append(thisObject->m_codeOfStartedBody);
     if (RareData* rareData = thisObject->m_rareData.get()) {
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
