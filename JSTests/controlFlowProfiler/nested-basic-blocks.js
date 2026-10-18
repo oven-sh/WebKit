@@ -150,6 +150,14 @@ function testFunctionDeclarationInIf(x) {
 testFunctionDeclarationInIf(false);
 count(testFunctionDeclarationInIf, "/*after*/", 1);
 
+function testEmptyBlock(x) {
+    if (x) { }
+    foo();
+}
+testEmptyBlock(false);
+count(testEmptyBlock, "}", 0);
+count(testEmptyBlock, "foo()", 1);
+
 function testLoopsLast() {
     for (let i = 0; i < 0; i++) {
         foo(1);

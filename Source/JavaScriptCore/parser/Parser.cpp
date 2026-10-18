@@ -899,6 +899,7 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseDoWhileStatement(TreeBuilder& context)
 {
     ASSERT(match(DO));
+    int startOffset = tokenStart();
     next();
     const Identifier* unused = nullptr;
     startLoop();
@@ -914,7 +915,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseDoWhileStatem
     recordPauseLocation(context.breakpointLocation(expr));
     handleProductionOrFail(CLOSEPAREN, ")", "end", "do-while loop condition");
     consume(SEMICOLON); // Always performs automatic semicolon insertion.
-    return context.createDoWhileStatement(location, statement, expr);
+    TreeStatement result = context.createDoWhileStatement(location, statement, expr);
+    context.setStartOffset(result, startOffset);
+    return result;
 }
 
 template <typename LexerType>
