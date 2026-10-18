@@ -2075,7 +2075,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
     DeclarationStacks::FunctionStack functionStack;
     next();
     if (match(CLOSEBRACE)) {
-        int endOffset = m_token.m_startPosition.offset;
+        int endOffset = m_token.m_endPosition.offset;
         next();
         if (shouldPushLexicalScope)
             std::tie(lexicalEnvironment, functionStack) = popScope(lexicalScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -2087,7 +2087,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
     TreeSourceElements subtree = parseSourceElements(context, DontCheckForStrictMode);
     failIfFalse(subtree, "Cannot parse the body of the block statement");
     matchOrFail(CLOSEBRACE, "Expected a closing '}' at the end of a block statement");
-    int endOffset = m_token.m_startPosition.offset;
+    int endOffset = m_token.m_endPosition.offset;
     next();
     if (shouldPushLexicalScope)
         std::tie(lexicalEnvironment, functionStack) = popScope(lexicalScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -2121,7 +2121,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(Tre
         break;
     case FUNCTION: {
         result = parseFunctionDeclarationStatement(context, parentAllowsFunctionDeclarationAsStatement);
-        shouldSetEndOffset = false;
         break;
     }
     case SEMICOLON: {
@@ -2245,10 +2244,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseFunctionDecla
     TreeSourceElements sourceElements = context.createSourceElements();
     context.appendStatement(sourceElements, function);
     auto [lexicalEnvironment, functionDeclarations] = popScope(blockScope, TreeBuilder::NeedsFreeVariableInfo);
-    TreeStatement result = context.createBlockStatement(location, sourceElements, WTF::move(lexicalEnvironment), WTF::move(functionDeclarations));
-    // That of a block is the offset of its brace.
-    context.setEndOffset(result, m_lastTokenLocation.endOffset - 1);
-    return result;
+    return context.createBlockStatement(location, sourceElements, WTF::move(lexicalEnvironment), WTF::move(functionDeclarations));
 }
 
 template <typename LexerType>
@@ -3646,7 +3642,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         auto [condition, location] = exprStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, 0);
-        context.setEndOffset(ifStatement, m_lastTokenLocation.endOffset);
+        context.setEndOffset(ifStatement, context.endOffset(trueBlock));
         statementStack.append(ifStatement);
     }
 
@@ -3655,7 +3651,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         TreeStatement falseBlock = statementStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, falseBlock);
-        context.setEndOffset(ifStatement, m_lastTokenLocation.endOffset);
+        context.setEndOffset(ifStatement, context.endOffset(falseBlock));
         statementStack.append(ifStatement);
     }
 
