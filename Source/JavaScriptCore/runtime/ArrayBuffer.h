@@ -343,6 +343,7 @@ private:
     static constexpr unsigned s_lockedFlag = INT32_MIN;
     Checked<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
+    bool m_contentsArePinned { false };
     Vector<ArrayBufferContents> m_contentsKeptWhilePinned;
 };
 
@@ -390,6 +391,7 @@ size_t ArrayBuffer::gcSizeEstimateInBytes() const
 void ArrayBuffer::pin()
 {
     m_pinCount++;
+    m_contentsArePinned = true;
 }
 
 void ArrayBuffer::unpin()
@@ -397,8 +399,10 @@ void ArrayBuffer::unpin()
     unsigned old = m_pinCount;
     m_pinCount--;
     m_pinCount |= (old & s_lockedFlag);
-    if (!isPinned())
+    if (!isPinned()) {
+        m_contentsArePinned = false;
         m_contentsKeptWhilePinned.clear();
+    }
 }
 
 bool ArrayBuffer::isDetachable() const

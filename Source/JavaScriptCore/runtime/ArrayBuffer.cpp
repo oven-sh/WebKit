@@ -533,10 +533,10 @@ void ArrayBuffer::detach(VM& vm)
     keepWhilePinned(WTF::move(contents));
 }
 
-// Whoever pinned us holds a pointer into these bytes, so they stay allocated until the last unpin().
+// Whoever pinned us while these were our bytes holds a pointer into them, so they stay allocated until the last unpin().
 void ArrayBuffer::keepWhilePinned(ArrayBufferContents&& contents)
 {
-    if (isPinned())
+    if (std::exchange(m_contentsArePinned, false))
         m_contentsKeptWhilePinned.append(WTF::move(contents));
 }
 
