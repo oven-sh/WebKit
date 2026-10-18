@@ -105,22 +105,27 @@ shouldBe(new RegExp(filler + "\\8").test(filler + "8"), true, "\\8 without captu
 }
 
 // Deeply nested long patterns take the eager path, so where they throw does not depend on the option.
+// Running out of stack while building or compiling one is a clean throw of either kind (see
+// regexp-quantify-atom-copy-term-out-of-stack.js); with enough stack nothing throws.
 {
     let depth = 20000;
     let source = "(?:".repeat(depth) + "a" + ")".repeat(depth);
+    let outOfStack = [
+        "SyntaxError: Invalid regular expression: regular expression too large",
+        "RangeError: Out of memory: Invalid regular expression: too many nested disjunctions",
+    ];
     let constructed = null;
-    let threwAtConstruction = false;
     try {
         constructed = new RegExp(source);
     } catch (e) {
-        threwAtConstruction = e instanceof SyntaxError;
+        shouldBe(outOfStack.includes(String(e)), true, "deeply nested pattern construction error: " + e);
     }
-    if (!threwAtConstruction) {
+    if (constructed) {
         let result = true;
         try {
             result = constructed.test("a");
         } catch (e) {
-            shouldBe(e instanceof SyntaxError, true, "deeply nested pattern compile error type");
+            shouldBe(outOfStack.includes(String(e)), true, "deeply nested pattern compile error: " + e);
         }
         shouldBe(result, true, "deeply nested pattern runs");
     }
