@@ -135,6 +135,11 @@ public:
     void clearMarkStacks();
 
     size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
+#if USE(BUN_JSC_ADDITIONS)
+    // What this visitor has marked, and the cells that were marked before and that it has visited again (the
+    // remembered set of an eden collection, the cells that the mutator's barrier sent back). That is its work.
+    size_t bytesVisited() const { return bytesMarked() + m_bytesVisitedAgain; }
+#endif
     void flushBytesMarked();
     JS_EXPORT_PRIVATE void flushExtraMemoryVisited();
 
@@ -234,6 +239,10 @@ private:
     size_t m_bytesMarkedInHeap { 0 };
     SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_bytesMarkedHeap { nullptr }; // Heap is not refcounted.
     size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_bytesVisitedAgain { 0 };
+    size_t m_bytesVisitedAtLastMarkerWakeup { 0 }; // bytesVisited() when this visitor last woke a marker, see donateKnownParallel().
+#endif
 
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
 

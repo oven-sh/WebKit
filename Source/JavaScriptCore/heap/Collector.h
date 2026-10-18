@@ -97,8 +97,10 @@ public:
     void runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>>);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether the helper threads have joined the marking of the current cycle.
-    bool parallelMarkersStarted();
+    // True until a visitor of the current cycle has visited Options::minimumBytesMarkedForParallelMarking or the
+    // cycle has woken a marker. A collection that small is done sooner on its collector's thread, in one pause, than
+    // with another thread woken for it or with the mutator resumed.
+    bool isSmallSoFar() const { return m_isSmallSoFar.load(std::memory_order_relaxed); }
 #endif
 
     template<typename Func>
@@ -191,9 +193,32 @@ private:
     bool runReloopPhase(GCConductor);
     bool runEndPhase(GCConductor);
 
-    // Hands the helper threads the marking of the current cycle. Once per cycle: the begin phase, or with
-    // Options::minimumBytesMarkedForParallelMarking the first place that shows the helpers would have work.
-    void startParallelMarkers(const AbstractLocker&) WTF_REQUIRES_LOCK(m_markingMutex);
+    // What a thread of the helper pool does for the marking of the current cycle.
+    void runMarkingHelper();
+
+#if USE(BUN_JSC_ADDITIONS)
+    // To wake one thread for the shared mark stacks or for m_bonusVisitorTask: chooseMarkerToWake() says which, and
+    // wakeMarker() wakes it. That is the thread that waits in SlotVisitor::drainFromShared(MainDrain) if there is
+    // one, else a thread of the helper pool. To wake a thread costs more than to mark a few cells, so the callers
+    // pay for each wake-up with marking that is done: Options::minimumBytesMarkedForParallelMarking. It is a system
+    // call too, and the thread that wakes up takes m_markingMutex first thing, so wakeMarker() is best called with
+    // the lock released.
+    enum class MarkerToWake : uint8_t { None, ThreadInMainDrain, Helper };
+    MarkerToWake chooseMarkerToWake(const AbstractLocker&) WTF_REQUIRES_LOCK(m_markingMutex);
+    // For a thread that stops marking while the mutator runs: a marker for the shared mark stacks, unless one is at
+    // them or on its way. That wake-up is not paid for: somebody has to go on with the marking.
+    MarkerToWake chooseMarkerToWakeIfNoneIsMarking(const AbstractLocker&) WTF_REQUIRES_LOCK(m_markingMutex);
+    void wakeMarker(MarkerToWake);
+
+    void didVisitEnoughForParallelMarking()
+    {
+        if (isSmallSoFar())
+            m_isSmallSoFar.store(false, std::memory_order_relaxed);
+    }
+
+    // What every visitor of the current cycle has visited: SlotVisitor::bytesVisited().
+    size_t bytesVisited();
+#endif
 
     bool changePhase(GCConductor, CollectorPhase);
     bool finishChangingPhase(GCConductor);
@@ -237,7 +262,11 @@ private:
     Condition m_bonusVisitorTaskConditionVariable;
     bool m_parallelMarkersShouldExit { false };
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_parallelMarkersStarted WTF_GUARDED_BY_LOCK(m_markingMutex) { false };
+    std::atomic<bool> m_isSmallSoFar { false };
+    // Wake-ups that chooseMarkerToWake() has chosen in the current cycle.
+    unsigned m_numberOfMarkerWakeups WTF_GUARDED_BY_LOCK(m_markingMutex) { 0 };
+    // Threads of the helper pool that have been asked for and have not arrived.
+    std::atomic<unsigned> m_numberOfRequestedParallelMarkers { 0 };
 #endif
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
