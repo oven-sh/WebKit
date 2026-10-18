@@ -49,7 +49,7 @@ public:
     void setEndOffset(int endOffset) { m_endOffset = endOffset; }
     bool hasExecuted() const { return m_executionCount > 0; }
     size_t executionCount() const { return m_executionCount; }
-    void insertGap(int, int);
+    void insertGaps(const Vector<Gap>&);
     Vector<Gap> getExecutedRanges() const;
     JS_EXPORT_PRIVATE void dumpData() const;
 #if ENABLE(JIT)

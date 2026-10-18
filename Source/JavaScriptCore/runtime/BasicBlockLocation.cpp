@@ -43,24 +43,21 @@ BasicBlockLocation::BasicBlockLocation(int startOffset, int endOffset)
 {
 }
 
-void BasicBlockLocation::insertGap(int startOffset, int endOffset)
+void BasicBlockLocation::insertGaps(const Vector<Gap>& gaps)
 {
-    std::pair<int, int> gap(startOffset, endOffset);
-    if (!m_gaps.contains(gap))
-        m_gaps.append(gap);
+    m_gaps.appendVector(gaps);
+    std::ranges::sort(m_gaps);
+    m_gaps.shrink(std::ranges::unique(m_gaps).begin() - m_gaps.begin());
 }
 
 Vector<std::pair<int, int>> BasicBlockLocation::getExecutedRanges() const
 {
     Vector<Gap> result;
-    Vector<Gap> gaps = m_gaps;
-    std::ranges::sort(gaps);
     int nextRangeStart = m_startOffset;
-    for (Gap gap : gaps) {
+    for (Gap gap : m_gaps) {
         if (nextRangeStart < gap.first)
             result.append(Gap(nextRangeStart, gap.first - 1));
-        // A gap can be in another one: a function in a part of an expression that is a basic block of its own.
-        nextRangeStart = std::max(nextRangeStart, gap.second + 1);
+        nextRangeStart = gap.second + 1;
     }
 
     if (nextRangeStart <= m_endOffset)

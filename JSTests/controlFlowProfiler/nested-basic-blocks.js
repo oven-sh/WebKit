@@ -150,6 +150,24 @@ function testFunctionDeclarationInIf(x) {
 testFunctionDeclarationInIf(false);
 count(testFunctionDeclarationInIf, "/*after*/", 1);
 
+function testFunctionAtTheStartOfABasicBlock(x) {
+    for (;;) {
+        if (x) { break; }function inner() { }
+        foo();
+    }
+}
+testFunctionAtTheStartOfABasicBlock(true);
+count(testFunctionAtTheStartOfABasicBlock, "inner", 0);
+count(testFunctionAtTheStartOfABasicBlock, "foo()", 0);
+
+function testFunctionThatIsABasicBlock(x) {
+    if (x) y => y
+    foo();
+}
+testFunctionThatIsABasicBlock(true);
+count(testFunctionThatIsABasicBlock, "y => y", 0);
+count(testFunctionThatIsABasicBlock, "foo()", 1);
+
 function testEmptyBlock(x) {
     if (x) { }
     foo();

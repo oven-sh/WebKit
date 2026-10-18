@@ -4012,8 +4012,32 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         int basicBlockEndOffset = bytecode.m_textEndOffset ? bytecode.m_textEndOffset - 1 : sourceOffset() + ownerExecutable()->source().length() - 1;
         return BasicBlockLocation::Gap { basicBlockStartOffset, basicBlockEndOffset };
     });
-    auto sortedBasicBlocks = basicBlocks;
-    std::ranges::sort(sortedBasicBlocks);
+
+    struct Range {
+        int startOffset;
+        int endOffset;
+        bool isFunction;
+    };
+    Vector<Range> ranges(offsetsLength, [&](size_t i) {
+        return Range { basicBlocks[i].first, basicBlocks[i].second, false };
+    });
+
+    // In the original source text of a JavaScript program, function literals form new basic blocks boundaries,
+    // but they aren't represented inside the CodeBlock's instruction stream.
+    auto appendFunction = [&](const WriteBarrier<FunctionExecutable>& functionExecutable) {
+        const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
+        if (executable->hasFunctionRangeInParentSource())
+            ranges.append(Range { static_cast<int>(executable->unlinkedFunctionStart()), static_cast<int>(executable->unlinkedFunctionEnd()), true });
+    };
+    for (const WriteBarrier<FunctionExecutable>& executable : m_functionDecls)
+        appendFunction(executable);
+    for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
+        appendFunction(executable);
+
+    // Of two that start together, the one that the other is in is first.
+    std::ranges::sort(ranges, [](const Range& a, const Range& b) {
+        return a.startOffset != b.startOffset ? a.startOffset < b.startOffset : a.endOffset > b.endOffset;
+    });
 
     for (size_t i = 0; i < offsetsLength; i++) {
         auto& metadata = bytecodeAt(i).metadata(this);
@@ -4021,34 +4045,18 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
 
         BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
 
-        // Find all functions that are enclosed within the range: [basicBlockStartOffset, basicBlockEndOffset]
-        // and insert these functions' start/end offsets as gaps in the current BasicBlockLocation.
-        // This is necessary because in the original source text of a JavaScript program, 
-        // function literals form new basic blocks boundaries, but they aren't represented 
-        // inside the CodeBlock's instruction stream.
-        auto insertFunctionGaps = [basicBlockLocation, basicBlockStartOffset, basicBlockEndOffset] (const WriteBarrier<FunctionExecutable>& functionExecutable) {
-            const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
-            if (!executable->hasFunctionRangeInParentSource())
-                return;
-            int functionStart = executable->unlinkedFunctionStart();
-            int functionEnd = executable->unlinkedFunctionEnd();
-            if (functionStart >= basicBlockStartOffset && functionEnd <= basicBlockEndOffset)
-                basicBlockLocation->insertGap(functionStart, functionEnd);
-        };
-
-        for (const WriteBarrier<FunctionExecutable>& executable : m_functionDecls)
-            insertFunctionGaps(executable);
-        for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
-            insertFunctionGaps(executable);
-
-        int lastGapEndOffset = -1;
-        for (auto inner = std::ranges::lower_bound(sortedBasicBlocks, basicBlockStartOffset, { }, &BasicBlockLocation::Gap::first); inner != sortedBasicBlocks.end() && inner->first <= basicBlockEndOffset; ++inner) {
-            // What is in a gap is not another one: with each `else if` in the one before it, there would be a gap for each two of them.
-            if (*inner == basicBlocks[i] || inner->first <= lastGapEndOffset)
+        Vector<BasicBlockLocation::Gap> gaps;
+        auto inner = std::ranges::lower_bound(ranges, basicBlockStartOffset, { }, &Range::startOffset);
+        while (inner != ranges.end() && inner->startOffset <= basicBlockEndOffset) {
+            if (!inner->isFunction && inner->startOffset == basicBlockStartOffset && inner->endOffset == basicBlockEndOffset) {
+                ++inner;
                 continue;
-            basicBlockLocation->insertGap(inner->first, inner->second);
-            lastGapEndOffset = inner->second;
+            }
+            gaps.append({ inner->startOffset, inner->endOffset });
+            // What is in a gap is not another one: with each `else if` in the one before it, there would be a gap for each two of them.
+            inner = std::ranges::upper_bound(inner, ranges.end(), inner->endOffset, { }, &Range::startOffset);
         }
+        basicBlockLocation->insertGaps(gaps);
 
         metadata.m_basicBlockLocation = basicBlockLocation;
     }
