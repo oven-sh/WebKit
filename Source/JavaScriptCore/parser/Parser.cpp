@@ -3548,7 +3548,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExpressionOrL
     for (size_t i = 0; i < labels.size(); i++) {
         const LabelInfo& info = labels[labels.size() - i - 1];
         statement = context.createLabelStatement(location, info.m_ident, statement, info.m_start, info.m_end);
-        context.setEndOffset(statement, m_lastTokenLocation.endOffset);
     }
     return statement;
 }

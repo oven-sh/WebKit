@@ -117,6 +117,32 @@ count(testElseIf, "foo(3)", 2);
 count(testElseIf, "/*else*/", 2);
 count(testElseIf, "/*end*/", 3);
 
+function testBraceOfElseIf(x) {
+    if (x === 1) {
+        foo(1);
+    } else if (x === 2) {
+        foo(2);
+        foo(2);
+    }
+    foo(3);
+}
+testBraceOfElseIf(1);
+count(testBraceOfElseIf, "}\n    foo(3)", 0);
+
+function testBraceOfElseAfterElseIf(x) {
+    if (x === 1) {
+        foo(1);
+    } else if (x === 2) {
+        foo(2);
+    } else {
+        foo(3);
+        foo(3);
+    }
+    foo(4);
+}
+testBraceOfElseAfterElseIf(1);
+count(testBraceOfElseAfterElseIf, "}\n    foo(4)", 0);
+
 function testFunctionDeclarationInIf(x) {
     if (x) function bar() { }/*after*/
     foo();
@@ -133,6 +159,48 @@ function testLoopsLast() {
 testLoopsLast();
 count(testLoopsLast, "foo(1)", 0);
 count(testLoopsLast, "/*end*/", 1);
+
+function testWhileLast() {
+    let i = 0;
+    while (i < 3) {
+        i++;
+    }
+    /*end*/
+}
+testWhileLast();
+count(testWhileLast, "i++", 3);
+count(testWhileLast, "/*end*/", 1);
+
+function testDoWhileLast() {
+    let i = 0;
+    do {
+        i++;
+    } while (i < 3);
+    /*end*/
+}
+testDoWhileLast();
+count(testDoWhileLast, "i++", 3);
+count(testDoWhileLast, "/*end*/", 1);
+
+function testForInLast() {
+    for (let key in { a: 1, b: 2, c: 3 }) {
+        foo(1);
+    }
+    /*end*/
+}
+testForInLast();
+count(testForInLast, "foo(1)", 3);
+count(testForInLast, "/*end*/", 1);
+
+function testForOfLast() {
+    for (let value of [1, 2, 3]) {
+        foo(1);
+    }
+    /*end*/
+}
+testForOfLast();
+count(testForOfLast, "foo(1)", 3);
+count(testForOfLast, "/*end*/", 1);
 
 function testSwitch(x) {
     switch (x) {
@@ -177,6 +245,17 @@ count(testTry, "foo(2)", 1);
 count(testTry, "foo(3)", 3);
 count(testTry, "/*finally*/", 3);
 count(testTry, "/*end*/", 3);
+
+function* testFinallyOfAGenerator() {
+    try {
+        yield 1;
+    } finally {
+        foo();
+    }
+}
+testFinallyOfAGenerator().next();
+count(testFinallyOfAGenerator, "yield 1", 1);
+count(testFinallyOfAGenerator, "foo()", 0);
 
 // What is after a statement goes up to the end of the block, and up to the brace that closes a function.
 
@@ -297,6 +376,89 @@ function testLabel() {
 testLabel();
 count(testLabel, "foo(1)", 0);
 count(testLabel, "foo(2)", 1);
+
+function testReturnInLabel(x) {
+    label: {
+        if (x)
+            return 1;
+    }
+    foo();
+}
+testReturnInLabel(true);
+count(testReturnInLabel, "foo()", 0);
+
+function testReturnInTryFinally(x) {
+    try {
+        if (x)
+            return 1;
+    } finally {
+        foo(1);
+    }
+    foo(2);
+}
+testReturnInTryFinally(true);
+testReturnInTryFinally(false);
+count(testReturnInTryFinally, "foo(1)", 2);
+count(testReturnInTryFinally, "foo(2)", 1);
+
+function testReturnInTryFinallyLast(x) {
+    try {
+        if (x)
+            return 1;
+    } finally {
+        foo();
+    }
+    /*end*/
+}
+testReturnInTryFinallyLast(true);
+testReturnInTryFinallyLast(false);
+count(testReturnInTryFinallyLast, "/*end*/", 2);
+
+function testReturnInWhile() {
+    while (true)
+        return 1;
+    foo();
+}
+testReturnInWhile();
+count(testReturnInWhile, "foo()", 0);
+count(testReturnInWhile, "}", 1);
+
+function testReturnInDoWhile() {
+    do
+        return 1;
+    while (true);
+    foo();
+}
+testReturnInDoWhile();
+count(testReturnInDoWhile, "foo()", 0);
+count(testReturnInDoWhile, "}", 1);
+
+function testReturnInFor() {
+    for (;;)
+        return 1;
+    foo();
+}
+testReturnInFor();
+count(testReturnInFor, "foo()", 0);
+count(testReturnInFor, "}", 1);
+
+function testReturnInForIn(object) {
+    for (let key in object)
+        return 1;
+    foo();
+}
+testReturnInForIn({ a: 1 });
+count(testReturnInForIn, "foo()", 0);
+count(testReturnInForIn, "}", 1);
+
+function testReturnInForOf() {
+    for (let value of [1])
+        return 1;
+    foo();
+}
+testReturnInForOf();
+count(testReturnInForOf, "foo()", 0);
+count(testReturnInForOf, "}", 1);
 
 // What is after a loop runs once.
 
