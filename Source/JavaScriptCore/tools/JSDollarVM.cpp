@@ -2261,6 +2261,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionSetTypeProfilerEnabledWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionSetControlFlowProfilerEnabledWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
 static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
@@ -4063,6 +4065,43 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
         vm->deleteAllCode(PreventCollectionAndDeleteAllCode);
     });
     return JSValue::encode(jsUndefined());
+}
+
+// setTypeProfilerEnabledWhenIdle(enabled) and setControlFlowProfilerEnabledWhenIdle(enabled, generateCodeAgain = true):
+// what the inspector's Runtime.enableTypeProfiler, disableTypeProfiler, enableControlFlowProfiler and
+// disableControlFlowProfiler do (InspectorRuntimeAgent), once this call has returned to the event loop: the profiler is
+// turned on or off and all code is deleted, to be generated again for the new mode. With generateCodeAgain false the code
+// that exists is left as it is, which an embedder may do so that only code generated from then on is instrumented.
+static EncodedJSValue setProfilerEnabledWhenIdle(JSGlobalObject* globalObject, CallFrame* callFrame, bool isTypeProfiler)
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    bool enable = callFrame->argument(0).toBoolean(globalObject);
+    bool generateCodeAgain = callFrame->argumentCount() < 2 || callFrame->uncheckedArgument(1).toBoolean(globalObject);
+    vm->whenIdle([=] () {
+        DollarVMAssertScope assertScope;
+        bool isEnabled = isTypeProfiler ? vm->isTypeProfilerEnabled() : vm->isControlFlowProfilerEnabled();
+        if (enable == isEnabled)
+            return;
+        bool needsToRecompile;
+        if (isTypeProfiler)
+            needsToRecompile = enable ? vm->enableTypeProfiler() : vm->disableTypeProfiler();
+        else
+            needsToRecompile = enable ? vm->enableControlFlowProfiler() : vm->disableControlFlowProfiler();
+        if (needsToRecompile && generateCodeAgain)
+            vm->deleteAllCodeToGenerateItAgain(PreventCollectionAndDeleteAllCode);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetTypeProfilerEnabledWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return setProfilerEnabledWhenIdle(globalObject, callFrame, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetControlFlowProfilerEnabledWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return setProfilerEnabledWhenIdle(globalObject, callFrame, false);
 }
 
 // shrinkFootprintWhenIdle(keepCodeThatNeedsParsing = true, keepCodeInUse = false): the embedder's deep-idle step, without
@@ -6027,6 +6066,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "setTypeProfilerEnabledWhenIdle"_s, functionSetTypeProfilerEnabledWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "setControlFlowProfilerEnabledWhenIdle"_s, functionSetControlFlowProfilerEnabledWhenIdle, 2);
     addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
     addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
     addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);

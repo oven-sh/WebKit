@@ -1128,12 +1128,36 @@ public:
     bool enableTypeProfiler();
     bool disableTypeProfiler();
     TypeProfilerLog* typeProfilerLog() LIFETIME_BOUND { return m_typeProfilerLog.get(); }
-    TypeProfiler* typeProfiler() LIFETIME_BOUND { return m_typeProfiler.get(); }
+    // Code that was generated for a profiler can run after the profiler is turned off: the body of a generator or an
+    // async function keeps its mode once it has run (ScriptExecutable::codeGenerationModeForResumableBody). Such code is
+    // linked against the profiler and writes into it. So turning a profiler off does not destroy it. It goes when all
+    // linked code has gone (releaseProfilersThatAreOff()), and code for it that is linked after that makes it again
+    // (ensure...ForInstrumentedCode()). What links such code asks for the profiler ...ForInstrumentedCode().
+    // typeProfiler() and controlFlowProfiler() are the profiler while it is on, as before: nothing reads what such
+    // code writes while the profiler is off.
+    bool isTypeProfilerEnabled() const { return m_typeProfilerEnabledCount; }
+    bool isControlFlowProfilerEnabled() const { return m_controlFlowProfilerEnabledCount; }
+    TypeProfiler* typeProfiler() LIFETIME_BOUND { return isTypeProfilerEnabled() ? m_typeProfiler.get() : nullptr; }
+    TypeProfiler* typeProfilerForInstrumentedCode() LIFETIME_BOUND { return m_typeProfiler.get(); }
+    TypeProfiler* ensureTypeProfilerForInstrumentedCode() LIFETIME_BOUND
+    {
+        if (!m_typeProfiler) [[unlikely]]
+            makeTypeProfiler();
+        return m_typeProfiler.get();
+    }
+    void releaseProfilersThatAreOff();
     JS_EXPORT_PRIVATE void dumpTypeProfilerData();
 
     FunctionHasExecutedCache* functionHasExecutedCache() LIFETIME_BOUND { return &m_functionHasExecutedCache; }
 
-    ControlFlowProfiler* controlFlowProfiler() LIFETIME_BOUND { return m_controlFlowProfiler.get(); }
+    ControlFlowProfiler* controlFlowProfiler() LIFETIME_BOUND { return isControlFlowProfilerEnabled() ? m_controlFlowProfiler.get() : nullptr; }
+    ControlFlowProfiler* controlFlowProfilerForInstrumentedCode() LIFETIME_BOUND { return m_controlFlowProfiler.get(); }
+    ControlFlowProfiler* ensureControlFlowProfilerForInstrumentedCode() LIFETIME_BOUND
+    {
+        if (!m_controlFlowProfiler) [[unlikely]]
+            makeControlFlowProfiler();
+        return m_controlFlowProfiler.get();
+    }
     bool enableControlFlowProfiler();
     bool disableControlFlowProfiler();
 
@@ -1428,6 +1452,9 @@ private:
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
+    JS_EXPORT_PRIVATE void makeTypeProfiler();
+    JS_EXPORT_PRIVATE void makeControlFlowProfiler();
+
     std::unique_ptr<TypeProfiler> m_typeProfiler;
     std::unique_ptr<TypeProfilerLog> m_typeProfilerLog;
     unsigned m_typeProfilerEnabledCount { 0 };

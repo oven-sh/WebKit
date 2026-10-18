@@ -113,6 +113,8 @@ public:
     GlobalVariableID getNextUniqueVariableID() { return m_nextUniqueVariableID++; }
     TypeLocation* nextTypeLocation();
     void invalidateTypeSetCache(VM&);
+    // Forgets what was seen. Every TypeLocation stays where it is: code points at it.
+    void clear();
     void dumpTypeProfilerData(VM&);
     
 private:

@@ -61,6 +61,14 @@ TypeProfilerLog::~TypeProfilerLog()
 
 void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
 {
+    // Code that has outlived the profiler still writes entries (VM::typeProfilerForInstrumentedCode()), and comes here
+    // when the log is full. Nobody reads them: they are dropped. The collector does not visit the log while the
+    // profiler is off, so what an entry points at may be gone.
+    if (!vm.isTypeProfilerEnabled()) {
+        clear();
+        return;
+    }
+
     // We need to do this because this code will call into calculatedDisplayName.
     // calculatedDisplayName will clear any exception it sees (because it thinks
     // it's a stack overflow). We may be called when an exception was already
