@@ -316,6 +316,24 @@ count(testTwoIfs, "if (y)", 2);
 count(testTwoIfs, "return 2", 1);
 count(testTwoIfs, "foo(2)", 1);
 
+function testSwitchAfterIf(x, y) {
+    if (x)
+        return 1;
+    switch (y) {
+    case 1:
+        if (y)
+            foo(1);
+        foo(2);
+        /*switch*/
+    }
+    foo(3);
+}
+testSwitchAfterIf(true, 1);
+testSwitchAfterIf(false, 1);
+count(testSwitchAfterIf, "foo(2)", 1);
+count(testSwitchAfterIf, "/*switch*/", 1);
+count(testSwitchAfterIf, "foo(3)", 1);
+
 function testPartOfAnExpressionAfterIf(x) {
     if (x) {
         return 1;
