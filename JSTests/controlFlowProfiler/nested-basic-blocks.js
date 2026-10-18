@@ -117,6 +117,13 @@ count(testElseIf, "foo(3)", 2);
 count(testElseIf, "/*else*/", 2);
 count(testElseIf, "/*end*/", 3);
 
+function testFunctionDeclarationInIf(x) {
+    if (x) function bar() { }/*after*/
+    foo();
+}
+testFunctionDeclarationInIf(false);
+count(testFunctionDeclarationInIf, "/*after*/", 1);
+
 function testLoopsLast() {
     for (let i = 0; i < 0; i++) {
         foo(1);

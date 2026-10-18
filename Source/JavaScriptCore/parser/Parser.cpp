@@ -2121,6 +2121,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(Tre
         break;
     case FUNCTION: {
         result = parseFunctionDeclarationStatement(context, parentAllowsFunctionDeclarationAsStatement);
+        shouldSetEndOffset = false;
         break;
     }
     case SEMICOLON: {
@@ -2244,7 +2245,10 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseFunctionDecla
     TreeSourceElements sourceElements = context.createSourceElements();
     context.appendStatement(sourceElements, function);
     auto [lexicalEnvironment, functionDeclarations] = popScope(blockScope, TreeBuilder::NeedsFreeVariableInfo);
-    return context.createBlockStatement(location, sourceElements, WTF::move(lexicalEnvironment), WTF::move(functionDeclarations));
+    TreeStatement result = context.createBlockStatement(location, sourceElements, WTF::move(lexicalEnvironment), WTF::move(functionDeclarations));
+    // That of a block is the offset of its brace.
+    context.setEndOffset(result, m_lastTokenLocation.endOffset - 1);
+    return result;
 }
 
 template <typename LexerType>
