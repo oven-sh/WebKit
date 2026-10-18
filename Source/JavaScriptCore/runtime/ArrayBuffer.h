@@ -331,6 +331,7 @@ private:
     static inline size_t LEGACY_NODELETE clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
+    void keepWhilePinned(ArrayBufferContents&&);
 
     ArrayBufferContents m_contents;
     InlineWatchpointSet m_detachingWatchpointSet { IsWatched };
@@ -340,6 +341,8 @@ private:
     static constexpr unsigned s_lockedFlag = INT32_MIN;
     Checked<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
+    // Wasm memory that stopped backing this buffer while it was pinned. Whoever pinned it may still be reading it.
+    Vector<ArrayBufferContents> m_contentsKeptWhilePinned;
 };
 
 void* ArrayBuffer::data() LIFETIME_BOUND
@@ -393,6 +396,8 @@ void ArrayBuffer::unpin()
     unsigned old = m_pinCount;
     m_pinCount--;
     m_pinCount |= (old & s_lockedFlag);
+    if (!(m_pinCount.value() & ~s_lockedFlag))
+        m_contentsKeptWhilePinned.clear();
 }
 
 bool ArrayBuffer::isDetachable() const

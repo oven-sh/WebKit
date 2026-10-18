@@ -461,10 +461,14 @@ void ArrayBuffer::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
     ASSERT(isWasmMemory());
 
     void* oldData = m_contents.data();
+    size_t oldSizeInBytes = m_contents.m_sizeInBytes;
+    RefPtr oldMemoryHandle = m_contents.m_memoryHandle;
     m_contents.refreshAfterWasmMemoryGrow(memory);
     void* newData = m_contents.data();
     if (newData == oldData)
         return;
+
+    keepWhilePinned({ oldData, oldSizeInBytes, oldSizeInBytes, oldMemoryHandle.releaseNonNull() });
 
     // JSArrayBufferViews (typed arrays) effectively cache their buffer's data pointer.
     for (size_t i = numberOfIncomingReferences(); i--;) {
@@ -524,8 +528,16 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 // We allow detaching wasm memory ArrayBuffers even though they are locked.
 void ArrayBuffer::detach(VM& vm)
 {
-    auto unused = m_contents.detach();
+    keepWhilePinned(m_contents.detach());
     notifyDetaching(vm);
+}
+
+// transferTo() leaves a pinned buffer's bytes where they are and copies them. A WebAssembly.Memory that grows
+// has already copied them, so what is left to do for a pinned buffer is to not free the memory it grew out of.
+void ArrayBuffer::keepWhilePinned(ArrayBufferContents&& contents)
+{
+    if (m_pinCount.value() & ~s_lockedFlag)
+        m_contentsKeptWhilePinned.append(WTF::move(contents));
 }
 
 void ArrayBuffer::notifyDetaching(VM& vm)
