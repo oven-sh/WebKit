@@ -2740,7 +2740,9 @@ RegisterID* BytecodeGenerator::emitResolveScope(RegisterID* dst, const Variable&
         return nullptr;
         
     case VarKind::DirectArgument:
-        return argumentsRegister();
+        // The arguments object is not a scope. emitGetFromScope() and emitPutToScope() name its register
+        // themselves, so that no caller can use it as a value: the |this| of a call, or the base of a delete.
+        return nullptr;
         
     case VarKind::Scope: {
         // This always refers to the activation that *we* allocated, and not the current scope that code
@@ -2795,7 +2797,7 @@ RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* sco
         return move(dst, variable.local());
         
     case VarKind::DirectArgument: {
-        OpGetFromArguments::emit(this, kill(dst), scope, variable.offset().capturedArgumentsOffset().offset(), nextValueProfileIndex());
+        OpGetFromArguments::emit(this, kill(dst), m_argumentsRegister, variable.offset().capturedArgumentsOffset().offset(), nextValueProfileIndex());
         return dst;
     }
         
@@ -2824,7 +2826,7 @@ RegisterID* BytecodeGenerator::emitPutToScope(RegisterID* scope, const Variable&
         return value;
         
     case VarKind::DirectArgument:
-        OpPutToArguments::emit(this, scope, variable.offset().capturedArgumentsOffset().offset(), value);
+        OpPutToArguments::emit(this, m_argumentsRegister, variable.offset().capturedArgumentsOffset().offset(), value);
         return value;
         
     case VarKind::Scope:
@@ -3327,7 +3329,7 @@ void BytecodeGenerator::emitTDZCheckIfNecessary(const Variable& variable, Regist
         if (target)
             emitTDZCheck(target, variable);
         else {
-            RELEASE_ASSERT(!variable.isLocal() && scope);
+            RELEASE_ASSERT(!variable.isLocal() && (scope || variable.offset().isDirectArgument()));
             RefPtr<RegisterID> result = emitGetFromScope(newTemporary(), scope, variable, DoNotThrowIfNotFound);
             emitTDZCheck(result.get(), variable);
         }
