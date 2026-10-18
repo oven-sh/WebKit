@@ -2047,6 +2047,18 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         return { UINT_MAX, InlineAttribute::None };
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Debug hooks pause in the frame of the code that has them. An inlined op_debug does nothing, and a breakpoint
+    // only throws away the optimized code of its own function (CodeBlock::addBreakpoint), not that of a caller that
+    // inlined it. The check above is for a caller with debug hooks. A caller without them can still call a function
+    // that has them: code of a global object without a debugger does, and so does the body of a generator that
+    // started before the debugger attached.
+    if (codeBlock->wasCompiledWithDebuggingOpcodes() && !executable->isPrivateBuiltinFunction()) {
+        VERBOSE_LOG("    Failing because the callee has debug hooks.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+#endif
+
     CodeBlock* targetCodeBlock = executable->codeBlockFor(specializationKind);
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;
