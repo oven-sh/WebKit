@@ -448,7 +448,7 @@ private:
                 fail(id, "names an inline slot that no object has"_s);
             break;
         case Opcode::PutById:
-            if ((value.isAtKnownSlot() || value.isFirstStoreToThis()) && value.knownSlot() >= Value::numberOfKnownSlots)
+            if (value.isAtKnownSlot() && value.knownSlot() >= Value::numberOfKnownSlots)
                 fail(id, "names an inline slot that no object has"_s);
             if (auto access = fieldOf(m_program, typeOf(value.child(0)), value.string()))
                 need(id, value.child(1), m_program.at(access->layout).fields[access->field].type, "the field's value"_s);

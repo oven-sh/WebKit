@@ -322,15 +322,6 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* executable) const
-{
-    for (unsigned index = 0; index < numberOfBuiltinCodes; ++index) {
-        if (m_unlinkedExecutables[index] == executable)
-            return index;
-    }
-    return std::nullopt;
-}
-
 std::span<const Latin1Character> BuiltinExecutables::sourceOf(unsigned index)
 {
     switch (static_cast<BuiltinCodeIndex>(index)) {

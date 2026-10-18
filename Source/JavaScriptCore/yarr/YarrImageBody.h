@@ -60,10 +60,9 @@ struct ResolvedReference {
 struct Result {
     Vector<uint8_t> bytes;
     Vector<ResolvedReference> references;
-    uint32_t entryForWideSubjects { 0 };
 };
 
-enum class Kind : uint8_t { Plain, ConditionalJump, Jump, Return, IndirectJump, CodeAddress, Call, Reference, Fill, JumpIfWide };
+enum class Kind : uint8_t { Plain, ConditionalJump, Jump, Return, IndirectJump, CodeAddress, Call, Reference, Fill };
 
 struct Unit {
     uint32_t offset { 0 };

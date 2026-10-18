@@ -1584,7 +1584,6 @@ private:
     void reportUnlessAtKnownSlot(LValue found, LValue expected, Boxed base);
     Boxed getAtKnownSlot(const Value&, Boxed base);
     void putAtKnownSlot(const Value&, Boxed base, Boxed value);
-    void assignThisStructure(const Value& store, Boxed self);
     bool hasInitialStructureStill(const Value& store);
     Vector<uint32_t> m_singlePredecessors;
     UncheckedKeyHashMap<uint32_t, bool> m_isUnreachableFromHandler;

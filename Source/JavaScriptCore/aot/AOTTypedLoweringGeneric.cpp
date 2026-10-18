@@ -652,39 +652,6 @@ bool Lowering::hasInitialStructureStill(const Value& store)
     return false;
 }
 
-void Lowering::assignThisStructure(const Value& store, Boxed self)
-{
-    auto& row = m_program.initialStructures[store.initialStructureOfFirstStore() - 1];
-    Word32 count = word32(row.names.size());
-    Word32 names = word32(rowOfNames(row.names.span()));
-    bool hasSlot = !(m_program.runsOnce(m_id) && !m_isInLoop) && m_context.sites.size() < std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots);
-    if (!hasSlot) {
-        AOT_TYPED_OPERATION(AssignThisStructure, Pointer(m_out.constIntPtr(0)), self, count, names, word32(row.number + 1));
-        return;
-    }
-    m_context.sites.append(Site { });
-    Pointer cache = slotAddress(m_context.sites.size() - 1);
-    auto inCache = [&](size_t offset) {
-        return TypedPointer(m_heaps.AOTTyped_collectorState, m_out.add(cache.value(), m_out.constIntPtr(offset)));
-    };
-    LBasicBlock isObject = m_out.newBlock();
-    LBasicBlock isKnown = m_out.newBlock();
-    LBasicBlock slowPath = newColdBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(isCell(self).value(), usually(isObject), rarely(slowPath));
-    m_out.appendTo(isObject);
-    CellPointer cell = asCell(self);
-    m_out.branch(m_out.equal(m_out.load32(cell.value(), m_heaps.JSCell_structureID), m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, structureID)))), usually(isKnown), rarely(slowPath));
-    m_out.appendTo(isKnown);
-    didEmitWrite(Writes::Heap);
-    m_out.store32(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, newStructureID))), cell.value(), m_heaps.JSCell_structureID);
-    m_out.jump(continuation);
-    m_out.appendTo(slowPath);
-    AOT_TYPED_OPERATION(AssignThisStructure, cache, self, count, names, word32(row.number + 1));
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-}
-
 void Lowering::putAtKnownSlot(const Value& access, Boxed base, Boxed value)
 {
     if (Options::validateAOTTypedFacts() && access.isStoreIntoInitialStructure()) [[unlikely]] {
@@ -1501,12 +1468,12 @@ void Lowering::emitPutByNameThroughTable(Stub stub, Boxed base, uint32_t identif
     callICStub(stub, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::pair { stubImmediateGPR, identifier });
 }
 
-void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub, unsigned siteFlags)
+void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub)
 {
     bool isSloppy = isInSloppyCode();
     auto* valueBoxing = value.value()->as<PatchpointValue>();
     bool storesNumberJustBoxed = valueBoxing && valueBoxing->generator() == m_context.numberBoxingGenerator.get();
-    if (auto number = siteFlags || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : tableIndexOfName(name)) {
+    if (auto number = onlyThroughStub || storesNumberJustBoxed ? std::nullopt : tableIndexOfName(name)) {
         if (usesSiteCaches(name))
             putByNameThroughSiteCache(isSloppy, base, *number, value);
         else
@@ -1514,11 +1481,7 @@ void Lowering::emitStandaloneCachedPutById(Boxed base, StringID name, Boxed valu
         return;
     }
     unsigned isStrict = isSloppy ? 0 : 2;
-    auto slot = allocateSite(name, isStrict | siteFlags);
-    if (!slot && siteFlags && !isSloppy) {
-        AOT_TYPED_OPERATION(SetByNameInThisStructure, base, word32(name.index()), value);
-        return;
-    }
+    auto slot = allocateSite(name, isStrict);
     if (!slot && name.index() < m_program.identifierNumbers.size() && m_program.identifierNumbers[name.index()]) {
         callICStub(isSloppy ? Stub::PutByNameUncachedSloppy : Stub::PutByNameUncached, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::pair { GPRInfo::argumentGPR2, name.index() });
         return;

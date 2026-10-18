@@ -727,21 +727,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetStaticField, void, (Instance* insta
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedSetByNameInThisStructure, void, (Instance* instance, EncodedJSValue base, uint32_t name, EncodedJSValue value))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    const Identifier& identifier = nameAt(instance, name);
-    if (tryStoreIntoThisStructure(globalObject, nullptr, nullptr, JSValue::decode(base), identifier, JSValue::decode(value)))
-        OPERATION_RETURN(scope);
-    if (JSValue::decode(base).isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, State::nullishMessage(JSValue::decode(base), identifier.string(), true));
-        OPERATION_RETURN(scope);
-    }
-    PutPropertySlot slot(JSValue::decode(base), true);
-    JSValue::decode(base).put(globalObject, identifier, JSValue::decode(value), slot);
-    OPERATION_RETURN(scope);
-}
-
 static void createDataProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue value)
 {
     Structure* structure = object->structure();
@@ -5048,36 +5033,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisWithStores, JSCell*, (Instan
     makePrototypeChainWatchable(vm, object);
     fill(object, structure);
     OPERATION_RETURN(scope, object);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedAssignThisStructure, void, (Instance* instance, Slot* cache, EncodedJSValue self, uint32_t count, uint32_t rowOfNames, uint32_t structureDescriptorPlusOne))
-{
-    AOT_OPERATION_BEGIN_WITH_CACHE(instance, cache);
-    JSValue value = JSValue::decode(self);
-    if (!value.isCell() || value.asCell()->type() != FinalObjectType)
-        OPERATION_RETURN(scope);
-    JSObject* object = asObject(value);
-    Structure* empty = object->structure();
-    if (empty->previousID() || isValidOffset(empty->maxOffset()) || empty->isDictionary() || empty->hasPolyProto() || !empty->isStructureExtensible() || empty->mayBePrototype() || empty->compiledLayout() || !empty->propertyAccessesAreCacheable() || object->butterfly() || count > empty->inlineCapacity())
-        OPERATION_RETURN(scope);
-    const uint32_t* nameIndicesOf = caller(instance, callFrame).info().function()->plans() + rowOfNames;
-    Vector<UniquedStringImpl*, 16> names;
-    for (unsigned i = 0; i < count; ++i) {
-        const Identifier& name = nameAt(instance, nameIndicesOf[i]);
-        if (indexNamedBy(instance, nameIndicesOf[i], name))
-            OPERATION_RETURN(scope);
-        names.append(name.impl());
-    }
-    makePrototypeChainWatchable(vm, object);
-    Structure* whole = structureAfterPropertyRun(instance, vm, empty, names.span());
-    if (!whole || whole->inlineCapacity() != empty->inlineCapacity() || whole->outOfLineCapacity())
-        OPERATION_RETURN(scope);
-    if (structureDescriptorPlusOne && structureDescriptorPlusOne <= UINT16_MAX && globalObject == instance->globalObject && !whole->structureDescriptorPlusOne())
-        whole->setStructureDescriptorPlusOne(structureDescriptorPlusOne);
-    object->setStructure(vm, whole);
-    if (cache)
-        cacheAssignedThisStructure(globalObject, callerData(instance, callFrame), cache, object, empty, whole, names.span());
-    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedDidStoreToThis, void, (Instance* instance, Slot* cache, JSCell* constructorCell, JSCell* newTarget, JSCell* cell, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* names))

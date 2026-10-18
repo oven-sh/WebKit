@@ -472,16 +472,13 @@ struct Value {
     static constexpr uint32_t numberOfKnownSlots = 62;
     static constexpr uint32_t isFirstStore = 0x200;
     static constexpr uint32_t usesNameLookup = 0x400;
-    static constexpr uint32_t receiverIsThis = 0x40;
     bool hasKnownSlotWord() const { return (opcode == Opcode::GetById || opcode == Opcode::PutById) && immediates[1] >> 30 == 1; }
-    bool isAtKnownSlot() const { return hasKnownSlotWord() && !(immediates[1] & (usesNameLookup | receiverIsThis)); }
-    bool isFirstStoreToThis() const { return opcode == Opcode::PutById && hasKnownSlotWord() && (immediates[1] & (isFirstStore | receiverIsThis)) == (isFirstStore | receiverIsThis); }
-    bool isStoreIntoInitialStructure() const { return opcode == Opcode::PutById && hasKnownSlotWord() && (immediates[1] & (isFirstStore | receiverIsThis)) == isFirstStore; }
+    bool isAtKnownSlot() const { return hasKnownSlotWord() && !(immediates[1] & usesNameLookup); }
+    bool isStoreIntoInitialStructure() const { return opcode == Opcode::PutById && hasKnownSlotWord() && immediates[1] & isFirstStore; }
     static constexpr uint32_t maxInitialStructureOfFirstStore = 0x3ffff;
     uint32_t initialStructureOfFirstStore() const { return immediates[1] >> 11 & 0x3ffff; }
     void setInitialStructureOfFirstStore(uint32_t allocationSite) { immediates[1] = (immediates[1] & ~(0x3ffffu << 11)) | allocationSite << 11; }
-    unsigned firstStoreAttributes() const { return (immediates[1] & receiverIsThis ? 0 : (immediates[1] >> 7 & 1) << 1) | (immediates[1] >> 29 & 1) << 3; }
-    bool isDefinitionInThisStructure() const { return isFirstStoreToThis() && immediates[1] & 0x80; }
+    unsigned firstStoreAttributes() const { return (immediates[1] >> 7 & 1) << 1 | (immediates[1] >> 29 & 1) << 3; }
     bool hasInitialStructure() const { return opcode == Opcode::NewObject && immediates[0] != Format::none; }
     uint32_t initialStructure() const { return immediates[0]; }
     uint32_t initialStructureDescriptor() const { return opcode == Opcode::NewObject ? immediates[1] : Format::none; }
@@ -1617,8 +1614,6 @@ public:
         uint32_t firstSlot { 0 };
         Vector<StringID, 8> names;
         bool isWhole { true };
-        bool isForThis { false };
-        uint32_t number { Format::none };
     };
     Vector<InitialStructure> initialStructures;
     struct StructureDescriptor {

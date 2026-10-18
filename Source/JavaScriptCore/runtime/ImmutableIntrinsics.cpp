@@ -119,10 +119,7 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
             entry.isCell = true;
             entry.type = value.asCell()->type();
             entry.canonical = numberOfCell.add(value.asCell(), number).iterator->value;
-            if (auto* function = dynamicDowncast<JSFunction>(value.asCell()); function && function->isBuiltinFunction()) {
-                if (auto index = vm.builtinExecutables()->indexOf(function->jsExecutable()->unlinkedExecutable()))
-                    entry.builtinCode = *index + 1;
-            } else if (function)
+            if (auto* function = dynamicDowncast<JSFunction>(value.asCell()); function && !function->isBuiltinFunction())
                 entry.isHostFunction = function->isHostFunction() && !isAOTCompiled(function);
             entry.inheritsFromFunctionPrototype = number && isIntrinsicFunction(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
         } else

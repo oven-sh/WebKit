@@ -293,7 +293,6 @@ public:
             && !m_lineStartTable.isBuilt();
     }
     LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
-    LineStarts lineStarts() { return m_lineStartTable.lineStarts(source()); }
     // A builtin with a source of its own is parsed as a function, which is not all of the source.
     LineStarts lineStartsForBytecode()
     {

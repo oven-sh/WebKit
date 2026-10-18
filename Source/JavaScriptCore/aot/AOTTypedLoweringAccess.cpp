@@ -3738,15 +3738,6 @@ void Lowering::assignStructureDescriptors(Program& program)
     });
     destroyOnHelperThread(WTF::move(allocationsByFunctionIndex));
     program.firstThisStructureDescriptor = program.structureDescriptors.size();
-    for (auto& row : program.initialStructures) {
-        bool isNumbered = row.isForThis && row.isWhole && row.names.size() <= maxNamedPropertiesPerSite;
-        for (size_t i = 0; isNumbered && i < row.names.size(); ++i) {
-            auto text = program.string(row.names[i]);
-            isNumbered = text.empty() || !isASCIIDigit(text[0]);
-        }
-        if (isNumbered)
-            row.number = program.ensureStructureDescriptor(row.names.span(), 0xff, false);
-    }
     for (auto& grown : program.structureTransitions)
         program.structuresWithoutTransitions.clear(grown[0]);
     for (uint32_t number = 0; number < program.structureDescriptors.size(); ++number) {
@@ -5686,7 +5677,7 @@ std::optional<Lowering::PropertyRunStore> Lowering::propertyRunStoreAt(size_t in
     PropertyRunStore store;
     switch (value.opcode) {
     case Opcode::PutById:
-        if (value.isInitialStore() || value.isAtKnownSlot() || value.isFirstStoreToThis() || value.storesLazyClosure || lazyClosureStoredBy(value) || mayBeStoredBeforeJump(value))
+        if (value.isInitialStore() || value.isAtKnownSlot() || value.storesLazyClosure || lazyClosureStoredBy(value) || mayBeStoredBeforeJump(value))
             return std::nullopt;
         store = { index, value.child(0), value.string(), { }, value.child(1), false };
         break;
@@ -6368,20 +6359,6 @@ void Lowering::lowerPutById(ValueID, const Value& value)
                 emitPutById(in<Boxed>(object), name, in<Boxed>(stored));
             return { };
         };
-        if (value.isFirstStoreToThis() && value.initialStructureOfFirstStore() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions()) {
-            if (!value.knownSlot())
-                assignThisStructure(value, in<Boxed>(object));
-            if (!value.isDefinitionInThisStructure())
-                emitStandaloneCachedPutById(in<Boxed>(object), name, in<Boxed>(stored), false, AOT::Site::hasThisStructure);
-            else if (!emitDefineByName(in<Boxed>(object), name, in<Boxed>(stored)))
-                AOT_TYPED_OPERATION(DefineByName, in<Boxed>(object), word32(name.index()), in<Boxed>(stored));
-            return;
-        }
-        if (value.isDefinitionInThisStructure()) {
-            if (!emitDefineByName(in<Boxed>(object), name, in<Boxed>(stored)))
-                AOT_TYPED_OPERATION(DefineByName, in<Boxed>(object), word32(name.index()), in<Boxed>(stored));
-            return;
-        }
         if (value.isAtKnownSlot() && !(value.isStoreIntoInitialStructure() && value.initialStructureOfFirstStore() && !m_program.initialStructures[value.initialStructureOfFirstStore() - 1].isWhole)) {
             putAtKnownSlot(value, in<Boxed>(object), in<Boxed>(stored));
             return;

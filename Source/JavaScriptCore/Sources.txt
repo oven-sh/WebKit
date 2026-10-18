@@ -46,6 +46,7 @@ API/OpaqueJSString.cpp
 
 aot/AOTCompiler.cpp
 aot/AOTImage.cpp
+aot/AOTImageCompilation.cpp @no-unify
 aot/AOTInlineCaches.cpp
 aot/AOTModuleEvaluation.cpp @no-unify
 aot/AOTEmitter.cpp @no-unify

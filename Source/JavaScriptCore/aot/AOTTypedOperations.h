@@ -37,7 +37,6 @@ struct Slot;
     v(operationAOTTypedThrowIfReadOnly) \
     v(operationAOTTypedGetStaticField) \
     v(operationAOTTypedSetStaticField) \
-    v(operationAOTTypedSetByNameInThisStructure) \
     v(operationAOTTypedPutLazyClosure) \
     v(operationAOTTypedDefineFieldsOfPlainThis) \
     v(operationAOTTypedDefineByName) \
@@ -222,7 +221,6 @@ struct Slot;
     v(operationAOTTypedCreateThisWithCapacity) \
     v(operationAOTTypedTryCreateThisWithStores) \
     v(operationAOTTypedCreateThisWithStores) \
-    v(operationAOTTypedAssignThisStructure) \
     v(operationAOTTypedCreateThisAt) \
     v(operationAOTTypedDidStoreToThis) \
     v(operationAOTTypedTryPutProperties) \
@@ -296,7 +294,6 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameSloppy, Heap, void, (Insta
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedThrowIfReadOnly, Nothing, void, (Instance*, JSCell* object, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetStaticField, Heap, EncodedJSValue, (Instance*, uint32_t ofClass, uint32_t field));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetStaticField, Heap, void, (Instance*, uint32_t ofClass, uint32_t field, EncodedJSValue));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSetByNameInThisStructure, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPutLazyClosure, Heap, void, (Instance*, EncodedJSValue, uint32_t function, uint32_t name));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineFieldsOfPlainThis, Heap, void, (Instance*, JSCell* object, uint32_t ofClass, uint32_t begin, uint32_t end));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDefineByName, Heap, void, (Instance*, EncodedJSValue, uint32_t, EncodedJSValue));
@@ -485,7 +482,6 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisWithCapacity, RuntimeStat
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryCreateThisWithStores, RuntimeState, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* valuesThenNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisWithStores, Heap, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* values, uint32_t rowOfNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCreateThisAt, RuntimeState, JSCell*, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAssignThisStructure, Heap, void, (Instance*, Slot* cache, EncodedJSValue self, uint32_t count, uint32_t rowOfNames, uint32_t structureDescriptorPlusOne));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedDidStoreToThis, Heap, void, (Instance*, Slot* cache, JSCell* constructor, JSCell* newTarget, JSCell* object, uint32_t count, uint32_t inlineCapacity, const EncodedJSValue* names));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryPutProperties, Heap, size_t, (Instance*, Slot* cache, EncodedJSValue object, uint64_t countAndNamesPlanOffset, uint64_t keyed, const EncodedJSValue* valuesThenKeys));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArray, RuntimeState, JSCell*, (Instance*, uint32_t, const EncodedJSValue*));

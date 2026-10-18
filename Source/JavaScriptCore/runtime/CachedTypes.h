@@ -123,7 +123,6 @@ public:
     enum class Slots : bool { No, Yes };
     JS_EXPORT_PRIVATE explicit DecoderStringTable(std::span<const uint8_t>, Slots = Slots::Yes);
     uint32_t count() const { return m_count; }
-    uint32_t lengthOf(uint32_t ordinal) const { return record(ordinal).length; }
     JS_EXPORT_PRIVATE ~DecoderStringTable();
     Ref<AtomStringImpl> atomFor(VM&, uint32_t ordinal);
     // How many of `lookups` coming atomFor calls to expect to insert into the thread's atom table, going by the calls so
@@ -298,7 +297,6 @@ public:
     static Ref<Decoder> createForProgramData(VM&, Ref<CachedBytecode>, IsBuilding);
     bool isForProgramData() const { return m_isForProgramData; }
     bool isForBuildingProgramData() const { return m_isForBuildingProgramData; }
-    CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
     void setExternalStrings(DecoderStringTable& strings) { m_externalStrings = &strings; }
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
@@ -407,7 +405,6 @@ public:
     ProgramObjectsDecoder(VM&, std::span<const uint8_t>, DecoderStringTable&);
     ~ProgramObjectsDecoder();
     Identifier identifier(uint32_t);
-    String identifierAsPlainString(uint32_t);
     JSValue constant(uint32_t);
     std::optional<uint32_t> constantAliasTarget(uint32_t);
     UnlinkedCodeBlock* topLevelCode(uint32_t);

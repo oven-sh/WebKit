@@ -2493,7 +2493,7 @@ static int runAll()
             RUN(testCallbackThunkEndToEnd());
             RUN(testOptimizingTierPointerArgumentWithNonViewCells());
         } else
-            dataLogLn("testFFI: the JIT is disabled: callbacks are skipped.");
+            dataLogLn("testFFI: the JIT is disabled, so callbacks are skipped.");
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");

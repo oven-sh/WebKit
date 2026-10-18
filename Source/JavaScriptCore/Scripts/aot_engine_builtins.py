@@ -80,7 +80,7 @@ def expand_if_abrupt_close_iterator(text):
         comma = argument_end(text, start + len(call))
         end = argument_end(text, comma + 1)
         if text[comma] != ',' or text[end:end + 2] != ');' or text[text.rindex('\n', 0, start) + 1:start].strip():
-            sys.exit('aot_engine_builtins.py: @ifAbruptCloseIterator(iterator, expression); is not a statement of its own: %s' % text[start:start + 80])
+            sys.exit('aot_engine_builtins.py: @ifAbruptCloseIterator(iterator, expression); must be a statement by itself, at the start of a line: %s' % text[start:start + 80])
         text = (text[:start] + '{ let __iterator = ' + text[start + len(call):comma].strip() + ', __completion = 0; try { ' + text[comma + 1:end].lstrip(' ')
                 + '; __completion = 1; } catch (__error) { __completion = 2; try { $iteratorGenericClose(__iterator); } catch { } throw __error; } finally { if (!__completion) $iteratorGenericClose(__iterator); } }'
                 + text[end + 2:])
@@ -104,7 +104,7 @@ DELETE = re.compile(SKIPPED.pattern + r'''|\bdelete\s+(?P<base>\w+)\[(?P<key>\w+
 def rewrite_delete_in_sloppy_functions(text):
     def rewritten(match):
         if match.group('other'):
-            sys.exit('aot_engine_builtins.py: a `delete` in a function without "use strict" that is not `delete x[y]`')
+            sys.exit('aot_engine_builtins.py: in a function without "use strict", the only `delete` that is supported is `delete x[y]`')
         return '$deleteByValSloppy(%s, %s)' % (match.group('base'), match.group('key')) if match.group('base') else match.group(0)
 
     for head in reversed(list(HEAD.finditer(text))):
@@ -147,7 +147,7 @@ def derive(text, excluded_functions):
             return '+'
         if name in ('throwTypeError', 'throwRangeError'):
             if marked[marked.rindex('\n', 0, match.start()) + 1:match.start()].strip():
-                sys.exit('aot_engine_builtins.py: @%s(..) is not a statement of its own' % name)
+                sys.exit('aot_engine_builtins.py: @%s(...) must be a statement by itself, at the start of a line' % name)
             return 'throw new ' + name[5:]
         return '$' + name
 

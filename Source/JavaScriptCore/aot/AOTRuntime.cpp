@@ -574,7 +574,7 @@ struct Instance::Collections {
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
 static_assert(!Instance::offsetOfSharedData());
 static_assert(Instance::offsetOfTypedStringWord(Instance::numberOfTypedStringsWithWord) >> 12 < 4096);
-static_assert(Instance::negativeOffsetOf(OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithContiguousHeader)) == -128, "On x86-64 an operand within 128 bytes below the Instance takes one byte of displacement and four beyond. A new field goes ahead of these.");
+static_assert(Instance::negativeOffsetOf(OBJECT_OFFSETOF(Instance::NegativeOffsetFields, newArrayWithContiguousHeader)) == -128, "On x86-64, an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. Add new fields before these.");
 static_assert(!(Instance::offsetOfOwnData() % sizeof(Data*)) && Instance::offsetOfOwnData() / sizeof(Data*) + Instance::maxNumberOfOwnData <= std::numeric_limits<uint16_t>::max() + 1);
 static_assert(Instance::linkedWithoutDataState() + 1 == Instance::offsetOfOwnData() / sizeof(Data*));
 static_assert(Instance::cacheMissLimitFor(FunctionInfo::maxEncodedSlots) < std::numeric_limits<uint16_t>::max());

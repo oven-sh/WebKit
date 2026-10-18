@@ -186,7 +186,7 @@ def parse_operand_uses(where, text):
     if text is None or text == '-':
         return None if text is None else 0
     if not text or any(letter not in USES for letter in text) or sorted(text, key=USES.index) != list(text) or len(set(text)) != len(text) or text == 'D':
-        errors.append('%s: uses %s: letters of %s, in that order, each once, D not alone' % (where, text, USES))
+        errors.append('%s: invalid uses %s: write letters of %s, in that order, each at most once, and D only with another letter' % (where, text, USES))
         return None
     return sum(1 << USES.index(letter) for letter in text)
 
@@ -199,12 +199,12 @@ def add_entry(where, family, kind, path, parameters, result, effects, lowering, 
         if match:
             parameters[index] = match.group(1) + (match.group(3) or '')
             if match.group(1) not in ('any', 'TypedArray!'):
-                errors.append('%s: %s admits primitives only: no uses' % (where, match.group(1)))
+                errors.append('%s: /USES is only allowed after any and TypedArray!, not after %s' % (where, match.group(1)))
     alternatives = [alternative.strip() for alternative in result.split('|')]
     objects = [alternative for alternative in alternatives if alternative.startswith(('new ', 'anything', 'this', 'arg'))]
     marks = {alternative[-1] if alternative[-2:] in ('/N', '/S') else '' for alternative in objects}
     if len(marks) > 1 or any(alternative[-2:] in ('/N', '/S') for alternative in alternatives if alternative not in objects):
-        errors.append('%s: result %s: /N or /S on every alternative that may be an object, or on none' % (where, result))
+        errors.append('%s: result %s: write the same /N or /S after every alternative that may be an object, or after none' % (where, result))
     fresh = {'N': 'Yes', 'S': 'UnlessSpecies'}.get(''.join(marks), 'No')
     result = ' | '.join(alternative.removesuffix('/N').removesuffix('/S') for alternative in alternatives)
     holder, name = '', path
@@ -263,7 +263,7 @@ for path in sorted(glob.glob(os.path.join(aot, 'builtins', '*.def'))):
         match = re.fullmatch(r'runtime (\w+) : (\w+) ([\w* ]+?) \((.*)\)( noexcept( leaf)?)?', line)
         if match:
             if match.group(2) not in WRITES:
-                errors.append('%s: writes %s' % (where, match.group(2)))
+                errors.append('%s: unknown WRITES %s' % (where, match.group(2)))
             runtime_operations.append(match.groups())
             continue
         match = re.fullmatch(r'(?:\$(\w+?)(\*)? (Call|Value|Member)|hardened (\w+)) = (\w+)(?:\((.*)\))?', line)
@@ -307,7 +307,7 @@ for path in sorted(glob.glob(os.path.join(aot, 'builtins', '*.def'))):
 def cpp_parameter(where, parameter):
     pattern = parameter.rstrip('?').rstrip('.')
     if pattern not in PATTERNS:
-        errors.append('%s: parameter %s' % (where, parameter))
+        errors.append('%s: unknown parameter pattern %s' % (where, parameter))
         return ''
     return 'optional(%s)' % PATTERNS[pattern] if parameter.endswith('?') else 'rest(%s)' % PATTERNS[pattern] if parameter.endswith('...') else PATTERNS[pattern]
 
@@ -343,13 +343,13 @@ def cpp_result(where, result):
         elif re.fullmatch(r'new \w+', alternative):
             kind, made = 'Instance', engine_class(alternative[4:])
         elif alternative != 'anything':
-            errors.append('%s: result %s' % (where, alternative))
+            errors.append('%s: unknown result %s' % (where, alternative))
         if kind in kinds:
-            errors.append('%s: result %s twice: there is room for one range and for one class' % (where, alternative))
+            errors.append('%s: result %s: there is already an alternative of this kind, and an entry has room for only one range and one class' % (where, alternative))
         if kind:
             kinds.append(kind)
     if 'anything' in alternatives and len(alternatives) > 1:
-        errors.append('%s: anything has no alternative' % where)
+        errors.append('%s: anything cannot be combined with another alternative' % where)
     return '{ %s, %d, %d, %s, %s }' % (' | '.join('Result::' + kind for kind in kinds) or '0', made, passed, least, most)
 
 
@@ -358,7 +358,7 @@ def cpp_effects(where, effects):
         return 'Effect::Pure' if effects == ['Pure'] else 'Effect::ClobbersWorld'
     for effect in effects:
         if effect not in EFFECTS:
-            errors.append('%s: effect %s' % (where, effect))
+            errors.append('%s: unknown effect %s' % (where, effect))
     return ' | '.join('Effect::' + effect for effect in EFFECTS if effect in effects)
 
 
@@ -396,7 +396,7 @@ def cpp_lowering(entry):
     if lowering == 'Generic' and is_function:
         return 'generic'
     if entry['holder'] in replaceable and (kind != 'static' or not re.fullmatch(r'Call|HostCall|Inline\(\w+\)', lowering)):
-        errors.append('%s: %s is replaceable: a static function that is HostCall, Call, Generic or Inline(NAME)' % (where, entry['holder']))
+        errors.append('%s: %s is replaceable, so its entries must be static functions that are HostCall, Call, Generic or Inline(NAME)' % (where, entry['holder']))
     if lowering in ('Call', 'HostCall') and is_function:
         return 'calls(%s)' % cpp_call(entry, lowering)
     if lowering == 'Cell' and kind == 'constant':
@@ -418,7 +418,7 @@ def cpp_lowering(entry):
     if match and kind in ('constant', 'getter'):
         numbers.append((entries.index(entry), match.group(1)))
         return 'number'
-    errors.append('%s: lowering %s of a %s' % (where, lowering, kind))
+    errors.append('%s: lowering %s is not allowed for kind %s' % (where, lowering, kind))
     return ''
 
 
@@ -439,7 +439,7 @@ def operand_uses(entry):
     is_harmless = returns_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
     accepts_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
     if entry['this'] is not None and not accepts_this:
-        errors.append('%s: it takes no `this` that is an object' % entry['where'])
+        errors.append('%s: this/USES is only allowed on a method, getter or setter of a holder that is not a class of primitives' % entry['where'])
     this = 0 if not accepts_this else entry['this'] if entry['this'] is not None else (GETS if 'ReadsReceiver' in effects else 0) if is_harmless else EVERYTHING
     parameters = []
     for parameter, uses in zip(entry['parameters'], entry['uses']):
@@ -484,7 +484,7 @@ builtin_names = sorted(builtin_names, key=lambda text: text.encode())
 name_numbers = {text: number for number, text in enumerate(builtin_names)}
 for text in WELL_KNOWN_CLASSES:
     if text not in class_numbers:
-        errors.append('no entry makes %s a class' % text)
+        errors.append('the engine needs the class %s, but no .def file declares or uses it' % text)
 
 is_global = set()
 for entry in entries:
@@ -640,12 +640,12 @@ for where, name, is_prefix, position, what, payload in intrinsics:
     elif what == 'PublicGlobal' and payload is None and name in is_global:
         variant = 'PublicGlobal("%s")' % name
     else:
-        errors.append('%s: %s%s is not what a name can be, or the table has no such operation, function or global' % (where, what, '(%s)' % payload if payload is not None else ''))
+        errors.append('%s: %s%s is not one of the kinds listed at the top of generate-aot-builtins.py, or it refers to an operation, function or global that is not in the table' % (where, what, '(%s)' % payload if payload is not None else ''))
         continue
     if is_prefix:
         intrinsic_prefixes.append((name, position, variant))
     elif intrinsic_rows.setdefault((name.encode(), position), variant) != variant:
-        errors.append('%s: %s as %s is said to be two things' % (where, name, position))
+        errors.append('%s: %s as %s is declared twice, with different meanings' % (where, name, position))
 POSITIONS = ['Call', 'Value', 'Member']
 intrinsic_rows = sorted(intrinsic_rows.items(), key=lambda row: (row[0][0], POSITIONS.index(row[0][1])))
 if errors:
@@ -902,7 +902,7 @@ for family in families:
     if not os.path.exists(os.path.join(aot, 'AOTTypedBuiltins%s.cpp' % family_name(family))):
         sys.exit('%s.def: there is no aot/AOTTypedBuiltins%s.cpp (it also has to be listed in Sources.txt)' % (family, family_name(family)))
     if family in checked_constants and 'FOR_EACH_AOT_TYPED_%s_CONSTANT(' % family_name(family).upper() not in open(os.path.join(aot, 'AOTTypedBuiltins%s.cpp' % family_name(family))).read():
-        sys.exit('%s.def: aot/AOTTypedBuiltins%s.cpp does not hold its constants against the engine: FOR_EACH_AOT_TYPED_%s_CONSTANT' % (family, family_name(family), family_name(family).upper()))
+        sys.exit('%s.def: aot/AOTTypedBuiltins%s.cpp does not check its constants against the engine. Expand FOR_EACH_AOT_TYPED_%s_CONSTANT into static_asserts there' % (family, family_name(family), family_name(family).upper()))
 if bun:
     outputs += [(os.path.join(bun, 'src', 'sema', 'check', 'aot', 'builtins_generated.rs'), trusted), (os.path.join(bun, 'src', 'aot', 'builtins_generated.rs'), front_end),
                 (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.rs'), intrinsics_rs), (os.path.join(bun, 'src', 'aot', 'build', 'intrinsics.txt'), intrinsics_txt),
@@ -916,7 +916,7 @@ if bun:
         '%d\t%s.%s\t%s\n' % (number, file, 'ts' if file in written_files else 'js', aot_engine_builtins.exported_name(function)) for file, function, code, number in engine_functions)))
     gone = [path for path in sorted(glob.glob(os.path.join(engine, '*.js'))) if path not in dict(outputs)]
     if gone:
-        sys.exit('no file of builtins/ stands behind these any more, delete them:\n' + '\n'.join(gone))
+        sys.exit('these files were generated from files that are no longer in builtins/. Delete them:\n' + '\n'.join(gone))
 stale = [path for path, text in outputs if not os.path.exists(path) or open(path).read() != text]
 if check:
     if stale:
@@ -928,4 +928,4 @@ else:
             open(path, 'w').write(text)
 print('%d families, %d entries, %d names under %d holders, %d classes, %d structures, %d inline, %d language operations, %d run-time operations, %d prelude functions, hash %08x%s' % (
     len(families), len(entries), sum(map(len, names.values())), len(names), len(engine_classes), len(structures), len(inline_builtins), len(operations), len(runtime_operations), len(prelude_functions), table_hash,
-    '' if bun else '; the files of the front end are not looked at without --bun'))
+    '' if bun else '; pass --bun <bun checkout> to also write or check the files generated for Bun'))

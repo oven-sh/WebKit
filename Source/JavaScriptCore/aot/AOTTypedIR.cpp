@@ -320,8 +320,6 @@ private:
                 m_out.print(" into initial structure at slot ", value.knownSlot(), ", by name");
             if (value.isStoreIntoInitialStructure() && value.initialStructureOfFirstStore())
                 m_out.print(", structure ", value.initialStructureOfFirstStore() - 1);
-            if (value.isFirstStoreToThis())
-                m_out.print(value.isDefinitionInThisStructure() ? " a definition" : "", " of this structure, slot ", value.knownSlot(), ", structure ", static_cast<int>(value.initialStructureOfFirstStore()) - 1);
             break;
         case Opcode::Operation:
             m_out.print(" \"", Builtins::singleton().at(value.builtin()).name, "\"");

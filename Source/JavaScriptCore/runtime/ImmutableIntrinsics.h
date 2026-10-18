@@ -56,7 +56,6 @@ public:
         uint16_t canonical { 0 };
         JSType type { CellType };
         bool isCell { false };
-        uint16_t builtinCode { 0 };
         bool isHostFunction { false };
         bool inheritsFromFunctionPrototype { false };
     };

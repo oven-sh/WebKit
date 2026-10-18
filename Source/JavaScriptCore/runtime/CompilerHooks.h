@@ -20,7 +20,7 @@ struct CompilerHooks {
     CompilationResult (*compileBaselineNow)(VM&, CodeBlock*, JITCompilationEffort) { nullptr };
     void* compileRegExp { nullptr };
     void* newBBQPlan { nullptr };
-    Vector<uint8_t> (*compileImage)(void* bytecodeLinkEncoderImpl) { nullptr };
+    Vector<uint8_t> (*compileImage)(void* imageCompilation) { nullptr };
     AOT::DiscoveredRegExps* (*newDiscoveredRegExps)(std::span<const uint8_t> typedProgramAsWritten) { nullptr };
 
     bool areInstalled() const { return !!enqueueBaselinePlan; }

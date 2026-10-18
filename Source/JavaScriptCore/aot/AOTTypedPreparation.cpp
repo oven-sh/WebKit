@@ -9758,12 +9758,10 @@ static void findInitialStructures(Program& program, Vector<String>& malformed)
                 complain("two names share one slot of a fully initialized object in "_s);
             name = store.string();
         };
-        Vector<StringID, 8> thisStructure;
         Vector<std::pair<uint32_t, uint32_t>, 8> storesAndAllocations;
-        ValueID self = function.has(Format::FunctionHasThis) && function.captureTypes.size() < function.blocks[0].parameters.size() ? function.blocks[0].parameters[function.captureTypes.size()] : ValueID();
         std::as_const(program).functions.forEachIndexedValue(index, storesByName, [&](ValueID id) {
             auto& store = function.at(id);
-            if (!store.isStoreIntoInitialStructure() && !store.isFirstStoreToThis())
+            if (!store.isStoreIntoInitialStructure())
                 return;
             if (store.initialStructureOfFirstStore() || store.firstStoreAttributes())
                 complain("a first store already has an initial structure or attributes in "_s);
@@ -9774,36 +9772,12 @@ static void findInitialStructures(Program& program, Vector<String>& malformed)
                     break;
                 object = origin.child(0);
             }
-            if (store.isFirstStoreToThis()) {
-                if (!self || object != self)
-                    complain("a first store to `this` targets another object in "_s);
-                note(thisStructure, store);
-                return;
-            }
             if (object.index() < function.values.size() && function.at(object).opcode == Opcode::NewObject) {
                 note(rows.ensure(object.index(), [] { return Vector<StringID, 8>(); }).iterator->value, store);
                 storesAndAllocations.append({ id.index(), object.index() });
             } else
                 complain("a first store has no allocation in "_s);
         });
-        if (!thisStructure.isEmpty()) {
-            Program::InitialStructure row;
-            row.isForThis = true;
-            row.names = thisStructure;
-            if (row.names.contains(StringID()))
-                complain("the initial structure of `this` has a gap in "_s);
-            for (size_t i = 0; i < row.names.size(); ++i) {
-                if (row.names.find(row.names[i]) != i)
-                    complain("one name has two slots in the initial structure of `this` in "_s);
-            }
-            for (unsigned k = 0; k < function.values.size(); ++k) {
-                if (!function.values[k].isFirstStoreToThis())
-                    continue;
-                function.values[k].setInitialStructureOfFirstStore(1 + found.rows.size());
-                found.storesWithInitialStructure.append(k);
-            }
-            found.rows.append(WTF::move(row));
-        }
         if (rows.isEmpty())
             return;
         UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> numbers;

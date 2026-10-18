@@ -86,8 +86,6 @@ bool storesAreOrdinaryAlongPrototypeChain(Structure*);
 const EncodedJSValue* undefinedValueHolder();
 void cacheDefinedProperty(JSGlobalObject*, Data*, Slot* cache, JSObject*, Structure* before, UniquedStringImpl*, std::span<UniquedStringImpl* const> absent);
 bool watchStores(JSGlobalObject*, Data*, Slot*, JSObject*, Structure*, std::span<UniquedStringImpl* const> names);
-void cacheAssignedThisStructure(JSGlobalObject*, Data*, Slot*, JSObject*, Structure* empty, Structure* whole, std::span<UniquedStringImpl* const> names);
-bool tryStoreIntoThisStructure(JSGlobalObject*, Data*, Slot*, JSValue base, const Identifier&, JSValue);
 void cachePropertyRun(JSGlobalObject*, Data*, Slot* cache, JSObject*, Structure* before, std::span<UniquedStringImpl* const> names, std::span<JSCell* const> keys);
 struct PropertyRunStorage {
     static constexpr uint32_t capacityMask = (1u << 10) - 1;

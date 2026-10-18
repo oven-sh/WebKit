@@ -1100,7 +1100,7 @@ void Lowering::findAccessRuns(const Vector<BlockID>& order)
         auto& block = m_function.at(id);
         for (unsigned i = 0; i < block.values.size(); ++i) {
             auto& value = m_function.at(block.values[i]);
-            if ((value.opcode != Opcode::GetById && value.opcode != Opcode::PutById) || !value.receiverHasSingleStructure || value.isFirstStoreToThis() || isLazilyFetched(block.values[i]) || value.string() == m_length)
+            if ((value.opcode != Opcode::GetById && value.opcode != Opcode::PutById) || !value.receiverHasSingleStructure || isLazilyFetched(block.values[i]) || value.string() == m_length)
                 continue;
             ValueID object = value.child(0);
             if (m_function.at(object).rep != Rep::JSValue || isLazilyFetched(object))

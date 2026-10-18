@@ -966,7 +966,6 @@ struct Site {
     static bool fits(unsigned identifier, unsigned extra) { return identifier < (1u << identifierBits) && extra < (1u << extraBits); }
 
     static constexpr unsigned storesLazyClosure = 4;
-    static constexpr unsigned hasThisStructure = 8;
 
     uint32_t identifierAndExtra { 0 };
 };

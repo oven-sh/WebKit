@@ -635,8 +635,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
         }
         OPERATION_RETURN(scope);
     }
-    if (flagBits & Site::hasThisStructure && tryStoreIntoThisStructure(globalObject, SharedData::contains(cache) ? nullptr : callerData(instance, callFrame), cache, base, ident, value))
-        OPERATION_RETURN(scope);
     bool isDirect = flagBits & 1;
     bool isStrict = flagBits & 2;
     if (!isDirect && base.isCell()) {

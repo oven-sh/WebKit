@@ -13359,7 +13359,6 @@ static void generatePutById(CCallHelpers& jit)
         loadInfo(jit, T10);
         loadSites(jit, T10, T11);
         jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
-        notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(Site::hasThisStructure << Site::identifierBits)));
         {
             CCallHelpers::JumpList hasNoDescriptor;
             hasNoDescriptor.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32((((1u << Site::extraBits) - 1) & ~2u) << Site::identifierBits)));

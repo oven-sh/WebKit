@@ -90,7 +90,7 @@
     Boxed getLastIndex(Boxed base, StringID name, bool isCalled);
     void putLastIndex(Boxed base, StringID name, Boxed value);
     void emitCachedPutById(Boxed base, StringID name, Boxed value);
-    void emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub = false, unsigned siteFlags = 0);
+    void emitStandaloneCachedPutById(Boxed base, StringID name, Boxed value, bool onlyThroughStub = false);
     struct OpenedString {
         ValueID string;
         B3::Variable* data;

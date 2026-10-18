@@ -245,7 +245,7 @@ private:
     template<auto field> static FieldType<field>* column(std::byte* bytes, uint32_t capacity)
     {
         constexpr size_t index = columnOf<field>();
-        static_assert(index < numberOfColumns, "the field is one of the columns, once");
+        static_assert(index < numberOfColumns, "the field must be listed exactly once among the columns");
         constexpr size_t ahead = rowBytesBefore(index);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         return reinterpret_cast<FieldType<field>*>(bytes + ahead * capacity);

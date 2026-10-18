@@ -31,7 +31,7 @@ public:
         if (m_header->magic != Format::magic)
             return "this is not a program written by the front end"_s;
         if (m_header->version != Format::version || m_header->opcodeNamesHash != Format::opcodeNamesHash || m_header->builtinsHash != builtinsHash)
-            return makeString("this Bun was built from a front end and an engine that do not belong together (front end | engine: format "_s, m_header->version, " | "_s, Format::version,
+            return makeString("this Bun was built from a compiler front end and a JavaScriptCore that do not match (front end | engine: format "_s, m_header->version, " | "_s, Format::version,
                 ", operations "_s, hex(m_header->opcodeNamesHash, 8, Lowercase), " | "_s, hex(Format::opcodeNamesHash, 8, Lowercase),
                 ", built-ins "_s, hex(m_header->builtinsHash, 8, Lowercase), " | "_s, hex(builtinsHash, 8, Lowercase), "): see WEBKIT_VERSION in scripts/build/deps/webkit.ts"_s);
         if (m_header->sizeInBytes != m_buffer.size())

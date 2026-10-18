@@ -301,14 +301,14 @@ void convertAllocationAssertions(Program& program, Vector<String>& findings)
         if (isAllocationAssertion(function))
             isAssertion.set(i);
         else
-            findings.append("assertNotAllocated is a function of one parameter with an empty body, declared where it captures nothing"_s);
+            findings.append("assertNotAllocated must be a function with one parameter and an empty body that captures nothing"_s);
     }
     for (auto& function : program.functions) {
         for (auto& value : function.values) {
             if ((value.opcode != Opcode::CallDirect && value.opcode != Opcode::FunctionReference) || !isAssertion.get(value.function().index()))
                 continue;
             if (value.opcode != Opcode::CallDirect || value.arguments.size() != 1) {
-                findings.append("assertNotAllocated is only ever called, with one argument"_s);
+                findings.append("assertNotAllocated can only be called directly, with exactly one argument"_s);
                 continue;
             }
             program.hasAllocationAssertions = true;
