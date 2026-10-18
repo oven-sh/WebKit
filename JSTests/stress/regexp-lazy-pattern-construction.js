@@ -9,15 +9,17 @@ function shouldBe(actual, expected, what) {
         throw new Error(what + ": expected " + expected + " but got " + actual);
 }
 
-function shouldThrowSyntaxError(source, flags) {
-    let threw = false;
+function shouldThrowSyntaxError(source, flags, message) {
+    let error = null;
     try {
         new RegExp(source, flags);
     } catch (e) {
-        threw = e instanceof SyntaxError;
+        error = e;
     }
-    if (!threw)
+    if (!(error instanceof SyntaxError))
         throw new Error("expected SyntaxError at construction for /" + source.slice(0, 40) + "/" + flags);
+    if (message !== undefined)
+        shouldBe(error.message, "Invalid regular expression: " + message, "message for /" + source.slice(0, 40) + "/" + flags);
 }
 
 let filler = "x".repeat(80);
@@ -60,6 +62,15 @@ shouldThrowSyntaxError(filler + "[b-a]", "");
 shouldThrowSyntaxError(filler + "\\k<nope>(?<yes>a)", "u");
 shouldThrowSyntaxError("[^\\q{ab}]" + filler, "v");
 shouldThrowSyntaxError(filler + "a{2,1}", "");
+
+// A negated class set that may contain strings is one of them, whatever makes the string.
+{
+    let negated = "negated class set may contain strings";
+    shouldThrowSyntaxError("[^\\q{}]" + filler, "v", negated);
+    shouldThrowSyntaxError("[^\\q{a|}]" + filler, "v", negated);
+    shouldThrowSyntaxError(filler + "[^[\\q{}]]", "v", negated);
+    shouldThrowSyntaxError("[^\\p{RGI_Emoji}&&\\p{RGI_Emoji}]" + filler, "v", negated);
+}
 
 // Back references are validated against the counted captures (non-unicode: octal escape fallback).
 shouldBe(new RegExp("(a)" + filler.slice(2) + "|\\1b").test("b"), true, "backreference to an unmatched group matches empty");

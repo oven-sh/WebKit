@@ -1673,7 +1673,10 @@ public:
 
     void atomCharacterClassEnd()
     {
+        // The Parser refuses a negated class that may contain strings before it reports the end of the class, and
+        // lazy RegExp creation relies on that. A build without assertions falls back on the two checks here.
         if (m_currentCharacterClassConstructor->hasInvertedStrings()) {
+            ASSERT_NOT_REACHED();
             m_error = ErrorCode::NegatedClassSetMayContainStrings;
             return;
         }
@@ -1695,6 +1698,7 @@ public:
             addCharacterClassTerm();
         else {
             if (m_invertCharacterClass) {
+                ASSERT_NOT_REACHED();
                 m_error = ErrorCode::NegatedClassSetMayContainStrings;
                 return;
             }
