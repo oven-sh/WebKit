@@ -689,9 +689,13 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
-        // For a part of an expression that does not always run. The basic block it is in goes on after it, with no need of
-        // a place where control flow joins again to say so.
+        // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
+        // it is in goes on after it.
         void emitProfileControlFlow(int textOffset, int textEndOffset);
+        // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
+        // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
+        bool emitProfileControlFlowAfter(StatementNode*, int textOffset);
+        int& statementsEndOffset() { return m_statementsEndOffset; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
@@ -1436,6 +1440,7 @@ namespace JSC {
         Vector<Ref<Label>> m_optionalChainTargetStack;
 
         int m_nextConstantOffset { 0 };
+        int m_statementsEndOffset { 0 };
         
         // Constant pool
         IdentifierMap m_identifierMap;

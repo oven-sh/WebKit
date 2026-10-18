@@ -34,10 +34,7 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ControlFlowProfiler);
 
-ControlFlowProfiler::ControlFlowProfiler()
-    : m_dummyBasicBlock(BasicBlockLocation(-1, -1))
-{
-}
+ControlFlowProfiler::ControlFlowProfiler() = default;
 
 ControlFlowProfiler::~ControlFlowProfiler()
 {
@@ -69,7 +66,7 @@ void ControlFlowProfiler::dumpData() const
     }
 }
 
-Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm) const
+Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM& vm, Gaps gaps) const
 {
     Vector<BasicBlockRange> result(0);
     auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
@@ -81,7 +78,7 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
         bool hasExecuted = block->hasExecuted();
         size_t executionCount = block->executionCount();
 
-        const Vector<BasicBlockLocation::Gap>& blockRanges = block->getExecutedRanges();
+        const Vector<BasicBlockLocation::Gap>& blockRanges = gaps == Gaps::With ? Vector { BasicBlockLocation::Gap { block->startOffset(), block->endOffset() } } : block->getExecutedRanges();
         result.reserveCapacity(result.size() + blockRanges.size());
         for (BasicBlockLocation::Gap gap : blockRanges) {
             BasicBlockRange range;

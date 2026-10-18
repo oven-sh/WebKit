@@ -1099,6 +1099,11 @@ public:
         node->setStartOffset(offset);
     }
 
+    void setEndOffset(CaseClauseNode* node, int offset)
+    {
+        node->setEndOffset(offset);
+    }
+
     void setStartOffset(Node* node, int offset)
     {
         node->setStartOffset(offset);

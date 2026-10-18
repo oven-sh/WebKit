@@ -1920,6 +1920,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
     failIfFalse(statements, "Cannot parse the body of a switch clause");
     TreeClause clause = context.createClause(condition, statements);
     context.setStartOffset(clause, startOffset);
+    context.setEndOffset(clause, m_lastTokenLocation.endOffset);
     TreeClauseList clauseList = context.createClauseList(clause);
     TreeClauseList tail = clauseList;
 
@@ -1933,6 +1934,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
         failIfFalse(statements, "Cannot parse the body of a switch clause");
         clause = context.createClause(condition, statements);
         context.setStartOffset(clause, startOffset);
+        context.setEndOffset(clause, m_lastTokenLocation.endOffset);
         tail = context.createClauseList(tail, clause);
     }
     return clauseList;
@@ -1950,6 +1952,7 @@ template <class TreeBuilder> TreeClause Parser<LexerType>::parseSwitchDefaultCla
     failIfFalse(statements, "Cannot parse the body of a switch default clause");
     TreeClause result = context.createClause(0, statements);
     context.setStartOffset(result, startOffset);
+    context.setEndOffset(result, m_lastTokenLocation.endOffset);
     return result;
 }
 
@@ -2020,7 +2023,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseTryStatement(
         // of https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget
         // being caught by the `catch` block.
         finallyBlock = context.createEmptyStatement(location);
-        context.setEndOffset(finallyBlock, m_lastTokenLocation.endOffset - 1);
+        context.setEndOffset(finallyBlock, m_lastTokenLocation.endOffset);
     }
 
     return context.createTryStatement(location, tryBlock, catchPattern, catchBlock, finallyBlock, WTF::move(catchEnvironment));
@@ -3640,7 +3643,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         auto [condition, location] = exprStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, 0);
-        context.setEndOffset(ifStatement, context.endOffset(trueBlock));
+        context.setEndOffset(ifStatement, m_lastTokenLocation.endOffset);
         statementStack.append(ifStatement);
     }
 
@@ -3649,7 +3652,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         TreeStatement falseBlock = statementStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, falseBlock);
-        context.setEndOffset(ifStatement, context.endOffset(falseBlock));
+        context.setEndOffset(ifStatement, m_lastTokenLocation.endOffset);
         statementStack.append(ifStatement);
     }
 

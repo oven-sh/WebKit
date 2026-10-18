@@ -3998,64 +3998,38 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         return;
     const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
 
-    Vector<BasicBlockLocation::Gap> partsOfExpressions;
-    for (auto bytecodeOffset : bytecodeOffsets) {
-        auto bytecode = instructions().at(bytecodeOffset)->as<OpProfileControlFlow>();
-        if (bytecode.m_textEndOffset)
-            partsOfExpressions.append({ bytecode.m_textOffset, bytecode.m_textEndOffset - 1 });
-    }
-    std::ranges::sort(partsOfExpressions);
-
-    for (size_t i = 0, offsetsLength = bytecodeOffsets.size(); i < offsetsLength; i++) {
-        // Because op_profile_control_flow is emitted at the beginning of every basic block, finding
-        // the next op_profile_control_flow will give us the text range of a single basic block.
-        size_t startIdx = bytecodeOffsets[i];
-        auto instruction = instructions().at(startIdx);
+    size_t offsetsLength = bytecodeOffsets.size();
+    auto bytecodeAt = [&](size_t i) {
+        auto instruction = instructions().at(bytecodeOffsets[i]);
         RELEASE_ASSERT(instruction->opcodeID() == op_profile_control_flow);
-        auto bytecode = instruction->as<OpProfileControlFlow>();
-        auto& metadata = bytecode.metadata(this);
+        return instruction->as<OpProfileControlFlow>();
+    };
+
+    // Basic blocks nest as the source does: the one of the code block has all of it, and each of the others is a gap in those it is in.
+    Vector<BasicBlockLocation::Gap> basicBlocks(offsetsLength, [&](size_t i) {
+        auto bytecode = bytecodeAt(i);
         int basicBlockStartOffset = bytecode.m_textOffset;
-        int basicBlockEndOffset;
-        if (bytecode.m_textEndOffset)
-            basicBlockEndOffset = bytecode.m_textEndOffset - 1;
-        else {
-            // A part of an expression is in the basic block, it does not end it.
-            basicBlockEndOffset = sourceOffset() + ownerExecutable()->source().length() - 1; // Offset before the closing brace.
+        int basicBlockEndOffset = bytecode.m_textEndOffset ? bytecode.m_textEndOffset - 1 : sourceOffset() + ownerExecutable()->source().length() - 1;
+        if (bytecode.m_isAfterStatement) {
+            // It ends where what is after a later one of the same statements starts.
             for (size_t next = i + 1; next < offsetsLength; next++) {
-                auto endInstruction = instructions().at(bytecodeOffsets[next]);
-                RELEASE_ASSERT(endInstruction->opcodeID() == op_profile_control_flow);
-                auto endBytecode = endInstruction->as<OpProfileControlFlow>();
-                if (endBytecode.m_textEndOffset)
-                    continue;
-                basicBlockEndOffset = endBytecode.m_textOffset - 1;
-                break;
+                auto nextBytecode = bytecodeAt(next);
+                if (nextBytecode.m_textOffset <= basicBlockStartOffset || nextBytecode.m_textOffset > basicBlockEndOffset)
+                    break;
+                if (nextBytecode.m_isAfterStatement && nextBytecode.m_textEndOffset == bytecode.m_textEndOffset) {
+                    basicBlockEndOffset = nextBytecode.m_textOffset - 1;
+                    break;
+                }
             }
         }
+        return BasicBlockLocation::Gap { basicBlockStartOffset, basicBlockEndOffset };
+    });
+    auto sortedBasicBlocks = basicBlocks;
+    std::ranges::sort(sortedBasicBlocks);
 
-        // The following check allows for the same textual JavaScript basic block to have its bytecode emitted more
-        // than once and still play nice with the control flow profiler. When basicBlockStartOffset is larger than 
-        // basicBlockEndOffset, it indicates that the bytecode generator has emitted code for the same AST node 
-        // more than once (for example: ForInNode, Finally blocks in TryNode, etc). Though these are different 
-        // basic blocks at the bytecode level, they are generated from the same textual basic block in the JavaScript 
-        // program. The condition: 
-        // (basicBlockEndOffset < basicBlockStartOffset) 
-        // is encountered when op_profile_control_flow lies across the boundary of these duplicated bytecode basic 
-        // blocks and the textual offset goes from the end of the duplicated block back to the beginning. These 
-        // ranges are dummy ranges and are ignored. The duplicated bytecode basic blocks point to the same 
-        // internal data structure, so if any of them execute, it will record the same textual basic block in the 
-        // JavaScript program as executing.
-        // At the bytecode level, this situation looks like:
-        // j: op_profile_control_flow (from j->k, we have basicBlockEndOffset < basicBlockStartOffset)
-        // ...
-        // k: op_profile_control_flow (we want to skip over the j->k block and start fresh at offset k as the start of a new basic block k->m).
-        // ...
-        // m: op_profile_control_flow
-        //
-        // So is a range that starts past the end of the function, after the expression that is the body of an arrow function.
-        if (basicBlockEndOffset < basicBlockStartOffset) {
-            metadata.m_basicBlockLocation = vm().controlFlowProfiler()->dummyBasicBlock();
-            continue;
-        }
+    for (size_t i = 0; i < offsetsLength; i++) {
+        auto& metadata = bytecodeAt(i).metadata(this);
+        auto [basicBlockStartOffset, basicBlockEndOffset] = basicBlocks[i];
 
         BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
 
@@ -4079,12 +4053,13 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
             insertFunctionGaps(executable);
 
-        // A part of an expression that is a basic block of its own is a gap too. Between two functions, what is left of
-        // this basic block would otherwise have the range of what is left of the part.
-        BasicBlockLocation::Gap basicBlock { basicBlockStartOffset, basicBlockEndOffset };
-        for (auto part = std::ranges::lower_bound(partsOfExpressions, basicBlockStartOffset, { }, &BasicBlockLocation::Gap::first); part != partsOfExpressions.end() && part->first <= basicBlockEndOffset; ++part) {
-            if (*part != basicBlock)
-                basicBlockLocation->insertGap(part->first, part->second);
+        int lastGapEndOffset = -1;
+        for (auto inner = std::ranges::lower_bound(sortedBasicBlocks, basicBlockStartOffset, { }, &BasicBlockLocation::Gap::first); inner != sortedBasicBlocks.end() && inner->first <= basicBlockEndOffset; ++inner) {
+            // What is in a gap is not another one: with each `else if` in the one before it, there would be a gap for each two of them.
+            if (*inner == basicBlocks[i] || inner->first <= lastGapEndOffset)
+                continue;
+            basicBlockLocation->insertGap(inner->first, inner->second);
+            lastGapEndOffset = inner->second;
         }
 
         metadata.m_basicBlockLocation = basicBlockLocation;

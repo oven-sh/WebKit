@@ -2095,7 +2095,7 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     if (shouldEmitControlFlowProfilerHooks()) {
         RELEASE_ASSERT(textOffset >= 0);
 
-        OpProfileControlFlow::emit(this, textOffset, 0);
+        OpProfileControlFlow::emit(this, textOffset, 0, false);
         m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
     }
 }
@@ -2104,9 +2104,27 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset, int textEndOffset
 {
     if (shouldEmitControlFlowProfilerHooks()) {
         RELEASE_ASSERT(textOffset >= 0 && textOffset < textEndOffset);
-        OpProfileControlFlow::emit(this, textOffset, textEndOffset);
+        OpProfileControlFlow::emit(this, textOffset, textEndOffset, false);
         m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
     }
+}
+
+bool BytecodeGenerator::emitProfileControlFlowAfter(StatementNode* statement, int textOffset)
+{
+    if (!shouldEmitControlFlowProfilerHooks())
+        return false;
+
+    // A function declaration does not run where it is.
+    StatementNode* next = statement->next();
+    while (next && next->isFuncDeclNode())
+        next = next->next();
+    if (!next)
+        return false;
+
+    RELEASE_ASSERT(textOffset >= 0 && textOffset < m_statementsEndOffset);
+    OpProfileControlFlow::emit(this, textOffset, m_statementsEndOffset, true);
+    m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
+    return true;
 }
 
 unsigned BytecodeGenerator::addConstantIndex()
