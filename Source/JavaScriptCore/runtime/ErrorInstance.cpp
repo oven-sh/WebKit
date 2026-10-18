@@ -504,7 +504,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
         }
 
-        if (!m_stackPropertyProvidedByCapturedStackTrace)
+        // The hook returns nothing when it has put a `stack` of its own.
+        if (stack)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
         return true;
     }
