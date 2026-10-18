@@ -130,7 +130,7 @@ public:
         return roundDownToMultipleOf(JSC::elementSize(m_type), bufferByteLength - byteOffsetStart);
     }
 
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE setDetachable(bool);
+    JS_EXPORT_PRIVATE void setDetachable(bool);
     bool isDetachable() const { return m_isDetachable; }
     bool isResizableOrGrowableShared() const { return m_isResizableNonShared || m_isGrowableShared; }
     bool isResizableNonShared() const { return m_isResizableNonShared; }

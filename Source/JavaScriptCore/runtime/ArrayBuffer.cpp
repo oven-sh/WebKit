@@ -532,11 +532,11 @@ void ArrayBuffer::detach(VM& vm)
     notifyDetaching(vm);
 }
 
-// transferTo() leaves a pinned buffer's bytes where they are and copies them. A WebAssembly.Memory that grows
-// has already copied them, so what is left to do for a pinned buffer is to not free the memory it grew out of.
+// Whoever pinned us holds a pointer into our bytes. transferTo() leaves those bytes alone and hands out a copy.
+// A detach cannot do that, so the bytes stop being ours but stay allocated until the last unpin().
 void ArrayBuffer::keepWhilePinned(ArrayBufferContents&& contents)
 {
-    if (m_pinCount.value() & ~s_lockedFlag)
+    if (isPinned())
         m_contentsKeptWhilePinned.append(WTF::move(contents));
 }
 
