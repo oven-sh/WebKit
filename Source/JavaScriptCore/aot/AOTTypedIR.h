@@ -325,6 +325,7 @@ static constexpr uint32_t shapeTestIsForThisInstance = 2;
 static constexpr uint32_t shapeTestGuardsFastPath = 3;
 
 static constexpr unsigned maxNumberOfPlainRecordFields = 16;
+static constexpr uint32_t plainRecordIsConverted = 1;
 
 enum class SpeculatedMethod : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd, RegExpExec, RegExpTest, StringMatch, CollectionGet, CollectionHas, CollectionSet, CollectionAdd, ArrayPushReadAhead };
 
@@ -347,6 +348,7 @@ struct Value {
     bool storesLazyClosure : 1 { false };
     bool isAwaitedWithoutPromise : 1 { false };
     bool takesElementsOfArrayLiteral : 1 { false };
+    bool mayConvertPlainRecord : 1 { false };
     SpeculatedMethod speculatedMethod : 4 { SpeculatedMethod::None };
     uint8_t predictedReceiverClassPlusOne : 6 { 0 };
     uint32_t position { 0 };
@@ -666,6 +668,7 @@ struct Function {
     FunctionID rampForClosures;
     FunctionID declaredGenericEntrypoint;
     FunctionID untypedClone;
+    FunctionID selfCheckingCopy;
     bool isRampForClosures { false };
     bool isUsedAsObject { false };
     bool isSharedOutlinedBody { false };
@@ -1571,6 +1574,33 @@ public:
     {
         auto found = std::ranges::lower_bound(jsonSerializers, layout.index(), { }, [](auto& entry) { return entry.first.index(); });
         return found == jsonSerializers.end() || found->first != layout ? FunctionID() : found->second;
+    }
+    bool mayReadRecordWhilePlain(LayoutID id, bool& hasLiterals) const
+    {
+        auto& candidate = at(id);
+        if (candidate.kind != LayoutKind::Record || !candidate.acceptsUntypedObjects || candidate.isRelaxedForLogging || candidate.subtypes.size() != 1 || candidate.subtypes[0] != id)
+            return false;
+        unsigned numberOfFields = 0;
+        for (auto& field : candidate.fields) {
+            if (field.flags & fieldIsNeverStored)
+                continue;
+            if (!field.type || field.isPinned || field.isPinnedToFunction || field.isOutOfLine || field.flags & (fieldIsPlaceholder | fieldMayExistWithoutStorage | fieldHoldsLazyClosure | fieldIsMethod))
+                return false;
+            hasLiterals |= !field.literals.isEmpty();
+            ++numberOfFields;
+        }
+        return numberOfFields && numberOfFields <= maxNumberOfPlainRecordFields;
+    }
+    bool mayHavePlainRecordConverter(LayoutID id) const
+    {
+        bool hasLiterals = false;
+        return id && mayReadRecordWhilePlain(id, hasLiterals) && !hasLiterals;
+    }
+    Vector<std::pair<LayoutID, FunctionID>> plainRecordConverters;
+    FunctionID plainRecordConverterFor(LayoutID layout) const
+    {
+        auto found = std::ranges::lower_bound(plainRecordConverters, layout.index(), { }, [](auto& entry) { return entry.first.index(); });
+        return found == plainRecordConverters.end() || found->first != layout ? FunctionID() : found->second;
     }
     static bool mayHaveBody(const Value& cast) { return cast.opcode == Opcode::Cast && (cast.castReason() == CastReason::As || cast.castReason() == CastReason::Claim) && cast.immediates[0] == Format::none; }
     static uint64_t castBodyKey(const Value& cast) { return (static_cast<uint64_t>(cast.type.index()) + 1) << 32 | cast.immediates[1]; }

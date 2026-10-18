@@ -692,6 +692,9 @@ private:
     bool isReceiverGuard(const Value&) const;
     LValue plainRecordProperty(CellPointer, LayoutID, uint32_t field);
     void branchOnPlainRecord(const Value&, LBasicBlock isOne, LBasicBlock isNone);
+    void convertPlainRecordOrElse(CellPointer, LayoutID, Integer depth, LBasicBlock otherwise);
+    FunctionID plainRecordConverterToCall(const Type&) const;
+    void callPlainRecordConverterOrElse(FunctionID, CellPointer, Integer depth, LBasicBlock otherwise);
     Word32 lowerIsPlainRecord(ValueID, const Value&);
     Operand lowerGetPlainRecordField(ValueID, const Value&);
     bool isHostObjectCacheTest(const Value&) const;

@@ -196,6 +196,7 @@ bool replacesPinnedFunction(const Program&, const Function&, LayoutID created, c
 unsigned inlineCalls(const Program&, FunctionID, Function&, CleanUpTiming = CleanUpTiming::Immediate);
 void internNamesForGeneratorLoopFusion(Program&);
 void fuseArrayMethodChains(Program&);
+void keepLocalBooleanArraysAsBytes(Program&);
 unsigned fuseGeneratorLoops(const Program&, Function&);
 unsigned stepGeneratorsInPlace(const Program&, Function&);
 void prepareForInlining(Program&);

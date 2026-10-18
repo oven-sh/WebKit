@@ -509,6 +509,154 @@ void Lowering::branchOnPlainRecord(const Value& value, LBasicBlock isOne, LBasic
     m_out.jump(isOne);
 }
 
+static unsigned widthInRecord(Store store)
+{
+    switch (store) {
+    case Store::Uint8:
+    case Store::Int8:
+    case Store::Boolean:
+    case Store::OptionalBoolean:
+        return 1;
+    case Store::Uint16:
+    case Store::Int16:
+        return 2;
+    case Store::Int32:
+    case Store::Uint32:
+    case Store::Float:
+    case Store::Int32OrNumberBox:
+    case Store::Cell32:
+    case Store::OptionalCell32:
+    case Store::LiteralString32:
+        return 4;
+    case Store::Int64:
+    case Store::Double:
+    case Store::Cell:
+    case Store::JSValue:
+    case Store::OptionalInt64:
+    case Store::OptionalDouble:
+    case Store::LiteralString:
+        return 8;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FunctionID Lowering::plainRecordConverterToCall(const Type& type) const
+{
+    if (m_activeHandler || (prefersGenericPathInColdCode() && !m_function.isSharedOutlinedBody))
+        return { };
+    LayoutID record = type.singleLayout();
+    FunctionID converter = record ? m_program.plainRecordConverterFor(record) : FunctionID();
+    if (!converter)
+        return { };
+    auto& callee = m_program.at(converter);
+    if (callee.writes > m_function.writes || (callee.writesShapeWords && !m_function.writesShapeWords))
+        return { };
+    return converter;
+}
+
+void Lowering::callPlainRecordConverterOrElse(FunctionID converter, CellPointer cell, Integer depth, LBasicBlock otherwise)
+{
+    orElse(callCompiled(converter, { Argument { box(cell), &m_program.at(m_program.types.anything) }, Argument { depth, &m_program.at(m_program.types.int32) } }, m_program.at(m_program.types.boolean)).as<Word32>(), otherwise);
+}
+
+void Lowering::convertPlainRecordOrElse(CellPointer object, LayoutID record, Integer depth, LBasicBlock otherwise)
+{
+    using Shape = Instance::PlainRecordShape;
+    static constexpr int64_t maxDepth = 3;
+    static_assert(!JSCell::structureIDOffset() && JSCell::indexingTypeAndMiscOffset() == 4 && JSCell::typeInfoFlagsOffset() == 6 && JSCell::cellStateOffset() == 7);
+    constexpr uint64_t preservedHeaderBits = 0xffull << 56 | static_cast<uint64_t>(TypeInfoPerCellBit) << 48 | static_cast<uint64_t>(static_cast<uint8_t>(~AllArrayTypesAndHistory)) << 32;
+    auto& layout = m_program.at(record);
+    auto& fields = layout.fields;
+    LValue shapes = fixedPointer(Instance::offsetOfPlainRecordShapes());
+    ptrdiff_t shape = Instance::indexOfPlainRecordShape(record.index()) * sizeof(Shape);
+    auto at = [&](ptrdiff_t offset) {
+        return TypedPointer(m_heaps.root, m_out.add(object.value(), m_out.constIntPtr(offset)));
+    };
+    auto hasKnownStructure = [&] {
+        return equal(Word32(m_out.load32(at(JSCell::structureIDOffset()))), Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, structureID)))));
+    };
+    orElse(hasKnownStructure(), otherwise);
+    orElse(equal(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, layoutIfConvertedByCompiledCode)))), word32(record.index())), otherwise);
+    orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfMutatorShouldBeFenced())))), otherwise);
+
+    Vector<LValue, maxNumberOfPlainRecordFields> given;
+    for (auto& field : fields) {
+        if (field.flags & fieldIsNeverStored)
+            continue;
+        LValue location = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, locations) + given.size()));
+        given.append(m_out.load64(TypedPointer(m_heaps.root, m_out.add(object.value(), m_out.shl(m_out.zeroExtPtr(location), m_out.constInt32(3))))));
+    }
+
+    SetForScope rejectsUntypedObjects(m_rejectsUntypedObjects, true);
+    auto& anything = m_program.at(m_program.types.anything);
+    Vector<Operand, maxNumberOfPlainRecordFields> held;
+    for (auto& field : fields) {
+        if (field.flags & fieldIsNeverStored)
+            continue;
+        Boxed value(given[held.size()]);
+        auto& type = m_program.at(field.type);
+        if (field.store == Store::Int32OrNumberBox) {
+            held.append(low32(narrowOrElse(value, anything, Type::integer({ minInlineInt32, INT32_MAX }), otherwise).as<Integer>()));
+            continue;
+        }
+        if (type.anyObject) {
+            LBasicBlock isCellCase = m_out.newBlock();
+            LBasicBlock mayBeTypedObject = m_out.newBlock();
+            LBasicBlock isTaken = m_out.newBlock();
+            m_out.branch(isCell(value).value(), unsure(isCellCase), unsure(isTaken));
+            m_out.appendTo(isCellCase);
+            m_out.branch(equal(loadCellType(asCell(value)), word32(ObjectType)).value(), unsure(mayBeTypedObject), unsure(isTaken));
+            m_out.appendTo(mayBeTypedObject);
+            orElse(Word32(m_out.lessThan(m_out.load32(TypedPointer(m_heaps.root, m_out.add(asCell(value).value(), m_out.constIntPtr(offsetOfShapeWord)))), m_out.constInt32(0))), otherwise);
+            m_out.jump(isTaken);
+            m_out.appendTo(isTaken);
+        }
+        FunctionID converterOfChild = plainRecordConverterToCall(type);
+        if (!converterOfChild) {
+            held.append(convert(narrowOrElse(value, anything, type, otherwise), type, repOf(field.store)));
+            continue;
+        }
+        LBasicBlock isNotTyped = newUnlikelyBlock();
+        LBasicBlock isTyped = m_out.newBlock();
+        narrowOrElse(value, anything, type, isNotTyped);
+        m_out.jump(isTyped);
+        m_out.appendTo(isNotTyped);
+        orElse(isCell(value), otherwise);
+        orElse(lessThan(depth, integer(maxDepth)), otherwise);
+        callPlainRecordConverterOrElse(converterOfChild, asCell(value), Integer(m_out.add(depth.value(), m_out.constInt64(1))), otherwise);
+        orElse(hasKnownStructure(), otherwise);
+        orElse(isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfMutatorShouldBeFenced())))), otherwise);
+        m_out.jump(isTyped);
+        m_out.appendTo(isTyped);
+        held.append(convert(value, type, repOf(field.store)));
+    }
+
+    BitVector isStored(layout.size);
+    for (auto& field : fields) {
+        if (field.flags & fieldIsNeverStored)
+            continue;
+        for (unsigned i = 0; i < widthInRecord(field.store); ++i)
+            isStored.set(field.offset + i);
+    }
+    LValue words = m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, shapes, shape + OBJECT_OFFSETOF(Shape, convertedWords)));
+    auto word = [&](unsigned index) {
+        return m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, words, index * sizeof(uint64_t)));
+    };
+    m_out.store64(m_out.bitOr(m_out.bitAnd(m_out.load64(at(0)), m_out.constInt64(static_cast<int64_t>(preservedHeaderBits))), word(0)), at(0));
+    for (unsigned index = 1; index * sizeof(uint64_t) < layout.size; ++index) {
+        bool isWhollyStored = true;
+        for (unsigned i = 0; i < sizeof(uint64_t); ++i)
+            isWhollyStored &= index * sizeof(uint64_t) + i < layout.size && isStored.get(index * sizeof(uint64_t) + i);
+        if (!isWhollyStored)
+            m_out.store64(word(index), at(index * sizeof(uint64_t)));
+    }
+    unsigned number = 0;
+    for (auto& field : fields) {
+        if (!(field.flags & fieldIsNeverStored))
+            store(field.store, held[number++], at(field.offset));
+    }
+}
+
 Word32 Lowering::lowerIsPlainRecord(ValueID result, const Value& value)
 {
     if (m_isFusedWithBranch.get(result.index()))
@@ -516,7 +664,13 @@ Word32 Lowering::lowerIsPlainRecord(ValueID result, const Value& value)
     LBasicBlock isOne = m_out.newBlock();
     LBasicBlock isNone = m_out.newBlock();
     Join join(m_out, Rep::Int32, Int32);
-    branchOnPlainRecord(value, isOne, isNone);
+    if (value.immediates[1] == plainRecordIsConverted) {
+        Boxed given = in<Boxed>(value.child(0));
+        orElse(isCell(given), isNone);
+        convertPlainRecordOrElse(asCell(given), value.layout(), in<Integer>(value.child(1)), isNone);
+        m_out.jump(isOne);
+    } else
+        branchOnPlainRecord(value, isOne, isNone);
     m_out.appendTo(isOne);
     join.add(boolean(true));
     m_out.appendTo(isNone);
@@ -3059,7 +3213,8 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
     if (!from.hasObjects() || to.objectLayouts.isEmpty() || m_program.castIsRedundant(from, to, cast))
         return ensure(operand, from, to);
 
-    if (mayCastInRegister(from, to) && operand.rep == Rep::JSValue) {
+    FunctionID converter = cast.mayConvertPlainRecord && (operand.rep == Rep::JSValue || operand.rep == Rep::Cell) ? plainRecordConverterToCall(to) : FunctionID();
+    if (!converter && mayCastInRegister(from, to) && operand.rep == Rep::JSValue) {
         bool inspectsUntypedObjects = (!isNarrowing && (cast.coercesFreshData() || m_program.annotationCoercesUntypedObjects(to))) || m_program.isRelaxedForLogging(to);
         bool usesCastTest = cast.castReason() == CastReason::As || isNarrowing;
         if (auto tests = castInRegisterTests(to, usesCastTest, inspectsUntypedObjects)) {
@@ -3081,6 +3236,15 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, s
     join.add(convert(fitted, to, rep));
 
     m_out.appendTo(slowPath);
+    if (converter) {
+        LBasicBlock isNotConverted = newColdBlock();
+        if (operand.rep == Rep::JSValue)
+            orElse(isCell(operand.as<Boxed>()), isNotConverted);
+        CellPointer object = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
+        callPlainRecordConverterOrElse(converter, object, integer(0), isNotConverted);
+        join.add(convert(CellPointer(m_out.opaque(object.value())), to.withoutPrimitives(Primitive::All), rep));
+        m_out.appendTo(isNotConverted);
+    }
     OperationEffects effects = castEffects ? *castEffects : OperationEffects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
     bool onlyCellsReachHere = operand.rep == Rep::JSValue && withoutCells(from).isSubsetOf(withoutCells(to), m_program);
     Boxed passed = onlyCellsReachHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? rematerializedValue(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
@@ -3190,6 +3354,15 @@ Operand Lowering::lowerCoercion(Operand operand, const Type& from, const Type& t
     join.add(Operand(rep, fitted.value));
 
     m_out.appendTo(slowPath);
+    if (FunctionID converter = cast.mayConvertPlainRecord && (operand.rep == Rep::JSValue || operand.rep == Rep::Cell) ? plainRecordConverterToCall(to) : FunctionID()) {
+        LBasicBlock isNotConverted = newColdBlock();
+        if (operand.rep == Rep::JSValue)
+            orElse(isCell(operand.as<Boxed>()), isNotConverted);
+        CellPointer object = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
+        callPlainRecordConverterOrElse(converter, object, integer(0), isNotConverted);
+        join.add(convert(CellPointer(m_out.opaque(object.value())), to.withoutPrimitives(Primitive::All), rep));
+        m_out.appendTo(isNotConverted);
+    }
     OperationEffects effects = castEffects ? *castEffects : OperationEffects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
     bool onlyCellsReachHere = operand.rep == Rep::JSValue && withoutCells(from).isSubsetOf(withoutCells(type), m_program);
     Boxed passed = onlyCellsReachHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? rematerializedValue(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
@@ -3906,8 +4079,6 @@ void Lowering::convertPlainRowInPlace(ValueID row, TypeID type)
 
 Operand Lowering::lowerCast(ValueID result, const Value& value)
 {
-    if (m_isDoneByLastReplacement.get(result.index()))
-        return Operand(value.rep, nullptr);
     if (m_castFusedIntoRead && m_castFusedIntoRead->block == m_currentBlock && m_castFusedIntoRead->index == m_currentIndexInBlock)
         return std::exchange(m_castFusedIntoRead, std::nullopt)->operand;
     if (value.castReason() == CastReason::Member)

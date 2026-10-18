@@ -912,6 +912,8 @@ private:
     {
         if (FunctionID written = m_program.at(id).declaredGenericEntrypoint; written && (needsArgumentCasts(id, thisValue, given) || (m_program.at(written).has(FunctionLogsTypeMismatches) && mayTakeUntypedObjects(id))))
             id = written;
+        else if (FunctionID copy = m_program.at(id).selfCheckingCopy; copy && !m_isInTailPosition && !m_program.at(type).isAnything())
+            id = copy;
         TypeID promiseType = promiseTypeOf(m_program, m_program.at(id));
         bool wasWatched = m_hasHandler;
         Target handler = m_handler;

@@ -385,7 +385,7 @@ private:
             m_out.print(" shape ", value.layout().index(), " field ", value.field());
             break;
         case Opcode::IsPlainRecord:
-            m_out.print(" shape ", value.layout().index());
+            m_out.print(" shape ", value.layout().index(), value.immediates[1] == plainRecordIsConverted ? " converted" : "");
             break;
         case Opcode::Cast: {
             static constexpr ASCIILiteral reasons[] = { "Store"_s, "As"_s, "NonNull"_s, "Claim"_s, "Flow"_s, "Upcast"_s, "Coerce"_s, "CoerceFreshObject"_s, "CoerceFreshGraph"_s, "AsFreshObject"_s, "Member"_s };

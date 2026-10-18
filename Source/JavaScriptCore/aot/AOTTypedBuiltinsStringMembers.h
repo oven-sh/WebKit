@@ -52,8 +52,7 @@
     bool collectConcatenationParts(const BitVector& isInBlock, ValueID, bool isLast, ConcatenationParts& parts, ConcatenationParts& lookedThrough, bool looksThroughStrings);
     void findConcatenationsWithNumbers();
     std::optional<Operand> lowerAsConcatenationPart(ValueID, const Value&);
-    CellPointer concatenateInOnePiece(const ConcatenationParts&, bool isKey = true);
-    BitVector m_concatenationsNotUsedAsKeys;
+    CellPointer concatenateInOnePiece(const ConcatenationParts&);
     struct StringOrder {
         BlockID block;
         LValue order;
@@ -217,20 +216,6 @@
     Characters iteratedStringCharacters(const StringIteration&, CellPointer);
     std::optional<Operand> iteratedCharacterCast(const Value&);
     bool isUnreferenced(ValueID literal, bool isGlobal);
-    struct CharacterReplacement {
-        std::array<uint64_t, 4> set;
-        bool repeats;
-        bool isLastOfPattern;
-        std::span<const uint8_t> inserted;
-    };
-    static constexpr unsigned maxReplacementsInOnePass = ReplacementSteps::maxCount;
-    using ReplacementChain = Vector<ValueID, 4>;
-    UncheckedKeyHashMap<uint32_t, ReplacementChain, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_replacementChains;
-    BitVector m_isDoneByLastReplacement;
-    bool m_isLoweringReplacementsOneByOne { false };
-    std::optional<CharacterReplacement> characterReplacementBy(ValueID);
-    void findReplacementChains();
-    std::optional<Operand> tryLowerReplacementChain(ValueID, const Value&);
     struct EntryPair {
         ValueID iterator;
         ValueID pair;

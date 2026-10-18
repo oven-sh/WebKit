@@ -40,7 +40,7 @@ public:
     bool multiline() const { return m_multiline; }
 
     void setInput(JSGlobalObject*, JSString*);
-    JSString* input(JSGlobalObject* globalObject) LIFETIME_BOUND { return m_cachedResult.input(globalObject); }
+    JSString* input() LIFETIME_BOUND { return m_cachedResult.input(); }
 
     DECLARE_VISIT_AGGREGATE;
 

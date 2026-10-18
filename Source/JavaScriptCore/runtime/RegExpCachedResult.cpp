@@ -51,9 +51,6 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    reconstructIfNeeded(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     if (!m_reified) {
         m_reifiedInput.set(vm, owner, m_lastInput.get());
         if (!m_lastRegExp)

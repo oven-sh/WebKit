@@ -1913,6 +1913,8 @@ struct Instance {
         uint32_t layout;
         uint8_t locations[maxNumberOfFields];
         const void* lastObject;
+        const uint64_t* convertedWords;
+        uint32_t layoutIfConvertedByCompiledCode;
     };
     static constexpr unsigned numberOfPlainRecordShapes = 64;
     static constexpr unsigned indexOfPlainRecordShape(uint32_t layout) { return layout % numberOfPlainRecordShapes; }

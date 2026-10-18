@@ -587,6 +587,15 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
         }
         addIfNumber(join, element, type);
         orElse(isNotEmpty(element), outside);
+        if (FunctionID converter = holdsOnPath ? plainRecordConverterToCall(type) : FunctionID()) {
+            LBasicBlock isNotTyped = newUnlikelyBlock();
+            join.add(narrowOrElse(element, m_program.at(m_program.types.anything), type, isNotTyped));
+            m_out.appendTo(isNotTyped);
+            orElse(isCell(element), slowPath);
+            callPlainRecordConverterOrElse(converter, asCell(element), integer(0), slowPath);
+            join.add(convert(CellPointer(m_out.opaque(asCell(element).value())), type.withoutPrimitives(Primitive::All), rep));
+            return;
+        }
         if (holdsOnPath && sharesSlowPath) {
             Type present = type.withoutPrimitives(Primitive::UndefinedOrNull);
             join.add(convert(narrowOrElse(element, m_program.at(m_program.types.anything), present, slowPath), present, rep));

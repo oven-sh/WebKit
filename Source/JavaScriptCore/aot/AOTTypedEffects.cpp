@@ -817,6 +817,8 @@ private:
     Effects effectsOf(const Function& function, const Block& block, size_t index)
     {
         auto& value = function.at(block.values[index]);
+        if (value.opcode == Opcode::IsPlainRecord && value.immediates[1] == plainRecordIsConverted)
+            return { Writes::RuntimeState, m_program.castsMayRetag, false };
         switch (value.opcode) {
         case Opcode::Parameter:
         case Opcode::Undefined:

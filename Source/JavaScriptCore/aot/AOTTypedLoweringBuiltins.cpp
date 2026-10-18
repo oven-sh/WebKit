@@ -456,10 +456,6 @@ Boxed Lowering::lowerMethodGetById(const Value& value)
 
 Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
 {
-    if (m_isDoneByLastReplacement.get(result.index()) && !m_isLoweringReplacementsOneByOne)
-        return Operand(value.rep, nullptr);
-    if (auto replaced = tryLowerReplacementChain(result, value))
-        return *replaced;
     m_lastTableEntry = { };
     if (value.tableInImage() != Format::none) {
         auto& created = m_builtins.classes()[value.engineClass()];

@@ -119,6 +119,66 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
         lastKey = key;
         numbers[numberCount++] = WithNumber { key, element };
     };
+    auto findKeyIn = [&](JSCell* cell) {
+        lastStructureID = StructureID();
+        if (!cell->isObject())
+            return false;
+        Structure* structure = cell->structure();
+        const Typed::LayoutData* layout = structure->compiledLayout();
+        lastHasLayout = layout && Typed::isObjectLayout(layout->kind);
+        if (lastHasLayout) {
+            auto* typedObject = uncheckedDowncast<Typed::Object>(cell);
+            lastField = typedObject->fieldNamed(typedObject->state(), ident);
+        } else {
+            unsigned attributes = 0;
+            PropertyOffset offset = layout || cell->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
+            if (!isValidOffset(offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                return false;
+            lastOffset = offset;
+        }
+        lastStructureID = cell->structureID();
+        return true;
+    };
+    auto numberKeyAt = [&](unsigned i) ALWAYS_INLINE_LAMBDA -> double {
+        JSValue element = array->butterfly()->contiguous().at(array, i).get();
+        if (!element || !element.isCell())
+            return PNaN;
+        JSCell* cell = element.asCell();
+        if (cell->structureID() != lastStructureID && !findKeyIn(cell)) [[unlikely]]
+            return PNaN;
+        if (lastHasLayout)
+            return lastField ? uncheckedDowncast<Typed::Object>(cell)->readNumberInline(*lastField) : PNaN;
+        JSValue keyValue = asObject(cell)->getDirect(lastOffset);
+        return keyValue && keyValue.isNumber() ? keyValue.asNumber() : PNaN;
+    };
+    if (length > 1 && !ident.isNull() && !(flags & (Typed::sortComparesByLocale | Typed::sortMakesCopy))) {
+        bool rises = true;
+        bool falls = true;
+        double previous = numberKeyAt(0);
+        unsigned seen = previous == previous;
+        for (; seen && seen < length && (rises || falls); ++seen) {
+            double number = numberKeyAt(seen);
+            if (number != number)
+                break;
+            bool isBefore = isDescending ? previous < number : number < previous;
+            rises &= !isBefore;
+            falls &= isBefore;
+            previous = number;
+        }
+        if (seen == length && rises)
+            OPERATION_RETURN(scope, JSValue::encode(array));
+        if (seen == length && falls) {
+            array->ensureWritable(vm);
+            auto elements = array->butterfly()->contiguous();
+            for (unsigned low = 0, high = length - 1; low < high; ++low, --high) {
+                JSValue moved = elements.at(array, low).get();
+                elements.at(array, low).setWithoutWriteBarrier(elements.at(array, high).get());
+                elements.at(array, high).setWithoutWriteBarrier(moved);
+            }
+            vm.writeBarrier(array);
+            OPERATION_RETURN(scope, JSValue::encode(array));
+        }
+    }
     for (unsigned i = 0; i < length; ++i) {
         if (shape == DoubleShape) {
             double number = array->butterfly()->contiguousDouble().at(array, i);
@@ -138,25 +198,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTrySortByKey, EncodedJSValue, (Instanc
             if (!element.isCell())
                 OPERATION_RETURN(scope, declined);
             JSCell* cell = element.asCell();
-            if (cell->structureID() != lastStructureID) [[unlikely]] {
-                if (!cell->isObject())
-                    OPERATION_RETURN(scope, declined);
-                Structure* structure = cell->structure();
-                const Typed::LayoutData* layout = structure->compiledLayout();
-                lastHasLayout = layout && Typed::isObjectLayout(layout->kind);
-                if (lastHasLayout) {
-                    auto* typedObject = uncheckedDowncast<Typed::Object>(cell);
-                    lastField = typedObject->fieldNamed(typedObject->state(), ident);
-                } else {
-                    unsigned attributes = 0;
-                    PropertyOffset offset = layout || cell->type() != FinalObjectType || structure->isUncacheableDictionary() ? invalidOffset : structure->get(vm, ident, attributes);
-                    if (!isValidOffset(offset) || attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
-                        OPERATION_RETURN(scope, declined);
-                    lastOffset = offset;
-                }
-                lastStructureID = cell->structureID();
-            }
+            if (cell->structureID() != lastStructureID && !findKeyIn(cell)) [[unlikely]]
+                OPERATION_RETURN(scope, declined);
             if (lastHasLayout) {
+                if (double number = lastField && strings.isEmpty() && !(flags & Typed::sortComparesByLocale) ? uncheckedDowncast<Typed::Object>(cell)->readNumberInline(*lastField) : PNaN; number == number) {
+                    appendNumber(number, JSValue::encode(element));
+                    continue;
+                }
                 keyValue = lastField ? uncheckedDowncast<Typed::Object>(cell)->readInline(*lastField) : JSValue();
                 if (!keyValue)
                     keyValue = Typed::Object::tryGetOwnData(vm, cell, ident);

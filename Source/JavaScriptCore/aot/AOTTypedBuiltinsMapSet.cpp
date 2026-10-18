@@ -379,25 +379,6 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByConten
     [[clang::musttail]] return concatenateWithIntegersGeneric(instance, count, parts);
 }
 
-static NEVER_INLINE OperationReturnType<JSCell*> makeFlatString(Instance* instance, CallFrame* callFrame, std::span<const Latin1Character> characters)
-{
-    VM& vm = *instance->vm;
-    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { jsNontrivialString(vm, String { characters }), nullptr };
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateFlat, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts))
-{
-    std::array<Latin1Character, maxSunkKeyLength> characters;
-    KeyPieces pieces;
-    if (auto text = flattenKeyParts(count, parts, characters, pieces); text && text->size() >= 2 && !Options::useAOTOperationCounters()) [[likely]] {
-        if (pieces.count == 1 && pieces.lastString)
-            return { pieces.lastString, nullptr };
-        return makeFlatString(instance, DECLARE_CALL_FRAME(*instance->vm), *text);
-    }
-    [[clang::musttail]] return concatenateWithIntegersGeneric(instance, count, parts);
-}
-
 static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGeneric(Instance* instance, uint32_t count, const EncodedJSValue* parts)
 {
     JSGlobalObject* globalObject = instance->globalObject;

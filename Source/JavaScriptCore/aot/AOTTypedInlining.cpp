@@ -115,7 +115,7 @@ public:
                 bool callerIsHot = m_currentBlockIsInCallerLoop || m_program.isHotOutsideLoops(m_id);
                 if (m_program.at(callee).isSharedCallBody && !callerIsHot)
                     continue;
-                if (m_program.at(callee).worker && !isOnlyRead(call) && !isOnlyReadThroughJoinsAndCalls(call) && !isPassedObjectThatIsOnlyRead(m_caller.at(call)))
+                if (m_program.at(callee).worker && !isOnlyRead(call) && !isReadOnlyThroughPhisAndCalls(call) && !passesReadOnlyAllocation(m_caller.at(call)))
                     continue;
                 if (isOwnWorker(callee) && sizeOf(m_program.at(callee), tinySizeInColdCode + 1) > tinySizeInColdCode)
                     continue;
@@ -851,7 +851,7 @@ private:
         return true;
     }
 
-    bool makesObject(ValueID id) const
+    bool isObjectAllocation(ValueID id) const
     {
         auto& value = m_caller.at(id);
         if (value.opcode == Opcode::NewObjectWithShape)
@@ -862,7 +862,7 @@ private:
         return wrapper.worker && !wrapper.nullishResultKind && m_program.at(value.type).singleLayout();
     }
 
-    bool isReadByCalleeThatWillBeInlined(ValueID user, ValueID object)
+    bool isReadOnlyByInlinableCallee(ValueID user, ValueID object)
     {
         auto& call = m_caller.at(user);
         if (call.opcode != Opcode::CallDirect || call.isJumpToContinuation() || call.immediates[1] == afterHead || call.isCallWithDeclinedInlining() || call.function() == m_id)
@@ -873,7 +873,7 @@ private:
         bool isInLoop = m_isInCallerLoop.get(m_blockOfValue[user.index()]);
         if (!isInLoop && !m_program.isHotOutsideLoops(m_id))
             return false;
-        uint32_t copies = numberOfCopiesAround(call);
+        uint32_t copies = enclosingInlineCopies(call);
         if (copies >= maxDepth || (copies && !isInLoop))
             return false;
         auto& body = callee.worker ? m_program.at(callee.worker) : callee;
@@ -886,10 +886,10 @@ private:
         return true;
     }
 
-    bool isOnlyReadThroughJoinsAndCalls(ValueID result)
+    bool isReadOnlyThroughPhisAndCalls(ValueID result)
     {
         static constexpr unsigned maxWeb = 16;
-        if (!makesObject(result) || m_program.functionsWithInliningDisabled.get(m_id.index()))
+        if (!isObjectAllocation(result) || m_program.functionsWithInliningDisabled.get(m_id.index()))
             return false;
         if (m_firstUser.isEmpty())
             findUsers();
@@ -915,7 +915,7 @@ private:
                     while (m_caller.at(given).opcode == Opcode::Cast && classifyObjectUse(m_caller, m_caller.at(given), m_caller.at(given).child(0)) == ObjectUse::IsAlias)
                         given = m_caller.at(given).child(0);
                     bool isJoin = m_caller.at(given).opcode == Opcode::Parameter && m_caller.at(given).immediates[0];
-                    if ((!isJoin && !makesObject(given)) || !add(given))
+                    if ((!isJoin && !isObjectAllocation(given)) || !add(given))
                         return false;
                 }
             }
@@ -944,19 +944,19 @@ private:
                 }
                 if (value.opcode == Opcode::PutField && definition.opcode == Opcode::NewObjectWithShape && value.child(0) == object && value.child(1) != object)
                     continue;
-                if (!isReadByCalleeThatWillBeInlined(user, object))
+                if (!isReadOnlyByInlinableCallee(user, object))
                     return false;
             }
         }
         return true;
     }
 
-    bool isPassedObjectThatIsOnlyRead(const Value& call)
+    bool passesReadOnlyAllocation(const Value& call)
     {
         for (ValueID argument : call.arguments) {
             if (!m_program.at(m_caller.at(argument).type).singleLayout())
                 continue;
-            if (ValueID origin = originOf(m_caller, argument, m_edgesIntoBlocks); makesObject(origin) && isOnlyReadThroughJoinsAndCalls(origin))
+            if (ValueID origin = originOf(m_caller, argument, m_edgesIntoBlocks); isObjectAllocation(origin) && isReadOnlyThroughPhisAndCalls(origin))
                 return true;
         }
         return false;
@@ -1441,10 +1441,10 @@ private:
             return maxDepth;
         if (isAccessor(call.function()) || sizeOf(m_program.at(call.function()), maxForwarder + 1) <= maxForwarder)
             return 0;
-        return numberOfCopiesAround(call, counted);
+        return enclosingInlineCopies(call, counted);
     }
 
-    uint32_t numberOfCopiesAround(const Value& call, Copies counted = Copies::All) const
+    uint32_t enclosingInlineCopies(const Value& call, Copies counted = Copies::All) const
     {
         uint32_t depth = call.immediates[1] == Format::none ? 0 : call.immediates[1];
         uint32_t frames = 0;

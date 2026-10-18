@@ -42,15 +42,6 @@ ALWAYS_INLINE void RegExpCachedResult::record(VM& vm, JSObject* owner, RegExp* r
     vm.writeBarrier(owner);
 }
 
-ALWAYS_INLINE void RegExpCachedResult::recordToBeReconstructed(VM& vm, JSObject* owner, JSString* original, Reconstruction reconstruction, void* context)
-{
-    m_lastInput.setWithoutWriteBarrier(original);
-    m_reconstruction = reconstruction;
-    m_reconstructionContext = context;
-    m_reified = isToBeReconstructed;
-    vm.writeBarrier(owner);
-}
-
 inline void RegExpGlobalData::setInput(JSGlobalObject* globalObject, JSString* string)
 {
     m_cachedResult.setInput(globalObject, globalObject, string);

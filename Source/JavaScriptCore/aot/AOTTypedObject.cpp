@@ -13739,7 +13739,7 @@ void State::cachePlainRecordShape(Structure* structure, const CoercionPlan& plan
     using Shape = Instance::PlainRecordShape;
     if (structure->isDictionary() || structure->hasPolyProto() || plan.keepsObject || plan.layout->numberOfFields > Shape::maxNumberOfFields)
         return;
-    Shape shape { structure->id().bits(), plan.layout->index, { }, nullptr };
+    Shape shape { structure->id().bits(), plan.layout->index, { }, nullptr, nullptr, UINT32_MAX };
     for (auto& planned : plan.fields) {
         if (!isInlineOffset(planned.offset))
             return;
@@ -13748,6 +13748,13 @@ void State::cachePlainRecordShape(Structure* structure, const CoercionPlan& plan
     for (uint32_t i = 0; i < plan.layout->numberOfFields; ++i) {
         if (!shape.locations[i] && (plan.layout->fields()[i].flags & (fieldIsOptional | fieldAllowsUndefined)) != (fieldIsOptional | fieldAllowsUndefined))
             return;
+    }
+    bool hasEveryField = std::ranges::all_of(std::span { shape.locations }.first(plan.layout->numberOfFields), [](uint8_t location) {
+        return !!location;
+    });
+    if (auto* conversion = plan.inPlaceConversion.get(); conversion && hasEveryField && !conversion->allocator && !conversion->allocates && !conversion->discriminantFrom && conversion->moveCount == plan.layout->numberOfFields && plan.layout->size <= JSFinalObject::allocationSize(structure->inlineCapacity()) && plan.layout->size <= conversion->wordCount * sizeof(uint64_t)) {
+        shape.convertedWords = conversion->words;
+        shape.layoutIfConvertedByCompiledCode = plan.layout->index;
     }
     instance.plainRecordShapes[Instance::indexOfPlainRecordShape(plan.layout->index)] = shape;
     m_hasCachedConversions = true;
@@ -13769,6 +13776,12 @@ void State::cacheCopyConversion(VM& vm, Structure* structure, const RuntimeType&
     }
     if (plan.copyConversion)
         cacheConversion(structure->id().bits(), typeAndReason, *plan.copyConversion);
+    if (structure->mayBePrototype())
+        return;
+    if (!plan.inPlaceConversion)
+        plan.inPlaceConversion = createConversionPlan(plan, WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(JSFinalObject::allocationSize(structure->inlineCapacity())), static_cast<uint64_t>(made->typeInfoBlob() & 0xffffff) << 32 | made->id().bits(), nullptr);
+    if (plan.inPlaceConversion)
+        cachePlainRecordShape(structure, plan);
 }
 
 void State::cacheConversionWithExtraProperties(VM& vm, Structure* structure, const RuntimeType& type, const CoercionPlan& plan, Object* converted, size_t sizeOfCell, uint32_t typeAndReason)

@@ -101,6 +101,7 @@ public:
     State& state() const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
+    double readNumberInline(const FieldData&) const;
     enum class ReadKind : uint32_t { Int32OrNumberBox, Cell32, Double, Boolean, JSValue, Int32, General };
     static constexpr unsigned readKindShift = 24;
     static uint32_t readKindAndOffset(const FieldData&);
@@ -321,6 +322,24 @@ ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
         return jsNumber(purifyNaN(at<double>(field.offset)));
     default:
         return read(field);
+    }
+}
+
+ALWAYS_INLINE double Object::readNumberInline(const FieldData& field) const
+{
+    if (field.flags & (fieldIsOutOfLine | fieldMayBeUnlisted)) [[unlikely]]
+        return PNaN;
+    switch (field.store()) {
+    case Store::Int32OrNumberBox:
+        if (int32_t word = at<int32_t>(field.offset); word >= minInlineInt32) [[likely]]
+            return word;
+        return PNaN;
+    case Store::Int32:
+        return at<int32_t>(field.offset);
+    case Store::Double:
+        return at<double>(field.offset);
+    default:
+        return PNaN;
     }
 }
 
@@ -1808,12 +1827,6 @@ struct State {
             growKeysByParts();
     }
     KeyByParts lastKeyPartsLookup;
-    struct LastReplacement {
-        std::array<EncodedJSValue, 56> steps;
-        uint32_t countAndForm { 0 };
-        uint32_t lastStep { 0 };
-    };
-    LastReplacement lastReplacement;
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t numberOfPlaces = m_cachedKeys.size();

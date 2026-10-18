@@ -889,7 +889,7 @@ void Lowering::lowerBlock(BlockID id)
 {
     m_out.appendTo(m_blocks[id.index()]);
     m_currentBlockID = id;
-    m_isInLoop = m_loopBlocks.get(id.index());
+    m_isInLoop = m_loopBlocks.get(id.index()) || (m_out.m_block->frequency() && m_function.module && m_program.modulesRunPerRequest.get(m_function.module.index()));
     bool didEmitCalls = std::exchange(m_context.emitsCalls, false);
 #if CPU(X86_64)
     m_context.hasColdSites = false;
@@ -1389,7 +1389,6 @@ bool Lowering::run()
         findSplitsOnlyTakenApart();
         findDescriptorsOnlyTakenApart();
         findSubstringsOnlyInspected();
-        findReplacementChains();
         findRepeatedTableLookups(order);
     }
     if (m_opcodes.intersects(concatenations))
