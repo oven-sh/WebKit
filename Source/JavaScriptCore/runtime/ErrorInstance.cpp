@@ -486,28 +486,32 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
 
-        {
-            Locker locker { cellLock() };
-            m_stackTrace->clear();
-            m_stackTrace = nullptr;
-            m_stackString = String();
+        if (hasFrames || stack) {
+            {
+                Locker locker { cellLock() };
+                m_stackTrace->clear();
+                m_stackTrace = nullptr;
+                m_stackString = String();
+            }
+
+            auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+
+            // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            if (hasFrames || m_lineColumn.line) {
+                putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+                putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+                if (!m_sourceURL.isEmpty())
+                    putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+            }
+
+            if (!m_stackPropertyProvidedByCapturedStackTrace)
+                putDirect(vm, vm.propertyNames->stack, stack, attributes);
+            return true;
         }
 
-        auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
-
-        // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
-        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        if (hasFrames || m_lineColumn.line) {
-            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-            if (!m_sourceURL.isEmpty())
-                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
-        }
-
-        // The hook returns nothing when it has put a `stack` of its own.
-        if (stack)
-            putDirect(vm, vm.propertyNames->stack, stack, attributes);
-        return true;
+        // The hook gave an error with no frames no stack: what follows is as if it had not been asked.
+        m_errorInfoMaterialized = false;
     }
 
 #endif

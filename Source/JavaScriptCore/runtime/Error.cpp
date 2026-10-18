@@ -274,11 +274,12 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             errorInstance->materializeErrorInfoIfNeeded(vm);
             catchScope.clearExceptionExceptTermination();
-            return errorInstance;
-        }
+            // It can give an error with no frames no stack, which then gets the parser's position below.
+            if (errorInstance->hasMaterializedErrorInfo())
+                return errorInstance;
+        } else
 #endif
-
-        errorInstance->materializeErrorInfoIfNeeded(vm);
+            errorInstance->materializeErrorInfoIfNeeded(vm);
     }
 
     // Without such a host, materializing takes line and sourceURL from the top frame of the stack (the caller of eval or
