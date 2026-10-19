@@ -2275,7 +2275,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderSetImportedModule);
-static JSC_DECLARE_HOST_FUNCTION(functionResetModuleGraphAfterFailedLink);
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderResetGraphAfterFailedLink);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
@@ -4318,19 +4318,24 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderSetImportedModule, (JSGlobalObject*
     return JSValue::encode(jsBoolean(false));
 }
 
-// $vm.resetModuleGraphAfterFailedLink(error): CyclicModuleRecord::resetGraphAfterFailedLink() for the module whose
-// Link() threw `error`, which is what a host that fills [[LoadedModules]] itself does then. Returns whether `error` is
-// the error of such a Link().
-JSC_DEFINE_HOST_FUNCTION(functionResetModuleGraphAfterFailedLink, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// $vm.moduleLoaderResetGraphAfterFailedLink({ loader }, module): CyclicModuleRecord::resetGraphAfterFailedLink() for the
+// module `module`, as a host that fills [[LoadedModules]] itself calls it after the Link() of that module threw.
+// `module` is a specifier, relative to the caller, of a module that the loader has. With undefined for the first
+// argument, the loader is the one of the global object. Returns whether the loader has the module.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderResetGraphAfterFailedLink, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
-    auto* error = dynamicDowncast<ErrorInstance>(callFrame->argument(0));
-    if (!error)
-        return JSValue::encode(jsBoolean(false));
-    JSModuleLoader::ModuleFailure failure = JSModuleLoader::getErrorInfo(globalObject, error);
-    auto* module = dynamicDowncast<CyclicModuleRecord>(failure.m_source);
-    if (!module || failure.m_kind != JSModuleLoader::ModuleFailure::Kind::Instantiation)
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = callFrame->argument(0).isUndefined() ? globalObject->moduleLoader() : moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected undefined or the result of $vm.createModuleLoader()"_s);
+    JSValue referrer = jsString(vm, callFrame->callerSourceOrigin(vm).url().string());
+    Identifier key = loader->resolve(globalObject, callFrame->argument(1), referrer, nullptr, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+    auto* module = entry ? dynamicDowncast<CyclicModuleRecord>(entry->record()) : nullptr;
+    if (!module)
         return JSValue::encode(jsBoolean(false));
     module->resetGraphAfterFailedLink(vm);
     return JSValue::encode(jsBoolean(true));
@@ -6102,7 +6107,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, allowIfNotFuzz, "moduleLoaderSetImportedModule"_s, functionModuleLoaderSetImportedModule, 4);
-    addFunction(vm, allowIfNotFuzz, "resetModuleGraphAfterFailedLink"_s, functionResetModuleGraphAfterFailedLink, 1);
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderResetGraphAfterFailedLink"_s, functionModuleLoaderResetGraphAfterFailedLink, 2);
 #endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
