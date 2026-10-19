@@ -225,6 +225,12 @@ bool JSModuleRecord::isTopLevelExecutionFinished() const
     return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing);
 }
 
+bool JSModuleRecord::hasTopLevelExecutionStarted() const
+{
+    JSValue state = internalField(Field::State).get();
+    return !state.isNumber() || state.asInt32AsAnyInt() != std::to_underlying(State::Init);
+}
+
 void JSModuleRecord::didFinishWithExecutable(VM& vm)
 {
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
@@ -234,28 +240,39 @@ void JSModuleRecord::didFinishWithExecutable(VM& vm)
     executable->didFinishEvaluation(vm);
 }
 
+void JSModuleRecord::didReceiveEvaluationError(VM& vm)
+{
+    // The error can be another module's while this body is suspended at a top-level await: the record is still on the
+    // stack of Evaluate() (its cycle is not complete) when a later module of the walk throws, and step 9 gives every
+    // record on the stack that error. ExecuteModule started the body with AsyncBlockStart, so it runs to its end like
+    // the body of an async function. AsyncModuleExecutionFulfilled and AsyncModuleExecutionRejected then find the
+    // module evaluated and return.
+    if (!hasTopLevelExecutionStarted())
+        didFinishWithExecutable(vm);
+}
+
 JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue, JSValue resumeMode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Before the executable: a record with an error has given it up (CyclicModuleRecord::setEvaluationError).
-    if (JSValue error = evaluationError()) {
-        scope.throwException(globalObject, error);
-        return { };
-    }
-
-    if (!m_moduleProgramExecutable) {
+    ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
+    if (!executable) {
+        // A record that got an error before its body started has given the executable up (didReceiveEvaluationError).
+        if (JSValue error = evaluationError()) {
+            scope.throwException(globalObject, error);
+            return { };
+        }
         ASSERT_NOT_REACHED_WITH_MESSAGE("Can't evaluate a JSModuleRecord that has no executable");
         return jsUndefined();
     }
+    // The error of a record that still has its executable came while its body was suspended: this resumes it.
+    ASSERT(!evaluationError() || hasTopLevelExecutionStarted());
 
     // Every module this one imports from has its environment now. Filling the import
     // slots here rather than on first use (JSModuleEnvironment::fillImportSlot) keeps
     // optimized code shared with other records from meeting an empty slot per record;
     // code only this record runs fills them on first use.
-    ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
-
     if (executable->isShared()) {
         JSModuleEnvironment* environment = moduleEnvironment();
         forEachImportSlot([&](unsigned index, const Identifier& localName) {
@@ -308,6 +325,8 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // 4. Set the ScriptOrModule of moduleContext to module.
     // 5. Assert: module has been linked and declarations in its module environment have been instantiated.
     ASSERT(static_cast<int>(status()) >= static_cast<int>(Status::Linked));
+    // Neither InnerModuleEvaluation nor AsyncModuleExecutionFulfilled executes a record that has an error.
+    ASSERT(!evaluationError());
     // 6. Set the VariableEnvironment of moduleContext to module.[[Environment]].
     // 7. Set the LexicalEnvironment of moduleContext to module.[[Environment]].
     // 8. Suspend the running execution context.
