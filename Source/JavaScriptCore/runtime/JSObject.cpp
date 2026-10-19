@@ -845,7 +845,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
-    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this) && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
@@ -938,8 +938,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     }
 
     scope.release();
-    // (With immutable properties it is here under AllowChangesToImmutableProperties, and what it does must not be cached.)
-    if (isThisValueAltered(slot, this) || structure()->hasImmutableProperties()) [[unlikely]]
+    if (isThisValueAltered(slot, this)) [[unlikely]]
         return definePropertyOnReceiver(globalObject, propertyName, value, slot);
     return putInlineFast(globalObject, propertyName, value, slot);
 }
@@ -2162,6 +2161,13 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
     }
 }
 
+// Whether AllowLazyMaterializationOfImmutableProperties lets native code define and delete the object's named properties. (Not with
+// indexed storage: its elements are protected by a copy-on-write butterfly, which room for a property would replace.)
+static ALWAYS_INLINE bool canChangeImmutablePropertiesNatively(VM& vm, JSObject* object)
+{
+    return vm.allowLazyMaterializationOfImmutablePropertiesCount && !hasIndexedProperties(object->indexingType());
+}
+
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
@@ -2439,7 +2445,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     VM& vm = globalObject->vm();
 
     // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
-    if (thisObject->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (thisObject->structure()->hasImmutableProperties() && !canChangeImmutablePropertiesNatively(vm, thisObject)) [[unlikely]]
         return !thisObject->hasOwnProperty(globalObject, propertyName);
     
     if (std::optional<uint32_t> index = parseIndex(propertyName))
@@ -3165,7 +3171,7 @@ bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 
 bool JSObject::isExtensible(JSObject* obj, JSGlobalObject* globalObject)
 {
-    if (obj->structure()->hasImmutableProperties() && globalObject->vm().allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (obj->structure()->hasImmutableProperties() && canChangeImmutablePropertiesNatively(globalObject->vm(), obj)) [[unlikely]]
         return true;
     return obj->isStructureExtensible();
 }
@@ -3278,8 +3284,11 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Nothing below applies: the descriptor is validated against the current one, which defineOwnNonIndexProperty() does.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    // (AllowLazyMaterializationOfImmutableProperties is not for an index: that function would put it among the named properties.)
+    if (structure()->hasImmutableProperties()) [[unlikely]] {
+        SetForScope noMaterialization(vm.allowLazyMaterializationOfImmutablePropertiesCount, 0u);
         RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));
+    }
 
     ASSERT(index <= MAX_ARRAY_INDEX);
 
@@ -4264,7 +4273,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
 
     // An object with immutable properties accepts a definition that changes nothing and refuses every other one.
-    if (object && object->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]] {
+    if (object && object->structure()->hasImmutableProperties() && !canChangeImmutablePropertiesNatively(vm, object)) [[unlikely]] {
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isUnchanged)

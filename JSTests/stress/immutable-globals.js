@@ -58,6 +58,8 @@
             let [object, path] = queue.pop();
             if (!isImmutable(object))
                 mutable.push(path);
+            if (typeof object === "function" && Object.hasOwn(object, "prototype") && object.prototype.constructor !== object)
+                mutable.push(path + ".prototype.constructor is not " + path);
             visit(Object.getPrototypeOf(object), path + ".__proto__");
             for (let key of Reflect.ownKeys(object)) {
                 let descriptor = Reflect.getOwnPropertyDescriptor(object, key);
@@ -96,7 +98,8 @@
         shouldThrow(() => { globalThis.print = 1; }, TypeError);
         shouldThrow(() => { globalThis.fresh = 1; }, TypeError);
         shouldThrow(() => { delete globalThis.Math; }, TypeError);
-        shouldThrow(() => { undeclared = 1; }, ReferenceError);
+        (0, eval)("undeclared = 1;");
+        shouldBe("undeclared" in globalThis, false);
         for (let source of ["var a;", "function a() { }"])
             shouldThrow(() => loadString(source), TypeError);
         for (let source of ["let a;", "const a = 1;", "class a { }", "let Array;", "var b; let a;", "function b() { } let a;"])

@@ -74,6 +74,7 @@ void IntlSegmenterConstructor::finishCreation(VM& vm, IntlSegmenterPrototype* se
 {
     Base::finishCreation(vm, 0, "Segmenter"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, segmenterPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm); // Options::immutableGlobals() has covered the prototype, which is older.
     segmenterPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 

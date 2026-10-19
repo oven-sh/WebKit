@@ -450,7 +450,7 @@ public:
 private:
     bool m_isInService { false };
 public:
-    // See AllowLazyMaterializationOfImmutableProperties and AllowChangesToImmutableProperties. (Declared here because it fills padding: no other field moves.)
+    // See AllowLazyMaterializationOfImmutableProperties. (Declared here because it fills padding: no other field moves.)
     unsigned allowLazyMaterializationOfImmutablePropertiesCount { 0 };
 private:
     RefPtr<CrossTaskToken> m_crossTaskToken;
@@ -1570,8 +1570,10 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes
 // nothing for any other object. It is for the places where the engine materializes a property the object logically already has: a
-// static property table entry, a function's name, length or prototype, an error's stack, an arguments object's callee. Nothing
-// inside it may run JavaScript: with assertions enabled it counts as a DisallowVMEntry too.
+// static property table entry, a function's name, length or prototype, an error's stack, an arguments object's callee. An embedder
+// whose built-ins are finished after they are made immutable can also define and delete their properties and set their prototypes
+// (JSObject::defineOwnProperty(), deleteProperty(), setPrototype()). Nothing inside it may run JavaScript: with assertions enabled it
+// counts as a DisallowVMEntry too.
 class AllowLazyMaterializationOfImmutableProperties {
     WTF_MAKE_NONCOPYABLE(AllowLazyMaterializationOfImmutableProperties);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -1591,28 +1593,6 @@ public:
         ASSERT(m_vm.disallowVMEntryCount);
         --m_vm.disallowVMEntryCount;
 #endif
-        --m_vm.allowLazyMaterializationOfImmutablePropertiesCount;
-    }
-
-private:
-    VM& m_vm;
-};
-
-// While one of these is alive, JavaScript can set, define and delete the properties of an object whose Structure says
-// hasImmutableProperties() and set its prototype, as if it did not say so. It is for an embedder's own JavaScript, which adds to its
-// built-ins as it loads. Whatever else runs inside can do the same.
-class AllowChangesToImmutableProperties {
-    WTF_MAKE_NONCOPYABLE(AllowChangesToImmutableProperties);
-    WTF_FORBID_HEAP_ALLOCATION;
-public:
-    explicit AllowChangesToImmutableProperties(VM& vm)
-        : m_vm(vm)
-    {
-        ++m_vm.allowLazyMaterializationOfImmutablePropertiesCount;
-    }
-
-    ~AllowChangesToImmutableProperties()
-    {
         --m_vm.allowLazyMaterializationOfImmutablePropertiesCount;
     }
 

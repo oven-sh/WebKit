@@ -3994,14 +3994,6 @@ static JSObject* withoutGlobalProxy(JSObject* object)
     return object->type() == GlobalProxyType ? uncheckedDowncast<JSGlobalProxy>(object)->target() : object;
 }
 
-static void appendFunctionsOfProperties(VM& vm, ObjectsToMakeImmutable& objects, JSObject* object)
-{
-    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
-        return true;
-    });
-}
-
 static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects, const Vector<WriteBarrier<JSObject>>& leftMutable)
 {
     DeferGC deferGC(vm); // The collector does not see the list.
@@ -4009,21 +4001,19 @@ static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable
         JSObject* object = withoutGlobalProxy(objects.takeLast());
         if (object->structure()->hasImmutableProperties() || leftMutable.containsIf([&](auto& other) { return other.get() == object; }))
             continue;
-        if (object->makePropertiesImmutable(vm))
-            appendFunctionsOfProperties(vm, objects, object);
+        if (!object->makePropertiesImmutable(vm))
+            continue;
+        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
+            return true;
+        });
     }
 }
 
 void JSGlobalObject::makeObjectAndItsFunctionsImmutable(VM& vm, JSObject* object)
 {
-    DeferGC deferGC(vm); // The collector does not see the list.
     ObjectsToMakeImmutable objects;
-    object = withoutGlobalProxy(object);
-    // It may have been given functions since, under AllowChangesToImmutableProperties.
-    if (object->structure()->hasImmutableProperties())
-        appendFunctionsOfProperties(vm, objects, object);
-    else
-        objects.append(object);
+    objects.append(object);
     makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
 }
 
@@ -4041,7 +4031,7 @@ void JSGlobalObject::didReifyStaticProperty(VM& vm, JSObject* holder, JSValue va
 void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
 {
     auto* option = Options::immutableGlobals();
-    if (!option) [[likely]]
+    if (!option || !*option) [[likely]]
         return;
 
     DeferGC deferGC(vm); // The collector does not see the list.
@@ -4050,20 +4040,23 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
 
     // Looking a global up creates it, while nothing is made immutable as it is created yet.
     auto leaveMutable = [&](JSObject* holder, const Identifier& name) -> JSObject* {
-        JSValue value = holder->get(this, name);
+        PropertySlot slot(holder, PropertySlot::InternalMethodType::GetOwnProperty);
+        JSValue value;
+        if (holder->methodTable()->getOwnPropertySlot(holder, this, name, slot))
+            value = slot.getValue(this, name);
         if (scope.exception()) [[unlikely]] {
             scope.clearException();
             return nullptr;
         }
-        if (!value.isObject())
+        if (!value || !value.isObject())
             return nullptr;
         Locker locker { cellLock() };
         m_globalsLeftMutable.append(WriteBarrier<JSObject>(vm, this, withoutGlobalProxy(asObject(value))));
         return asObject(value);
     };
-    String string { option };
+    String string = String::fromUTF8(unsafeSpan(option));
     bool isFirst = true;
-    for (StringView entry : StringView(string).split(',')) {
+    for (StringView entry : StringView(string).splitAllowingEmptyEntries(',')) {
         if (isFirst ? entry != "*"_s : !entry.startsWith('-')) {
             dataLogLn("ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: ", string);
             CRASH();
@@ -4074,8 +4067,6 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
         if (global && global->isCallable())
             leaveMutable(global, vm.propertyNames->prototype);
     }
-    if (isFirst)
-        return;
     m_hasImmutableGlobals = true;
 
     ObjectsToMakeImmutable objects;
