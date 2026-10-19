@@ -189,6 +189,17 @@ bool BlockDirectory::isFreeListedCell(const void* cell)
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void BlockDirectory::configureAllocationSampling(bool enabled)
+{
+    Locker locker { m_localAllocatorsLock };
+    m_localAllocators.forEach(
+        [&] (LocalAllocator* allocator) {
+            allocator->configureAllocationSampling(enabled);
+        });
+}
+#endif
+
 void BlockDirectory::stopAllocating()
 {
     dataLogLnIf(BlockDirectoryInternal::verbose, RawPointer(this), ": BlockDirectory::stopAllocating!");
