@@ -134,6 +134,14 @@ void ModuleProgramExecutable::setLinkerImportedBindings(std::optional<ImportedBi
     m_linker.clear();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleProgramExecutable::forgetLinker(JSModuleRecord* linker)
+{
+    if (m_linker.get() == linker)
+        m_linker.clear();
+}
+#endif
+
 bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
 {
     if (m_moduleScopeSymbolTables.size() != symbolTables.size())
