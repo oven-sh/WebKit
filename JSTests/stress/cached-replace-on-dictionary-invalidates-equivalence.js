@@ -31,7 +31,7 @@ noInline(store);
     let object = Object.create(proto);
     function call(o) { return o.f(); }
     noInline(call);
-    for (let i = 0; i < 1e5; ++i)
+    for (let i = 0; i < testLoopCount; ++i)
         shouldBe(call(object), 1);
     for (let i = 0; i < 200; ++i)
         store(proto, 'p' + i, -i);
@@ -50,7 +50,7 @@ noInline(store);
     for (let i = 0; i < 200; ++i)
         store(proto, 'p' + i, -i);
     store(proto, 'f', function () { return 1; });
-    for (let i = 0; i < 1e5; ++i)
+    for (let i = 0; i < testLoopCount; ++i)
         shouldBe(call(object), 1);
     store(proto, 'f', function () { return 2; });
     shouldBe(call(object), 2);
@@ -64,11 +64,11 @@ noInline(store);
     noInline(call);
     function replaceF(o, value) { o.f = value; }
     noInline(replaceF);
-    for (let i = 0; i < 1e5; ++i)
+    for (let i = 0; i < testLoopCount; ++i)
         shouldBe(call(object), 1);
     replaceF(proto, function () { return 3; });
     shouldBe(call(object), 3);
-    for (let i = 0; i < 1e4; ++i)
+    for (let i = 0; i < testLoopCount; ++i)
         replaceF(proto, function () { return 4; });
     shouldBe(call(object), 4);
 }
