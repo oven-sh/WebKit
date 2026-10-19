@@ -1573,9 +1573,9 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 // static property table entry, a function's name, length or prototype, an error's stack, an arguments object's callee. An embedder
 // whose built-ins are finished after they are made immutable can also define and delete their named properties and set their
 // prototypes (JSObject::defineOwnProperty(), deleteProperty(), setPrototype()), unless they are arrays or have indexed storage. Such
-// an embedder materializes the property beforehand if a static table holds it, because a PropertyCallback may run JavaScript, and
-// afterwards makes immutable the functions it added. Nothing inside the scope may run JavaScript: with assertions enabled it counts
-// as a DisallowVMEntry too.
+// an embedder materializes the property beforehand if a static table holds it, and the whole table (reifyAllStaticProperties()) before
+// a delete, which does that itself, because a PropertyCallback may run JavaScript. Afterwards it makes immutable the functions it
+// added. Nothing inside the scope may run JavaScript: with assertions enabled it counts as a DisallowVMEntry too.
 class AllowLazyMaterializationOfImmutableProperties {
     WTF_MAKE_NONCOPYABLE(AllowLazyMaterializationOfImmutableProperties);
     WTF_FORBID_HEAP_ALLOCATION;
