@@ -118,7 +118,14 @@ public:
             // A requested object is older than the cache's capacity. We can
             // infer that requested objects are subject to high eviction probability,
             // so we grow the cache to improve our hit rate.
+#if USE(BUN_JSC_ADDITIONS)
+            // By one window at most: a hit on one large source must not let the cache keep a gigabyte of sources that
+            // never repeat, with no entry count to stop it. A set of large sources that repeats grows the capacity by a
+            // window per hit until it fits.
+            m_capacity += std::min(recencyBias * oldObjectSamplingMultiplier * weight(key), static_cast<int64_t>(Options::codeCacheWorkingSetMaxBytes()));
+#else
             m_capacity += recencyBias * oldObjectSamplingMultiplier * weight(key);
+#endif
         } else if (age < m_capacity / 2) {
             // A requested object is much younger than the cache's capacity. We can
             // infer that requested objects are subject to low eviction probability,
@@ -158,6 +165,8 @@ public:
     // A full collection began: what is looked up from now on counts as used in its cycle.
     void didStartFullCollection() { m_ageAtLastFullCollection = m_age; }
     void removeEntriesNotUsedInCurrentFullCollectionCycle();
+    size_t numberOfEntries() const { return static_cast<size_t>(m_map.size()); }
+    int64_t weightOfEntries() const { return m_size; }
 #endif
 
     void clear()
@@ -300,6 +309,9 @@ public:
     void didStartFullCollection() { m_sourceCode.didStartFullCollection(); }
     // Entries no lookup has hit since the last full collection began: an idle VM parses them again if it needs them.
     void clearCodeNotUsedInCurrentFullCollectionCycle() { m_sourceCode.removeEntriesNotUsedInCurrentFullCollectionCycle(); }
+    size_t numberOfEntries() const { return m_sourceCode.numberOfEntries(); }
+    // The bytes the entries count for: the length of each source plus 1 KB.
+    int64_t weightOfEntries() const { return m_sourceCode.weightOfEntries(); }
 #endif
 
 private:

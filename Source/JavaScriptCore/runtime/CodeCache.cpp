@@ -41,7 +41,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeCache);
 void CodeCacheMap::pruneSlowCase()
 {
     m_minCapacity = std::max(m_size - m_sizeAtLastPrune, static_cast<int64_t>(0));
+#if !USE(BUN_JSC_ADDITIONS)
     m_sizeAtLastPrune = m_size;
+#endif
     m_timeAtLastPrune = ApproximateTime::now();
 
     if (m_capacity < m_minCapacity)
@@ -67,6 +69,13 @@ void CodeCacheMap::pruneSlowCase()
         m_size -= weight(it->key);
         m_map.remove(it);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // What is left after the eviction, not what there was before it: the next window admits
+    // Options::codeCacheWorkingSetMaxBytes on top of this, so a stream of sources that never repeat peaks at two windows.
+    // Recorded before the eviction, each window would start where the last one peaked, and the peaks would grow without
+    // bound.
+    m_sizeAtLastPrune = m_size;
+#endif
 }
 
 void CodeCacheMap::removeIfHolds(const SourceCodeKey& key, JSCell* cell)
