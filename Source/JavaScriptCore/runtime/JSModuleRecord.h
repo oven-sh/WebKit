@@ -87,10 +87,12 @@ public:
     void didFinishWithExecutable(VM&);
 #if USE(BUN_JSC_ADDITIONS)
     // CyclicModuleRecord::resetGraphAfterFailedLink() for this record, which is not linked: what InitializeEnvironment,
-    // ResolveExport and GetModuleNamespace left on it is gone. So is its executable, whose code the environment was
-    // made for: the next InitializeEnvironment takes one again, and compares a shared one with what the imports of
-    // this record resolve to then (getOrMakeExecutable).
+    // ResolveExport and GetModuleNamespace left on it is gone. So is its executable. The next InitializeEnvironment
+    // takes one again, and compares an executable that records share with what the imports of this record resolve to
+    // then (getOrMakeExecutable).
     void resetAfterFailedLink(VM&);
+    // Whether this record has anything that resetAfterFailedLink() gives up.
+    bool hasLinkResults() const;
 #endif
 
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did

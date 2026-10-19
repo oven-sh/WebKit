@@ -250,6 +250,12 @@ void JSModuleRecord::resetAfterFailedLink(VM& vm)
     }
     m_initialized = false;
     AbstractModuleRecord::discardLinkResults();
+    ASSERT(!hasLinkResults());
+}
+
+bool JSModuleRecord::hasLinkResults() const
+{
+    return m_initialized || m_moduleProgramExecutable || m_functionDeclarationSlots || m_uninstantiatedFunctionDeclarations || AbstractModuleRecord::hasLinkResults();
 }
 #endif
 

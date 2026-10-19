@@ -560,18 +560,15 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     // getImportedModule()'s typed lookup will use.
     Locker locker { cellLock() };
     ModuleMapKey key { request.m_specifier.impl(), request.type() };
-#if ASSERT_ENABLED
-    // Another module for a request is for a record that has nothing a Link() made from the module it had: a record
-    // that no Link() has reached, or one that went through CyclicModuleRecord::resetGraphAfterFailedLink().
+#if USE(BUN_JSC_ADDITIONS) && ASSERT_ENABLED
+    // A record that gets another module for a request has nothing that was made from the module it had. This looks at
+    // this record only. The rule for the graph is the host's: see the declaration.
     if (auto iter = m_loadedModules.find(key); iter != m_loadedModules.end() && iter->value.m_module.get() != record) {
         if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this))
             ASSERT(cyclic->status() == CyclicModuleRecord::Status::New || cyclic->status() == CyclicModuleRecord::Status::Unlinked);
         // The reset leaves a WebAssemblyModuleRecord as it is.
-        if (dynamicDowncast<JSModuleRecord>(this)) {
-            ASSERT(!m_moduleEnvironment);
-            ASSERT(!m_moduleNamespaceObject && !m_deferredNamespaceObject);
-            ASSERT(m_resolutionCache.isEmpty());
-        }
+        if (auto* jsModule = dynamicDowncast<JSModuleRecord>(this))
+            ASSERT(!jsModule->hasLinkResults());
     }
 #endif
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
@@ -585,6 +582,11 @@ void AbstractModuleRecord::discardLinkResults()
     m_deferredNamespaceObject.clear();
     m_resolutionCache.clear();
     m_prelinkedImportResolutions.clear();
+}
+
+bool AbstractModuleRecord::hasLinkResults() const
+{
+    return m_moduleEnvironment || m_moduleNamespaceObject || m_deferredNamespaceObject || !m_resolutionCache.isEmpty() || !m_prelinkedImportResolutions.isEmpty();
 }
 #endif
 
