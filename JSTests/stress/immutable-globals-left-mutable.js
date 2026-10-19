@@ -22,7 +22,7 @@ Object.prototype.extra = 1;
 globalThis.Set = 1;
 shouldBe(new Map().get() + Date.now() + Math.random() + [].extra + Set, "patched00.511");
 
-// A class that is created later, and whose prototype inherits from Object.prototype, does not make Object.prototype immutable.
+// A structure that is created later for objects whose prototype is Object.prototype itself (a segment's data, a format's parts) leaves it alone.
 new Intl.Segmenter().segment("a").containing(0);
 new Intl.DateTimeFormat().formatToParts();
 new WeakRef({ });

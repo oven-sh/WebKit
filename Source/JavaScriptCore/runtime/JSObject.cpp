@@ -2162,8 +2162,8 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 }
 
 // Whether AllowLazyMaterializationOfImmutableProperties lets native code define and delete the object's named properties and set its
-// prototype. It does not for an array, whose length is not an ordinary property, or for an object with indexed storage: its elements
-// are read-only because its butterfly is copy-on-write, and making room for a named property would replace that butterfly.
+// prototype. Not for an array: its length is not an ordinary property, and making room for a named property would replace the
+// copy-on-write butterfly that keeps its elements read-only. Other objects with indexed storage are left out with it: none needs this.
 static ALWAYS_INLINE bool canChangeImmutablePropertiesNatively(VM& vm, JSObject* object)
 {
     return vm.allowLazyMaterializationOfImmutablePropertiesCount && object->indexingType() == NonArray;
