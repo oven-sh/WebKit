@@ -42,6 +42,7 @@ class JSPromise;
 class JSModuleNamespaceObject;
 class JSModuleRecord;
 class JSSourceCode;
+class ModuleLoadingContext;
 class ModuleRegistryEntry;
 class SourceOrigin;
 
@@ -180,6 +181,35 @@ public:
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+
+    // A load by name (loadModule(name): import(), an entry point) is not in the registry until its fetch settles, so
+    // clearAll() and markReplaced() cannot take it out. They advance this counter instead. The load keeps the value it
+    // started under, and when it continues under another value it asks isStaleLoad().
+    uint32_t registryEpoch() const { return m_registryEpoch; }
+    // True when the registry was cleared, or `key` replaced, after a load of `key` started under `epoch`. That load
+    // still ends for whoever awaits it, on an entry the registry does not hold: it does not join, publish into, or
+    // store an error on what the key maps to now.
+    bool isStaleLoad(uint32_t epoch, const Identifier& key) const
+    {
+        if (epoch == m_registryEpoch) [[likely]]
+            return false;
+        return isStaleLoadSlow(epoch, key);
+    }
+    // For an embedder that puts another module under `key` (removeEntry() and a module of its own): the loads of `key`
+    // in flight are stale from here on. removeEntry() alone does not say so: it also serves to load a key again, and
+    // the load in flight is then the one to share.
+    JS_EXPORT_PRIVATE void markReplaced(const Identifier& key);
+
+    // The entry a load by name stores its outcome in: what its key maps to, or, for a stale load, its own (null if it
+    // has none).
+    ModuleRegistryEntry* entryOfLoad(ModuleLoadingContext*);
+    // For a load by name whose fetch settled under another registry epoch than it started under. Null when the load is
+    // not stale after all. Otherwise the entry it goes on with: the one it joined, or one the registry does not hold,
+    // which gets `moduleData` and which the stale loads of one key share.
+    ModuleRegistryEntry* entryOfStaleLoad(JSGlobalObject*, ModuleLoadingContext*, JSValue moduleData);
+    // What loadModule(referrer) does for the realm, for a stale load by name: it goes on with `entry` and looks nothing
+    // up by key.
+    JSPromise* continueStaleLoad(JSGlobalObject*, ModuleLoadingContext* loadByName, ModuleRegistryEntry*, JSCell* payload, OptionSet<ModuleLoadFlag>);
 #endif
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
@@ -238,6 +268,9 @@ public:
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
+        m_clearedAtEpoch = ++m_registryEpoch;
+        m_replacedAtEpoch.clear();
+        m_entriesOfStaleLoads.clear();
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
@@ -283,6 +316,17 @@ private:
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
     BitVector m_prelinkedRecordRemoved; // empty until the first removal
     unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
+
+    JS_EXPORT_PRIVATE bool isStaleLoadSlow(uint32_t epoch, const Identifier& key) const;
+
+    struct EntryOfStaleLoads {
+        uint32_t epoch; // the one its loads started under
+        WriteBarrier<ModuleRegistryEntry> entry;
+    };
+    uint32_t m_registryEpoch { 0 }; // advanced by clearAll() and markReplaced()
+    uint32_t m_clearedAtEpoch { 0 }; // m_registryEpoch as clearAll() last left it
+    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint32_t> m_replacedAtEpoch; // m_registryEpoch as markReplaced(key) last left it; emptied by clearAll()
+    ModuleMap<EntryOfStaleLoads> m_entriesOfStaleLoads; // visited under cellLock(); emptied by clearAll()
 #endif
     void didAddModuleMapEntry(ScriptFetchParameters::Type type)
     {

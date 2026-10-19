@@ -81,6 +81,12 @@ public:
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+
+    // A load by name (the two loadModule() contexts): the registry epoch it started under, and the entry it goes on
+    // with when it turns out stale. See JSModuleLoader::isStaleLoad().
+    uint32_t registryEpoch() const { return m_registryEpoch; }
+    void setRegistryEpoch(uint32_t epoch) { m_registryEpoch = epoch; }
+    void setEntry(VM&, ModuleRegistryEntry*);
 #endif
 
 private:
@@ -88,6 +94,9 @@ private:
     ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_registryEpoch { 0 }; // in the padding after m_step
+#endif
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
     const RefPtr<ScriptFetcher> m_scriptFetcher;
     WriteBarrier<JSCell> m_payload;

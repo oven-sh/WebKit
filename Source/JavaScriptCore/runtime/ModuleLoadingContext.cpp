@@ -73,7 +73,10 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
 #endif
     , m_flags(flags)
 {
-#if !USE(BUN_JSC_ADDITIONS)
+#if USE(BUN_JSC_ADDITIONS)
+    static_assert(OBJECT_OFFSETOF(ModuleLoadingContext, m_moduleRequest) == sizeof(JSCell) + sizeof(void*), "m_registryEpoch fits in the padding after m_step");
+    m_registryEpoch = loader->registryEpoch();
+#else
     UNUSED_PARAM(referrerAsyncOrder);
 #endif
 }
@@ -85,6 +88,13 @@ ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loade
     context->finishCreation(vm);
     return context;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleLoadingContext::setEntry(VM& vm, ModuleRegistryEntry* entry)
+{
+    m_entry.setMayBeNull(vm, this, entry);
+}
+#endif
 
 JSModuleLoader::ModuleReferrer ModuleLoadingContext::referrer() const
 {

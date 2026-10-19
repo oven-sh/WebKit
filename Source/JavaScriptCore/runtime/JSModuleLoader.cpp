@@ -287,6 +287,8 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(loadedModule.m_module);
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_prelinkedRecords.begin(), thisObject->m_prelinkedRecords.end());
+    for (auto& [key, staleLoads] : thisObject->m_entriesOfStaleLoads)
+        visitor.append(staleLoads.entry);
 #endif
 }
 
@@ -395,6 +397,10 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     // Preserve the caller's ScriptFetchParameters (HostDefined data) into the loading context
     // before `parameters` is moved into fetch() below.
     RefPtr<ScriptFetchParameters> contextParameters = parameters ? parameters : ScriptFetchParameters::create(type);
+    // The load keeps the registry epoch it starts under (fetch() below can run script) and the entry it joins, for
+    // isStaleLoad().
+    uint32_t registryEpoch = m_registryEpoch;
+    ModuleRegistryEntry* joinedEntry = nullptr;
 #endif
 
     if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
@@ -409,6 +415,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
             if (entry->status() != ModuleRegistryEntry::Status::New) {
                 promise = entry->ensureFetchPromise(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
+                joinedEntry = entry;
                 // require(esm) of a module whose fetch an import already started.
                 if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
                     fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
@@ -430,6 +437,11 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
 #endif
     auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+#if USE(BUN_JSC_ADDITIONS)
+    context->setRegistryEpoch(registryEpoch);
+    if (joinedEntry)
+        context->setEntry(vm, joinedEntry);
+#endif
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -934,6 +946,119 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
 
     return resultPromise;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool JSModuleLoader::isStaleLoadSlow(uint32_t epoch, const Identifier& key) const
+{
+    if (epoch < m_clearedAtEpoch)
+        return true;
+    auto replaced = m_replacedAtEpoch.find(key.impl());
+    return replaced != m_replacedAtEpoch.end() && epoch < replaced->value;
+}
+
+void JSModuleLoader::markReplaced(const Identifier& key)
+{
+    m_replacedAtEpoch.set(key.impl(), ++m_registryEpoch);
+}
+
+ModuleRegistryEntry* JSModuleLoader::entryOfLoad(ModuleLoadingContext* context)
+{
+    const ModuleRequest& request = context->moduleRequest();
+    if (isStaleLoad(context->registryEpoch(), request.m_specifier)) [[unlikely]]
+        return context->entry();
+    return getRegisteredMayBeNull(request.m_specifier, request.type());
+}
+
+ModuleRegistryEntry* JSModuleLoader::entryOfStaleLoad(JSGlobalObject* globalObject, ModuleLoadingContext* context, JSValue moduleData)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const ModuleRequest& request = context->moduleRequest();
+    uint32_t epoch = context->registryEpoch();
+    if (!isStaleLoadSlow(epoch, request.m_specifier))
+        return nullptr;
+    if (ModuleRegistryEntry* joinedEntry = context->entry())
+        return joinedEntry;
+
+    // In the registry the loads of one key share an entry, whichever fetch settles first. So do the stale ones that
+    // started under one epoch.
+    ModuleMapKey key { request.m_specifier.impl(), request.type() };
+    ModuleRegistryEntry* entry = nullptr;
+    if (auto iter = m_entriesOfStaleLoads.find(key); iter != m_entriesOfStaleLoads.end() && iter->value.epoch == epoch)
+        entry = iter->value.entry.get();
+    else {
+        entry = ModuleRegistryEntry::create(vm, this, request.m_specifier, request.type(), context->scriptFetcher());
+        if (auto* record = dynamicDowncast<AbstractModuleRecord>(moduleData))
+            entry->provideModule(vm, record);
+        else {
+            entry->provideFetch(globalObject, moduleData);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        Locker locker { cellLock() };
+        m_entriesOfStaleLoads.set(key, EntryOfStaleLoads { epoch, WriteBarrier<ModuleRegistryEntry>(vm, this, entry) });
+    }
+    context->setEntry(vm, entry);
+    return entry;
+}
+
+JSPromise* JSModuleLoader::continueStaleLoad(JSGlobalObject* globalObject, ModuleLoadingContext* loadByName, ModuleRegistryEntry* entry, JSCell* payload, OptionSet<ModuleLoadFlag> flags)
+{
+    // What hostLoadImportedModule() does for the realm once it has found the entry, then what loadModule(referrer) does.
+    // finishLoadingImportedModule() keeps a record that the registry does not hold under its key out of the realm's
+    // [[LoadedModules]].
+    ASSERT(isModuleLoaderHostDefinedPayload(payload));
+    ASSERT(!flags.contains(ModuleLoadFlag::Dynamic));
+    ASSERT(entry->status() != ModuleRegistryEntry::Status::New);
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const ModuleRequest& moduleRequest = loadByName->moduleRequest();
+    RefPtr<ScriptFetcher> scriptFetcher = loadByName->scriptFetcher();
+    ModuleReferrer referrer { globalObject };
+    JSPromise* promise = nullptr;
+    if (JSValue fetchError = entry->fetchError()) {
+        if (auto* errorInstance = dynamicDowncast<ErrorInstance>(fetchError)) {
+            fetchError = JSModuleLoader::duplicateError(globalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, Exception::create(vm, fetchError), scriptFetcher);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        promise = JSPromise::rejectedPromise(globalObject, fetchError);
+    } else if (JSPromise* loadedPromise = entry->loadedPromise(globalObject)) {
+        promise = loadedPromise;
+        if (entry->record()) {
+            finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, entry->record(), scriptFetcher);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        } else {
+            auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, entry, scriptFetcher);
+            promise = JSPromise::create(vm, globalObject->promiseStructure());
+            promise->markAsHandled();
+            loadedPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, promise, context);
+        }
+    } else {
+        JSPromise* modulePromise = entry->ensureModulePromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, entry, scriptFetcher);
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->markAsHandled();
+        modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, promise, context);
+        entry->setLoadPromise(vm, promise);
+    }
+
+    auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
+    context->setRegistryEpoch(loadByName->registryEpoch());
+    context->setEntry(vm, entry);
+    JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    resultPromise->markAsHandled();
+
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadLinkEvaluateSettled, resultPromise, context);
+    resultPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStoreError, nullptr, context);
+
+    return resultPromise;
+}
+#endif
 
 void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGraphLoadingState *state, AbstractModuleRecord* startModule)
 {

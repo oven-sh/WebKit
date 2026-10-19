@@ -1181,8 +1181,17 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         ScriptFetcher* scriptFetcher = context->scriptFetcher();
 
 #if USE(BUN_JSC_ADDITIONS)
+        // clearAll() or markReplaced() ran while this load was in flight: see JSModuleLoader::isStaleLoad().
+        ModuleRegistryEntry* entryOfStaleLoad = nullptr;
+        if (context->registryEpoch() != context->loader()->registryEpoch()) [[unlikely]] {
+            entryOfStaleLoad = context->loader()->entryOfStaleLoad(globalObject, context, moduleData);
+            if (scope.exception()) {
+                intermediatePromise->rejectWithCaughtException(vm, scope);
+                return;
+            }
+        }
         // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
-        if (!moduleData.inherits<AbstractModuleRecord>()) {
+        if (!entryOfStaleLoad && !moduleData.inherits<AbstractModuleRecord>()) {
 #endif
         context->loader()->provideFetch(globalObject, specifier, type, moduleData);
         if (scope.exception()) {
@@ -1210,11 +1219,21 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+            if (entryOfStaleLoad) [[unlikely]]
+                loadPromise = context->loader()->continueStaleLoad(globalObject, context, entryOfStaleLoad, combinedCell, innerLoadFlags);
+            else
+#endif
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
+#if USE(BUN_JSC_ADDITIONS)
+            if (entryOfStaleLoad) [[unlikely]]
+                loadPromise = context->loader()->continueStaleLoad(globalObject, context, entryOfStaleLoad, combinedCell, innerLoadFlags);
+            else
+#endif
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
             if (scope.exception()) {
                 intermediatePromise->rejectWithCaughtException(vm, scope);
@@ -1248,7 +1267,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
+#if USE(BUN_JSC_ADDITIONS)
+            // Nor when the load is stale: see JSModuleLoader::isStaleLoad().
+            if (failure.isEvaluationError(specifier, type) && !context->loader()->isStaleLoad(context->registryEpoch(), specifier)) {
+#else
             if (failure.isEvaluationError(specifier, type)) {
+#endif
                 ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
@@ -1273,11 +1297,16 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
     if (status == JSPromise::Status::Fulfilled)
         resultPromise->fulfill(vm, arguments[1]);
     else {
+#if USE(BUN_JSC_ADDITIONS)
+        // Only set an error if the entry already exists. A stale load sets it in its own entry.
+        if (ModuleRegistryEntry* entry = context->loader()->entryOfLoad(context))
+#else
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
         if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
+#endif
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1432,7 +1461,12 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
+#if USE(BUN_JSC_ADDITIONS)
+        // A stale load sets it in its own entry.
+        ModuleRegistryEntry* entry = context->loader()->entryOfLoad(context);
+#else
         ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
+#endif
         if (!entry)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
