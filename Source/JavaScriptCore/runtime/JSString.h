@@ -663,6 +663,15 @@ public:
     // If nullOrExecForOOM is null, resolveRope() will be do nothing in the event of an OOM error.
     // The rope value will remain a null string in that case.
     JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
+
+    // True when a copy of this rope reads each fiber once: a substring, or a rope of flat fibers.
+    bool hasOnlyFlatFibers() const
+    {
+        if (isSubstring())
+            return true;
+        JSString* fiber2 = this->fiber2();
+        return !fiber0()->isRope() && !fiber1()->isRope() && (!fiber2 || !fiber2->isRope());
+    }
     JS_EXPORT_PRIVATE const String& resolveRopeWithoutGC() const;
 
     template<typename CharacterType>
