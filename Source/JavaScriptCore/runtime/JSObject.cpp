@@ -2161,18 +2161,18 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
     }
 }
 
-// Whether AllowLazyMaterializationOfImmutableProperties lets native code define and delete the object's named properties. (Not with
-// indexed storage: its elements are protected by a copy-on-write butterfly, which room for a property would replace.)
+// Whether AllowLazyMaterializationOfImmutableProperties lets native code define and delete the object's named properties and set its
+// prototype. (Not an array, whose length is not a property, nor indexed storage: what protects the elements is a copy-on-write butterfly.)
 static ALWAYS_INLINE bool canChangeImmutablePropertiesNatively(VM& vm, JSObject* object)
 {
-    return vm.allowLazyMaterializationOfImmutablePropertiesCount && !hasIndexedProperties(object->indexingType());
+    return vm.allowLazyMaterializationOfImmutablePropertiesCount && object->indexingType() == NonArray;
 }
 
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
     // (No result to give. setPrototypeWithCycleCheck() has refused before it comes here; this is for a caller that does not ask.)
-    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !canChangeImmutablePropertiesNatively(vm, this)) [[unlikely]]
         return;
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
@@ -2222,7 +2222,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
 
-    if (this->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]] {
+    if (this->structure()->hasImmutableProperties() && !canChangeImmutablePropertiesNatively(vm, this)) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);

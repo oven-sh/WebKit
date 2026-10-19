@@ -1571,9 +1571,10 @@ JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 // While one of these is alive, properties can be put directly on an object whose Structure says hasImmutableProperties(); it changes
 // nothing for any other object. It is for the places where the engine materializes a property the object logically already has: a
 // static property table entry, a function's name, length or prototype, an error's stack, an arguments object's callee. An embedder
-// whose built-ins are finished after they are made immutable can also define and delete their properties and set their prototypes
-// (JSObject::defineOwnProperty(), deleteProperty(), setPrototype()). Nothing inside it may run JavaScript: with assertions enabled it
-// counts as a DisallowVMEntry too.
+// whose built-ins are finished after they are made immutable can also define and delete their named properties and set their
+// prototypes (JSObject::defineOwnProperty(), deleteProperty(), setPrototype()), unless they are arrays or have indexed storage. It
+// materializes what a static table holds beforehand, because a PropertyCallback may run JavaScript, and makes immutable what it adds.
+// Nothing inside it may run JavaScript: with assertions enabled it counts as a DisallowVMEntry too.
 class AllowLazyMaterializationOfImmutableProperties {
     WTF_MAKE_NONCOPYABLE(AllowLazyMaterializationOfImmutableProperties);
     WTF_FORBID_HEAP_ALLOCATION;

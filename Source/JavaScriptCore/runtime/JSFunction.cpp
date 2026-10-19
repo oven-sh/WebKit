@@ -426,9 +426,9 @@ bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Prop
 
 bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
-    if (object->structure()->hasImmutableProperties()) [[unlikely]]
-        return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
     VM& vm = globalObject->vm();
+    if (object->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+        return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);

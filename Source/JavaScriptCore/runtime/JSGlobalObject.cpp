@@ -4057,7 +4057,7 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
     String string = String::fromUTF8(unsafeSpan(option));
     bool isFirst = true;
     for (StringView entry : StringView(string).splitAllowingEmptyEntries(',')) {
-        if (isFirst ? entry != "*"_s : !entry.startsWith('-')) {
+        if (isFirst ? entry != "*"_s : (!entry.startsWith('-') || entry.length() == 1)) {
             dataLogLn("ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: ", string);
             CRASH();
         }

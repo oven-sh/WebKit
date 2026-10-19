@@ -67,8 +67,8 @@ for (let create of [() => ({ }), () => function () { }, () => new Map, () => Obj
     }
 }
 
-// Nor is an object with elements, which stay as they are afterwards.
-for (let create of [() => [], () => [1, 2, 3], () => [1.5], () => ["a"], () => ({ 0: 1 }), () => Object.assign([1], { existing: 1 })]) {
+// An array or an object with elements is not for native code to change, and its elements stay as they are afterwards.
+for (let create of [() => [], () => [1, 2, 3], () => [1.5], () => ["a"], () => ({ 0: 1 }), () => Object.assign([1], { existing: 1 }), () => $vm.createGlobalObject().Array.prototype]) {
     let object = $vm.makePropertiesImmutable(create());
     let before = observe(object);
     shouldThrow(() => $vm.definePropertyAllowingLazyMaterialization(object, "fresh", { value: 2 }), TypeError);
@@ -77,15 +77,15 @@ for (let create of [() => [], () => [1, 2, 3], () => [1.5], () => ["a"], () => (
     if (Array.isArray(object))
         shouldThrow(() => $vm.definePropertyAllowingLazyMaterialization(object, "length", { value: object.length + 1 }), TypeError);
     shouldBe($vm.deletePropertyAllowingLazyMaterialization(object, "existing"), !Object.hasOwn(object, "existing"));
-    $vm.setPrototypeAllowingLazyMaterialization(object, Object.getPrototypeOf(object));
+    shouldThrow(() => $vm.setPrototypeAllowingLazyMaterialization(object, otherPrototype), TypeError);
     shouldThrow(() => { object[0] = 99; }, TypeError);
     shouldThrow(() => { object[5] = 99; }, TypeError);
     if (Array.isArray(object))
-        shouldThrow(() => { object.push(5); }, TypeError);
+        shouldThrow(() => { Array.prototype.push.call(object, 5); }, TypeError);
     shouldBe(observe(object), before);
 }
 
-// An index is not for native code to change either.
+// Nor is an index.
 for (let create of [() => ({ }), () => [1], () => ({ 0: 1 }), () => function () { }]) {
     let object = $vm.makePropertiesImmutable(create());
     let before = observe(object);
@@ -95,6 +95,22 @@ for (let create of [() => ({ }), () => [1], () => ({ 0: 1 }), () => function () 
         shouldBe($vm.deletePropertyAllowingLazyMaterialization(object, index), !Object.hasOwn(object, index), index);
     }
     shouldBe(observe(object), before);
+}
+
+// What a function constructs follows its prototype.
+{
+    function Constructor() { }
+    function* generator() { }
+    let construct = () => [new Constructor, Reflect.construct(Map, [], Constructor), Reflect.construct(Array, [], Constructor), generator()];
+    noInline(construct);
+    for (let i = 0; i < testLoopCount; ++i)
+        construct();
+    for (let func of [Constructor, generator])
+        $vm.definePropertyAllowingLazyMaterialization($vm.makePropertiesImmutable(func), "prototype", { value: otherPrototype });
+    for (let i = 0; i < testLoopCount; ++i) {
+        for (let object of construct())
+            shouldBe(Object.getPrototypeOf(object), otherPrototype);
+    }
 }
 
 // What is refused for any object is refused.
