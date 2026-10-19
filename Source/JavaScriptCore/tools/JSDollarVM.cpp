@@ -2213,6 +2213,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
 static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionAllowChangesToImmutableProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionSetStackTraceLimitOverride);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
@@ -3278,6 +3279,20 @@ JSC_DEFINE_HOST_FUNCTION(functionHasImmutableProperties, (JSGlobalObject*, CallF
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
     return JSValue::encode(jsBoolean(object && object->hasImmutableProperties()));
+}
+
+// Calls the function under AllowChangesToImmutableProperties.
+// Usage: $vm.allowChangesToImmutableProperties(function)
+JSC_DEFINE_HOST_FUNCTION(functionAllowChangesToImmutableProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSValue function = callFrame->argument(0);
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None)
+        return JSValue::encode(jsUndefined());
+    AllowChangesToImmutableProperties allowChanges(vm);
+    return JSValue::encode(call(globalObject, function, callData, jsUndefined(), ArgList()));
 }
 
 // Calls JSGlobalObject::setStackTraceLimitOverride() and returns the override there was: a number, or undefined for none.
@@ -5976,6 +5991,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
+    addFunction(vm, alwaysAllow, "allowChangesToImmutableProperties"_s, functionAllowChangesToImmutableProperties, 1);
     addFunction(vm, alwaysAllow, "setStackTraceLimitOverride"_s, functionSetStackTraceLimitOverride, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);

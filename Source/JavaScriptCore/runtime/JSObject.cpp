@@ -845,7 +845,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
-    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this) && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
@@ -938,7 +938,8 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     }
 
     scope.release();
-    if (isThisValueAltered(slot, this)) [[unlikely]]
+    // (With immutable properties it is here under AllowChangesToImmutableProperties, and what it does must not be cached.)
+    if (isThisValueAltered(slot, this) || structure()->hasImmutableProperties()) [[unlikely]]
         return definePropertyOnReceiver(globalObject, propertyName, value, slot);
     return putInlineFast(globalObject, propertyName, value, slot);
 }
@@ -2165,7 +2166,7 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
     // (No result to give. setPrototypeWithCycleCheck() has refused before it comes here; this is for a caller that does not ask.)
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
@@ -2215,7 +2216,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
 
-    if (this->structure()->hasImmutableProperties()) [[unlikely]] {
+    if (this->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
@@ -2438,7 +2439,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     VM& vm = globalObject->vm();
 
     // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
-    if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
+    if (thisObject->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return !thisObject->hasOwnProperty(globalObject, propertyName);
     
     if (std::optional<uint32_t> index = parseIndex(propertyName))
@@ -3162,8 +3163,10 @@ bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
     return true;
 }
 
-bool JSObject::isExtensible(JSObject* obj, JSGlobalObject*)
+bool JSObject::isExtensible(JSObject* obj, JSGlobalObject* globalObject)
 {
+    if (obj->structure()->hasImmutableProperties() && globalObject->vm().allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+        return true;
     return obj->isStructureExtensible();
 }
 
@@ -3206,7 +3209,7 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
                 if (vm.exceptionForInspection()) [[unlikely]]
                     return;
                 if (JSGlobalObject* realm = this->realm(); realm->hasImmutableGlobals()) [[unlikely]]
-                    realm->didReifyStaticProperty(vm, this, value, getDirect(vm, key));
+                    realm->didReifyStaticProperty(vm, this, getDirect(vm, key));
             }
         }
     }
@@ -4236,7 +4239,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
-        ASSERT(!object || !object->structure()->hasImmutableProperties());
+        ASSERT(!object || !object->structure()->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4261,7 +4264,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
 
     // An object with immutable properties accepts a definition that changes nothing and refuses every other one.
-    if (object && object->structure()->hasImmutableProperties()) [[unlikely]] {
+    if (object && object->structure()->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]] {
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isUnchanged)

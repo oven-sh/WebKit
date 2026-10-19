@@ -173,7 +173,6 @@ void ArrayPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
             unscopables->putDirect(vm, *unscopableName, jsBoolean(true));
     }
     putDirectWithoutTransition(vm, vm.propertyNames->unscopablesSymbol, unscopables, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
-    globalObject->didCreateBuiltin(vm, unscopables);
 }
 
 // ------------------------------ Array Functions ----------------------------

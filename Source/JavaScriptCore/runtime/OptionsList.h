@@ -667,8 +667,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useEagerWasmModuleHashing, false, Normal, "Unnamed Wasm modules are identified in backtraces through their hash, if available."_s) \
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
     v(Bool, useCopyOnWriteArraysForImmutableProperties, true, Normal, "If true, JSObject::makePropertiesImmutable() makes a JSArray whose Int32, Double or Contiguous elements have no holes a copy-on-write array. If false, it enters dictionary indexing mode, as every other object with elements does."_s) \
-    v(OptionString, immutableGlobals, nullptr, Normal, "Comma-separated list of what JSGlobalObject::applyImmutableGlobalsOption() makes immutable in each new global object. '*' is every built-in of JavaScriptCore's own, named or not; any other entry is a name looked up on the global object (globalThis is the global object itself). See JSObject::makePropertiesImmutable()."_s) \
-    v(Bool, logImmutableGlobals, false, Normal, "Log what Options::immutableGlobals() lists and leaves mutable: a name that is not there, an object of a class that does not support it. An embedder logs what it creates later and leaves mutable."_s) \
+    v(OptionString, immutableGlobals, nullptr, Normal, "'*' makes every built-in immutable in each new global object, an embedder's too: the global object, what it holds, every prototype, and what is created later. ',-name' after it leaves the global of that name mutable and, if it is a function, its prototype. See JSGlobalObject::applyImmutableGlobalsOption()."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \

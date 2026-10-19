@@ -1522,7 +1522,7 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
             return GiveUpOnCache;
 
         ASSERT(oldStructure);
-        if (!baseValue.isObject() || !oldStructure->propertyAccessesAreCacheable() || oldStructure->isProxy())
+        if (!baseValue.isObject() || !oldStructure->propertyAccessesAreCacheable() || oldStructure->isProxy() || oldStructure->hasImmutableProperties())
             return GiveUpOnCache;
 
         if (!slot.isCacheableDelete())

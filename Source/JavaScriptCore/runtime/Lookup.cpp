@@ -81,7 +81,7 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         }
 
         if (JSGlobalObject* globalObject = thisObject->realm(); globalObject->hasImmutableGlobals()) [[unlikely]]
-            globalObject->didReifyStaticProperty(vm, thisObject, *entry, thisObject->getDirect(offset));
+            globalObject->didReifyStaticProperty(vm, thisObject, thisObject->getDirect(offset));
     }
 
     if (isAccessor)
