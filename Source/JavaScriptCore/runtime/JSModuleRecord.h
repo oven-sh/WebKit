@@ -81,9 +81,17 @@ public:
     CodeFeatures features() const { return m_features; }
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
-    // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where a
-    // failed link is rolled back: such a record keeps its environment and its executable for the next attempt.)
+    // This record will not run its body (again): it ran to the end, it threw, or a module it depends on did. (Not where
+    // Link() rolls a failed link back: such a record keeps its environment and its executable for the next attempt,
+    // unless the host asks for CyclicModuleRecord::resetGraphAfterFailedLink().)
     void didFinishWithExecutable(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    // CyclicModuleRecord::resetGraphAfterFailedLink() for this record, which is not linked: what InitializeEnvironment,
+    // ResolveExport and GetModuleNamespace left on it is gone. So is its executable, whose code the environment was
+    // made for: the next InitializeEnvironment takes one again, and compares a shared one with what the imports of
+    // this record resolve to then (getOrMakeExecutable).
+    void resetAfterFailedLink(VM&);
+#endif
 
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.

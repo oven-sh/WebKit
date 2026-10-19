@@ -569,6 +569,41 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+void CyclicModuleRecord::resetGraphAfterFailedLink(VM& vm)
+{
+    // Link() sets every record of its stack back to UNLINKED when it fails, this one included.
+    if (status() != Status::Unlinked)
+        return;
+
+    // Not only the records of the stack: ResolveExport and GetModuleNamespace also went through the records that
+    // InnerModuleLinking had not reached. Not recursive: the failure can be a stack overflow.
+    UncheckedKeyHashSet<CyclicModuleRecord*> seen;
+    Vector<CyclicModuleRecord*, 16> worklist;
+    seen.add(this);
+    worklist.append(this);
+    while (!worklist.isEmpty()) {
+        CyclicModuleRecord* module = worklist.takeLast();
+        // A WebAssemblyModuleRecord has nothing that depends on the modules it imports before it is evaluated.
+        if (auto* jsModule = dynamicDowncast<JSModuleRecord>(module))
+            jsModule->resetAfterFailedLink(vm);
+        for (const ModuleRequest& request : module->requestedModules()) {
+            AbstractModuleRecord* requiredModule = module->prelinkedRequestedModule(request);
+            if (!requiredModule) {
+                auto iter = module->loadedModules().find(ModuleMapKey { request.m_specifier.impl(), request.type() });
+                if (iter == module->loadedModules().end())
+                    continue;
+                requiredModule = iter->value.m_module.get();
+            }
+            // A record that is LINKED or later keeps what it has, and every record it requests is linked too.
+            auto* requiredCyclic = dynamicDowncast<CyclicModuleRecord>(requiredModule);
+            if (requiredCyclic && requiredCyclic->status() == Status::Unlinked && seen.add(requiredCyclic).isNewEntry)
+                worklist.append(requiredCyclic);
+        }
+    }
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
 JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
 #else
 JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)

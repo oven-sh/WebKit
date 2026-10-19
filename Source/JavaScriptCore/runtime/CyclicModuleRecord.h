@@ -58,6 +58,15 @@ public:
     void initializeEnvironment(JSGlobalObject*, RefPtr<ScriptFetcher>);
     void link(JSGlobalObject*, RefPtr<ScriptFetcher>);
 #if USE(BUN_JSC_ADDITIONS)
+    // A Link() that fails keeps what it made on the records that did not link, for the next Link() of the same graph:
+    // the environment of each module that finished InitializeEnvironment, and the resolutions and namespace objects of
+    // every module that ResolveExport and GetModuleNamespace went through. All of it was made for the modules that
+    // [[LoadedModules]] had. A host that gives such a record another module for a request (setImportedModule) calls
+    // this first, on the record whose Link() threw. As Module::ResetGraph of V8, it returns every record of the graph
+    // that is not linked to the state that it had before the Link(). [[LoadedModules]] stays.
+    JS_EXPORT_PRIVATE void resetGraphAfterFailedLink(VM&);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
     JSPromise* evaluate(JSGlobalObject*, int64_t referrerAsyncOrder = -1, JSPromise* dynamicImportPromise = nullptr);
 #else
     JSPromise* evaluate(JSGlobalObject*);

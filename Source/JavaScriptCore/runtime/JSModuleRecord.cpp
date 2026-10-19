@@ -234,6 +234,25 @@ void JSModuleRecord::didFinishWithExecutable(VM& vm)
     executable->didFinishEvaluation(vm);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSModuleRecord::resetAfterFailedLink(VM& vm)
+{
+    ASSERT(status() == Status::Unlinked);
+    if (ModuleProgramExecutable* executable = m_moduleProgramExecutable.get()) {
+        executable->forgetLinker(this);
+        didFinishWithExecutable(vm);
+    }
+    std::unique_ptr<UninstantiatedFunctionDeclarations> uninstantiated;
+    {
+        Locker locker { cellLock() };
+        m_functionDeclarationSlots = nullptr;
+        uninstantiated = WTF::move(m_uninstantiatedFunctionDeclarations);
+    }
+    m_initialized = false;
+    AbstractModuleRecord::discardLinkResults();
+}
+#endif
+
 JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue, JSValue resumeMode)
 {
     VM& vm = globalObject->vm();

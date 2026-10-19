@@ -120,6 +120,16 @@ public:
     const std::optional<ImportedBindings>& linkerImportedBindings() const { return m_linkerImportedBindings; }
     void setLinkerImportedBindings(std::optional<ImportedBindings>&&);
 #if USE(BUN_JSC_ADDITIONS)
+    // The Link() of the linker failed, and the linker gave up what that Link() made before another record was compared
+    // with it (JSModuleRecord::resetAfterFailedLink). Its imports can resolve to something else when it links again, so
+    // there is nothing left to compare another record with.
+    void forgetLinker(JSModuleRecord* linker)
+    {
+        if (m_linker.get() == linker)
+            m_linker.clear();
+    }
+#endif
+#if USE(BUN_JSC_ADDITIONS)
     // The linker was module `moduleIndex` of `graph` (JSModuleRecord::createPrelinked), or with null was not such a record.
     bool wasLinkedFor(PrelinkedModuleGraph* graph, uint32_t moduleIndex) const { return m_linkerPrelinkedGraph.get() == graph && m_linkerPrelinkedIndex == moduleIndex; }
 #endif

@@ -2272,6 +2272,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionResetModuleGraphAfterFailedLink);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4276,6 +4279,26 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// $vm.resetModuleGraphAfterFailedLink(error): CyclicModuleRecord::resetGraphAfterFailedLink() for the module whose
+// Link() threw `error`, which is what a host that fills [[LoadedModules]] itself does then. Returns whether `error` is
+// the error of such a Link().
+JSC_DEFINE_HOST_FUNCTION(functionResetModuleGraphAfterFailedLink, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* error = dynamicDowncast<ErrorInstance>(callFrame->argument(0));
+    if (!error)
+        return JSValue::encode(jsBoolean(false));
+    JSModuleLoader::ModuleFailure failure = JSModuleLoader::getErrorInfo(globalObject, error);
+    auto* module = dynamicDowncast<CyclicModuleRecord>(failure.m_source);
+    if (!module || failure.m_kind != JSModuleLoader::ModuleFailure::Kind::Instantiation)
+        return JSValue::encode(jsBoolean(false));
+    module->resetGraphAfterFailedLink(vm);
+    return JSValue::encode(jsBoolean(true));
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6039,6 +6062,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, allowIfNotFuzz, "resetModuleGraphAfterFailedLink"_s, functionResetModuleGraphAfterFailedLink, 1);
+#endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);

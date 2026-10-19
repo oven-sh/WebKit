@@ -256,6 +256,9 @@ public:
     Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName);
 
     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+    // For a host that fills [[LoadedModules]] itself. It can give a request another module only while nothing that a
+    // Link() made from the module it had is left on this record: after a Link() of this record failed, that takes
+    // CyclicModuleRecord::resetGraphAfterFailedLink().
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
 
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation, bool shouldPreventExtensions = true);
@@ -397,6 +400,12 @@ private:
     Resolutions m_resolutionCache;
 
 protected:
+#if USE(BUN_JSC_ADDITIONS)
+    // What a Link() left on this record from the modules that [[LoadedModules]] had: the environment, the namespace
+    // objects and the memoized resolutions (CyclicModuleRecord::resetGraphAfterFailedLink).
+    void discardLinkResults();
+#endif
+
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
 
     ModuleMap<LoadedModuleRequest> m_loadedModules;

@@ -560,8 +560,30 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     // getImportedModule()'s typed lookup will use.
     Locker locker { cellLock() };
     ModuleMapKey key { request.m_specifier.impl(), request.type() };
+#if ASSERT_ENABLED
+    // Another module for a request is for a record that has nothing a Link() made from the module it had: a record
+    // that no Link() has reached, or one that went through CyclicModuleRecord::resetGraphAfterFailedLink().
+    if (auto iter = m_loadedModules.find(key); iter != m_loadedModules.end() && iter->value.m_module.get() != record) {
+        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this);
+        ASSERT(!cyclic || cyclic->status() == CyclicModuleRecord::Status::New || cyclic->status() == CyclicModuleRecord::Status::Unlinked);
+        ASSERT(!m_moduleEnvironment);
+        ASSERT(!m_moduleNamespaceObject && !m_deferredNamespaceObject);
+        ASSERT(m_resolutionCache.isEmpty());
+    }
+#endif
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractModuleRecord::discardLinkResults()
+{
+    m_moduleEnvironment.clear();
+    m_moduleNamespaceObject.clear();
+    m_deferredNamespaceObject.clear();
+    m_resolutionCache.clear();
+    m_prelinkedImportResolutions.clear();
+}
+#endif
 
 auto AbstractModuleRecord::resolveImport(JSGlobalObject* globalObject, const Identifier& localName) -> Resolution
 {
@@ -1200,8 +1222,11 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ASSERT_ENABLED
+    // ECMA-262 also asserts that the status is not UNLINKED. That does not hold for the module that `export * as ns
+    // from` names when the module with that export is in a cycle: a member of the cycle that imports `ns` gets here
+    // from its InitializeEnvironment (step 7.c.iii.1) before InnerModuleLinking has visited this module.
     if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this))
-        ASSERT(cyclic->status() != CyclicModuleRecord::Status::New && cyclic->status() != CyclicModuleRecord::Status::Unlinked);
+        ASSERT(cyclic->status() != CyclicModuleRecord::Status::New);
 #endif
 
     // https://tc39.es/ecma262/#sec-getmodulenamespace
