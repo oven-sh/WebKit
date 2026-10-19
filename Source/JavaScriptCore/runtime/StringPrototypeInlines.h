@@ -28,6 +28,7 @@
 #include "CachedCallInlines.h"
 #include "ExceptionHelpers.h"
 #include "JSCellButterfly.h"
+#include "JSStringInlines.h"
 #include "ObjectConstructor.h"
 #include "ParseInt.h"
 #include "StringPrototype.h"
@@ -156,7 +157,30 @@ ALWAYS_INLINE JSString* stringSubstring(JSGlobalObject* globalObject, JSString* 
     return jsSubstring(globalObject, string, start, end - start);
 }
 
-ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalObject, JSString* sourceVal, StringView source, const Range<int32_t>* substringRanges, int rangeCount, const String* separators, int separatorCount)
+// The results of the replacer calls of one replace(). Each is a JSString* cell. The splice below writes
+// each one into the result buffer in place, so a rope result is never resolved into a StringImpl of its own.
+using ReplacementResults = MarkedVector<JSString*, 16, RecordOverflow>;
+
+// ToString of one replacer result. A rope whose fibers are flat is kept as it is: the splice copies
+// the fibers. A deeper rope is resolved here, once. A replacer that returns the same cell for every
+// match would otherwise walk it once per match, where the old per-match resolve made it flat once.
+ALWAYS_INLINE JSString* replacementResult(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (string->isRope()) {
+        auto* rope = uncheckedDowncast<JSRopeString>(string);
+        if (!rope->hasOnlyFlatFibers()) {
+            rope->resolveRope(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+    return string;
+}
+
+ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalObject, JSString* sourceVal, StringView source, const Range<int32_t>* substringRanges, int rangeCount, JSString* const* separators, int separatorCount)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -179,13 +203,13 @@ ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalO
         // compared to the generic single-allocation path below.
         CheckedInt32 length = substringRanges[0].distance();
         length += substringRanges[1].distance();
-        length += separators[0].length();
+        length += separators[0]->length();
         if (!length.hasOverflowed()) [[likely]] {
             if (shouldMakeRope(length.value(), /* newFiberCount */ 3)) {
-                auto resolved = sourceVal->value(globalObject);
+                JSString* leftPart = jsSubstring(globalObject, vm, sourceVal, substringRanges[0].begin(), substringRanges[0].distance());
                 RETURN_IF_EXCEPTION(scope, nullptr);
-                String leftPart(StringImpl::createSubstringSharingImpl(*resolved->impl(), substringRanges[0].begin(), substringRanges[0].distance()));
-                String rightPart(StringImpl::createSubstringSharingImpl(*resolved->impl(), substringRanges[1].begin(), substringRanges[1].distance()));
+                JSString* rightPart = jsSubstring(globalObject, vm, sourceVal, substringRanges[1].begin(), substringRanges[1].distance());
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 RELEASE_AND_RETURN(scope, jsString(globalObject, leftPart, separators[0], rightPart));
             }
         }
@@ -196,8 +220,8 @@ ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalO
     for (int i = 0; i < rangeCount; i++)
         totalLength += substringRanges[i].distance();
     for (int i = 0; i < separatorCount; i++) {
-        totalLength += separators[i].length();
-        if (separators[i].length() && !separators[i].is8Bit())
+        totalLength += separators[i]->length();
+        if (separators[i]->length() && !separators[i]->is8Bit())
             allSeparators8Bit = false;
     }
     if (totalLength.hasOverflowed()) {
@@ -208,6 +232,28 @@ ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalO
     if (!totalLength)
         return jsEmptyString(vm);
 
+    auto write = [&](auto buffer) {
+        int maxCount = std::max(rangeCount, separatorCount);
+        Checked<int, AssertNoOverflow> bufferPos = 0;
+        for (int i = 0; i < maxCount; i++) {
+            if (i < rangeCount) {
+                auto substring = StringView { source }.substring(substringRanges[i].begin(), substringRanges[i].distance());
+                if constexpr (std::is_same_v<typename decltype(buffer)::element_type, Latin1Character>)
+                    substring.getCharacters8(buffer.subspan(bufferPos.value()));
+                else
+                    substring.getCharacters(buffer.subspan(bufferPos.value()));
+                bufferPos += substring.length();
+            }
+            if (i < separatorCount) {
+                JSString* separator = separators[i];
+                unsigned separatorLength = separator->length();
+                separator->resolveToBuffer(buffer.subspan(bufferPos.value(), separatorLength));
+                bufferPos += separatorLength;
+            }
+        }
+        ASSERT(bufferPos.value() == totalLength.value());
+    };
+
     if (source.is8Bit() && allSeparators8Bit) {
         std::span<Latin1Character> buffer;
         auto impl = StringImpl::tryCreateUninitialized(totalLength, buffer);
@@ -215,22 +261,7 @@ ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalO
             throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-
-        int maxCount = std::max(rangeCount, separatorCount);
-        Checked<int, AssertNoOverflow> bufferPos = 0;
-        for (int i = 0; i < maxCount; i++) {
-            if (i < rangeCount) {
-                auto substring = StringView { source }.substring(substringRanges[i].begin(), substringRanges[i].distance());
-                substring.getCharacters8(buffer.subspan(bufferPos.value()));
-                bufferPos += substring.length();
-            }
-            if (i < separatorCount) {
-                StringView separator = separators[i];
-                separator.getCharacters8(buffer.subspan(bufferPos.value()));
-                bufferPos += separator.length();
-            }
-        }
-
+        write(buffer);
         RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
     }
 
@@ -240,22 +271,7 @@ ALWAYS_INLINE JSString* jsSpliceSubstringsWithSeparators(JSGlobalObject* globalO
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-
-    int maxCount = std::max(rangeCount, separatorCount);
-    Checked<int, AssertNoOverflow> bufferPos = 0;
-    for (int i = 0; i < maxCount; i++) {
-        if (i < rangeCount) {
-            auto substring = StringView { source }.substring(substringRanges[i].begin(), substringRanges[i].distance());
-            substring.getCharacters(buffer.subspan(bufferPos.value()));
-            bufferPos += substring.length();
-        }
-        if (i < separatorCount) {
-            StringView separator = separators[i];
-            separator.getCharacters(buffer.subspan(bufferPos.value()));
-            bufferPos += separator.length();
-        }
-    }
-
+    write(buffer);
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
@@ -547,7 +563,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
     size_t endOfLastMatch = 0;
     size_t searchStringLength = searchString.length();
     Vector<Range<int32_t>, 16> sourceRanges;
-    Vector<String, 16> replacements;
+    ReplacementResults replacements;
     do {
         JSValue replacement;
         if (cachedCall) {
@@ -566,7 +582,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
             replacement = call(globalObject, replaceValue, callData, jsUndefined(), ArgList { args.data(), args.size() });
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
-        replaceString = replacement.toWTFString(globalObject);
+        JSString* replacementString = replacementResult(globalObject, replacement);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         if (!sourceRanges.tryConstructAndAppend(endOfLastMatch, matchStart)) [[unlikely]] {
@@ -575,7 +591,11 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         }
 
         size_t matchEnd = matchStart + searchStringLength;
-        replacements.append(replaceString);
+        replacements.append(replacementString);
+        if (replacements.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
 
         endOfLastMatch = matchEnd;
         if constexpr (mode == StringReplaceMode::Single)
@@ -587,7 +607,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, jsString, string, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, jsString, string, sourceRanges.span().data(), sourceRanges.size(), replacements.data(), replacements.size()));
 }
 
 enum class DollarCheck : uint8_t { Yes, No };
@@ -919,14 +939,11 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             JSValue jsResult = cachedCall.callWithArguments(globalObject, jsUndefined(), matchedString, startOffset, string);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
-            auto jsString = jsResult.toString(globalObject);
+            JSString* jsString = replacementResult(globalObject, jsResult);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
-            auto string = jsString->value(globalObject);
-            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
-
-            replacementsAre8Bit &= string->is8Bit();
-            totalLength += string->length();
+            replacementsAre8Bit &= jsString->is8Bit();
+            totalLength += jsString->length();
             totalLength += (start - lastIndex);
             slot = jsString;
 
@@ -958,9 +975,10 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
             substring.getCharacters8(buffer.subspan(bufferPos));
             bufferPos += substring.length();
 
-            auto replacement = asString(slot)->value(globalObject);
-            StringView { replacement }.getCharacters8(buffer.subspan(bufferPos));
-            bufferPos += replacement->length();
+            JSString* replacement = asString(slot);
+            unsigned replacementLength = replacement->length();
+            replacement->resolveToBuffer(buffer.subspan(bufferPos, replacementLength));
+            bufferPos += replacementLength;
 
             ++index;
             lastIndex = end;
@@ -993,9 +1011,10 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
         substring.getCharacters(buffer.subspan(bufferPos));
         bufferPos += substring.length();
 
-        auto replacement = asString(slot)->value(globalObject);
-        StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
-        bufferPos += replacement->length();
+        JSString* replacement = asString(slot);
+        unsigned replacementLength = replacement->length();
+        replacement->resolveToBuffer(buffer.subspan(bufferPos, replacementLength));
+        bufferPos += replacementLength;
 
         ++index;
         lastIndex = end;
@@ -1034,118 +1053,16 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
     // regExp->numSubpatterns() + 1 for pattern args, + 2 for match start and string
     unsigned length = result->length();
     unsigned items = length / cachedCount;
-    Vector<String, 16> replacements;
 
-    if (!replacements.tryReserveCapacity(items)) [[unlikely]] {
+    ReplacementResults replacements;
+    replacements.ensureCapacity(items);
+    if (replacements.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    replacements.grow(items);
 
     CachedCall cachedCall(globalObject, replaceFunction, argCount);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (argCount == 3) {
-        ASSERT(!regExp->numSubpatterns());
-        ASSERT(cachedCount == 2);
-        uint64_t totalLength = 0;
-        bool replacementsAre8Bit = true;
-        {
-            size_t lastIndex = 0;
-            size_t index = 0;
-            for (auto& slot : replacements) {
-                JSString* matchedString = asString(result->get(index * 2));
-                JSValue startOffset = result->get(index * 2 + 1);
-
-                int32_t start = startOffset.asInt32();
-                int32_t end = start + matchedString->length();
-
-                JSValue jsResult = cachedCall.callWithArguments(globalObject, jsUndefined(), matchedString, startOffset, string);
-                RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
-
-                auto string = jsResult.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
-
-                replacementsAre8Bit &= string.is8Bit();
-                totalLength += string.length();
-                totalLength += (start - lastIndex);
-                slot = WTF::move(string);
-
-                lastIndex = end;
-                ++index;
-            }
-            if (static_cast<unsigned>(lastIndex) < sourceLen)
-                totalLength += (sourceLen - lastIndex);
-        }
-
-        StringView sourceView { source };
-        if (sourceView.is8Bit() && replacementsAre8Bit) {
-            std::span<Latin1Character> buffer;
-            auto impl = StringImpl::tryCreateUninitialized(totalLength, buffer);
-            if (!impl) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return nullptr;
-            }
-
-            size_t lastIndex = 0;
-            unsigned index = 0;
-            size_t bufferPos = 0;
-            for (auto& replacement : replacements) {
-                int32_t length = asString(result->get(index * 2))->length();
-                int32_t start = result->get(index * 2 + 1).asInt32();
-                int32_t end = start + length;
-
-                auto substring = sourceView.substring(lastIndex, start - lastIndex);
-                substring.getCharacters8(buffer.subspan(bufferPos));
-                bufferPos += substring.length();
-
-                StringView { replacement }.getCharacters8(buffer.subspan(bufferPos));
-                bufferPos += replacement.length();
-
-                ++index;
-                lastIndex = end;
-            }
-            if (static_cast<unsigned>(lastIndex) < sourceLen) {
-                auto substring = sourceView.substring(lastIndex, sourceLen - lastIndex);
-                substring.getCharacters8(buffer.subspan(bufferPos));
-            }
-
-            ASSERT(lastIndex <= sourceLen && (bufferPos + (sourceLen - lastIndex)) == totalLength);
-            RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
-        }
-
-        std::span<char16_t> buffer;
-        auto impl = StringImpl::tryCreateUninitialized(totalLength, buffer);
-        if (!impl) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
-        }
-
-        size_t lastIndex = 0;
-        unsigned index = 0;
-        size_t bufferPos = 0;
-        for (auto& replacement : replacements) {
-            int32_t length = asString(result->get(index * 2))->length();
-            int32_t start = result->get(index * 2 + 1).asInt32();
-            int32_t end = start + length;
-
-            auto substring = sourceView.substring(lastIndex, start - lastIndex);
-            substring.getCharacters(buffer.subspan(bufferPos));
-            bufferPos += substring.length();
-
-            StringView { replacement }.getCharacters(buffer.subspan(bufferPos));
-            bufferPos += replacement.length();
-
-            ++index;
-            lastIndex = end;
-        }
-        if (static_cast<unsigned>(lastIndex) < sourceLen) {
-            auto substring = sourceView.substring(lastIndex, sourceLen - lastIndex);
-            substring.getCharacters(buffer.subspan(bufferPos));
-        }
-
-        ASSERT(lastIndex <= sourceLen && (bufferPos + (sourceLen - lastIndex)) == totalLength);
-        RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
-    }
 
     Vector<Range<int32_t>, 16> sourceRanges;
     if (!sourceRanges.tryReserveCapacity(items + 1)) [[unlikely]] {
@@ -1155,7 +1072,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
 
     size_t lastIndex = 0;
     size_t cursor = 0;
-    for (auto& slot : replacements) {
+    for (unsigned index = 0; index < items; ++index) {
         cachedCall.clearArguments();
         for (unsigned i = 0; i < cachedCount; ++i)
             cachedCall.appendArgument(result->get(cursor + i));
@@ -1175,10 +1092,14 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
         JSValue jsResult = cachedCall.call();
         RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
-        auto string = jsResult.toWTFString(globalObject);
+        JSString* replacement = replacementResult(globalObject, jsResult);
         RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, nullptr);
 
-        slot = WTF::move(string);
+        replacements.append(replacement);
+        if (replacements.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
 
         lastIndex = end;
         cursor += cachedCount;
@@ -1186,7 +1107,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
 
     if (static_cast<unsigned>(lastIndex) < sourceLen)
         sourceRanges.constructAndAppend(lastIndex, sourceLen);
-    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.data(), replacements.size()));
 }
 
 static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObject, StringView source, JSString* string, RegExp* regExp)
