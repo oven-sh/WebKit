@@ -165,10 +165,25 @@ void Worklist::enqueue(Ref<Plan> plan)
     dataLogLnIf(WasmWorklistInternal::verbose, "Enqueuing plan");
     bool multiThreaded = plan->multiThreaded();
     m_queue.enqueue({ multiThreaded ? Priority::Compilation : Priority::Preparation, nextTicket(),  WTF::move(plan) });
-    if (multiThreaded)
-        m_planEnqueued->notifyAll(locker);
-    else
-        m_planEnqueued->notifyOne(locker);
+    bool notified = multiThreaded ? m_planEnqueued->notifyAll(locker) : m_planEnqueued->notifyOne(locker);
+    if (notified)
+        return;
+
+    // The OS refused to create a compiler thread (pthread_create EAGAIN under a thread or pid limit). A thread that
+    // is alive takes the queue. Otherwise nobody would, and a synchronous compile would wait forever, so this thread
+    // compiles the queued plans itself.
+    for (auto& thread : m_threads) {
+        if (thread->hasUnderlyingThread(locker))
+            return;
+    }
+    Vector<Ref<Plan>> plans;
+    while (!m_queue.isEmpty() && m_queue.peek().priority != Priority::Shutdown)
+        plans.append(m_queue.dequeue().plan.releaseNonNull());
+    locker.unlockEarly();
+    for (auto& queuedPlan : plans) {
+        while (queuedPlan->hasWork())
+            queuedPlan->work();
+    }
 }
 
 void Worklist::completePlanSynchronously(Plan& plan)
@@ -219,7 +234,8 @@ void Worklist::stopAllPlansForContext(VM& vm)
 
 Worklist::Worklist()
     : m_lock(Box<Lock>::create())
-    , m_planEnqueued(AutomaticThreadCondition::create())
+    // A compiler thread the OS refuses to create is not fatal: enqueue() compiles on the calling thread instead.
+    , m_planEnqueued(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 {
     unsigned numberOfCompilationThreads = Options::useConcurrentJIT() ? Options::numberOfWasmCompilerThreads() : 1;
     Locker locker { *m_lock };
@@ -234,6 +250,9 @@ Worklist::~Worklist()
         Locker locker { *m_lock };
         m_queue.enqueue({ Priority::Shutdown, nextTicket(), nullptr });
         m_planEnqueued->notifyAll(locker);
+        // A thread that never got an underlying thread has nothing to join.
+        for (auto& thread : m_threads)
+            thread->tryStop(locker);
     }
     for (unsigned i = 0; i < m_threads.size(); ++i)
         Ref { m_threads[i] }->join();

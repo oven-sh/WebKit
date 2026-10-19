@@ -44,7 +44,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(JITWorklist);
 JITWorklist::JITWorklist()
     : m_lock(Box<Lock>::create())
     // A compiler thread the OS refuses to create (pthread_create EAGAIN under a thread or pid limit)
-    // is not fatal: its plans stay queued and wakeThreads() / waitUntilAllPlansForVMAreReady() retry.
+    // is not fatal: enqueue() compiles the plan on the calling thread instead.
     , m_planEnqueued(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 {
     m_maximumNumberOfConcurrentCompilationsPerTier = {
@@ -144,9 +144,8 @@ void JITWorklist::wakeThreads(const AbstractLocker& locker, unsigned enqueuedTie
         targetNumThreads = std::min(targetNumThreads, maxThreads);
     }
     while (m_numberOfActiveThreads < targetNumThreads) {
-        // False means the OS refused to create a thread. The plan stays queued for the next enqueue
-        // (or for waitUntilAllPlansForVMAreReady()), and an active-thread count that never came to
-        // life must not be recorded.
+        // False means the OS refused to create a thread: an active-thread count that never came to
+        // life must not be recorded. enqueue() compiles on the calling thread when none is active.
         if (!m_planEnqueued->notifyOne(locker))
             return;
         m_numberOfActiveThreads++;
@@ -181,9 +180,26 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
     ASSERT(m_plans.find(plan->key()) == m_plans.end());
     m_plans.add(plan->key(), plan.copyRef());
     m_totalLoad += planLoad(plan);
-    m_queues[tier].append(WTF::move(plan));
+    m_queues[tier].append(plan.copyRef());
     wakeThreads(locker, tier);
-    return CompilationResult::CompilationDeferred;
+    if (m_numberOfActiveThreads)
+        return CompilationResult::CompilationDeferred;
+
+    // The OS refused to create a compiler thread (pthread_create EAGAIN under a thread or pid limit) and none is
+    // awake to take the queue, so the plan would never be compiled. Compile it here instead, as without a
+    // concurrent JIT. Nothing ran between the append and here: the plan is still last in its queue.
+    RELEASE_ASSERT(m_queues[tier].last() == plan.ptr());
+    m_queues[tier].removeLast();
+    m_plans.remove(plan->key());
+    m_totalLoad -= planLoad(plan);
+    locker.unlockEarly();
+#if USE(PROTECTED_JIT)
+    ArenaLifetime saLifetime;
+#endif
+    plan->compileInThread(nullptr);
+    if (plan->stage() != JITPlanStage::Canceled)
+        plan->endSignpost();
+    return plan->finalize();
 }
 
 size_t JITWorklist::queueLength() const
@@ -291,36 +307,17 @@ void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
 
     for (;;) {
         bool allAreCompiled = true;
-        bool hasQueuedPlan = false;
         for (const auto& entry : m_plans) {
             if (entry.value->vm() != &vm)
                 continue;
-            if (entry.value->stage() == JITPlanStage::Ready)
-                continue;
-            allAreCompiled = false;
-            if (entry.value->stage() == JITPlanStage::Preparing) {
-                hasQueuedPlan = true;
+            if (entry.value->stage() != JITPlanStage::Ready) {
+                allAreCompiled = false;
                 break;
             }
         }
 
         if (allAreCompiled)
             break;
-
-        if (hasQueuedPlan && !m_numberOfActiveThreads) {
-            // No compiler thread is awake to take the queued plans: every attempt to create one
-            // failed under a thread or pid limit. Try again now. If the OS still refuses, nobody
-            // will ever compile them, so cancel them instead of waiting forever. Their code blocks
-            // keep running in the lower tier and may enqueue again later.
-            if (m_planEnqueued->notifyOne(locker))
-                m_numberOfActiveThreads++;
-            else {
-                removeMatchingPlansForVMWithLock(locker, vm, [](JITPlan& plan) {
-                    return plan.stage() == JITPlanStage::Preparing;
-                });
-                continue;
-            }
-        }
 
         m_planCompiledOrCancelled.wait(*m_lock);
     }
@@ -468,12 +465,6 @@ template<typename MatchFunction>
 void JITWorklist::removeMatchingPlansForVM(VM& vm, NOESCAPE const MatchFunction& matches)
 {
     Locker locker { *m_lock };
-    removeMatchingPlansForVMWithLock(locker, vm, matches);
-}
-
-template<typename MatchFunction>
-void JITWorklist::removeMatchingPlansForVMWithLock(const AbstractLocker& locker, VM& vm, NOESCAPE const MatchFunction& matches)
-{
     UncheckedKeyHashSet<JITCompilationKey> deadPlanKeys;
     for (auto& entry : m_plans) {
         JITPlan* plan = entry.value.get();
@@ -496,7 +487,7 @@ void JITWorklist::removeMatchingPlansForVMWithLock(const AbstractLocker& locker,
         }
         queue.swap(newQueue);
     }
-    ASSERT_UNUSED(locker, !m_totalLoad == (!queueLength(locker) && !totalOngoingCompilations(locker)));
+    ASSERT(!m_totalLoad == (!queueLength(locker) && !totalOngoingCompilations(locker)));
 
     bool didCancelPlans = !deadPlanKeys.isEmpty();
     for (JITCompilationKey key : deadPlanKeys)

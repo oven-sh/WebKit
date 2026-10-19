@@ -26,6 +26,8 @@
 #include "config.h"
 #include <wtf/AutomaticThread.h>
 
+#include <atomic>
+
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
@@ -193,6 +195,12 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
+// The OS refuses threads per uid or per cgroup, not per condition. After one refusal every StartFailure::Retry
+// start in this window fails without a pthread_create, which bounds the syscalls a process makes at the limit
+// (some users retry on every allocation).
+static constexpr Seconds startRetryDelay = 100_ms;
+static std::atomic<double> lastRefusedStartSeconds { -1 };
+
 bool AutomaticThread::start(const AbstractLocker&)
 {
     RELEASE_ASSERT(m_isRunning);
@@ -200,6 +208,15 @@ bool AutomaticThread::start(const AbstractLocker&)
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
+
+    bool retryOnFailure = m_condition->startFailure() == AutomaticThreadCondition::StartFailure::Retry;
+    if (retryOnFailure) {
+        double lastRefused = lastRefusedStartSeconds.load(std::memory_order_relaxed);
+        if (lastRefused >= 0 && MonotonicTime::now().secondsSinceEpoch().seconds() - lastRefused < startRetryDelay.seconds()) {
+            m_hasUnderlyingThread = false;
+            return false;
+        }
+    }
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -322,7 +339,8 @@ bool AutomaticThread::start(const AbstractLocker&)
     if (!thread) {
         // The entry point (and its ref to this) was destroyed without running.
         m_hasUnderlyingThread = false;
-        RELEASE_ASSERT_WITH_MESSAGE(m_condition->startFailure() == AutomaticThreadCondition::StartFailure::Retry, "Could not create the underlying thread for %s", name().characters());
+        RELEASE_ASSERT_WITH_MESSAGE(retryOnFailure, "Could not create the underlying thread for %s", name().characters());
+        lastRefusedStartSeconds.store(MonotonicTime::now().secondsSinceEpoch().seconds(), std::memory_order_relaxed);
         if (verbose)
             dataLog(RawPointer(this), ": Could not create the underlying thread; will retry on the next notify.\n");
         return false;

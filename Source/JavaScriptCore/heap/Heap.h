@@ -785,7 +785,6 @@ private:
     void handleNeedCollectionEpilogue();
     
     bool finishRelinquishingConn();
-    void collectAsTheCollectorBecauseCollectorThreadCouldNotStart();
     
     void setNeedCollectionEpilogue();
     void waitWhileNeedCollectionEpilogue();

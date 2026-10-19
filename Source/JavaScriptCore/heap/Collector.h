@@ -42,6 +42,7 @@
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
+#include <atomic>
 
 namespace JSC {
 
@@ -128,7 +129,7 @@ private:
     friend class VerifierSlotVisitor;
 
     GCRequest::Ticket requestCollection(Heap& requester, GCRequest);
-    void takeConnBecauseThreadCouldNotStart(const AbstractLocker&, Heap&) WTF_REQUIRES_LOCK(*m_threadLock);
+    bool notifyThreadWithLock(const AbstractLocker&, Heap* requester) WTF_REQUIRES_LOCK(*m_threadLock);
     bool isSubsumedByQueuedRequest(const GCRequest&);
 
     bool hasPendingGCRequest()
@@ -257,6 +258,9 @@ private:
     CollectorPhase m_nextPhase { CollectorPhase::NotRunning };
     bool m_threadIsWorking WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
     bool m_threadShouldStop WTF_GUARDED_BY_LOCK(*m_threadLock) { false };
+    // Set under m_threadLock when the OS refused to create the collector thread, cleared when a later notify
+    // succeeds. A mutator conducting the Concurrent phase reads it without the lock.
+    std::atomic<bool> m_threadCouldNotStart { false };
     bool m_isCompilerThreadsSuspended { false };
     uint64_t m_phaseVersion { 0 };
     std::unique_ptr<MutatorScheduler> m_scheduler;

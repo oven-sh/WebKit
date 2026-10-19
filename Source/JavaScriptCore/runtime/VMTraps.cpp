@@ -270,8 +270,8 @@ public:
         if (m_scheduled)
             return;
         // No thread for the sender: the trap still fires at the next stack check because
-        // m_stack.requestStop() lowered the limit. Only a loop with no calls runs on until a
-        // later request can start the queue.
+        // m_stack.requestStop() lowered the limit. Optimized code with no calls runs on until
+        // a later fireTrap() on this VM retries the queue (updateThreadStopRequestIfNeeded).
         WorkQueue* queue = VMTraps::tryQueue();
         if (!queue)
             return;
@@ -443,8 +443,15 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 
     bool shouldStop = needHandling(AsyncEvents);
 
-    if (shouldStop == m_threadStopRequested)
-        return; // State already matches, nothing to do.
+    if (shouldStop == m_threadStopRequested) {
+#if ENABLE(SIGNAL_BASED_VM_TRAPS)
+        // The state matches. If the signal sender could not be scheduled when the stop was requested
+        // (the OS refused its thread), this request retries it.
+        if (shouldStop && m_signalSender && !Options::usePollingTraps())
+            m_signalSender->notify(locker);
+#endif
+        return;
+    }
 
     if (shouldStop)
         requestThreadStopIfNeeded(locker);

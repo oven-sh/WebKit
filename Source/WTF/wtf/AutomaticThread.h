@@ -81,7 +81,8 @@ public:
         // Leave the AutomaticThread without an underlying thread and return false from the notify.
         // The next notify tries again. Only for users that act on a false return, so that the work
         // still completes without the thread: ParallelHelperPool (the client runs the task itself),
-        // JSC::Collector (the mutator collects) and JSC::JITWorklist (plans stay queued or are cancelled).
+        // JSC::Collector (the mutator collects), JSC::JITWorklist (plans stay queued or are cancelled) and
+        // JSC::Wasm::Worklist (the enqueuing thread compiles).
         Retry,
     };
 

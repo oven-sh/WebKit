@@ -2073,9 +2073,10 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         }
 
         // We still have the conn if the collector thread could not be created. Nobody else can finish
-        // this collection, so this thread plays the collector too (see the function).
+        // this collection: the next stopIfNecessarySlow() above runs it to the end on this thread
+        // (Collector::runConcurrentPhase drains on the mutator when no collector thread can start).
         if (collectorThreadCouldNotStart) {
-            collectAsTheCollectorBecauseCollectorThreadCouldNotStart();
+            RELEASE_ASSERT(m_worldState.load() & mutatorHasConnBit);
             continue;
         }
         
@@ -2157,10 +2158,7 @@ bool Heap::finishRelinquishingConn()
     bool handedOff = true;
     if (m_collector->hasWorkWithLock()) {
         RELEASE_ASSERT(!m_collector->m_threadShouldStop);
-        if (!m_collector->m_threadCondition->notifyOne(locker) && m_collector->hasHeap(*this)) {
-            m_collector->takeConnBecauseThreadCouldNotStart(locker, *this);
-            handedOff = false;
-        }
+        handedOff = m_collector->notifyThreadWithLock(locker, this);
     }
     ParkingLot::unparkAll(&m_worldState);
     return handedOff;
@@ -2184,35 +2182,6 @@ bool Heap::relinquishConn()
         if (!finishRelinquishingConn())
             return false;
     }
-}
-
-// Called by a mutator that waits for a collection while no collector thread can be created. With the
-// conn, the mutator runs only the phases that stop the world; the concurrent phase is the collector's,
-// and with the stochastic scheduler it lasts until marking terminates or the mutator allocates its
-// headroom. A waiting mutator allocates nothing, so without a collector the collection would never
-// end. So this thread hands the conn to the collector side and runs the collector's phases itself.
-// The collector side hands the conn straight back when it needs the world stopped (stopTheMutator()
-// sees that the mutator has heap access), and the caller's loop continues as the mutator. No real
-// collector thread can appear in the meantime: only this thread's notifies start one.
-void Heap::collectAsTheCollectorBecauseCollectorThreadCouldNotStart()
-{
-    dataLogLnIf(HeapInternal::verbose, "Running the collector's phases on the mutator thread: the collector thread could not start.");
-    for (;;) {
-        unsigned oldState = m_worldState.load();
-        RELEASE_ASSERT(oldState & hasAccessBit);
-        if (!(oldState & mutatorHasConnBit))
-            break;
-        if (m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
-            break;
-    }
-    sanitizeStackForVM(vm());
-    // The collector side waits for the mutator to run a pending epilogue before it stops the world.
-    // Here both sides are this thread, so run it first.
-    handleNeedCollectionEpilogue();
-    CollectingScope collectingScope(*this);
-    m_collector->collectInCollectorThread();
-    // Either stopTheMutator() gave the conn back, or the collection finished with the conn on the
-    // collector side, which is the idle state requestCollection() steals from.
 }
 
 NEVER_INLINE bool Heap::handleNeedCollectionEpilogue(unsigned oldState)
