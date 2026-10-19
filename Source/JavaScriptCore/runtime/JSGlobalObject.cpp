@@ -3994,6 +3994,14 @@ static JSObject* withoutGlobalProxy(JSObject* object)
     return object->type() == GlobalProxyType ? uncheckedDowncast<JSGlobalProxy>(object)->target() : object;
 }
 
+static void appendFunctionsOfProperties(VM& vm, ObjectsToMakeImmutable& objects, JSObject* object)
+{
+    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
+        return true;
+    });
+}
+
 static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects, const Vector<WriteBarrier<JSObject>>& leftMutable)
 {
     DeferGC deferGC(vm); // The collector does not see the list.
@@ -4001,19 +4009,21 @@ static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable
         JSObject* object = withoutGlobalProxy(objects.takeLast());
         if (object->structure()->hasImmutableProperties() || leftMutable.containsIf([&](auto& other) { return other.get() == object; }))
             continue;
-        if (!object->makePropertiesImmutable(vm))
-            continue;
-        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
-            return true;
-        });
+        if (object->makePropertiesImmutable(vm))
+            appendFunctionsOfProperties(vm, objects, object);
     }
 }
 
 void JSGlobalObject::makeObjectAndItsFunctionsImmutable(VM& vm, JSObject* object)
 {
+    DeferGC deferGC(vm); // The collector does not see the list.
     ObjectsToMakeImmutable objects;
-    objects.append(object);
+    object = withoutGlobalProxy(object);
+    // It may have been given functions since, under AllowChangesToImmutableProperties.
+    if (object->structure()->hasImmutableProperties())
+        appendFunctionsOfProperties(vm, objects, object);
+    else
+        objects.append(object);
     makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
 }
 
