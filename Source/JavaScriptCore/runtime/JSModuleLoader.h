@@ -238,7 +238,14 @@ public:
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
+        m_registryEpoch++;
     }
+    // A load by name (loadModule(name): import(), an entry point) is not in the registry until its fetch settles, so
+    // clearAll() cannot take it out. The load keeps the epoch it started under. When its fetch settles under another,
+    // what the fetch settled with is from before the clear: the load does not use it, and starts again
+    // (moduleLoadTopSettled). A load that has its entry at the clear is not started again: it goes on with that entry.
+    // An embedder that publishes a fetch by key in tables of its own compares the same way.
+    uint32_t registryEpoch() const { return m_registryEpoch; }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
 
@@ -283,6 +290,7 @@ private:
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
     BitVector m_prelinkedRecordRemoved; // empty until the first removal
     unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
+    uint32_t m_registryEpoch { 0 }; // advanced by clearAll()
 #endif
     void didAddModuleMapEntry(ScriptFetchParameters::Type type)
     {
