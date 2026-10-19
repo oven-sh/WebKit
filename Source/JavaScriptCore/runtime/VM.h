@@ -176,9 +176,13 @@ class Waiter;
 constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 #if USE(BUN_JSC_ADDITIONS)
+class DetachedStackTrace;
+enum class DetachedStackTraceUse : bool;
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
-using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL)>;
+// Runs at the end of a collection: it allocates nothing in the JS heap and runs no script.
+using StackTraceDetachFunction = WTF::Function<std::unique_ptr<DetachedStackTrace>(VM&, Vector<StackFrame>& stackTrace)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*)>;
+using DetachedErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, DetachedStackTrace&, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, DetachedStackTraceUse)>;
 #endif
 
 #if ENABLE(FTL_JIT)
@@ -1198,18 +1202,24 @@ public:
     const StackTraceAppenderFunction& onAppendStackTrace() const { return m_onAppendStackTrace; }
     StackTraceAppenderFunction& onAppendStackTrace() { return m_onAppendStackTrace; }
     
-    const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
-    ErrorInfoFunction& onComputeErrorInfo() { return m_onComputeErrorInfo; }
+    const StackTraceDetachFunction& onDetachStackTrace() const { return m_onDetachStackTrace; }
     
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
     
+    const DetachedErrorInfoFunctionJSValue& onComputeDetachedErrorInfoJSValue() const { return m_onComputeDetachedErrorInfoJSValue; }
+
     const WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() const { return m_computeLineColumnWithSourcemap; }
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
 
     void setOnAppendStackTrace(StackTraceAppenderFunction&& function) { m_onAppendStackTrace = WTF::move(function); }
-    void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
+    // The two go together: what the first returns is what the second is handed when the error's stack is first needed.
+    void setOnDetachStackTrace(StackTraceDetachFunction&& detach, DetachedErrorInfoFunctionJSValue&& compute)
+    {
+        m_onDetachStackTrace = WTF::move(detach);
+        m_onComputeDetachedErrorInfoJSValue = WTF::move(compute);
+    }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
 #endif
     
@@ -1457,8 +1467,9 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
-    ErrorInfoFunction m_onComputeErrorInfo;
+    StackTraceDetachFunction m_onDetachStackTrace;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
+    DetachedErrorInfoFunctionJSValue m_onComputeDetachedErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;
 #endif

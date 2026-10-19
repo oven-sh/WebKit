@@ -29,6 +29,21 @@ namespace JSC {
 
 class CallLinkInfo;
 
+#if USE(BUN_JSC_ADDITIONS)
+// What the host keeps of a stack trace whose frames a collection is about to free (VM::onDetachStackTrace). It refers
+// to no cell. The error owns it until its stack is first needed, and the host formats it then.
+class DetachedStackTrace {
+    WTF_MAKE_NONCOPYABLE(DetachedStackTrace);
+public:
+    DetachedStackTrace() = default;
+    virtual ~DetachedStackTrace() = default;
+    virtual size_t sizeInBytes() const = 0;
+};
+
+// Overwrite: the property is about to be stored to, deleted or redefined.
+enum class DetachedStackTraceUse : bool { Read, Overwrite };
+#endif
+
 class ErrorInstance : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -112,6 +127,8 @@ public:
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
+    // Not null once a collection found a frame of the unread trace dead, until the stack is first needed.
+    DetachedStackTrace* detachedStackTrace() const LIFETIME_BOUND { return m_detachedStackTrace.get(); }
 #endif
 
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
@@ -161,6 +178,10 @@ protected:
 
     void computeErrorInfo(VM&, bool allocationAllowed);
     bool materializeCapturedStackPropertyIfSaved(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    bool materializeErrorInfoIfNeeded(VM&, DetachedStackTraceUse);
+    bool materializeErrorInfoForOverwrite(VM&, PropertyName);
+#endif
 
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
@@ -171,6 +192,9 @@ protected:
     LineColumn m_lineColumn;
     String m_sourceURL;
     String m_stackString;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<DetachedStackTrace> m_detachedStackTrace;
+#endif
     RuntimeType m_runtimeTypeForCause { TypeNothing };
     ErrorType m_errorType { ErrorType::Error };
     bool m_stackOverflowError : 1;
@@ -183,11 +207,12 @@ protected:
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
 #endif
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_stackStringIsFramesOnly : 1;
-    JSValue stackWithHeader(VM&, String&& frames);
-#endif
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// m_detachedStackTrace takes the padding of the 80-byte cell an error already has.
+static_assert(sizeof(ErrorInstance) <= 80);
+#endif
 
 String appendSourceToErrorMessage(CodeBlock*, BytecodeIndex, const String&, RuntimeType, ErrorInstance::SourceAppender);
 

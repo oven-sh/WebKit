@@ -60,9 +60,6 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
-#if USE(BUN_JSC_ADDITIONS)
-    , m_stackStringIsFramesOnly(false)
-#endif
 {
 }
 
@@ -140,12 +137,10 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
-    // A collection may already have formatted the frames these replace.
+    // A collection may already have detached or formatted the frames these replace.
+    m_detachedStackTrace = nullptr;
     m_stackString = String();
     m_hasErrorInfo = false;
-#if USE(BUN_JSC_ADDITIONS)
-    m_stackStringIsFramesOnly = false;
-#endif
     vm.writeBarrier(this);
 }
 
@@ -160,6 +155,8 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
             size += errorInstance->m_stackTrace->sizeInBytes();
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
+        if (errorInstance->m_detachedStackTrace)
+            size += errorInstance->m_detachedStackTrace->sizeInBytes();
     }
 
     return Base::estimatedSize(cell, vm) + size;
@@ -176,6 +173,7 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
 
         if (!m_stackTrace || !append) {
             m_stackTrace = WTF::move(stackTrace);
+            m_detachedStackTrace = nullptr;
             vm.writeBarrier(this);
             return;
         }
@@ -295,9 +293,6 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     m_sourceURL = WTF::move(sourceURL);
     m_stackString = WTF::move(stackString);
     m_hasErrorInfo = !m_stackString.isNull();
-#if USE(BUN_JSC_ADDITIONS)
-    m_stackStringIsFramesOnly = false;
-#endif
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -396,7 +391,7 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     // If we did, we might end up keeping functions (and their global objects) alive that happened to
     // get caught in a trace.
     // Since the frames are weak, a dead one means the trace can no longer be reconstructed, so
-    // materialize it into strings while it is still readable.
+    // keep what the stack is made from while it is still readable.
     if (m_capturedStackTrace && hasUnmarkedFrame(vm, *m_capturedStackTrace)) {
         DeferGCForAWhile deferGC(vm);
         String stackString = Interpreter::stackTraceAsString(vm, *m_capturedStackTrace);
@@ -418,19 +413,24 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     UNUSED_PARAM(allocationAllowed);
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
-        auto& fn = vm.onComputeErrorInfo();
-        WTF::String stackString;
-        if (fn) {
-            if (!m_stackPropertyProvidedByCapturedStackTrace) {
-                // Possibly the end of a collection: the hook formats the frames, and stackWithHeader() prepends the header.
-                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL);
-                m_stackStringIsFramesOnly = true;
-            }
-        } else {
-            getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
+        if (auto& detach = vm.onDetachStackTrace()) {
+            // Possibly the end of a collection, which runs no script: the host keeps the frames' data, and formats the
+            // stack when it is first needed, as it does for live frames.
+            std::unique_ptr<DetachedStackTrace> detached;
             if (!m_stackPropertyProvidedByCapturedStackTrace)
-                stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+                detached = detach(vm, *m_stackTrace);
+            else
+                m_hasErrorInfo = true;
+
+            Locker locker { cellLock() };
+            m_stackTrace = nullptr;
+            m_detachedStackTrace = WTF::move(detached);
+            return;
         }
+        getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
+        WTF::String stackString;
+        if (!m_stackPropertyProvidedByCapturedStackTrace)
+            stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
         m_hasErrorInfo = true;
 
         {
@@ -444,30 +444,12 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-// "name: message" in front of the frames a collection formatted, as a stack materialized on access
-// begins. undefined if reading the name or the message throws, which is what the hook that
-// materializes a stack on access leaves.
-JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSGlobalObject* globalObject = this->globalObject();
-    String name = sanitizedNameString(globalObject);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
-    String message = sanitizedMessageString(globalObject);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
-    // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
-    ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
-    String stack = tryMakeString(name, separator, message, frames);
-    if (stack.isNull())
-        stack = tryMakeString(name, separator, message);
-    if (stack.isNull())
-        stack = WTF::move(message);
-    return jsString(vm, WTF::move(stack));
-}
-#endif
-
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
+{
+    return materializeErrorInfoIfNeeded(vm, DetachedStackTraceUse::Read);
+}
+
+bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, DetachedStackTraceUse detachedStackTraceUse)
 {
     bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
     if (m_errorInfoMaterialized)
@@ -476,18 +458,32 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
 
     auto& fn = vm.onComputeErrorInfoJSValue();
-    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
+    bool hasFrames = m_stackTrace && !m_stackTrace->isEmpty();
+    if ((fn && hasFrames) || m_detachedStackTrace) {
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
+        // Taken from the error before the host runs: it can run script, which can give this error other frames.
+        std::unique_ptr<DetachedStackTrace> detached;
+        {
+            Locker locker { cellLock() };
+            detached = WTF::move(m_detachedStackTrace);
+        }
+
         JSValue stack;
-        if (!m_stackPropertyProvidedByCapturedStackTrace)
-            stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
+        if (!m_stackPropertyProvidedByCapturedStackTrace) {
+            if (hasFrames)
+                stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
+            else
+                stack = vm.onComputeDetachedErrorInfoJSValue()(vm, *detached, m_lineColumn.line, m_lineColumn.column, m_sourceURL, this, detachedStackTraceUse);
+        }
 
         {
             Locker locker { cellLock() };
-            m_stackTrace->clear();
-            m_stackTrace = nullptr;
+            if (m_stackTrace) {
+                m_stackTrace->clear();
+                m_stackTrace = nullptr;
+            }
             m_stackString = String();
         }
 
@@ -527,14 +523,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
-            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
-            JSValue stackValue;
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_stackStringIsFramesOnly)
-                stackValue = stackWithHeader(vm, WTF::move(stackString));
-            else
-#endif
-                stackValue = jsString(vm, WTF::move(stackString));
+            JSValue stackValue = jsString(vm, WTF::move(stackString));
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             putDirect(vm, vm.propertyNames->stack, stackValue, attributes);
         }
@@ -557,6 +546,14 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyNa
     if (isErrorInfoProperty(vm, propertyName))
         return materializeErrorInfoIfNeeded(vm);
     return false;
+}
+
+bool ErrorInstance::materializeErrorInfoForOverwrite(VM& vm, PropertyName propertyName)
+{
+    if (!isErrorInfoProperty(vm, propertyName))
+        return false;
+    // Only a stack that is overwritten is never read: line, column and sourceURL stay next to the stack the host makes.
+    return materializeErrorInfoIfNeeded(vm, propertyName == vm.propertyNames->stack ? DetachedStackTraceUse::Overwrite : DetachedStackTraceUse::Read);
 }
 
 bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vector<StackFrame>& stackTrace)
@@ -623,7 +620,7 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    thisObject->materializeErrorInfoForOverwrite(vm, propertyName);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
@@ -633,7 +630,7 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    bool materializedProperties = thisObject->materializeErrorInfoForOverwrite(vm, propertyName);
     RETURN_IF_EXCEPTION(scope, {});
     if (materializedProperties)
         slot.disableCaching();
@@ -644,7 +641,7 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    bool materializedProperties = thisObject->materializeErrorInfoForOverwrite(vm, propertyName);
     if (materializedProperties)
         slot.disableCaching();
     return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
