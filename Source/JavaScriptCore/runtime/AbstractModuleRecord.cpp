@@ -1225,9 +1225,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ASSERT_ENABLED
-    // ECMA-262 also asserts that the status is not UNLINKED. That does not hold for the module that `export * as ns
-    // from` names when the module with that export is in a cycle: a member of the cycle that imports `ns` gets here
-    // from its InitializeEnvironment (step 7.c.iii.1) before InnerModuleLinking has visited this module.
+    // ECMA-262 also asserts that the status is not UNLINKED, which is a bug of the specification
+    // (https://github.com/tc39/ecma262/issues/3114). A member of a cycle that imports `ns` gets here from its
+    // InitializeEnvironment, for the module that `export * as ns from` names, before InnerModuleLinking has visited
+    // that module.
     if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this))
         ASSERT(cyclic->status() != CyclicModuleRecord::Status::New);
 #endif
