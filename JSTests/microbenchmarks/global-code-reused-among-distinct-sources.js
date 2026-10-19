@@ -1,6 +1,7 @@
 // A set of sources that is evaluated again and again, with 300 sources the code cache has not seen between two
-// uses. Once the cache has admitted its byte working set (16 MB, each entry counting as its length plus 1 KB), every
-// new source evicts an entry. A source of the set that was evicted is parsed again.
+// uses. The cache holds more than a window of sources (Options::codeCacheWorkingSetMaxBytes, 16 MB, each entry
+// counting as its length plus 1 KB), so the new sources evict entries. A source of the set that was evicted is parsed
+// again.
 var globalEval = eval;
 
 var body = "";
@@ -27,11 +28,11 @@ function test(rounds) {
 }
 noInline(test);
 
-// Fill the cache first.
-for (var i = 0; i < 3000; ++i)
+// Fill the cache past a window first.
+for (var i = 0; i < 20000; ++i)
     globalEval("2 + " + i);
 
-var rounds = 40;
+var rounds = 60;
 var result = test(rounds);
 if (result !== rounds * (reused.length + 300))
     throw new Error("bad result: " + result);
