@@ -66,6 +66,7 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "MarkedSpaceInlines.h"
+#include "ModuleRegistryEntry.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2273,6 +2274,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 #if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderSetImportedModule);
 static JSC_DECLARE_HOST_FUNCTION(functionResetModuleGraphAfterFailedLink);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
@@ -4280,6 +4282,42 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// $vm.moduleLoaderSetImportedModule({ loader }, importer, request, module): AbstractModuleRecord::setImportedModule(), as
+// a host that fills [[LoadedModules]] itself calls it. The request `request` of the module `importer` gets the module
+// `module`. `importer` and `module` are specifiers, relative to the caller, of modules that the loader has. Returns
+// whether it has them and `importer` has the request.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderSetImportedModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    JSValue referrer = jsString(vm, callFrame->callerSourceOrigin(vm).url().string());
+    auto recordFor = [&](JSValue specifier) -> AbstractModuleRecord* {
+        Identifier key = loader->resolve(globalObject, specifier, referrer, nullptr, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript);
+        return entry ? entry->record() : nullptr;
+    };
+    AbstractModuleRecord* importer = recordFor(callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    String request = callFrame->argument(2).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    AbstractModuleRecord* module = recordFor(callFrame->argument(3));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!importer || !module)
+        return JSValue::encode(jsBoolean(false));
+    for (const auto& moduleRequest : importer->requestedModules()) {
+        if (moduleRequest.m_specifier.string() == request) {
+            importer->setImportedModule(globalObject, moduleRequest, module);
+            return JSValue::encode(jsBoolean(true));
+        }
+    }
+    return JSValue::encode(jsBoolean(false));
+}
+
 // $vm.resetModuleGraphAfterFailedLink(error): CyclicModuleRecord::resetGraphAfterFailedLink() for the module whose
 // Link() threw `error`, which is what a host that fills [[LoadedModules]] itself does then. Returns whether `error` is
 // the error of such a Link().
@@ -6063,6 +6101,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
 #if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderSetImportedModule"_s, functionModuleLoaderSetImportedModule, 4);
     addFunction(vm, allowIfNotFuzz, "resetModuleGraphAfterFailedLink"_s, functionResetModuleGraphAfterFailedLink, 1);
 #endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);

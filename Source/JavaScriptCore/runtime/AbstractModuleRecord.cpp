@@ -564,11 +564,14 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     // Another module for a request is for a record that has nothing a Link() made from the module it had: a record
     // that no Link() has reached, or one that went through CyclicModuleRecord::resetGraphAfterFailedLink().
     if (auto iter = m_loadedModules.find(key); iter != m_loadedModules.end() && iter->value.m_module.get() != record) {
-        auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this);
-        ASSERT(!cyclic || cyclic->status() == CyclicModuleRecord::Status::New || cyclic->status() == CyclicModuleRecord::Status::Unlinked);
-        ASSERT(!m_moduleEnvironment);
-        ASSERT(!m_moduleNamespaceObject && !m_deferredNamespaceObject);
-        ASSERT(m_resolutionCache.isEmpty());
+        if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(this))
+            ASSERT(cyclic->status() == CyclicModuleRecord::Status::New || cyclic->status() == CyclicModuleRecord::Status::Unlinked);
+        // The reset leaves a WebAssemblyModuleRecord as it is.
+        if (dynamicDowncast<JSModuleRecord>(this)) {
+            ASSERT(!m_moduleEnvironment);
+            ASSERT(!m_moduleNamespaceObject && !m_deferredNamespaceObject);
+            ASSERT(m_resolutionCache.isEmpty());
+        }
     }
 #endif
     m_loadedModules.set(key, LoadedModuleRequest { vm, request, record, this });

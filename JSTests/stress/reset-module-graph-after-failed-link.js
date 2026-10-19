@@ -22,9 +22,12 @@ function heldByModuleRecords() {
     return `${holders.JSModuleEnvironment.size} environments, ${holders.ModuleNamespaceObject.size} namespace objects, ${holders.ModuleProgramExecutable.size} executables`;
 }
 
-function link(name) {
+const resource = name => `./resources/reset-module-graph-after-failed-link/${name}`;
+
+// The namespace object of the module, or the error of its Link().
+function link(name, loader) {
     let outcome = "pending";
-    import(`./resources/reset-module-graph-after-failed-link/${name}`).then(
+    (loader ? $vm.moduleLoaderImport(loader, resource(name)) : import(resource(name))).then(
         namespace => { outcome = namespace; },
         error => { outcome = error; });
     drainMicrotasks();
@@ -73,3 +76,34 @@ shouldBe(link("not-visited/c.js").y, 1);
 // Not the error of a Link().
 shouldBe($vm.resetModuleGraphAfterFailedLink(new SyntaxError("not from a module")), false);
 shouldBe($vm.resetModuleGraphAfterFailedLink(undefined), false);
+
+// What the reset is for. After it, the host gives a.js another module for "./b.js", and the graph links.
+{
+    const loader = $vm.createModuleLoader();
+    error = link("replace/b.js", loader);
+    shouldBe(error instanceof SyntaxError, true);
+    shouldBe($vm.resetModuleGraphAfterFailedLink(error), true);
+    shouldBe(link("replace/b2.js", loader).v, "b2");
+    shouldBe($vm.moduleLoaderSetImportedModule(loader, resource("replace/a.js"), "./b.js", resource("replace/b2.js")), true);
+    shouldBe(link("replace/a.js", loader).read(), "only2,v: b2");
+}
+
+// Two loaders of one global object share the code of a.js while its imports resolve alike. That code has the place
+// of `v` in the module that exports it: the first variable of b.js, and the fourth of b2.js. In both loaders a.js
+// finishes InitializeEnvironment and takes the code, and then z.js fails.
+{
+    const first = $vm.createModuleLoader();
+    const second = $vm.createModuleLoader();
+    for (const loader of [first, second]) {
+        error = link("shared/z.js", loader);
+        shouldBe(error instanceof SyntaxError, true);
+        shouldBe($vm.resetModuleGraphAfterFailedLink(error), true);
+        shouldBe(link("shared/c2.js", loader).missing, 1);
+        shouldBe($vm.moduleLoaderSetImportedModule(loader, resource("shared/z.js"), "./c.js", resource("shared/c2.js")), true);
+    }
+    // The second loader runs a.js with b.js. The first loader gives a.js the module b2.js.
+    shouldBe(link("shared/a.js", second).read(), "b");
+    shouldBe(link("shared/b2.js", first).v, "b2");
+    shouldBe($vm.moduleLoaderSetImportedModule(first, resource("shared/a.js"), "./b.js", resource("shared/b2.js")), true);
+    shouldBe(link("shared/a.js", first).read(), "b2");
+}
