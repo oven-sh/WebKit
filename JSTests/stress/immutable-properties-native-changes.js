@@ -67,7 +67,7 @@ for (let create of [() => ({ }), () => function () { }, () => new Map, () => Obj
     }
 }
 
-// An array or an object with elements is not for native code to change, and its elements stay as they are afterwards.
+// Native changes to an array or to an object with elements are refused, and its elements are still read-only afterwards.
 for (let create of [() => [], () => [1, 2, 3], () => [1.5], () => ["a"], () => ({ 0: 1 }), () => Object.assign([1], { existing: 1 }), () => $vm.createGlobalObject().Array.prototype]) {
     let object = $vm.makePropertiesImmutable(create());
     let before = observe(object);
@@ -85,7 +85,7 @@ for (let create of [() => [], () => [1, 2, 3], () => [1.5], () => ["a"], () => (
     shouldBe(observe(object), before);
 }
 
-// Nor is an index.
+// An index as the key is refused too.
 for (let create of [() => ({ }), () => [1], () => ({ 0: 1 }), () => function () { }]) {
     let object = $vm.makePropertiesImmutable(create());
     let before = observe(object);
@@ -97,7 +97,7 @@ for (let create of [() => ({ }), () => [1], () => ({ 0: 1 }), () => function () 
     shouldBe(observe(object), before);
 }
 
-// What a function constructs follows its prototype.
+// After a native change of a function's "prototype", what the function constructs inherits from the new one.
 {
     function Constructor() { }
     function* generator() { }
@@ -113,7 +113,7 @@ for (let create of [() => ({ }), () => [1], () => ({ 0: 1 }), () => function () 
     }
 }
 
-// What is refused for any object is refused.
+// A non-configurable property and a prototype cycle are refused, as they are for any object.
 {
     let object = $vm.makePropertiesImmutable(Object.defineProperty({ }, "fixed", { value: 1 }));
     shouldThrow(() => $vm.definePropertyAllowingLazyMaterialization(object, "fixed", { value: 2 }), TypeError);

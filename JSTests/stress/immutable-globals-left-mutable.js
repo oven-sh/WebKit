@@ -22,13 +22,13 @@ Object.prototype.extra = 1;
 globalThis.Set = 1;
 shouldBe(new Map().get() + Date.now() + Math.random() + [].extra + Set, "patched00.511");
 
-// What is created later with one of them as its prototype leaves it alone.
+// A class that is created later, and whose prototype inherits from Object.prototype, does not make Object.prototype immutable.
 new Intl.Segmenter().segment("a").containing(0);
 new Intl.DateTimeFormat().formatToParts();
 new WeakRef({ });
 shouldBe(isImmutable(Object.prototype), false);
 
-// Everything else is covered: what has no name though it serves one of them, what inherits from one, what the global object holds.
+// Everything else is covered: the unnamed prototype of Map's iterators, objects that inherit from an opted-out one, the other globals.
 for (let object of [Object.getPrototypeOf(new Map().entries()), WeakMap, WeakMap.prototype, Array.prototype, Function.prototype, JSON, Intl, Intl.Segmenter.prototype,
     parseInt, debug, performance, Reflect, Reflect.get])
     shouldBe(isImmutable(object), true);

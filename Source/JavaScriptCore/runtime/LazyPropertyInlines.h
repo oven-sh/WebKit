@@ -37,7 +37,7 @@ template<typename OwnerType, typename ElementType>
 void LazyProperty<OwnerType, ElementType>::Initializer::set(ElementType* value) const
 {
     property.set(vm, owner, value);
-    // The prototype of a class that is created on first use may have no name to find it by.
+    // For Options::immutableGlobals(): no property of a covered object may lead to the prototype of a lazily created class.
     if constexpr (std::is_same_v<ElementType, Structure>) {
         if (value->storedPrototype().isObject())
             value->realm()->didCreateBuiltin(vm, asObject(value->storedPrototype()));

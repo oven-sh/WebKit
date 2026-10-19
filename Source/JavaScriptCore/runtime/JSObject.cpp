@@ -2162,7 +2162,8 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 }
 
 // Whether AllowLazyMaterializationOfImmutableProperties lets native code define and delete the object's named properties and set its
-// prototype. (Not an array, whose length is not a property, nor indexed storage: what protects the elements is a copy-on-write butterfly.)
+// prototype. It does not for an array, whose length is not an ordinary property, or for an object with indexed storage: its elements
+// are read-only because its butterfly is copy-on-write, and making room for a named property would replace that butterfly.
 static ALWAYS_INLINE bool canChangeImmutablePropertiesNatively(VM& vm, JSObject* object)
 {
     return vm.allowLazyMaterializationOfImmutablePropertiesCount && object->indexingType() == NonArray;
@@ -3284,7 +3285,7 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Nothing below applies: the descriptor is validated against the current one, which defineOwnNonIndexProperty() does.
-    // (AllowLazyMaterializationOfImmutableProperties is not for an index: that function would put it among the named properties.)
+    // An index is refused under AllowLazyMaterializationOfImmutableProperties too: that function would store it as a named property.
     if (structure()->hasImmutableProperties()) [[unlikely]] {
         SetForScope noMaterialization(vm.allowLazyMaterializationOfImmutablePropertiesCount, 0u);
         RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));

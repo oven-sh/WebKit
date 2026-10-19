@@ -3980,7 +3980,7 @@ static void appendFunctionsOfProperty(VM& vm, ObjectsToMakeImmutable& objects, J
         objects.append(asObject(value));
 }
 
-// A global is covered whatever kind of object it is, and whether or not the global object is.
+// The value of a global is covered even if it is not a function, and even if -globalThis leaves the global object itself mutable.
 static void appendGlobal(VM& vm, ObjectsToMakeImmutable& objects, JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isObject())
@@ -3996,7 +3996,7 @@ static JSObject* withoutGlobalProxy(JSObject* object)
 
 static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects, const Vector<WriteBarrier<JSObject>>& leftMutable)
 {
-    DeferGC deferGC(vm); // The collector does not see the list.
+    DeferGC deferGC(vm); // The collector does not visit `objects`.
     while (!objects.isEmpty()) {
         JSObject* object = withoutGlobalProxy(objects.takeLast());
         if (object->structure()->hasImmutableProperties() || leftMutable.containsIf([&](auto& other) { return other.get() == object; }))
@@ -4034,11 +4034,11 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
     if (!option || !*option) [[likely]]
         return;
 
-    DeferGC deferGC(vm); // The collector does not see the list.
+    DeferGC deferGC(vm); // The collector does not visit `objects`.
     DeferTermination deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Looking a global up creates it, while nothing is made immutable as it is created yet.
+    // The lookup can create a lazy global. m_hasImmutableGlobals is still false, so nothing makes it immutable as it is created.
     auto leaveMutable = [&](JSObject* holder, const Identifier& name) -> JSObject* {
         PropertySlot slot(holder, PropertySlot::InternalMethodType::GetOwnProperty);
         JSValue value;
@@ -4085,6 +4085,7 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
                 objects.append(asObject(structure->storedPrototype()));
         });
     }
+    // Not a function, so Array.prototype does not lead to it.
     objects.append(uncheckedDowncast<JSObject>(arrayPrototype()->getDirect(vm, vm.propertyNames->unscopablesSymbol)));
     makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
 }

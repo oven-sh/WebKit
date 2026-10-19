@@ -1276,12 +1276,14 @@ public:
     // object of a class that does not support it. A function that one of these objects creates later, for a property it has not
     // materialized yet, is covered too.
     JS_EXPORT_PRIVATE void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
-    // For a built-in that is created on first use and that no property of another built-in holds as a function.
+    // For a built-in that is created after applyImmutableGlobalsOption() ran. A function in a property of a covered object does not
+    // need it: that is found when the property is materialized.
     void didCreateBuiltin(VM& vm, JSObject* object)
     {
         if (m_hasImmutableGlobals) [[unlikely]]
             makeObjectAndItsFunctionsImmutable(vm, object);
     }
+    // Called, if hasImmutableGlobals(), when `holder` has materialized a property from its static table.
     void didReifyStaticProperty(VM&, JSObject* holder, JSValue);
 
     void notifyArrayBufferDetaching();

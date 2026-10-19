@@ -92,7 +92,7 @@
     (function () {
         "use strict";
 
-        // The global object: what a name means does not change.
+        // The global object: no global can be added, replaced or deleted.
         shouldThrow(() => { globalThis.Array = 1; }, TypeError);
         shouldThrow(() => { globalThis.Date = 1; }, TypeError);
         shouldThrow(() => { globalThis.print = 1; }, TypeError);

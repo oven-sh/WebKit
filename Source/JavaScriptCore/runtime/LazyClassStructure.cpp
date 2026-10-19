@@ -69,7 +69,7 @@ void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
     this->constructor = constructor;
 
     {
-        // (setStructure() may have made the prototype immutable.)
+        // With Options::immutableGlobals() setStructure() has made the prototype immutable, and it would silently refuse its constructor.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
