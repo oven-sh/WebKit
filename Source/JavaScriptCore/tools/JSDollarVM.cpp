@@ -6022,9 +6022,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
-    addFunction(vm, alwaysAllow, "definePropertyAllowingLazyMaterialization"_s, functionDefinePropertyAllowingLazyMaterialization, 3);
-    addFunction(vm, alwaysAllow, "deletePropertyAllowingLazyMaterialization"_s, functionDeletePropertyAllowingLazyMaterialization, 2);
-    addFunction(vm, alwaysAllow, "setPrototypeAllowingLazyMaterialization"_s, functionSetPrototypeAllowingLazyMaterialization, 2);
+    addFunction(vm, allowIfNotFuzz, "definePropertyAllowingLazyMaterialization"_s, functionDefinePropertyAllowingLazyMaterialization, 3);
+    addFunction(vm, allowIfNotFuzz, "deletePropertyAllowingLazyMaterialization"_s, functionDeletePropertyAllowingLazyMaterialization, 2);
+    addFunction(vm, allowIfNotFuzz, "setPrototypeAllowingLazyMaterialization"_s, functionSetPrototypeAllowingLazyMaterialization, 2);
     addFunction(vm, alwaysAllow, "setStackTraceLimitOverride"_s, functionSetStackTraceLimitOverride, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
