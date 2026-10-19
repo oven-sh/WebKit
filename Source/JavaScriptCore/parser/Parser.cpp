@@ -3785,6 +3785,8 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseImportDeclaration(TreeBuilder& context)
 {
     // http://www.ecma-international.org/ecma-262/6.0/#sec-imports
+    DepthManager statementDepth(&m_statementDepth);
+    m_statementDepth++;
     ASSERT(match(IMPORT));
     JSTokenLocation importLocation(tokenLocation());
     next();
@@ -3923,6 +3925,8 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclaration(TreeBuilder& context)
 {
     // http://www.ecma-international.org/ecma-262/6.0/#sec-exports
+    DepthManager statementDepth(&m_statementDepth);
+    m_statementDepth++;
     ASSERT(match(EXPORT_));
     JSTokenLocation exportLocation(tokenLocation());
     next();
@@ -4018,8 +4022,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
         if (isFunctionOrClassDeclaration) {
             if (startsWithFunction) {
                 ASSERT(match(FUNCTION));
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseFunctionDeclaration(context, FunctionDeclarationType::Declaration, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
             } else if (match(CLASSTOKEN)) {
                 result = parseClassDeclaration(context, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
@@ -4027,8 +4029,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
                 ASSERT(matchContextualKeyword(m_vm.propertyNames->async));
                 unsigned functionStart = m_token.m_startPosition;
                 next();
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseAsyncFunctionDeclaration(context, functionStart, ExportType::NotExported, DeclarationDefaultContext::ExportDefault);
             }
         } else {
@@ -4144,12 +4144,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
             result = parseVariableDeclaration(context, DeclarationType::LetDeclaration, ExportType::Exported);
             break;
 
-        case FUNCTION: {
-            DepthManager statementDepth(&m_statementDepth);
-            m_statementDepth = 1;
+        case FUNCTION:
             result = parseFunctionDeclaration(context, FunctionDeclarationType::Declaration, ExportType::Exported);
             break;
-        }
 
         case CLASSTOKEN:
             result = parseClassDeclaration(context, ExportType::Exported);
@@ -4160,8 +4157,6 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
                 unsigned functionStart = m_token.m_startPosition;
                 next();
                 semanticFailIfFalse(match(FUNCTION) && !m_lexer->hasLineTerminatorBeforeToken(), "Expected 'function' keyword following 'async' keyword with no preceding line terminator");
-                DepthManager statementDepth(&m_statementDepth);
-                m_statementDepth = 1;
                 result = parseAsyncFunctionDeclaration(context, functionStart, ExportType::Exported);
                 break;
             }
