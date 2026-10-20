@@ -1418,8 +1418,9 @@ ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, Ex
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
+            int optionalChainEndOffset = optionalChain->expr()->endOffset();
             optionalChain->expr()->setEndOffset(optionalChain->endOffset());
-            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
+            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain, optionalChainEndOffset);
         }
     }
     constexpr bool hasAbsorbedOptionalChain = false;

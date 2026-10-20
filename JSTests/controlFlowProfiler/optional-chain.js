@@ -173,6 +173,18 @@ testParentheses(null);
 checkBasicBlock(testParentheses, "foo()", ShouldNotHaveExecuted);
 checkBasicBlock(testParentheses, "/* last */", ShouldHaveExecuted);
 
+function testParenthesesAndCoalesce(x) {
+    if ((x?.[foo(1)] /* first */) ?? true)
+        foo(2);
+    return (x?.[foo(3)] /* second */) ?? foo(4);
+}
+testParenthesesAndCoalesce(null);
+checkBasicBlock(testParenthesesAndCoalesce, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testParenthesesAndCoalesce, "/* first */", ShouldHaveExecuted);
+checkBasicBlock(testParenthesesAndCoalesce, "foo(3)", ShouldNotHaveExecuted);
+checkBasicBlock(testParenthesesAndCoalesce, "/* second */", ShouldHaveExecuted);
+checkBasicBlock(testParenthesesAndCoalesce, "foo(4)", ShouldHaveExecuted);
+
 function testCount(x) {
     return x?.[foo()];
 }

@@ -3672,7 +3672,7 @@ RegisterID* CoalesceNode::emitBytecode(BytecodeGenerator& generator, RegisterID*
     Ref<Label> endLabel = generator.newLabel();
 
     if (m_hasAbsorbedOptionalChain)
-        generator.pushOptionalChainTarget(m_expr1->endOffset());
+        generator.pushOptionalChainTarget(m_optionalChainEndOffset);
     generator.emitNode(temp.get(), m_expr1);
     generator.emitJumpIfFalse(generator.emitIsUndefinedOrNull(generator.newTemporary(), temp.get()), endLabel.get());
 
@@ -3693,7 +3693,7 @@ void CoalesceNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
     Ref<Label> nullishTarget = generator.newLabel();
 
     if (m_hasAbsorbedOptionalChain)
-        generator.pushOptionalChainTarget(nullishTarget.get(), m_expr1->endOffset());
+        generator.pushOptionalChainTarget(nullishTarget.get(), m_optionalChainEndOffset);
     RefPtr<RegisterID> value = generator.emitNode(m_expr1);
     generator.emitJumpIfTrue(generator.emitIsUndefinedOrNull(generator.newTemporary(), value.get()), nullishTarget.get());
     if (m_hasAbsorbedOptionalChain)
