@@ -542,7 +542,14 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Assert: module.[[Status]] is one of UNLINKED, LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    // Or EVALUATING: a job that runs inside the evaluation of a graph calls Link() and then Evaluate() for a record
+    // that is on the stack of that evaluation (see evaluate()). The record is linked, and InnerModuleLinking
+    // returns at once for it.
+    ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 2. Let stack be a new empty List.
     Vector<CyclicModuleRecord*, 8> stack;
     // 3. Let result be Completion(InnerModuleLinking(module, stack, 0)).
@@ -563,11 +570,78 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
         return;
     }
     // 5. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 6. Assert: stack is empty.
     ASSERT(stack.isEmpty());
     // 7. Return UNUSED.
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// A job that runs inside the evaluation of a graph (see gatherAvailableParents()) can call Evaluate() for a record
+// that is on the stack of that evaluation: the continuation of an import() of that module does. The record cannot be
+// evaluated a second time, and it has no cycle root yet that could have the capability as its
+// [[TopLevelCapability]]. So the call returns a promise that VM::m_moduleEvaluationWaiters keeps, and the evaluation
+// gives it the result when it takes the record off its stack.
+NEVER_INLINE JSPromise* CyclicModuleRecord::evaluationWaiter(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    ASSERT(status() == Status::Evaluating);
+    if (JSPromise* promise = vm.m_moduleEvaluationWaiters.get(this))
+        return promise;
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    vm.m_moduleEvaluationWaiters.add(this, promise);
+    return promise;
+}
+
+// `waiter` is for a record that leaves the stack. From now on an Evaluate() of that record returns the capability of
+// this record (step 4): the root of its cycle, or the record itself after step 9.a. When this record has no
+// capability, `waiter` becomes it, as steps 6 and 7 do for a new promise, and settleAdoptedEvaluationWaiter() does
+// the rest of that Evaluate().
+bool CyclicModuleRecord::adoptEvaluationWaiter(VM& vm, JSPromise* waiter)
+{
+    if (JSPromise* capability = topLevelCapability()) {
+        waiter->pipeFrom(vm, capability);
+        return false;
+    }
+    setTopLevelCapability(vm, waiter);
+    return true;
+}
+
+NEVER_INLINE bool CyclicModuleRecord::adoptEvaluationWaiters(VM& vm, const Vector<AbstractModuleRecord*, 8>& stack)
+{
+    bool adopted = false;
+    size_t index = stack.reverseFind(this);
+    ASSERT(index != notFound);
+    for (; index < stack.size(); ++index) {
+        if (JSPromise* waiter = vm.m_moduleEvaluationWaiters.take(uncheckedDowncast<CyclicModuleRecord>(stack[index])))
+            adopted |= adoptEvaluationWaiter(vm, waiter);
+    }
+    return adopted;
+}
+
+NEVER_INLINE void CyclicModuleRecord::settleAdoptedEvaluationWaiter(VM& vm)
+{
+    // What Evaluate() does with a new capability for a record that is not LINKED: step 2 of InnerModuleEvaluation
+    // and steps 9 and 10.
+    JSPromise* capability = topLevelCapability();
+    if (JSValue error = evaluationError())
+        capability->reject(vm, error);
+    else if (status() == Status::Evaluated)
+        capability->fulfill(vm, jsUndefined());
+    // Else the record is EVALUATING-ASYNC: AsyncModuleExecutionFulfilled or AsyncModuleExecutionRejected settles it.
+}
+
+NEVER_INLINE void CyclicModuleRecord::rejectEvaluationWaiter(VM& vm)
+{
+    JSPromise* waiter = vm.m_moduleEvaluationWaiters.take(this);
+    if (waiter && adoptEvaluationWaiter(vm, waiter))
+        settleAdoptedEvaluationWaiter(vm);
+}
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
 JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise)
@@ -583,7 +657,12 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: is this needed?
     // 2. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    // Or EVALUATING (see evaluationWaiter()).
+    ASSERT(m_status == Status::Linked || m_status == Status::Evaluating || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#else
     ASSERT(m_status == Status::Linked || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#endif
     CyclicModuleRecord* module = this;
     // 3. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
     if (m_status == Status::EvaluatingAsync || m_status == Status::Evaluated) {
@@ -603,6 +682,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
         // 4.a. Return module.[[TopLevelCapability]].[[Promise]].
         RELEASE_AND_RETURN(scope, promise);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // The record is on the stack of another Evaluate(). (Step 4 has returned for the record of that Evaluate().)
+    if (m_status == Status::Evaluating) [[unlikely]]
+        RELEASE_AND_RETURN(scope, evaluationWaiter(globalObject));
+#endif
     // 5. Let stack be a new empty List.
     Vector<AbstractModuleRecord*, 8> stack;
     // 6. Let capability be ! NewPromiseCapability(%Promise%).
@@ -627,6 +711,10 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             cyclic->setStatus(Status::Evaluated);
             // 9.a.iii. Set m.[[EvaluationError]] to result.
             cyclic->setEvaluationError(vm, exception->value());
+#if USE(BUN_JSC_ADDITIONS)
+            if (!vm.m_moduleEvaluationWaiters.isEmpty()) [[unlikely]]
+                cyclic->rejectEvaluationWaiter(vm);
+#endif
         }
         // 9.b. Assert: module.[[Status]] is EVALUATED.
         ASSERT(module->status() == Status::Evaluated);
@@ -927,9 +1015,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     if (!isOnStack)
         setStatus(CyclicModuleRecord::Status::Evaluated);
     // 7. If module.[[TopLevelCapability]] is not EMPTY, then
-    // A module on the stack has one only when a job called Evaluate() on it. Its cycle has not run, so this does not
-    // settle that promise.
-    if (auto* capability = isOnStack ? nullptr : topLevelCapability()) {
+    if (auto* capability = topLevelCapability()) {
         // 7.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
         ASSERT(cycleRoot() == this);
         // 7.b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
@@ -978,8 +1064,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
         if (!mIsOnStack)
             m->setStatus(CyclicModuleRecord::Status::Evaluated);
         // 12.c.iii.3. If m.[[TopLevelCapability]] is not EMPTY, then
-        // Not for a module on the stack, as in step 7.
-        if (auto* capability = mIsOnStack ? nullptr : m->topLevelCapability()) {
+        if (auto* capability = m->topLevelCapability()) {
             // 12.c.iii.3.a. Assert: m.[[CycleRoot]] and m are the same Module Record.
             ASSERT(m->cycleRoot() == m);
             // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).

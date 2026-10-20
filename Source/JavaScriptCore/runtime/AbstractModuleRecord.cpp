@@ -1912,6 +1912,13 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
     ASSERT(module->dfsAncestorIndex() <= moduleIndex);
     // 16. If module.[[DFSAncestorIndex]] = moduleIndex, then
     if (module->dfsAncestorIndex() == moduleIndex) {
+#if USE(BUN_JSC_ADDITIONS)
+        // A job that ran inside this walk can have called Evaluate() for a record of this cycle
+        // (CyclicModuleRecord::evaluationWaiter).
+        bool adoptedEvaluationWaiter = false;
+        if (!vm.m_moduleEvaluationWaiters.isEmpty()) [[unlikely]]
+            adoptedEvaluationWaiter = module->adoptEvaluationWaiters(vm, stack);
+#endif
         // 16.a. Let done be false.
         bool done = false;
         // 16.b. Repeat, while done is false,
@@ -1940,6 +1947,10 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 16.b.viii. Set requiredModule.[[CycleRoot]] to module.
             requiredModule->setCycleRoot(vm, module);
         } while (!done);
+#if USE(BUN_JSC_ADDITIONS)
+        if (adoptedEvaluationWaiter) [[unlikely]]
+            module->settleAdoptedEvaluationWaiter(vm);
+#endif
     }
     // 17. Return index.
     RELEASE_AND_RETURN(scope, index);
