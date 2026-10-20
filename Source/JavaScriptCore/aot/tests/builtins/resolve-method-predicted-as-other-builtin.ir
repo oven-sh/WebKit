@@ -1,0 +1,56 @@
+# The member that the class of a proven receiver holds under the name of a method call outranks a prediction of the callee: read and call are resolved under one test of the receiver
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenReceiver" parameters=[{type=Set}, {type=string}] results=[{type=anything}] {
+  b0(v0: Set, v1: string):
+    v2 = PropGet v0 key="has"
+    v3 = Predict v2 predicted=builtin(Function)
+    v4 = Call v3, v0, v1 calleeKey="has"
+    Return v4
+}
+# CHECK-LABEL: function f0 name="provenReceiver"
+# CHECK: [[isPristine0]]: boolean = IsPristine v0 builtinClass=Set aspects=[Names]
+# CHECK-NEXT: Branch [[isPristine0]] -> taken
+# CHECK-NOT: IsPristine
+# CHECK: = Builtin builtin=SetPrototypeHas
+# CHECK: boolean = CallBuiltin v0, v1 overload=SetPrototypeHas/0
+# CHECK: frequency=Unlikely
+# CHECK: anything = PropGet v0 key="has"
+# CHECK: anything = Call {{*}}, v0, v1 calleeKey="has"
+
+function f1 name="provenPrimitiveReceiver" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="trim"
+    v3 = Predict v2 predicted=builtin(Function)
+    v4 = Call v3, v0 calleeKey="trim"
+    Return v4
+}
+# CHECK-LABEL: function f1 name="provenPrimitiveReceiver"
+# CHECK: = TypeTest {{*}} testedType=builtin(StringPrototypeTrim)
+# CHECK: string = CallBuiltin v0 overload=StringPrototypeTrim/0
+
+function f2 name="predictedReceiver" parameters=[{type=anything predicted=Set}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ Set, v1: string):
+    v2 = PropGet v0 key="has"
+    v3 = Predict v2 predicted=builtin(MapPrototypeHas)
+    v4 = Call v3, v0, v1 calleeKey="has"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="predictedReceiver"
+# CHECK-NOT: CallBuiltin
+# CHECK: anything = Call {{*}}, v0, v1 calleeKey="has"
+# CHECK-NOT: CallBuiltin
+
+function f3 name="calleeNotReadFromReceiver" parameters=[{type=Set}, {type=string}, {type=anything predicted=builtin(ObjectPrototypeHasOwnProperty)}] results=[{type=anything}] {
+  b0(v0: Set, v1: string, v2: anything ~ builtin(ObjectPrototypeHasOwnProperty)):
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="calleeNotReadFromReceiver"
+# CHECK: = TypeTest v2 testedType=builtin(ObjectPrototypeHasOwnProperty)
+# CHECK-NOT: SetPrototypeHas
+# CHECK: boolean = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/
+# CHECK: frequency=Unlikely
+# CHECK-NEXT: anything = Call v2, v0, v1

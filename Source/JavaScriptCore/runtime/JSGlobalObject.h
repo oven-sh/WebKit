@@ -223,18 +223,27 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+#if ENABLE(AOT)
 namespace AOT {
 struct Instance;
-JS_EXPORT_PRIVATE void microtaskQueueingDidChange(VM&);
 }
+#endif
 
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+#if ENABLE(AOT)
+public:
+    static constexpr unsigned numberOfAOTClosureStructures = 5;
+    static constexpr unsigned numberOfAOTSlimClosureStructures = 2;
+private:
     AOT::Instance* m_aotInstance { nullptr };
-    WriteBarrierStructureID m_aotClosureStructures[5];
+    WriteBarrierStructureID m_aotClosureStructures[numberOfAOTClosureStructures];
+    WriteBarrierStructureID m_aotSlimClosureStructures[numberOfAOTSlimClosureStructures];
+    JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
+#endif
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -249,7 +258,8 @@ private:
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
 #endif
 #if ENABLE(AOT)
-        AOT::microtaskQueueingDidChange(*m_vm);
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
 #endif
     }
 
@@ -702,13 +712,10 @@ public:
     bool m_webAssemblyEnabled { true };
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
-    bool m_isNumberingIntrinsics { false };
-    bool m_hasImmutableIntrinsics { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
-    Vector<EncodedJSValue> m_immutableIntrinsics;
     WeakPtr<ConsoleClient> m_consoleClient;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
@@ -1158,14 +1165,16 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
-    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
-    static constexpr ptrdiff_t offsetOfCanFastQueueMicrotask() { return OBJECT_OFFSETOF(JSGlobalObject, m_canFastQueueMicrotask); }
     bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask; }
-    static constexpr ptrdiff_t offsetOfMicrotaskQueue() { return OBJECT_OFFSETOF(JSGlobalObject, m_microtaskQueue); }
+#if ENABLE(AOT)
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
-    Structure* aotClosureStructure(unsigned which) const { return m_aotClosureStructures[which].get(); }
-    void setAOTClosureStructure(VM& vm, unsigned which, Structure* structure) { m_aotClosureStructures[which].set(vm, this, structure); }
+    Structure* aotClosureStructure(unsigned index) const { return m_aotClosureStructures[index].get(); }
+    void setAOTClosureStructure(VM& vm, unsigned index, Structure* structure) { m_aotClosureStructures[index].set(vm, this, structure); }
+    Structure* aotSlimClosureStructure(unsigned index) const { return m_aotSlimClosureStructures[index].get(); }
+    void setAOTSlimClosureStructure(VM& vm, unsigned index, Structure* structure) { m_aotSlimClosureStructures[index].set(vm, this, structure); }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+#endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
@@ -1262,8 +1271,6 @@ public:
     inline JSCell* linkTimeConstant(LinkTimeConstant) const;
     template<typename Type> inline Type linkTimeConstantConcurrently(LinkTimeConstant) const;
 
-    JS_EXPORT_PRIVATE void setAuditFunction(VM&, JSObject*);
-
     inline JSObject* asyncGeneratorPrototypeNextFunction() const;
     inline JSObject* asyncIteratorPrototypeSymbolAsyncIteratorFunction() const;
 
@@ -1281,6 +1288,7 @@ public:
     }
         
     void haveABadTime(VM&);
+    void haveABadTime(VM&, JSObject* interceptor);
 
     void notifyArrayBufferDetaching();
 
@@ -1291,14 +1299,6 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
-    bool hasImmutableIntrinsics() const { return m_hasImmutableIntrinsics; }
-    bool locksOrAuditsIntrinsics() const { return m_hasImmutableIntrinsics || vm().auditsImmutableIntrinsics(); }
-    JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
-    enum class IntrinsicKind : bool { Prototype, Other };
-    JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind, JSObject::LockedObjectHistory = JSObject::LockedObjectHistory::MayBeCached);
-    JS_EXPORT_PRIVATE void lockHostClassPrototype(JSObject*);
-    void makeIntrinsicValueImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
-    std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const

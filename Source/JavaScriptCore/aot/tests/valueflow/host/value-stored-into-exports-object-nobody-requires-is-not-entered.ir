@@ -1,0 +1,16 @@
+# The exports object belongs to one module, and native code holds it only if somebody hands it over
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f1
+    PropSet v1, v6 key="handler" mode=Strict
+    Return
+}
+function f1 name="handler" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

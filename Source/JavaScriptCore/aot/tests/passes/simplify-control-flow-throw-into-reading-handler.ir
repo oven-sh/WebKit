@@ -1,0 +1,90 @@
+# A throw stays a throw when its handler reads the thrown value or the exception
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="handlerReadsValue" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    Throw v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: function f0 name="handlerReadsValue"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v1
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+
+function f1 name="handlerReadsException" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    Throw v1
+  b1() role=CatchHandler:
+    v2 = CatchException
+    v3 = Call v0, -, v0
+    Rethrow v2
+}
+# CHECK-LABEL: function f1 name="handlerReadsException"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v1
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: = CatchException
+
+function f2 name="handlerReadsBoth" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    Throw v1
+  b1() role=CatchHandler:
+    v2 = CatchException
+    v3 = CatchValue
+    v4 = Call v0, -, v3
+    Rethrow v2
+}
+# CHECK-LABEL: function f2 name="handlerReadsBoth"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v1
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: = CatchValue
+
+function f3 name="caughtValueHasNoUse" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    Throw v2
+  b1() role=CatchHandler:
+    v3 = CatchValue
+    Return v1
+}
+# CHECK-LABEL: function f3 name="caughtValueHasNoUse"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Return v1
+
+function f4 name="rethrowIntoReadingHandler" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    Return v1
+  b1() role=CatchHandler handler=b2():
+    v2 = CatchException
+    v3 = Call v0, -, v0
+    Rethrow v2
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f4 name="rethrowIntoReadingHandler"
+# CHECK: b1() role=CatchHandler handler=b2():
+# CHECK-NEXT: = CatchException
+# CHECK-NEXT: = Call v0, -, v0
+# CHECK-NEXT: Rethrow v2
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: = CatchValue

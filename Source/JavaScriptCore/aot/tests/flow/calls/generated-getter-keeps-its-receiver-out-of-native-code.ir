@@ -1,0 +1,32 @@
+# A getter that the class generator declares is not passed its wrapper, so it can neither keep the object nor answer it: the request whose `method`, `url` and `headers` a handler reads does not reach native code, and what the getters answer is not the request
+# RUN: flow-solve sinks
+# RUN(NODES): flow-solve nodes
+# CHECK-NOT: Request@
+# NODES: Variable(g0) = {string}
+# NODES-NOT: Variable(g2) = {{*}}Request@
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="method" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="url" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="headers" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=BunServe
+    v3 = Builtin builtin=Bun
+    v4 = Call v2, v3, v1
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="method"
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v0 key="url"
+    PutModuleVariable v4 variable=g1
+    v6 = PropGet v0 key="headers"
+    PutModuleVariable v6 variable=g2
+    Return
+}

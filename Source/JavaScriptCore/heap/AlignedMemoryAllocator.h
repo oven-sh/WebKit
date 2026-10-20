@@ -41,7 +41,6 @@ public:
     virtual ~AlignedMemoryAllocator();
     
     virtual void* tryAllocateAlignedMemory(size_t alignment, size_t size) = 0;
-    virtual void* tryAllocateUntouchedAlignedMemory(size_t alignment, size_t size) { return tryAllocateAlignedMemory(alignment, size); }
     virtual void freeAlignedMemory(void*) = 0;
     
     // This can't be pure virtual as it breaks our Dumpable concept.

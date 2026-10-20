@@ -1,0 +1,43 @@
+# Values that hold the same in every solution share a local: a copy of one value, a chain of copies, a block parameter that every edge fills from one value, also around a loop. A value keeps a local of its own where two values meet, where a constant comes in, where a statement writes it, and a result or a parameter is never given up
+# RUN: flow-summary f0
+# CHECK: summary f0: parameters=3 results=1 locals=12 values=13
+# CHECK-NEXT: l0 = v0, v3, v4
+# CHECK-NEXT: l1 = v1
+# CHECK: seed [[constant]] Integers [1, 1]
+# CHECK-NEXT: copy l0 -> l3
+# CHECK-NEXT: copy l0 -> [[met]]
+# CHECK-NEXT: copy l1 -> [[met]]
+# CHECK-NEXT: copy [[read]] -> [[readOrConstant]]
+# CHECK-NEXT: copy [[constant]] -> [[readOrConstant]]
+# CHECK-NEXT: PropertyAccess#0 kind=Load use=Value origin=v7 receiver=[[met]] key="a" value=[[read]] thrown=l4
+# CHECK-NEXT: PropertyAccess#1 kind=Load use=Value origin=v10 receiver=l0 key="b"
+# CHECK-NEXT: PropertyAccess#2 kind=Load use=Value origin=v11 receiver=[[read]] key="c"
+# CHECK-NEXT: PropertyAccess#3 kind=Load use=Value origin=v12 receiver=[[readOrConstant]] key="d"
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="copies" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = ClaimDeclared v0 declared={type=anything}
+    v4 = Predict v3 predicted=object
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    Branch v2 -> taken b1(v5), notTaken b2()
+  b2():
+    Branch v2 -> taken b4(v5), notTaken b3()
+  b3():
+    Jump -> next b4(v1)
+  b4(v7):
+    v8 = PropGet v7 key="a"
+    v9 = ClaimDeclared v8 declared={type=anything}
+    Branch v2 -> taken b6(v9), notTaken b5()
+  b5():
+    v10 = Integer integer=1
+    Jump -> next b6(v10)
+  b6(v11):
+    v12 = PropGet v5 key="b"
+    v13 = PropGet v9 key="c"
+    v14 = PropGet v11 key="d"
+    Return v0
+}

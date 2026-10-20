@@ -1,0 +1,19 @@
+# Nothing is evaluated on the way to a pattern: a concatenation of two literals gives an empty list that is not complete, and the literal of the construct beside it is listed
+# RUN: flow
+# CHECK: sink [[concatenated]] operand 0 []
+# CHECK-NOT: complete
+# CHECK: sink [[concatenated]] operand 1 [] mayBeUndefined complete
+# CHECK-NEXT: sink [[literal]] operand 0 ["a"] complete
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = Add v0, v1
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v2
+    v5 = Construct v3, -, v0
+    Return
+}

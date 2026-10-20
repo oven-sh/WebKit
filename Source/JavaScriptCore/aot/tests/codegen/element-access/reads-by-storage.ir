@@ -1,0 +1,352 @@
+# A read of an array element under a proven storage kind has code for each kind, each representation of the result and of the position, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-9: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="int32StorageOfInt32" parameters=[{type=Array<i32, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="int32StorageOfInt32"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|i32 @OptionalInt64 = GetArrayElement
+# R-NOT: = GetArrayElement
+function f1 name="int32StorageOfAnything" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Int32 level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Int32 level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+# R-LABEL: function f1 name="int32StorageOfAnything"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|i32 @OptionalInt64 = GetArrayElement
+# R-NOT: = GetArrayElement
+function f2 name="doubleStorageOfNumbers" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+# R-LABEL: function f2 name="doubleStorageOfNumbers"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|number @OptionalDouble = GetArrayElement
+# R-NOT: = GetArrayElement
+function f3 name="doubleStorageOfAnything" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+# R-LABEL: function f3 name="doubleStorageOfAnything"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|number @OptionalDouble = GetArrayElement
+# R-NOT: = GetArrayElement
+function f4 name="doubleStorageOfIntegers" parameters=[{type=Array<int, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<int, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Double level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Double level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Double level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+# R-LABEL: function f4 name="doubleStorageOfIntegers"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|int @OptionalInt64 = GetArrayElement
+# R-NOT: = GetArrayElement
+function f5 name="contiguousStorageOfAnything" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b1 Fast
+# S: f5 b3 Compact
+# R-LABEL: function f5 name="contiguousStorageOfAnything"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: anything @JSValue = GetArrayElement
+# R-NOT: = GetArrayElement
+function f6 name="contiguousStorageOfStrings" parameters=[{type=Array<string, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b1 Fast
+# S: f6 b3 Compact
+# R-LABEL: function f6 name="contiguousStorageOfStrings"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|string @JSValue = GetArrayElement
+# R-NOT: = GetArrayElement
+function f7 name="contiguousStorageOfNumbers" parameters=[{type=Array<number, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
+    v6 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v7 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v8 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v9 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v10 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v11 = NewArray v6, v7, v8, v9, v10 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v14 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v15 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v16 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v17 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v18 = NewArray v13, v14, v15, v16, v17 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    v20 = GetArrayElement v0, v2 arrayStorage=Contiguous level=Proven
+    v21 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven
+    v22 = GetArrayElement v0, v4 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v23 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v24 = NewArray v19, v20, v21, v22, v23 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b1 Fast
+# S: f7 b3 Compact
+# R-LABEL: function f7 name="contiguousStorageOfNumbers"
+# R: v1: i32 @Int32, v2: int @Int64, v3: number @Double, v4: whole @Double
+# R-COUNT-15: undefined|number @JSValue = GetArrayElement
+# R-NOT: = GetArrayElement
+function f8 name="underGuards" parameters=[{type=Array}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: i32, v2: boolean):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b1(| 0), notTaken b9()
+  b1(v4):
+    v5 = HasArrayStorage v0 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b9()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v9 = NewArray v8 contents=anything
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v12 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v13 = NewArray v12 contents=anything
+    Branch v2 -> taken b4(), notTaken b5()
+  b5():
+    Branch v2 -> taken b3(), notTaken b6()
+  b6():
+    Branch v2 -> taken b7(), notTaken b8()
+  b7() frequency=Rare:
+    v14 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v15 = NewArray v14 contents=anything
+    Jump -> next b8()
+  b8():
+    Return
+  b9() frequency=Rare:
+    Return
+}
+# S: f8 b2 Balanced
+# S: f8 b4 Fast
+# S: f8 b7 Compact
+# R-LABEL: function f8 name="underGuards"
+# R-COUNT-3: undefined|number @OptionalDouble = GetArrayElement v0, v1, v7

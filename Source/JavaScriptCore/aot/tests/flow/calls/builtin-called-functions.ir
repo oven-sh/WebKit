@@ -1,0 +1,49 @@
+# Reading a built-in as a value enters the library functions its entry says it calls, and testing it enters none
+# RUN: flow-links calls uses
+# RUN(INSTANCES): flow-solve instances
+# RUN(OTHERS): flow-links calls
+# RUN(UNENTERED): flow-solve instances
+# CHECK: host - -> [[scan]] f1 Host Repeatedly cycle
+# CHECK: host - -> [[scanSync]] f2 Host Repeatedly cycle
+# OTHERS-NOT: f3
+# OTHERS-NOT: f4
+# CHECK: use BunGlob [Read] f0:v2
+# CHECK: use BunPeek [Tested]
+# INSTANCES: f1 Generic
+# INSTANCES: f2 Generic
+# UNENTERED-NOT: f3
+# UNENTERED-NOT: f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="Glob"
+    PutModuleVariable v2 variable=g0
+    v4 = PropGet v1 key="peek" [isForTypeOf]
+    v5 = TypeOf v4
+    Return
+}
+function f1 name="scan" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="scanSync" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="peek" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="peekStatus" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+runtimefunction id=65557 function=f1
+runtimefunction id=65558 function=f2
+runtimefunction id=65569 function=f3
+runtimefunction id=65570 function=f4

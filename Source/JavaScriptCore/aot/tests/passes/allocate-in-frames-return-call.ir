@@ -1,0 +1,176 @@
+# The frame is gone when the callee of a tail call runs: a cell that is passed to one is on the heap
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="passedInTailCall" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="passedInCall" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect function=f1
+    v3 = CallDirect function=f2
+    v4 = CallDirect function=f3
+    v5 = CallDirect function=f4
+    v6 = CallDirect v1 function=f5
+    v7 = CallDirect v1 function=f6
+    v8 = ToBoolean v1
+    v9 = NewClosure function=f16
+    v10 = CallDirect v9, v8 function=f15
+    Return
+}
+
+function f1 name="closureInTailCall" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = CallDirect v0 function=f7
+    ReturnCall v1
+}
+# CHECK-LABEL: function f1 name="closureInTailCall"
+# CHECK: = NewClosure function=f8
+# CHECK-NOT: storage=
+# CHECK: ReturnCall {{*}}requirement=Allowed
+# PLAN-LABEL: function f1
+# PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
+
+function f2 name="closureInCall" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f9
+    v1 = CallDirect v0 function=f7
+    Return v1
+}
+# CHECK-LABEL: function f2 name="closureInCall"
+# CHECK: = NewClosure function=f9 {{*}}storage=Frame
+# PLAN-LABEL: function f2
+# PLAN-NEXT: v0: Frame
+
+function f3 name="closureInTailCallByValue" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f10
+    v1 = Call v0
+    ReturnCall v1
+}
+# CHECK-LABEL: function f3 name="closureInTailCallByValue"
+# CHECK: = NewClosure function=f10
+# CHECK-NOT: storage=
+# CHECK: ReturnCall
+# PLAN-LABEL: function f3
+# PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
+
+function f4 name="closureDeadAtTailCall" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f11
+    v1 = CallDirect v0 function=f7
+    v2 = NewClosure function=f12
+    v3 = CallDirect v2 function=f7
+    ReturnCall v3
+}
+# CHECK-LABEL: function f4 name="closureDeadAtTailCall"
+# CHECK: = NewClosure function=f11 {{*}}storage=Frame
+# CHECK: = NewClosure function=f12
+# CHECK-NOT: storage=
+# CHECK: ReturnCall
+# PLAN-LABEL: function f4
+# PLAN-NEXT: v0: Frame
+# PLAN-NEXT: v2: Heap LiveAtReturnCall by v3(0)
+
+function f5 name="environmentInTailCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f13
+    ReturnCall v2
+}
+# CHECK-LABEL: function f5 name="environmentInTailCall"
+# CHECK: = NewObject {{*}}layout=L0
+# CHECK-NOT: storage=
+# CHECK: ReturnCall
+# PLAN-LABEL: function f5
+# PLAN-NEXT: v1: Heap LiveAtReturnCall by v2(0)
+
+function f6 name="environmentInCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1 function=f14
+    Return v2
+}
+# CHECK-LABEL: function f6 name="environmentInCall"
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# PLAN-LABEL: function f6
+# PLAN-NEXT: v1: Frame
+
+function f7 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f7 name="callsParameter"
+# PLAN-LABEL: function f7
+
+function f8 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f10 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f12 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="readsScope" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = ToBoolean v1
+    Return v2
+}
+function f14 name="readsScope" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    v2 = ToBoolean v1
+    Return v2
+}
+
+function f15 name="closureInRequiredTailCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewClosure function=f17
+    v3 = CallDirect v2, v1 function=f15
+    ReturnCall v3
+  b2():
+    v4 = Call v0
+    Return v4
+}
+# CHECK-LABEL: function f15 name="closureInRequiredTailCall"
+# CHECK: = NewClosure function=f17
+# CHECK-NOT: storage=
+# CHECK: ReturnCall
+# CHECK-NOT: requirement=Allowed
+# CHECK: b2():
+# PLAN-LABEL: function f15
+# PLAN-NEXT: v2: Heap LiveAtReturnCall by v3(0)
+
+function f16 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK-LABEL: function f16 name="callback"
+# PLAN-LABEL: function f16
+function f17 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

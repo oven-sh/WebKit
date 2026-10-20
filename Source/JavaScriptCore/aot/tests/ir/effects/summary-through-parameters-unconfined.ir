@@ -1,0 +1,56 @@
+# A write to the object of an entry parameter is in the summary of that parameter also when the entry that writes may run other code, names no written operand, or passes the object where the callee has no parameter
+# FORM: Prepared
+# RUN: effects summaries f0
+# CHECK: f0 return: {{*}} p0: [{{*}}] reads({{*}}) writes(EnvironmentFields/1, ObjectFields, ShapeWords, {{*}}) p1: [Inspects]
+# CHECK-NEXT: f1 return: {{*}} p0: [{{*}}] reads({{*}}) writes(EnvironmentFields/1, ObjectFields, ShapeWords, {{*}}) p1: [Inspects]
+# CHECK-NEXT: f2 return: {{*}} p0: [Inspects, DefinesName] reads({{*}}) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties) p1:
+# CHECK-NEXT: f3 return: writes(ObjectFields/1) throw: none p0: [{{*}}] writes(ObjectFields/1) p1: [Inspects]
+# CHECK-NOT: f4 return: {{*}}writes
+# CHECK: f5 return: {{*}} p0: [] p1: [{{*}}] reads({{*}}) writes({{*}}) p2: [Inspects]
+# CHECK-NEXT: f6 return: {{*}} p0: [] p1: [{{*}}] reads({{*}}) writes({{*}}) p2: [Inspects]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L1 kind=Instance name="Gauge" constructor=f7 fields=[{key="held" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="level" kind=Setter function=f8 mutability=Fixed}]}
+layout L2 kind=Environment fields=[{key="count" declared={type=number}}]
+function f0 name="storesByNameIntoAnything" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: anything, v1: number):
+    PropSet v0, v1 key="a"
+    Return
+}
+function f1 name="callsStoreByName" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = CallDirect v0, v1 function=f0
+    Return
+}
+function f2 name="definesGetter" parameters=[{type=L0}, {type=function}] results=[{type=undefined}] {
+  b0(v0: L0, v1: function):
+    DefineGetter v0, v1 key="a"
+    Return
+}
+function f3 name="storesThroughSetter" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="level"
+    Return
+}
+function f4 name="readsOnly" parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="a" receivers=[L0] level=Proven
+    Return v1
+}
+function f5 name="runsOtherCodeOnAnotherOperand" parameters=[{type=L0}, {type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything, v2: number):
+    PropSet v1, v2 key="a"
+    Return
+}
+function f6 name="keepsEnvironment" captures=[{type=env L2}] parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L2, v1: anything, v2: number):
+    PropSet v1, v2 key="a"
+    Return
+}
+function f7 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f8 name="level" kind=Setter flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: L1, v1: number):
+    PutSlot v0, -, v1 key="held" receivers=[L1] level=Proven
+    Return
+}

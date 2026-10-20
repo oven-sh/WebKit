@@ -28,15 +28,17 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBasicBlock.h"
+#include "AirCode.h"
+#include "B3ValueRep.h"
 #include "MacroAssembler.h"
+#include <wtf/BitVector.h>
 #include <wtf/Box.h>
+#include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
 #include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace B3 { namespace Air {
-
-class Code;
 
 struct GenerationContext {
     WTF_MAKE_NONCOPYABLE(GenerationContext);
@@ -59,16 +61,23 @@ public:
             });
     }
 
-    Vector<std::tuple<Origin, Ref<LatePath>>> latePaths;
-    struct NearbyLatePath {
-        unsigned index;
-        uint32_t recordedOffset;
+    struct SharedLatePath {
+        Vector<ValueRep> reps;
+        bool frameIsSetUp;
+        Box<MacroAssembler::JumpList> jumps;
     };
-    Vector<NearbyLatePath, 8> nearbyLatePaths;
+
+    Vector<std::tuple<Origin, Ref<LatePath>>> latePaths;
+    BitVector latePathsWithoutFrame;
+    UncheckedKeyHashMap<const void*, Vector<SharedLatePath, 1>> sharedLatePathsByGenerator;
     IndexMap<BasicBlock*, Box<MacroAssembler::Label>> blockLabels;
     BasicBlock* currentBlock { nullptr };
     unsigned indexInBlock { UINT_MAX };
     Code* code { nullptr };
+    bool frameIsSetUp { true };
+    Vector<FrameRange> frameRanges;
+
+    JS_EXPORT_PRIVATE void setFrameIsSetUp(CCallHelpers&, bool);
 };
 
 } } } // namespace JSC::B3::Air

@@ -1,0 +1,94 @@
+# The constructor of a built-in class makes the instances of a class that extends it, at any depth, so they never have the shape of the layout: no type names it, nothing is allocated with it
+# RUN: flow
+# RUN(DEEPER): flow
+# RUN(LIST): flow
+# RUN(COMPILED): flow
+# RUN(BODIES): flow-apply
+# OPTIONS: disable=flow:CallVersions
+# CHECK: class {{*}} layout=L0 {{*}}cause=BuiltinBase witness={function=f1 value=v4}
+# DEEPER: class {{*}} layout=L1 {{*}}cause=BuiltinBase witness={function=f1 value=v4}
+# LIST: class {{*}} layout=L2 {{*}}cause=BuiltinBase witness={function=f3 value=v3}
+# CHECK: layout L0 flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Error
+# CHECK-NOT: allocationClasses=
+# CHECK: layout L1 flow={allocation=NeverAllocated baseState=Layout base=L0
+# CHECK-NOT: allocationClasses=
+# CHECK: layout L2 flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Array
+# CHECK-NOT: allocationClasses=
+# CHECK: layout L3
+# COMPILED: class [[plain]] layout=L3 impossibleMutations=[{{*}}LoseShape]
+# COMPILED: layout L3 flow={baseState=None members=[L3] allocationClasses=[
+# BODIES-NOT: keepsShape
+# BODIES-LABEL: function f1 name="Failure"
+# BODIES: v4: object{{*}}= SuperConstruct
+# BODIES-LABEL: function f3 name="List"
+# BODIES: v3: object{{*}}= SuperConstruct
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Failure" constructor=f1 fields=[{key="code" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Deeper" predictedBase=L0 constructor=f2 fields=[{key="level" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="List" constructor=f3 fields=[{key="tag" declared={type=anything}}] flags=[HasHeritage]
+layout L3 kind=Instance name="Plain" constructor=f4 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Error" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = ResolveHeritage v1
+    v4 = NewClass v2, v1, v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = NewClosure function=f2
+    v7 = ResolveHeritage v5
+    v8 = NewClass v6, v5, v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = PropGet v0 key="Array" [isFreeName]
+    v11 = NewClosure function=f3
+    v12 = ResolveHeritage v10
+    v13 = NewClass v11, v10, v12 layout=L2
+    v14 = FinishClass v13 layout=L2
+    v15 = NewClosure function=f4
+    v16 = NewClass v15 layout=L3
+    v17 = FinishClass v16 layout=L3
+    v18 = String string="boom"
+    v19 = Construct v5, -, v18
+    v20 = Construct v9, -, v18
+    v21 = Construct v14
+    v22 = Construct v17
+    v23 = PropGet v19 key="code"
+    v24 = PropGet v20 key="level"
+    v25 = PropGet v21 key="tag"
+    v26 = PropGet v22 key="x"
+    Return
+}
+function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    v5 = Integer integer=7
+    PropSet v4, v5 key="code" mode=Strict
+    Return v4
+}
+function f2 name="Deeper" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    v5 = Integer integer=2
+    PropSet v4, v5 key="level" mode=Strict
+    Return v4
+}
+function f3 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    v4 = String string="t"
+    PropSet v3, v4 key="tag" mode=Strict
+    Return v3
+}
+function f4 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}

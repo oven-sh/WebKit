@@ -1,0 +1,140 @@
+# An access inside the length has code in each storage kind: the read compares with no length, tests for a hole only where the array may have one, and the store has no path that grows, converts or copies the storage. The test of the position and the test for storage of the array's own have code as conditions of branches
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: generate-code calls
+# CHECK-COUNT-9: : size=
+# CHECK-NOT: no code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="denseReadInInt32" parameters=[{type=Array<i32, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f1 name="mayHaveHolesReadInInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f2 name="storeInInt32" parameters=[{type=Array<i32, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: i32):
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 mode=Strict level=Predicted [isInBounds]
+    Return
+  b3():
+    Return
+}
+function f3 name="denseReadInDouble" parameters=[{type=Array<number, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f4 name="mayHaveHolesReadInDouble" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Double
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Double level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f5 name="storeInDouble" parameters=[{type=Array<number, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=fractional}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: fractional):
+    v3 = HasArrayStorage v0 arrayStorage=Double [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Double mode=Strict level=Predicted [isInBounds]
+    Return
+  b3():
+    Return
+}
+function f6 name="denseReadInContiguous" parameters=[{type=Array<string, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Contiguous level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f7 name="mayHaveHolesReadInContiguous" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 1000]):
+    v2 = HasArrayStorage v0 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = IsInBounds v0, v1
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Contiguous level=Predicted [isInBounds]
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+}
+function f8 name="storeInContiguous" parameters=[{type=Array<string, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=string}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: string):
+    v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Contiguous mode=Strict level=Predicted [isInBounds]
+    Return
+  b3():
+    Return
+}

@@ -1,0 +1,35 @@
+# A compiled test tests a class by its ClassInfo, so an instance leaves the notTaken edge and another object stays on it
+# RUN: flow
+# CHECK: variable g1 type=null written=anything
+# RUN(INSTANCE): flow
+# INSTANCE-NOT: variable g0 {{*}}WeakRef
+# INSTANCE-NOT: variable g0 {{*}}cause=
+
+layout L0
+layout L1 fields=[{key="a" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="instanceOutside" declared={type=anything}
+variable g1 name="plainObjectOutside" declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = Builtin builtin=WeakRef
+    v2 = Construct v1, -, v0
+    v3 = TypeTest v2 testedType=WeakRef
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return
+  b2(v4):
+    PutModuleVariable v4 variable=g0
+    v6 = Null
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = TypeTest v7 testedType=WeakRef
+    Branch v8 -> taken b3(), notTaken b4(| 0)
+  b3():
+    Return
+  b4(v9):
+    v10 = PropGet v9 key="a"
+    PutModuleVariable v10 variable=g1
+    Return
+}

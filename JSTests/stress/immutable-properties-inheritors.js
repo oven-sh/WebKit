@@ -82,8 +82,8 @@ function shouldThrow(func, errorType) {
     shouldBe(Object.prototype.toString.call(1), "[object Number]");
 }
 
-// An accessor on such a prototype: the setter runs, for an ordinary inheritor and for a receiver whose own properties are
-// immutable alike: an assignment that resolves to an accessor is left to the accessor. What the setter puts on such a receiver fails.
+// An accessor on such a prototype: the setter runs for an ordinary inheritor. Every put on a receiver whose own properties are
+// immutable fails, also one that finds an accessor: the setter is not called.
 {
     let calls = 0;
     let prototype = $vm.makePropertiesImmutable({ set value(v) { calls++; this.stored = v; }, get value() { return this.stored; } });
@@ -94,11 +94,12 @@ function shouldThrow(func, errorType) {
     shouldBe(instance.value, 5);
 
     let immutableInstance = $vm.makePropertiesImmutable(Object.create(prototype));
-    (() => { "use strict"; immutableInstance.value = 6; })();
-    shouldBe(calls, 2);
-    shouldBe(Reflect.set(immutableInstance, "value", 6), true);
-    shouldBe(calls, 3);
+    shouldThrow(() => { "use strict"; immutableInstance.value = 6; }, TypeError);
+    immutableInstance.value = 6;
+    shouldBe(Reflect.set(immutableInstance, "value", 6), false);
+    shouldBe(calls, 1);
     shouldBe(Object.hasOwn(immutableInstance, "stored"), false);
+    shouldBe(immutableInstance.value, undefined);
 }
 
 // Reflect.set() with a separate receiver: what matters is the receiver, not the object the lookup starts from.

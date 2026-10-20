@@ -1,0 +1,29 @@
+# A constant locale is reported in its canonical form, two spellings of one tag are one record with the lower witness, and a text that is no well-formed tag counts as a locale nobody knows
+# RUN: flow-report
+# CHECK-NOT: locale-used
+# CHECK: locale-used Unknown {{*}}witness f0:v9
+# CHECK-NEXT: locale-used Constant "de" {{*}}witness f0:v7
+# CHECK-NEXT: locale-used Constant "en-US" {{*}}witness f0:v3
+# CHECK-NOT: locale-used
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = Integer integer=1234
+    v1 = PropGet v0 key="toLocaleString" @1
+    v2 = String string="en-us"
+    v3 = Call v1, v0, v2 @2
+    v4 = String string="EN-US"
+    v5 = Call v1, v0, v4 @3
+    v6 = String string="de"
+    v7 = Call v1, v0, v6 @4
+    v8 = String string="en_US"
+    v9 = Call v1, v0, v8 @5
+    Jump -> next b1()
+  b1():
+    Return
+  b2() role=CatchHandler:
+    v10 = CatchValue
+    Return
+}

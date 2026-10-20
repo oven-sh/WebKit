@@ -1,0 +1,26 @@
+# A class that flow has proven to have no instance has no shape, and its prototype object still selects: `class Only { x = 1 } class NeverConstructed extends Only {}`,
+# Reflect.construct(Only, [], NeverConstructed). The run time answers with an ordinary object, so the allocation is no guard for the shape it names and may list no field.
+# The same holds for a class whose chain ends in a built-in class, which never has a shape.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Only" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="NeverConstructed" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0}
+function f0 name="Only" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="NeverConstructed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="badNewTargetUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+function f3 name="goodKeepsShape" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 [keepsShape]
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}

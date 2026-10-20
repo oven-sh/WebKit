@@ -1,0 +1,30 @@
+# A kept lookup is walked again once a holder that it passed gains the name: the read that came first and the read that comes after the store find the value, and a receiver with another chain does not
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-solve nodes fixpoint
+# CHECK: f0, v7) = {undefined|1}
+# CHECK: f0, v9) = {undefined|1}
+# CHECK: f0, v12) = {undefined}
+# CHECK: nothing changes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Parent" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Child" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Other" fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    SetLiteralPrototype v3, v2
+    v5 = FinishObject v3
+    v6 = Integer integer=2
+    v7 = PropGet v5 key="late"
+    PropSet v2, v0 key="late" mode=Strict
+    v9 = PropGet v5 key="late"
+    v10 = NewObject -, v6 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    v12 = PropGet v11 key="late"
+    Return
+}

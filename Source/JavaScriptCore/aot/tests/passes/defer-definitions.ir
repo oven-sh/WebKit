@@ -1,0 +1,77 @@
+# A variable that is stored once, with a closure that captures nothing, and that no read sees before the store is born as that function: the module body neither makes the closure nor stores it
+# FORM: Prepared
+# RUN: pass DeferDefinitions
+# STATISTIC: ClosuresDeferredInVariables = 1
+# CHECK: outcome: Changed
+# CHECK: variable g0 name="deferred" module=m0 declared={type=f1} initialization=Function function=f1 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g1 name="mayBeReadEarly" module=m0 declared={type=absent|f2} flow={writers=AllKnown stores=AtMostOnce}
+# CHECK-NEXT: variable g2 name="capturesSomething" module=m0 declared={type=f3} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g3 name="closureIsUsedTwice" module=m0 declared={type=f4} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g4 name="firstOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g5 name="secondOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g6 name="unknownWriters" module=m0 declared={type=anything} flow={stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: function=f1
+# CHECK-NOT: variable=g0
+# CHECK: = NewClosure function=f2
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{declared={type=anything}}]
+variable g0 name="deferred" module=m0 declared={type=f1} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="mayBeReadEarly" module=m0 declared={type=absent|f2} flow={writers=AllKnown stores=AtMostOnce}
+variable g2 name="capturesSomething" module=m0 declared={type=f3} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g3 name="closureIsUsedTwice" module=m0 declared={type=f4} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g4 name="firstOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g5 name="secondOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g6 name="unknownWriters" module=m0 declared={type=anything} flow={stores=AtMostOnce initialization=StoredBeforeEveryRead}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = Undefined
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewClosure v5 function=f3
+    PutModuleVariable v6 variable=g2
+    v8 = NewClosure function=f4
+    PutModuleVariable v8 variable=g3
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="publish" [isFreeName]
+    v12 = Call v11, -, v8
+    v13 = NewClosure function=f5
+    PutModuleVariable v13 variable=g4
+    v15 = NewClosure function=f5
+    PutModuleVariable v15 variable=g5
+    v17 = NewClosure function=f6
+    PutModuleVariable v17 variable=g6
+    v19 = GetModuleVariable variable=g0
+    v20 = Call v11, -, v19
+    Return
+}
+function f1 name="deferred" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="mayBeReadEarly" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="capturesSomething" module=m0 kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    Return
+}
+function f4 name="closureIsUsedTwice" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="twoClosures" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="unknownWriters" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,57 @@
+# A changed prototype is a pair of objects: each object inherits from what it was given and from what it had, not from what another object was given
+# RUN: flow-walk f0 prototypes
+# RUN(OTHER): flow-walk f0 prototypes
+# CHECK: f0@i{{*}} v9 Get {"fromP"}
+# CHECK-NEXT: L0#{{*}}: Value Predicted L2#{{*}} "fromP"
+# CHECK-NEXT: L0#{{*}}: Absent Predicted
+# CHECK-NEXT: f0@i{{*}} v10 Get {"fromQ"}
+# CHECK-NEXT: L0#{{*}}: Absent Predicted
+# CHECK-NEXT: f0@i{{*}} v11 Get {"fromQ"}
+# CHECK-NEXT: L1#{{*}}: Value Predicted L3#{{*}} "fromQ"
+# CHECK-NEXT: L1#{{*}}: Absent Predicted
+# CHECK: L0#{{*}} -> L2#{{*}}, ObjectPrototype
+# CHECK: L1#{{*}} -> L3#{{*}}, ObjectPrototype
+# CHECK: f1 -> Error
+# CHECK: f1.prototype -> ErrorPrototype
+# OTHER-NOT: L0#{{*}} -> {{*}}L3#
+# OTHER-NOT: L1#{{*}} -> {{*}}L2#
+# OTHER-NOT: L0#{{*}} -> {{*}}Error
+# OTHER-NOT: L1#{{*}} -> {{*}}Error
+# OTHER-NOT: L0#{{*}} -> {{*}}unknown
+# OTHER-NOT: L1#{{*}} -> {{*}}unknown
+# OTHER-NOT: f1 -> {{*}}L
+# OTHER-NOT: f1.prototype -> {{*}}L
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="P" fields=[{key="fromP" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Q" fields=[{key="fromQ" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Instance name="E" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = Builtin builtin=ObjectSetPrototypeOf
+    v6 = Call v5, -, v1, v3
+    v7 = Call v5, -, v2, v4
+    v8 = Builtin builtin=Error
+    v9 = PropGet v1 key="fromP"
+    v10 = PropGet v1 key="fromQ"
+    v11 = PropGet v2 key="fromQ"
+    v12 = NewClosure function=f1
+    v13 = ResolveHeritage v8
+    v14 = NewClass v12, v8, v13 layout=L4
+    v15 = FinishClass v14 layout=L4
+    Return
+}
+function f1 name="E" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L4
+    Return v3
+}

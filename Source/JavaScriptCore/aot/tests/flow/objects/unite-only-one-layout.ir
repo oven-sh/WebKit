@@ -1,0 +1,42 @@
+# Sites of two layouts that meet stay apart, and an object of another layout between two sites of one layout unites nothing
+# RUN: flow-sites classes
+# CHECK: class A0 layout=L0 sites=[s0] shared=
+# CHECK: class A1 layout=L1 sites=[s1] shared=
+# CHECK: class A2 layout=L0 sites=[s2] shared=
+# CHECK-NOT: class A3
+# RUN(COUNT): flow-sites classes
+# COUNT-COUNT-3: sites=[s
+# COUNT-NOT: sites=[s
+# RUN(ALL): flow-sites classes
+# ALL-NOT: , s
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Offset" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = ToBoolean v1
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v6)
+  b3(v10):
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6(v6)
+  b5():
+    Jump -> next b6(v8)
+  b6(v11):
+    Return
+}

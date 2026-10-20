@@ -17,7 +17,6 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}"
     "${JAVASCRIPTCORE_DIR}/API"
     "${JAVASCRIPTCORE_DIR}/assembler"
-    "${JAVASCRIPTCORE_DIR}/aot"
     "${JAVASCRIPTCORE_DIR}/b3"
     "${JAVASCRIPTCORE_DIR}/b3/air"
     "${JAVASCRIPTCORE_DIR}/bindings"
@@ -248,6 +247,7 @@ set(LLINT_ASM
     llint/InPlaceInterpreter64.asm
     llint/LowLevelInterpreter.asm
     llint/LowLevelInterpreter64.asm
+    llint/LowLevelInterpreterAOT.asm
 )
 
 set(OFFLINE_ASM
@@ -618,8 +618,10 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/AllowMacroScratchRegisterUsage.h
     assembler/AssemblerBuffer.h
     assembler/AssemblerCommon.h
+    assembler/AssemblerPolicy.h
     assembler/AssemblyComments.h
     assembler/CPU.h
+    assembler/CPUFeatureSet.h
     assembler/CPUInlines.h
     assembler/CodeLocation.h
     assembler/DisallowMacroScratchRegisterUsage.h
@@ -639,10 +641,12 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     assembler/RISCV64Assembler.h
     assembler/RISCV64Registers.h
     assembler/RegisterInfo.h
+    assembler/RelocationKind.h
     assembler/SecureARM64EHashPins.h
     assembler/SecureARM64EHashPinsInlines.h
     assembler/TargetAssemblerDefinitions.h
     assembler/X86Assembler.h
+    assembler/X86JumpShortening.h
     assembler/X86_64Registers.h
 
     b3/air/AirDisassembler.h
@@ -666,12 +670,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/BytecodeDumper.h
     bytecode/BytecodeGeneratorification.h
     bytecode/BytecodeGraph.h
-    aot/AOTAirPasses.h
-    aot/AOTFunction.h
-    aot/AOTProgramData.h
-    aot/AOTTypedBuiltinLists.h
-    aot/AOTTypedBuiltins.h
-
     bytecode/BytecodeIndex.h
     bytecode/BytecodeIntrinsicRegistry.h
     bytecode/BytecodeLivenessAnalysis.h
@@ -847,10 +845,12 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/BlockDirectoryBits.h
     heap/BlockDirectoryInlines.h
     heap/BunV8HeapSnapshotBuilder.h
+    heap/CagedAlignedMemoryAllocator.h
     heap/CellAttributes.h
     heap/CellContainer.h
     heap/CellContainerInlines.h
     heap/CellState.h
+    heap/CellVisitKind.h
     heap/CodeBlockSet.h
     heap/CodeBlockSetInlines.h
     heap/CollectingScope.h
@@ -950,6 +950,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/SpaceTimeMutatorScheduler.h
     heap/StochasticSpaceTimeMutatorScheduler.h
     heap/StopIfNecessaryTimer.h
+    heap/StoredCellLog.h
     heap/Strong.h
     heap/StrongBlock.h
     heap/StrongForward.h
@@ -1112,7 +1113,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     parser/Nodes.h
     parser/Parser.h
     parser/ParserArena.h
-    parser/AuditSites.h
     parser/ParserError.h
     parser/ParserFunctionInfo.h
     parser/ParserModes.h
@@ -1227,6 +1227,12 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/CagedBarrierPtr.h
     runtime/CallData.h
     runtime/CellSize.h
+    runtime/DateTimeWriter.h
+    runtime/ImmutablePropertyNames.h
+    runtime/IntlFormatPattern.h
+    runtime/JSObjectVisitInlines.h
+    runtime/JSStringVisitInlines.h
+    runtime/PropertyRun.h
     runtime/TerminationDeadline.h
     runtime/TopExceptionScope.h
     runtime/ClassInfo.h
@@ -1244,7 +1250,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ConcatKeyAtomStringCache.h
     runtime/ConcatKeyAtomStringCacheInlines.h
     runtime/Concurrency.h
-    runtime/CompilerHooks.h
     runtime/ConcurrentJSLock.h
     runtime/ConfigFile.h
     runtime/ConsoleClient.h
@@ -2024,8 +2029,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     yarr/RegularExpression.h
     yarr/Yarr.h
+    yarr/YarrCharacterSetBits.h
     yarr/YarrErrorCode.h
+    yarr/YarrFirstFollowSets.h
     yarr/YarrFlags.h
+    yarr/YarrFlatProgram.h
     yarr/YarrInterpreter.h
     yarr/YarrJIT.h
     yarr/YarrMatchingContextHolder.h
@@ -2080,6 +2088,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     ffi/BunFFI.h
     ffi/FFICallHost.h
+    ffi/FFICallbackEntryPool.h
     ffi/FFICallbackThunk.h
     ffi/FFICallingConvention.h
     ffi/FFIContext.h
@@ -2088,6 +2097,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ffi/FFIICStub.h
     ffi/FFIInvokeThunk.h
     ffi/FFISignature.h
+    ffi/FFIStubEmitters.h
+    ffi/FFIStubs.h
     ffi/FFIType.h
     ffi/JSFFICallback.h
     ffi/JSFFIFunction.h
@@ -2101,6 +2112,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/ProgramCodeBlock.h
     parser/ModuleAnalyzer.h
 )
+include(aot/AOT.cmake)
 
 if(USE_INSPECTOR_SOCKET_SERVER)
     list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS

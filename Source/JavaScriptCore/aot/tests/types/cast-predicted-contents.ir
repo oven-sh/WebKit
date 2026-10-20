@@ -1,0 +1,17 @@
+# A cast keeps what is predicted of the contents as far as the cast type agrees. Declared contents that the cast replaces leave no prediction; beside a proof they become one
+# RUN: cast
+# CHECK: t0 as t1 = Array<object ~ L0, proven>
+# CHECK-NEXT: t0 as t2 = Array<object, proven>
+# CHECK-NEXT: t0 as t3 = Array<object ~ L0, proven>
+# CHECK: t4 as t1 = Array<L0|L1>
+# CHECK: t4 as t3 = Array<L0>
+# CHECK-NEXT: t4 as t5 = Array<object ~ L0, proven>
+# CHECK: t5 as t4 = Array<object ~ L0, proven>
+# CHECK: t6 as t1 = Array<L0|L1 ~ L0>
+# CHECK: t6 as t3 = Array<object ~ L0>
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Dog"
+layout L1 name="Cat"
+function f0 name="types" parameters=[{type=Array<object ~ L0, proven>}, {type=Array<L0|L1>}, {type=Array<L1>}, {type=Array}, {type=Array<L0>}, {type=Array<object, proven>}, {type=Array<object ~ L0>}] results=[{type=undefined}]

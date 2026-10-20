@@ -1,0 +1,156 @@
+# Forty layouts reach positions typed by their supertype and by anything, and each type lists all forty
+# RUN: flow
+# CHECK: layout L0 flow={allocation=NeverAllocated {{*}}members=[L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40]
+# CHECK: variable g0 type=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 written=undefined|null|L0
+# CHECK: variable g1 type=L1 written=undefined|null|L0
+# CHECK: variable g2 type=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 written=anything
+# CHECK: function f1 parameter 0 type=L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 written=undefined|null|L0
+# CHECK: function f2 parameter 0 type=L1|L2 written=undefined|null|L0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="typedBySupertype" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+variable g1 name="one" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+variable g2 name="typedByAnything" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Shape" fields=[{key="x" declared={type=number}}]
+layout L1 name="Shape1" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L2 name="Shape2" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L3 name="Shape3" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L4 name="Shape4" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L5 name="Shape5" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L6 name="Shape6" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L7 name="Shape7" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L8 name="Shape8" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L9 name="Shape9" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L10 name="Shape10" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L11 name="Shape11" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L12 name="Shape12" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L13 name="Shape13" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L14 name="Shape14" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L15 name="Shape15" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L16 name="Shape16" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L17 name="Shape17" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L18 name="Shape18" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L19 name="Shape19" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L20 name="Shape20" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L21 name="Shape21" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L22 name="Shape22" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L23 name="Shape23" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L24 name="Shape24" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L25 name="Shape25" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L26 name="Shape26" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L27 name="Shape27" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L28 name="Shape28" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L29 name="Shape29" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L30 name="Shape30" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L31 name="Shape31" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L32 name="Shape32" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L33 name="Shape33" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L34 name="Shape34" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L35 name="Shape35" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L36 name="Shape36" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L37 name="Shape37" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L38 name="Shape38" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L39 name="Shape39" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L40 name="Shape40" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v0 layout=L3 fields=[0]
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v0 layout=L4 fields=[0]
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v0 layout=L5 fields=[0]
+    PutModuleVariable v9 variable=g0
+    v11 = NewObject -, v0 layout=L6 fields=[0]
+    PutModuleVariable v11 variable=g0
+    v13 = NewObject -, v0 layout=L7 fields=[0]
+    PutModuleVariable v13 variable=g0
+    v15 = NewObject -, v0 layout=L8 fields=[0]
+    PutModuleVariable v15 variable=g0
+    v17 = NewObject -, v0 layout=L9 fields=[0]
+    PutModuleVariable v17 variable=g0
+    v19 = NewObject -, v0 layout=L10 fields=[0]
+    PutModuleVariable v19 variable=g0
+    v21 = NewObject -, v0 layout=L11 fields=[0]
+    PutModuleVariable v21 variable=g0
+    v23 = NewObject -, v0 layout=L12 fields=[0]
+    PutModuleVariable v23 variable=g0
+    v25 = NewObject -, v0 layout=L13 fields=[0]
+    PutModuleVariable v25 variable=g0
+    v27 = NewObject -, v0 layout=L14 fields=[0]
+    PutModuleVariable v27 variable=g0
+    v29 = NewObject -, v0 layout=L15 fields=[0]
+    PutModuleVariable v29 variable=g0
+    v31 = NewObject -, v0 layout=L16 fields=[0]
+    PutModuleVariable v31 variable=g0
+    v33 = NewObject -, v0 layout=L17 fields=[0]
+    PutModuleVariable v33 variable=g0
+    v35 = NewObject -, v0 layout=L18 fields=[0]
+    PutModuleVariable v35 variable=g0
+    v37 = NewObject -, v0 layout=L19 fields=[0]
+    PutModuleVariable v37 variable=g0
+    v39 = NewObject -, v0 layout=L20 fields=[0]
+    PutModuleVariable v39 variable=g0
+    v41 = NewObject -, v0 layout=L21 fields=[0]
+    PutModuleVariable v41 variable=g0
+    v43 = NewObject -, v0 layout=L22 fields=[0]
+    PutModuleVariable v43 variable=g0
+    v45 = NewObject -, v0 layout=L23 fields=[0]
+    PutModuleVariable v45 variable=g0
+    v47 = NewObject -, v0 layout=L24 fields=[0]
+    PutModuleVariable v47 variable=g0
+    v49 = NewObject -, v0 layout=L25 fields=[0]
+    PutModuleVariable v49 variable=g0
+    v51 = NewObject -, v0 layout=L26 fields=[0]
+    PutModuleVariable v51 variable=g0
+    v53 = NewObject -, v0 layout=L27 fields=[0]
+    PutModuleVariable v53 variable=g0
+    v55 = NewObject -, v0 layout=L28 fields=[0]
+    PutModuleVariable v55 variable=g0
+    v57 = NewObject -, v0 layout=L29 fields=[0]
+    PutModuleVariable v57 variable=g0
+    v59 = NewObject -, v0 layout=L30 fields=[0]
+    PutModuleVariable v59 variable=g0
+    v61 = NewObject -, v0 layout=L31 fields=[0]
+    PutModuleVariable v61 variable=g0
+    v63 = NewObject -, v0 layout=L32 fields=[0]
+    PutModuleVariable v63 variable=g0
+    v65 = NewObject -, v0 layout=L33 fields=[0]
+    PutModuleVariable v65 variable=g0
+    v67 = NewObject -, v0 layout=L34 fields=[0]
+    PutModuleVariable v67 variable=g0
+    v69 = NewObject -, v0 layout=L35 fields=[0]
+    PutModuleVariable v69 variable=g0
+    v71 = NewObject -, v0 layout=L36 fields=[0]
+    PutModuleVariable v71 variable=g0
+    v73 = NewObject -, v0 layout=L37 fields=[0]
+    PutModuleVariable v73 variable=g0
+    v75 = NewObject -, v0 layout=L38 fields=[0]
+    PutModuleVariable v75 variable=g0
+    v77 = NewObject -, v0 layout=L39 fields=[0]
+    PutModuleVariable v77 variable=g0
+    v79 = NewObject -, v0 layout=L40 fields=[0]
+    PutModuleVariable v79 variable=g0
+    PutModuleVariable v1 variable=g1
+    v82 = GetModuleVariable variable=g0
+    PutModuleVariable v82 variable=g2
+    v84 = CallDirect v82 function=f1
+    v85 = CallDirect v1 function=f2
+    v86 = CallDirect v3 function=f2
+    Return
+}
+function f1 name="many" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="few" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

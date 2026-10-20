@@ -1,0 +1,177 @@
+# A call of a number built-in whose answer follows from the type of its operand becomes the operand or a constant
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="roundingOfInteger" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = CallBuiltin -, v0 overload=MathFloor/0
+    v2 = CallBuiltin -, v0 overload=MathCeil/0
+    v3 = CallBuiltin -, v0 overload=MathRound/0
+    v4 = CallBuiltin -, v0 overload=MathTrunc/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f0 name="roundingOfInteger"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: i32 = Upcast v0 castType=i32
+# CHECK-NEXT: v2: i32 = Upcast v0 castType=i32
+# CHECK-NEXT: v3: i32 = Upcast v0 castType=i32
+# CHECK-NEXT: v4: i32 = Upcast v0 castType=i32
+
+function f1 name="roundingOfNumber" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathFloor/0
+    v2 = CallBuiltin -, v0 overload=MathCeil/0
+    v3 = CallBuiltin -, v0 overload=MathRound/0
+    v4 = CallBuiltin -, v0 overload=MathTrunc/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f1 name="roundingOfNumber"
+# CHECK-NOT: Upcast
+# CHECK: v1: {{*}} = CallBuiltin -, v0 overload=MathFloor/0
+# CHECK-NEXT: v2: {{*}} = CallBuiltin -, v0 overload=MathCeil/0
+# CHECK-NEXT: v3: {{*}} = CallBuiltin -, v0 overload=MathRound/0
+# CHECK-NEXT: v4: {{*}} = CallBuiltin -, v0 overload=MathTrunc/0
+
+function f2 name="unmatchedCallStays" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = CallBuiltin -, v0 overload=MathFloor/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+# CHECK-LABEL: function f2 name="unmatchedCallStays"
+# CHECK-NOT: Upcast
+# CHECK: v1: {{*}} = CallBuiltin -, v0 overload=MathFloor/0 builtinCallForm=AnyReceiver
+
+function f3 name="numberOfNumber" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=Number/1
+    Return v1
+}
+# CHECK-LABEL: function f3 name="numberOfNumber"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: number = Upcast v0 castType=number
+
+function f4 name="numberOfOtherValue" parameters=[{type=string}, {type=bigint}, {type=number|bigint}] results=[{type=anything}] {
+  b0(v0: string, v1: bigint, v2: number|bigint):
+    v3 = CallBuiltin -, v0 overload=Number/0
+    v4 = CallBuiltin -, v1 overload=Number/1
+    v5 = CallBuiltin -, v2 overload=Number/1
+    v6 = NewArray v3, v4, v5 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f4 name="numberOfOtherValue"
+# CHECK-NOT: Upcast
+# CHECK: v3: number = CallBuiltin -, v0 overload=Number/0
+# CHECK-NEXT: v4: number = CallBuiltin -, v1 overload=Number/1
+# CHECK-NEXT: v5: number = CallBuiltin -, v2 overload=Number/1
+
+function f5 name="constructionOfNumberObject" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=Number/2
+    v2 = CallBuiltin overload=Number/2
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f5 name="constructionOfNumberObject"
+# CHECK-NOT: Upcast
+# CHECK-NOT: = Integer
+# CHECK: v1: Number = CallBuiltin -, v0 overload=Number/2
+# CHECK-NEXT: v2: Number = CallBuiltin overload=Number/2
+
+function f6 name="noArgument" results=[{type=anything}] {
+  b0():
+    v0 = CallBuiltin overload=Number/1
+    v1 = CallBuiltin overload=MathHypot/0
+    v2 = CallBuiltin overload=MathMin/0
+    v3 = CallBuiltin overload=MathMax/0
+    v4 = NewArray v0, v1, v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f6 name="noArgument"
+# CHECK-NOT: CallBuiltin
+# CHECK: v0: 0 = Integer
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: {{*}} = Double number=Infinity
+# CHECK-NEXT: v3: {{*}} = Double number=-Infinity
+
+function f7 name="oneArgument" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathHypot/0
+    v2 = CallBuiltin -, v0 overload=MathMin/0
+    v3 = CallBuiltin -, v0 overload=MathMax/0
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f7 name="oneArgument"
+# CHECK-NOT: = Integer
+# CHECK-NOT: = Double
+# CHECK: v1: {{*}} = CallBuiltin -, v0 overload=MathHypot/0
+# CHECK-NEXT: v2: {{*}} = CallBuiltin -, v0 overload=MathMin/0
+# CHECK-NEXT: v3: {{*}} = CallBuiltin -, v0 overload=MathMax/0
+
+function f8 name="testsOfInteger" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = CallBuiltin -, v0 overload=NumberIsInteger/0
+    v2 = CallBuiltin -, v0 overload=NumberIsFinite/0
+    v3 = CallBuiltin -, v0 overload=NumberIsNaN/0
+    v4 = CallBuiltin -, v0 overload=IsNaN/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f8 name="testsOfInteger"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: v2: true = Boolean boolean=true
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: v4: false = Boolean
+
+function f9 name="testsOfNumber" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=NumberIsInteger/0
+    v2 = CallBuiltin -, v0 overload=NumberIsFinite/0
+    v3 = CallBuiltin -, v0 overload=NumberIsNaN/0
+    v4 = CallBuiltin -, v0 overload=IsNaN/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f9 name="testsOfNumber"
+# CHECK-NOT: = Boolean
+# CHECK: v1: boolean = CallBuiltin -, v0 overload=NumberIsInteger/0
+# CHECK-NEXT: v2: boolean = CallBuiltin -, v0 overload=NumberIsFinite/0
+# CHECK-NEXT: v3: boolean = CallBuiltin -, v0 overload=NumberIsNaN/0
+# CHECK-NEXT: v4: boolean = CallBuiltin -, v0 overload=IsNaN/0
+
+function f10 name="testsOfValueThatIsNoNumber" parameters=[{type=undefined|string|object}] results=[{type=anything}] {
+  b0(v0: undefined|string|object):
+    v1 = CallBuiltin -, v0 overload=NumberIsInteger/0
+    v2 = CallBuiltin -, v0 overload=NumberIsFinite/0
+    v3 = CallBuiltin -, v0 overload=NumberIsNaN/0
+    v4 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f10 name="testsOfValueThatIsNoNumber"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: false = Boolean
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: v4: false = Boolean
+
+function f11 name="testsOfValueThatMayBeNumber" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallBuiltin -, v0 overload=NumberIsInteger/0
+    v2 = CallBuiltin -, v0 overload=NumberIsFinite/0
+    v3 = CallBuiltin -, v0 overload=NumberIsNaN/0
+    v4 = CallBuiltin -, v0 overload=NumberIsSafeInteger/0
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f11 name="testsOfValueThatMayBeNumber"
+# CHECK-NOT: = Boolean
+# CHECK: v1: boolean = CallBuiltin -, v0 overload=NumberIsInteger/0
+# CHECK-NEXT: v2: boolean = CallBuiltin -, v0 overload=NumberIsFinite/0
+# CHECK-NEXT: v3: boolean = CallBuiltin -, v0 overload=NumberIsNaN/0
+# CHECK-NEXT: v4: boolean = CallBuiltin -, v0 overload=NumberIsSafeInteger/0

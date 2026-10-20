@@ -1,0 +1,81 @@
+# `same(xs)` returns its parameter. One caller passes it an asserted object: the parameter and the result of the helper admit objects, and so does the place behind that caller's call, also through a second helper that calls the first.
+# A caller that passes an array of its own keeps the type and the test of its place: the loss stays with its cause. A helper that returns an asserted object of its own gives it to every caller
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 8
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Result
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Variable
+typesite w3 module=m0 position=40 kind=Parameter
+variable g0 name="same" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="sameAgain" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="ofItsOwn" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="behindAssertedArgument" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g4 name="behindOwnArray" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g5 name="behindAssertedArgumentOfSecondHelper" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g6 name="behindOwnArrayOfSecondHelper" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g7 name="behindHelperWithItsOwn" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+# CHECK: variable g3 name="behindAssertedArgument" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+# CHECK: variable g4 name="behindOwnArray" {{*}}declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: variable g5 name="behindAssertedArgumentOfSecondHelper" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+# CHECK: variable g6 name="behindOwnArrayOfSecondHelper" {{*}}declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: variable g7 name="behindHelperWithItsOwn" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="same" parameters=[{type=undefined|null|Array site=w3}] results=[{type=undefined|null|Array predicted=Array site=w0}] {
+  b0(v0: undefined|null|Array):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|Array predicted=Array site=w0}
+    Return v1
+}
+# CHECK-LABEL: function f1 name="same" {{*}}parameters=[{type=undefined|null|object site=w3 flags=[AdmitsObjects]}] results=[{type=undefined|null|object predicted=Array site=w0 flags=[AdmitsObjects]}]
+function f2 name="sameAgain" parameters=[{type=undefined|null|Array site=w3}] results=[{type=undefined|null|Array predicted=Array site=w0}] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="same"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|Array predicted=Array site=w0}
+    Return v3
+}
+# CHECK-LABEL: function f2 name="sameAgain" {{*}}parameters=[{type=undefined|null|object site=w3 flags=[AdmitsObjects]}] results=[{type=undefined|null|object predicted=Array site=w0 flags=[AdmitsObjects]}]
+function f3 name="ofItsOwn" parameters=[{type=anything}] results=[{type=undefined|null|Array predicted=Array site=w0}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v2 = ClaimDeclared v1 declared={type=undefined|null|Array predicted=Array site=w0}
+    Return v2
+}
+function f4 name="passesAssertedObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="same"
+    v4 = ClaimDeclared v3 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v4 variable=g3
+    v6 = GetModuleVariable variable=g1
+    v7 = Call v6, -, v1 calleeName="sameAgain"
+    v8 = ClaimDeclared v7 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v8 variable=g5
+    Return
+}
+function f5 name="passesOwnArray" parameters=[{type=undefined|null|Array site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="same"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v3 variable=g4
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v0 calleeName="sameAgain"
+    v7 = ClaimDeclared v6 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v7 variable=g6
+    v9 = GetModuleVariable variable=g2
+    v10 = Call v9, -, v0 calleeName="ofItsOwn"
+    v11 = ClaimDeclared v10 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v11 variable=g7
+    Return
+}
+# CHECK-LABEL: function f5 name="passesOwnArray" {{*}}parameters=[{type=undefined|null|Array site=w3}]
+# CHECK: ClaimDeclared v2 declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: ClaimDeclared v6 declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: ClaimDeclared v10 declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}

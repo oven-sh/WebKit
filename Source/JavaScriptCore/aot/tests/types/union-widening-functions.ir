@@ -1,0 +1,25 @@
+# Eight listed functions are the limit and no hit. The ninth widens the list to function, and the other parts stay.
+# OPTIONS: limit=MaxFunctionsInType:8
+# RUN: union-widening
+# LOSS: MaxFunctionsInType x2 f0
+# CHECK: t0 | t0 = f1|f2|f3|f4|f5|f6|f7|f8
+# CHECK-NEXT: t0 | t1 = undefined|function|L0
+# CHECK-NEXT: t0 | t2 = f1|f2|f3|f4|f5|f6|f7|f8
+# CHECK-NEXT: t1 | t1 = undefined|L0|f9
+# CHECK-NEXT: t1 | t2 = undefined|L0|f1|f9
+# CHECK-NEXT: t2 | t2 = f1
+# CHECK-NEXT: loss MaxFunctionsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+function f0 name="types" parameters=[{type=f1|f2|f3|f4|f5|f6|f7|f8}, {type=undefined|L0|f9}, {type=f1}] results=[{type=undefined}]
+function f1 name="f1" results=[{type=anything}]
+function f2 name="f2" results=[{type=anything}]
+function f3 name="f3" results=[{type=anything}]
+function f4 name="f4" results=[{type=anything}]
+function f5 name="f5" results=[{type=anything}]
+function f6 name="f6" results=[{type=anything}]
+function f7 name="f7" results=[{type=anything}]
+function f8 name="f8" results=[{type=anything}]
+function f9 name="f9" results=[{type=anything}]

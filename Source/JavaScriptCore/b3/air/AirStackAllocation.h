@@ -39,7 +39,7 @@ class StackSlot;
 // Performs a first-fit assignment (smallest possible offset) of the given stack slot such that
 // it does not overlap with any of the adjacent slots. The adjacent slots must all have assigned
 // offsets (offsetFromFP < 0) and be sorted by offsetFromFP descending (closest to FP first).
-void assign(StackSlot*, const Vector<StackSlot*>& adjacent);
+JS_EXPORT_PRIVATE void assign(StackSlot*, const Vector<StackSlot*>& adjacent);
 
 // Allocates all stack slots that escape - that is, that don't have live ranges that can be
 // determined by looking at their uses. Returns a vector of slots that got assigned offsets.

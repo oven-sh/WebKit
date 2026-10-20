@@ -1,0 +1,54 @@
+# Two objects that get each other as prototype on two paths form a cycle of links. The walk ends, visits each holder once, and all it finds above a link with two members is predicted
+# RUN: flow-walk prototypes
+# CHECK: f0@i{{*}} v13 Get {"y"}
+# CHECK-NEXT: L0#[[first]]: Value Predicted L1#[[second]] "y"
+# CHECK-NEXT: L0#[[first]]: Absent Predicted
+# CHECK-NEXT: f0@i{{*}} v14 Get {"x"}
+# CHECK-NEXT: L1#[[second]]: Value Predicted L0#[[first]] "x"
+# CHECK-NEXT: L1#[[second]]: Absent Predicted
+# CHECK-NEXT: f0@i{{*}} v15 Get {"x"}
+# CHECK-NEXT: L0#[[first]]: Value own Proven L0#[[first]] "x"
+# CHECK-NEXT: f0@i{{*}} v16 Get {"toString"}
+# CHECK-NEXT: L0#[[first]]: BuiltinMember Predicted ObjectPrototype "toString" ObjectPrototypeToString
+# CHECK-NEXT: f0@i{{*}} v17 Get {"toString"}
+# CHECK-NEXT: L2#[[apart]]: BuiltinMember Proven ObjectPrototype "toString" ObjectPrototypeToString
+# CHECK-NEXT: L0#[[first]] -> L1#[[second]], ObjectPrototype
+# CHECK-NEXT: L1#[[second]] -> L0#[[first]], ObjectPrototype
+# CHECK-NEXT: L2#[[apart]] -> ObjectPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Apart" fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b4():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Builtin builtin=MathRandom
+    v9 = Call v8
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1() handler=b4():
+    v11 = Call v7, -, v2, v4
+    Jump -> next b3()
+  b2() handler=b4():
+    v12 = Call v7, -, v4, v2
+    Jump -> next b3()
+  b3() handler=b4():
+    v13 = PropGet v2 key="y"
+    v14 = PropGet v4 key="x"
+    v15 = PropGet v2 key="x"
+    v16 = PropGet v2 key="toString"
+    v17 = PropGet v6 key="toString"
+    Return
+  b4() role=CatchHandler:
+    v18 = CatchValue
+    Return
+}

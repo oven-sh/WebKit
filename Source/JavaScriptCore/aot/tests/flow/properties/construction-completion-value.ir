@@ -1,0 +1,97 @@
+# A constructor ends in a test of its completion value: an object is returned, anything else gives way to the constructed object. A parent whose completion value is never an object returns only what it constructed
+# RUN(UNDEFINED): flow-construction
+# RUN(UNDEFINEDFIELDS): flow-solve nodes
+# RUN(ARGUMENT): flow-construction
+# RUN(ARGUMENTFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="CompletesWithUndefined" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="BelowUndefined" predictedBase=L0 constructor=f2 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="CompletesWithArgument" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="BelowArgument" predictedBase=L2 constructor=f4 fields=[{key="y" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+variable g0 name="BelowUndefined" module=m0 declared={type=function} initialization=Uninitialized
+variable g1 name="BelowArgument" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    PutModuleVariable v6 variable=g0
+    v8 = Construct v2
+    v9 = Construct v6
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = NewClosure function=f4
+    v14 = ResolveHeritage v12
+    v15 = NewClass v13, v12, v14 layout=L3
+    v16 = FinishClass v15 layout=L3
+    PutModuleVariable v16 variable=g1
+    v18 = Undefined
+    v19 = Construct v16, -, v18
+    v20 = Construct v16, -, v19
+    Return
+}
+function f1 name="CompletesWithUndefined" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = Undefined
+    v6 = TypeTest v5 testedType=object
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7):
+    Jump -> next b3(v7)
+  b2(v8):
+    Jump -> next b3(v2)
+  b3(v9):
+    Return v9
+}
+function f2 name="BelowUndefined" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="y"
+    Return v3
+}
+# UNDEFINED: construction f2@i{{*}} root v3: DoesNotLeak before-leak "x" "y" at-exit "x" "y" read-early initial-order "x" "y" stores OnlyInitialOrder
+# UNDEFINED-NOT: construction f2@i{{*}}: Unknown
+# UNDEFINED: layout L1: DoesNotLeak OnlyAtConstruction set [0] orders [0]
+# UNDEFINEDFIELDS: DeclaredPart(L1#{{*}}, 0) = {2}
+# UNDEFINEDFIELDS: Property(L1#{{*}}, "x") = {1}
+function f3 name="CompletesWithArgument" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Integer integer=1
+    PropSet v3, v4 key="x"
+    v6 = TypeTest v1 testedType=object
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v7):
+    Jump -> next b3(v7)
+  b2(v8):
+    Jump -> next b3(v3)
+  b3(v9):
+    Return v9
+}
+function f4 name="BelowArgument" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = GetSuperBase v2 homeKind=Object
+    v4 = SuperConstruct v3, v0, v1 layout=L3
+    v5 = Integer integer=2
+    PropSet v4, v5 key="y"
+    Return v4
+}
+# ARGUMENT: construction f4@i{{*}} root v4: Unknown at f4:v4 before-leak at-exit
+# ARGUMENT-NOT: construction f4@i{{*}}: DoesNotLeak
+# ARGUMENT: layout L3: Unknown at f4:v4 Unknown set [] orders
+# ARGUMENTFIELDS: DeclaredPart(L3#{{*}}, 0) = {undefined|2}

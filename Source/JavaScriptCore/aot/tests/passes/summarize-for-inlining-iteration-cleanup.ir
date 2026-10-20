@@ -1,0 +1,63 @@
+# The landing block that closes the iterator of a loop over an iterable does not count as a handler
+# FORM: AsRead
+# RUN: pipeline SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="callsForEachElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3() handler=b4():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+}
+# CHECK: f1: barrier=None
+# CHECK-NOT: handlers=
+# CHECK-NOT: boundToFrame
+
+function f2 name="catchesInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3() handler=b4():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Jump -> next b1()
+}
+# CHECK: f2: barrier=None {{*}} handlers=[b3]
+
+# CHECK-LABEL: function f1 name="callsForEachElement"
+# CHECK: handler=[[cleanup]]():
+# CHECK: [[cleanup]]() role=IterationCleanup

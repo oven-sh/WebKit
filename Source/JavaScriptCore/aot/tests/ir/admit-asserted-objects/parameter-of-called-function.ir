@@ -1,0 +1,39 @@
+# `store(value as Setting)`: the assertion lets every object through, so the parameter it is passed to admits objects. A parameter of the same type that only an untyped value reaches keeps its type
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 1
+# STATISTIC: AssertedObjectsPassedToUnknownCallees = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Assertion
+variable g0 name="store" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f0 flags=[IsImmutable]
+variable g1 name="keep" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="store" parameters=[{type=undefined|null|boolean|number|string predicted=boolean|number|string site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|boolean|number|string):
+    Return v0
+}
+# CHECK-LABEL: function f0 name="store" {{*}}parameters=[{type=undefined|null|boolean|number|string|object predicted=boolean|number|string site=w0 flags=[AdmitsObjects]}]
+# CHECK: b0(v0: undefined|null|boolean|number|string|object ~ boolean|number|string):
+function f1 name="keep" parameters=[{type=undefined|null|boolean|number|string predicted=boolean|number|string site=w1}] results=[{type=anything}] {
+  b0(v0: undefined|null|boolean|number|string):
+    Return v0
+}
+# CHECK-LABEL: function f1 name="keep" {{*}}parameters=[{type=undefined|null|boolean|number|string predicted=boolean|number|string site=w1}]
+# CHECK: b0(v0: undefined|null|boolean|number|string ~ boolean|number|string):
+function f2 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ClaimDeclared v0 declared={type=undefined|null|boolean|number|string|object written=undefined|null|boolean|number|string predicted=boolean|number|string site=w2}
+    v3 = Call v1, -, v2 calleeName="store"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="apply"
+# CHECK: [[asserted]]: undefined|null|boolean|number|string|object = Claim v0 castType=undefined|null|boolean|number|string|object site=w2
+function f3 name="applyUntyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="keep"
+    Return v2
+}

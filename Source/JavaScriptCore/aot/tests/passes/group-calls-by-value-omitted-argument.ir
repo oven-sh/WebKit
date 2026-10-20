@@ -1,0 +1,42 @@
+# A position that a call leaves out is marked, and an argument that no member has a parameter for is not recorded
+# FORM: Prepared
+# RUN: pass GroupCallsByValue
+# CHECK: group g0 members=[f3, f4, f5, f6, f7] sites=[a0, a1, a2] this=[string | omitted] arguments=[{{*}}[number], [number | omitted]]
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesBoth" parameters=[{type=f3|f4|f5|f6|f7}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7, v1: number):
+    v2 = Call v0, -, v1, v1 accessSite=0 callees=[f3, f4, f5, f6, f7]
+    Return v2
+}
+function f1 name="passesOne" parameters=[{type=f3|f4|f5|f6|f7}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7, v1: number):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f3, f4, f5, f6, f7]
+    Return v2
+}
+function f2 name="passesThisAndThree" parameters=[{type=f3|f4|f5|f6|f7}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7, v1: number, v2: string):
+    v3 = Call v0, v2, v1, v1, v2 accessSite=2 callees=[f3, f4, f5, f6, f7]
+    Return v3
+}
+function f3 name="first" kind=Arrow parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+  b0(v0: number, v1: undefined|number):
+    Return v0
+}
+function f4 name="second" kind=Arrow parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+  b0(v0: number, v1: undefined|number):
+    Return v0
+}
+function f5 name="third" kind=Arrow parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+  b0(v0: number, v1: undefined|number):
+    Return v0
+}
+function f6 name="fourth" kind=Arrow parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+  b0(v0: number, v1: undefined|number):
+    Return v0
+}
+function f7 name="fifth" kind=Arrow parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+  b0(v0: number, v1: undefined|number):
+    Return v0
+}

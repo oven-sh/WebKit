@@ -1,0 +1,85 @@
+# partitionMembers groups the members of a receiver set by what the lookup finds: equal answers form an arm, an unknown answer goes to the rest, and one awkward class costs itself only
+# FORM: Prepared
+# RUN(METHODS): partition-members layouts=[L0,L1,L2,L3] key="run"
+# METHODS: arm [L0, L1]: Method level=Proven holder=L0 method=F4
+# METHODS-NEXT: arm [L2]: Method level=Proven holder=L2 method=F5
+# METHODS-NEXT: rest [L3]
+# RUN(WITHOUTAWKWARD): partition-members layouts=[L0,L1,L2] key="run"
+# WITHOUTAWKWARD: arm [L0, L1]: Method level=Proven holder=L0 method=F4
+# WITHOUTAWKWARD-NEXT: arm [L2]: Method level=Proven holder=L2 method=F5
+# WITHOUTAWKWARD-NOT: rest
+# RUN(ONLYAWKWARD): partition-members layouts=[L3] key="run"
+# ONLYAWKWARD-NOT: arm
+# ONLYAWKWARD: rest [L3]
+# RUN(ORDER): partition-members layouts=[L2,L1,L0] key="run"
+# ORDER: arm [L0, L1]: Method level=Proven holder=L0 method=F4
+# ORDER-NEXT: arm [L2]: Method level=Proven holder=L2 method=F5
+# RUN(NEEDSTEST): partition-members layouts=[L0,L1,L4] key="run"
+# NEEDSTEST: arm [L0, L1]: Method level=Proven holder=L0 method=F4
+# NEEDSTEST-NOT: proofs=
+# NEEDSTEST: arm [L4]: Method level=Predicted holder=L0 method=F4 proofs=[NoExtraProperties]
+# RUN(UNITEDCONDITIONS): partition-members layouts=[L5,L6] key="run"
+# UNITEDCONDITIONS: arm [L5, L6]: Method level=Predicted holder=L0 method=F4 conditions=[MemberUnchanged(L6, Prototype, K{{*}}), PrototypeLinkUnchanged(L5, Prototype)]
+# UNITEDCONDITIONS-NOT: arm
+# RUN(UNITEDPROOFS): partition-members layouts=[L4,L7] key="run"
+# UNITEDPROOFS: arm [L4, L7]: Method level=Predicted holder=L0 method=F4 proofs=[NoExtraProperties, PrototypeLinkUnchanged]
+# UNITEDPROOFS-NOT: arm
+# RUN(FIELDS): partition-members layouts=[L8,L9] key="x"
+# FIELDS: arm [L8, L9]: Field level=Proven
+# FIELDS-NOT: holder=
+# FIELDS-NOT: arm
+# RUN(INHERITEDFIELD): partition-members layouts=[L0,L1] key="x"
+# INHERITEDFIELD: arm [L0, L1]: Field level=Proven holder=L0 field=0
+# RUN(FIELDANDGETTER): partition-members layouts=[L8,L10] key="x"
+# FIELDANDGETTER: arm [L8]: Field level=Proven holder=L8 field=0
+# FIELDANDGETTER-NEXT: arm [L10]: Accessor level=Proven holder=L10 getter=F6 setter=none
+# RUN(FIELDANDABSENT): partition-members layouts=[L8,L11] key="x"
+# FIELDANDABSENT: arm [L8]: Field level=Proven holder=L8 field=0
+# FIELDANDABSENT-NEXT: arm [L11]: Absent level=Proven
+# RUN(ABSENT): partition-members layouts=[L8,L9,L11] key="missing"
+# ABSENT: arm [L8, L9, L11]: Absent level=Proven
+# ABSENT-NOT: arm
+# RUN(SAMEGETTER): partition-members layouts=[L10,L12] key="x"
+# SAMEGETTER: arm [L10, L12]: Accessor level=Proven holder=L10 getter=F6 setter=none
+# RUN(OTHERSETTER): partition-members layouts=[L10,L13] key="x" access=Store
+# OTHERSETTER: arm [L10]: Accessor level=Proven holder=L10 getter=F6 setter=none
+# OTHERSETTER-NEXT: arm [L13]: Accessor level=Proven holder=L13 getter=F6 setter=F7
+# RUN(DEFINE): partition-members layouts=[L0,L2,L8] key="run" access=Define
+# DEFINE: arm [L0, L2, L8]: Absent level=Proven
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="A" constructor=f0 fields=[{key="x" declared={type=number}}] flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f4 mutability=Fixed}]}
+layout L1 kind=Instance name="B" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="C" constructor=f2 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f5 mutability=Fixed}]}
+layout L3 kind=Instance name="D" constructor=f3 flags=[HasHeritage] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="MayGainProperties" predictedBase=L0 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="LinkMayChange" predictedBase=L0 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="NamesIncomplete" predictedBase=L0 constructor=f10 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed staticNamesAreComplete=true}
+layout L7 kind=Instance name="MayChangePrototype" predictedBase=L0 constructor=f11 flags=[HasHeritage] flow={baseState=Layout base=L0 addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 name="Point" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
+layout L9 name="Named" fields=[{key="name" declared={type=string}}, {key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
+layout L10 kind=Instance name="Computed" constructor=f12 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f6 mutability=Fixed}]}
+layout L11 name="Empty" flow={impossibleMutations=[ChangePrototype] addedKeysAreComplete=true}
+layout L12 kind=Instance name="BelowComputed" predictedBase=L10 constructor=f13 flags=[HasHeritage] flow={baseState=Layout base=L10 impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L13 kind=Instance name="ComputedAndStored" constructor=f14 flow={baseState=None impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="x" kind=Getter function=f6 mutability=Fixed}, {key="x" kind=Setter function=f7 mutability=Fixed}]}
+
+function f0 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="D" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="run" kind=Method flags=[HasThis] results=[{type=anything}]
+function f5 name="run" kind=Method flags=[HasThis] results=[{type=anything}]
+function f6 name="x" kind=Getter flags=[HasThis] results=[{type=anything}]
+function f7 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
+function f8 name="MayGainProperties" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f9 name="LinkMayChange" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f10 name="NamesIncomplete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f11 name="MayChangePrototype" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+function f12 name="Computed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L10
+function f13 name="BelowComputed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L12
+function f14 name="ComputedAndStored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L13
+function f15 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="missing"
+    Return v1
+}

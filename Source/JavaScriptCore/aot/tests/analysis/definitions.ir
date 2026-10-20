@@ -1,0 +1,136 @@
+# Which allocations of a module body do nothing but allocate, which binding or definition holds each, and which of their uses need the object
+# RUN: definitions
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="a" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L1 kind=Instance name="Base" module=m0 position=10 constructor=f4
+layout L2 kind=Instance name="Derived" module=m0 position=20 constructor=f5 flags=[HasHeritage]
+variable g0 name="onlyCalled" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="handedOn" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="table" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g3 name="pattern" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g4 name="Base" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g5 name="Derived" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g6 name="storedTwice" module=m0 declared={type=anything}
+variable g7 name="changed" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g8 name="registered" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=1
+    v5 = NewClosure function=f3
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g2
+    v9 = NewRegExp pattern="a+" regExpFlags=[]
+    PutModuleVariable v9 variable=g3
+    v11 = NewClosure function=f4
+    v12 = NewClass v11 layout=L1
+    v13 = NewClosure function=f6
+    DefineMethod v12, v13 layout=L1 side=Prototype key="method"
+    v15 = FinishClass v12 layout=L1
+    PutModuleVariable v15 variable=g4
+    v17 = GetModuleVariable variable=g4
+    v18 = CheckInitialized v17 name="Base"
+    v19 = ResolveHeritage v18
+    v20 = NewClosure function=f5
+    v21 = NewClass v20, v18, v19 layout=L2
+    v22 = FinishClass v21 layout=L2
+    PutModuleVariable v22 variable=g5
+    v24 = NewClosure function=f1
+    PutModuleVariable v24 variable=g6
+    v26 = NewClosure function=f2
+    PutModuleVariable v26 variable=g6
+    v28 = NewObject -, v4, v4 layout=L0 fields=[0, 1]
+    v29 = FinishObject v28
+    PutModuleVariable v29 variable=g7
+    v31 = NewClosure function=f3
+    PutModuleVariable v31 variable=g8
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="register" [isFreeName]
+    v35 = Call v34, -, v31
+    Return
+}
+function f1 name="onlyCalled" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="handedOn" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="run" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 module=m0 position=10 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f5 module=m0 position=20 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] thisType={type=anything} results=[{type=object}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f6 name="method" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="user" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="onlyCalled"
+    v2 = Call v1
+    v3 = GetModuleVariable variable=g1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = GetModuleVariable variable=g2
+    v8 = PropGet v7 key="a"
+    v9 = GetModuleVariable variable=g5
+    v10 = Construct v9
+    v11 = InstanceOf v10, v9
+    v12 = GetModuleVariable variable=g7
+    v13 = Integer integer=2
+    PropSet v12, v13 key="a" mode=Strict
+    v15 = GetModuleVariable variable=g3
+    v16 = TypeOf v15
+    Return
+}
+
+# CHECK: f0 v0 Function binding=g0 past=1 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v2 Function binding=g1 past=0 observedInModuleBodies=0 observedInFunctions=1 made on demand
+# CHECK-NEXT: f0 v5 Function in=v6 past=0 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v6 Object binding=g2 past=1 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v9 RegExp binding=g3 past=1 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v11 Function in=v12 past=0 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v12 Class binding=g4 past=0 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v13 Function in=v12 past=0 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v20 Function in=v21 past=0 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v21 Class binding=g5 past=2 observedInModuleBodies=0 observedInFunctions=0 never made
+# CHECK-NEXT: f0 v24 Function past=0 observedInModuleBodies=1 observedInFunctions=0 made at start
+# CHECK-NEXT: f0 v26 Function past=0 observedInModuleBodies=1 observedInFunctions=0 made at start
+# CHECK-NEXT: f0 v28 Object binding=g7 past=0 observedInModuleBodies=0 observedInFunctions=1 made on demand
+# CHECK-NEXT: f0 v31 Function binding=g8 past=0 observedInModuleBodies=1 observedInFunctions=0 made at start
+# CHECK-NEXT: definitions Function 9 made at start 3 made on demand 1 never made 5
+# CHECK-NEXT: definitions Class 2 made at start 0 made on demand 0 never made 2
+# CHECK-NEXT: definitions RegExp 1 made at start 0 made on demand 0 never made 1
+# CHECK-NEXT: definitions TemplateObject 0 made at start 0 made on demand 0 never made 0
+# CHECK-NEXT: definitions ClassToken 0 made at start 0 made on demand 0 never made 0
+# CHECK-NEXT: definitions Object 2 made at start 0 made on demand 1 never made 1
+# CHECK-NEXT: definitions Array 0 made at start 0 made on demand 0 never made 0
+# CHECK-NEXT: functions held by a binding: observed at start 1, made at start with its holder 0, made on demand 1, never made 1
+# CHECK-NEXT: functions held by nothing: observed at start 2, made at start with its holder 0, made on demand 0, never made 0
+# CHECK-NEXT: functions held by Class: observed at start 0, made at start with its holder 0, made on demand 0, never made 3
+# CHECK-NEXT: functions held by Object: observed at start 0, made at start with its holder 0, made on demand 0, never made 1
+# CHECK-NEXT: functions held by Array: observed at start 0, made at start with its holder 0, made on demand 0, never made 0
+# CHECK-NEXT: functions held by Function: observed at start 0, made at start with its holder 0, made on demand 0, never made 0
+# CHECK-NEXT: observed at start by PutModuleVariable 2
+# CHECK-NEXT: observed at start by Call 1

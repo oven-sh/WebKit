@@ -1,0 +1,43 @@
+# An array enters a position with proven contents through an assumed type, which carries what no test at run time establishes, and an array that native code may fill has none
+# RUN: flow-apply
+# OPTIONS: disable=flow:PristineInstances,flow:ArrayStorageKinds,flow:Predictions
+# STATISTIC: FlowRemainingClaims = 0
+# CHECK: layout L0 name="Holder" fields=[{key="list" declared={type=Array<1, proven> written=anything}
+# CHECK: variable g0 name="list" module=m0 declared={type=Array<1, proven> written=anything}
+# CHECK: variable g1 name="shared" module=m0 declared={type=Array written=anything}
+# CHECK: v1: Array = NewArray v0 contents=anything
+# CHECK-NEXT: [[array]]: Array<1, proven> = AssumeType v1 castType=Array<1, proven>
+# CHECK-NEXT: PutModuleVariable [[array]] variable=g0
+# CHECK-NEXT: = NewObject -, [[array]] layout=L0
+# CHECK: v5: anything = Call v4
+# CHECK-NEXT: [[result]]: Array<1, proven> = AssumeType v5 castType=Array<1, proven>
+# CHECK-NEXT: PutModuleVariable [[result]] variable=g0
+# CHECK-NEXT: v7: Array = NewArray v0 contents=anything
+# CHECK-NEXT: PutModuleVariable v7 variable=g1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="list" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="shared" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = Call v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewArray v0 contents=anything holes=[]
+    PutModuleVariable v7 variable=g1
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v7
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

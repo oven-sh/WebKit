@@ -1,0 +1,50 @@
+# One call with a validated result calls the validator, and three calls later a function nobody knows arrives as its callee: the copy may hold what the result of that function holds.
+# A position that the plan copies by its type holds that type alone.
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(L0#[[row]], 0) = {{*}}unknown
+# CHECK-NEXT: DeclaredPart(L0#[[row]], 1) = {number}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="extra" node=1 field=0}, {key="id" node=2 field=1}]} type=L0}, {type=anything}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="Row" fields=[{key="extra" declared={type=anything}}, {key="id" declared={type=number}}]
+layout L1 name="Input" fields=[{key="extra" declared={type=anything}}, {key="id" declared={type=anything}}]
+layout L2 name="Nested" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    v3 = Builtin builtin=BunBundleValidate
+    v4 = NewClosure function=f1
+    v5 = Call v4
+    v6 = Call v5
+    v7 = Call v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="flag" [isFreeName]
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v7)
+  b3(v11):
+    v12 = Call v11, -, v2 expectedResult=x0
+    Return v12
+}
+function f1 name="stage1" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="stage2" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    Return v0
+}
+function f3 name="stage3" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="other" [isFreeName]
+    Return v1
+}

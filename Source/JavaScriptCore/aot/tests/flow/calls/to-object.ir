@@ -1,0 +1,47 @@
+# ToObject answers the object itself, a wrapper instance for a string, a number or a boolean, an opaque object for a symbol or a big integer, each only when such a value arrives, and nothing for undefined
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {L0#[[plain]]}
+# CHECK-NEXT: Variable(g1) = {String@f0:v6}
+# CHECK-NEXT: Variable(g2) = {Number@f0:v9.1}
+# CHECK-NEXT: Variable(g3) = {Boolean@f0:v11.2}
+# CHECK-NEXT: Variable(g4) = {opaque@f0:v14.3}
+# CHECK-NEXT: Variable(g5) = {opaque@f0:v17.3}
+# CHECK-NOT: Variable(g6)
+# CHECK-NOT: @f0:v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="ofObject" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="ofString" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="ofNumber" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="ofBoolean" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="ofSymbol" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="ofBigInteger" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="ofUndefined" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = ToObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = String string="s"
+    v6 = ToObject v5
+    PutModuleVariable v6 variable=g1
+    v8 = Integer integer=1
+    v9 = ToObject v8
+    PutModuleVariable v9 variable=g2
+    v11 = ToObject v0
+    PutModuleVariable v11 variable=g3
+    v13 = Builtin builtin=SymbolIterator
+    v14 = ToObject v13
+    PutModuleVariable v14 variable=g4
+    v16 = BigInt digits="1"
+    v17 = ToObject v16
+    PutModuleVariable v17 variable=g5
+    v19 = Undefined
+    v20 = ToObject v19
+    PutModuleVariable v20 variable=g6
+    Return
+}

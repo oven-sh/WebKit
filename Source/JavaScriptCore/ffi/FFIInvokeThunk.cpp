@@ -31,6 +31,7 @@
 #include "CCallHelpers.h"
 #include "FFICallingConvention.h"
 #include "FFISignature.h"
+#include "FFIStubEmitters.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
@@ -253,6 +254,81 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature& signa
     return code;
 }
 
+#if FFI_STUBS_SUPPORTED
+
+void emitInvokeStub(CCallHelpers& jit)
+{
+    constexpr NativeCC cc = hostNativeCC();
+
+    auto [argumentsReg, targetReg] = scratchGPRsForInvoke(cc);
+    ASSERT(argumentsReg != shuffleGPR && targetReg != shuffleGPR);
+
+    std::span<const GPRReg> integerArgumentRegs = integerArgumentRegisters(cc);
+    std::span<const FPRReg> floatArgumentRegs = floatArgumentRegisters(cc);
+
+    GPRReg remaining = shuffleGPR;
+    GPRReg source = integerArgumentRegs[0];
+    GPRReg destination = integerArgumentRegs[1];
+    GPRReg word = integerArgumentRegs[2];
+
+    jit.emitFunctionPrologue();
+#if CPU(X86_64)
+    ASSERT(argumentsReg == X86Registers::ebx);
+    jit.pushToSave(X86Registers::ebx);
+    jit.subPtr(CCallHelpers::TrustedImm32(8), MacroAssembler::stackPointerRegister);
+#elif CPU(ARM64)
+    ASSERT(argumentsReg == ARM64Registers::x19);
+    jit.pushPair(ARM64Registers::x19, ARM64Registers::x20);
+#endif
+
+    jit.move(GPRInfo::argumentGPR1, argumentsReg);
+    jit.move(GPRInfo::argumentGPR0, targetReg);
+
+    jit.load32(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfStackBytes()), remaining);
+    jit.move(MacroAssembler::stackPointerRegister, destination);
+    jit.subPtr(remaining, destination);
+    jit.move(destination, MacroAssembler::stackPointerRegister);
+    jit.addPtr(CCallHelpers::TrustedImm32(InvokeArguments::offsetOfStack()), argumentsReg, source);
+
+    auto done = jit.branchTest32(CCallHelpers::Zero, remaining);
+    auto loop = jit.label();
+    for (int32_t offset : { 0, 8 }) {
+        jit.load64(CCallHelpers::Address(source, offset), word);
+        jit.store64(word, CCallHelpers::Address(destination, offset));
+    }
+    jit.addPtr(CCallHelpers::TrustedImm32(16), source);
+    jit.addPtr(CCallHelpers::TrustedImm32(16), destination);
+    jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(16), remaining).linkTo(loop, &jit);
+    done.link(&jit);
+
+    for (unsigned i = 0; i < floatArgumentRegs.size(); ++i)
+        jit.loadDouble(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfFPR(i)), floatArgumentRegs[i]);
+    for (unsigned i = 0; i < integerArgumentRegs.size(); ++i)
+        jit.load64(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfGPR(i)), integerArgumentRegs[i]);
+
+#if CPU(X86_64)
+    if (cc == NativeCC::SysV64)
+        jit.load32(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfNumberOfFPRsUsed()), X86Registers::eax);
+#endif
+
+    jit.call(targetReg, CFunctionPtrTag);
+
+    jit.store64(GPRInfo::returnValueGPR, CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfReturnGPR()));
+    jit.storeDouble(FPRInfo::returnValueFPR, CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfReturnFPR()));
+
+    jit.addPtr(CCallHelpers::TrustedImm32(-16), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
+#if CPU(X86_64)
+    jit.addPtr(CCallHelpers::TrustedImm32(8), MacroAssembler::stackPointerRegister);
+    jit.popToRestore(X86Registers::ebx);
+#elif CPU(ARM64)
+    jit.popPair(ARM64Registers::x19, ARM64Registers::x20);
+#endif
+    jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
+#endif // FFI_STUBS_SUPPORTED
+
 #else // ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
 
 MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&)
@@ -266,272 +342,25 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&)
 
 #endif // USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
 
-#if USE(BUN_JSC_ADDITIONS) && FFI_INVOKE_WITHOUT_JIT_SUPPORTED
+#if USE(BUN_JSC_ADDITIONS)
 
 #include "FFICallingConvention.h"
 #include "FFISignature.h"
+#include "FFIStubs.h"
 #include "FFIType.h"
-#include <wtf/InlineASM.h>
 
 namespace JSC { namespace FFI {
 
-struct InvokeArguments {
-    static constexpr unsigned maxStackBytes = (shadowStackBytes(NativeCC::Win64) + Signature::maxArguments * 8 + 15) & ~15u;
-
-    uint64_t gprs[8];
-    uint64_t fprs[8];
-    uint64_t returnGPR;
-    uint64_t returnFPR;
-    uint32_t stackBytes;
-    uint32_t fprCount;
-    alignas(16) uint8_t stack[maxStackBytes];
-};
-
-static_assert(!OBJECT_OFFSETOF(InvokeArguments, gprs));
-static_assert(OBJECT_OFFSETOF(InvokeArguments, fprs) == 64);
-static_assert(OBJECT_OFFSETOF(InvokeArguments, returnGPR) == 128);
-static_assert(OBJECT_OFFSETOF(InvokeArguments, returnFPR) == 136);
-static_assert(OBJECT_OFFSETOF(InvokeArguments, stackBytes) == 144);
-static_assert(OBJECT_OFFSETOF(InvokeArguments, fprCount) == 148);
-static_assert(OBJECT_OFFSETOF(InvokeArguments, stack) == 160);
-
-extern "C" void ffiInvokeTrampoline(void* target, InvokeArguments*);
-
-#if CPU(ARM64) && OS(WINDOWS)
-
-__asm__(
-    ".text" "\n"
-    ".balign 16" "\n"
-    ".globl " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    ".def " SYMBOL_STRING(ffiInvokeTrampoline) "; .scl 2; .type 32; .endef" "\n"
-    ".seh_proc " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    SYMBOL_STRING(ffiInvokeTrampoline) ":" "\n"
-
-    "stp x19, x20, [sp, #-32]!" "\n"
-    ".seh_save_regp_x x19, 32" "\n"
-    "stp x29, x30, [sp, #16]" "\n"
-    ".seh_save_fplr 16" "\n"
-    "add x29, sp, #16" "\n"
-    ".seh_add_fp 16" "\n"
-    ".seh_endprologue" "\n"
-    "mov x19, x1" "\n"
-    "mov x9, x0" "\n"
-
-    "ldr w10, [x19, #144]" "\n"
-    "sub sp, sp, x10" "\n"
-    "add x11, x19, #160" "\n"
-    "mov x12, sp" "\n"
-    "cbz x10, " LOCAL_LABEL_STRING(ffiInvokeTrampolineRegisters) "\n"
-    LOCAL_LABEL_STRING(ffiInvokeTrampolineStack) ":" "\n"
-    "ldp x13, x14, [x11], #16" "\n"
-    "stp x13, x14, [x12], #16" "\n"
-    "subs x10, x10, #16" "\n"
-    "b.ne " LOCAL_LABEL_STRING(ffiInvokeTrampolineStack) "\n"
-
-    LOCAL_LABEL_STRING(ffiInvokeTrampolineRegisters) ":" "\n"
-    "ldp d0, d1, [x19, #64]" "\n"
-    "ldp d2, d3, [x19, #80]" "\n"
-    "ldp d4, d5, [x19, #96]" "\n"
-    "ldp d6, d7, [x19, #112]" "\n"
-    "ldp x0, x1, [x19]" "\n"
-    "ldp x2, x3, [x19, #16]" "\n"
-    "ldp x4, x5, [x19, #32]" "\n"
-    "ldp x6, x7, [x19, #48]" "\n"
-    "blr x9" "\n"
-    "str x0, [x19, #128]" "\n"
-    "str d0, [x19, #136]" "\n"
-
-    ".seh_startepilogue" "\n"
-    "sub sp, x29, #16" "\n"
-    ".seh_add_fp 16" "\n"
-    "ldp x29, x30, [sp, #16]" "\n"
-    ".seh_save_fplr 16" "\n"
-    "ldp x19, x20, [sp], #32" "\n"
-    ".seh_save_regp_x x19, 32" "\n"
-    ".seh_endepilogue" "\n"
-    "ret" "\n"
-    ".seh_endproc" "\n"
-);
-
-#elif CPU(ARM64)
-
-__asm__(
-    ".text" "\n"
-    ".balign 16" "\n"
-    ".globl " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    HIDE_SYMBOL(ffiInvokeTrampoline) "\n"
-    SYMBOL_STRING(ffiInvokeTrampoline) ":" "\n"
-
-    "stp x20, x19, [sp, #-32]!" "\n"
-    "stp x29, x30, [sp, #16]" "\n"
-    "add x29, sp, #16" "\n"
-    "mov x19, x1" "\n"
-    "mov x9, x0" "\n"
-
-    "ldr w10, [x19, #144]" "\n"
-    "sub sp, sp, x10" "\n"
-    "add x11, x19, #160" "\n"
-    "mov x12, sp" "\n"
-    "cbz x10, " LOCAL_LABEL_STRING(ffiInvokeTrampolineRegisters) "\n"
-    LOCAL_LABEL_STRING(ffiInvokeTrampolineStack) ":" "\n"
-    "ldp x13, x14, [x11], #16" "\n"
-    "stp x13, x14, [x12], #16" "\n"
-    "subs x10, x10, #16" "\n"
-    "b.ne " LOCAL_LABEL_STRING(ffiInvokeTrampolineStack) "\n"
-
-    LOCAL_LABEL_STRING(ffiInvokeTrampolineRegisters) ":" "\n"
-    "ldp d0, d1, [x19, #64]" "\n"
-    "ldp d2, d3, [x19, #80]" "\n"
-    "ldp d4, d5, [x19, #96]" "\n"
-    "ldp d6, d7, [x19, #112]" "\n"
-    "ldp x0, x1, [x19]" "\n"
-    "ldp x2, x3, [x19, #16]" "\n"
-    "ldp x4, x5, [x19, #32]" "\n"
-    "ldp x6, x7, [x19, #48]" "\n"
-    "blr x9" "\n"
-    "str x0, [x19, #128]" "\n"
-    "str d0, [x19, #136]" "\n"
-
-    "sub sp, x29, #16" "\n"
-    "ldp x29, x30, [sp, #16]" "\n"
-    "ldp x20, x19, [sp], #32" "\n"
-    "ret" "\n"
-    ".previous" "\n"
-);
-
-#elif CPU(X86_64) && OS(WINDOWS)
-
-__asm__(
-    ".text" "\n"
-    ".balign 16" "\n"
-    ".globl " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    ".def " SYMBOL_STRING(ffiInvokeTrampoline) "; .scl 2; .type 32; .endef" "\n"
-    ".seh_proc " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    SYMBOL_STRING(ffiInvokeTrampoline) ":" "\n"
-
-    "pushq %rbp" "\n"
-    ".seh_pushreg %rbp" "\n"
-    "pushq %rbx" "\n"
-    ".seh_pushreg %rbx" "\n"
-    "pushq %rsi" "\n"
-    ".seh_pushreg %rsi" "\n"
-    "pushq %rdi" "\n"
-    ".seh_pushreg %rdi" "\n"
-    "subq $8, %rsp" "\n"
-    ".seh_stackalloc 8" "\n"
-    "movq %rsp, %rbp" "\n"
-    ".seh_setframe %rbp, 0" "\n"
-    ".seh_endprologue" "\n"
-    "movq %rdx, %rbx" "\n"
-    "movq %rcx, %r10" "\n"
-
-    "movl 144(%rbx), %ecx" "\n"
-    "subq %rcx, %rsp" "\n"
-    "leaq 160(%rbx), %rsi" "\n"
-    "movq %rsp, %rdi" "\n"
-    "shrl $3, %ecx" "\n"
-    "rep movsq" "\n"
-
-    "movsd 64(%rbx), %xmm0" "\n"
-    "movsd 72(%rbx), %xmm1" "\n"
-    "movsd 80(%rbx), %xmm2" "\n"
-    "movsd 88(%rbx), %xmm3" "\n"
-    "movq (%rbx), %rcx" "\n"
-    "movq 8(%rbx), %rdx" "\n"
-    "movq 16(%rbx), %r8" "\n"
-    "movq 24(%rbx), %r9" "\n"
-    "callq *%r10" "\n"
-    "movq %rax, 128(%rbx)" "\n"
-    "movsd %xmm0, 136(%rbx)" "\n"
-
-    "leaq 8(%rbp), %rsp" "\n"
-    "popq %rdi" "\n"
-    "popq %rsi" "\n"
-    "popq %rbx" "\n"
-    "popq %rbp" "\n"
-    "ret" "\n"
-    ".seh_endproc" "\n"
-);
-
-#elif CPU(X86_64)
-
-__asm__(
-    ".text" "\n"
-    ".balign 16" "\n"
-    ".globl " SYMBOL_STRING(ffiInvokeTrampoline) "\n"
-    HIDE_SYMBOL(ffiInvokeTrampoline) "\n"
-    SYMBOL_STRING(ffiInvokeTrampoline) ":" "\n"
-
-    "pushq %rbp" "\n"
-    "movq %rsp, %rbp" "\n"
-    "pushq %rbx" "\n"
-    "subq $8, %rsp" "\n"
-    "movq %rsi, %rbx" "\n"
-    "movq %rdi, %r10" "\n"
-
-    "movl 144(%rbx), %ecx" "\n"
-    "subq %rcx, %rsp" "\n"
-    "leaq 160(%rbx), %rsi" "\n"
-    "movq %rsp, %rdi" "\n"
-    "shrl $3, %ecx" "\n"
-    "rep movsq" "\n"
-
-    "movsd 64(%rbx), %xmm0" "\n"
-    "movsd 72(%rbx), %xmm1" "\n"
-    "movsd 80(%rbx), %xmm2" "\n"
-    "movsd 88(%rbx), %xmm3" "\n"
-    "movsd 96(%rbx), %xmm4" "\n"
-    "movsd 104(%rbx), %xmm5" "\n"
-    "movsd 112(%rbx), %xmm6" "\n"
-    "movsd 120(%rbx), %xmm7" "\n"
-    "movq (%rbx), %rdi" "\n"
-    "movq 8(%rbx), %rsi" "\n"
-    "movq 16(%rbx), %rdx" "\n"
-    "movq 24(%rbx), %rcx" "\n"
-    "movq 32(%rbx), %r8" "\n"
-    "movq 40(%rbx), %r9" "\n"
-    "movl 148(%rbx), %eax" "\n"
-    "callq *%r10" "\n"
-    "movq %rax, 128(%rbx)" "\n"
-    "movsd %xmm0, 136(%rbx)" "\n"
-
-    "leaq -8(%rbp), %rsp" "\n"
-    "popq %rbx" "\n"
-    "popq %rbp" "\n"
-    "ret" "\n"
-    ".previous" "\n"
-);
-
-#endif
-
-static uint64_t normalizedIntegerReturn(Type type, uint64_t value)
+void invokeThroughStub(InvokeStubFunction stub, const Signature& signature, void* target, uint64_t* slots)
 {
-    if (type == Type::Bool)
-        return !!(value & 0xff);
-    switch (nativeSizeInBytes(type)) {
-    case 1:
-        return isSigned(type) ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(value))) : static_cast<uint8_t>(value);
-    case 2:
-        return isSigned(type) ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(value))) : static_cast<uint16_t>(value);
-    case 4:
-        return isSigned(type) ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(value))) : static_cast<uint32_t>(value);
-    case 8:
-        return value;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-void invokeWithoutJIT(const Signature& signature, void* target, uint64_t* slots)
-{
-    CallLayout layout = computeCallLayout(hostNativeCC(), signature, Direction::Outgoing);
+    const CallLayout& layout = signature.callLayout();
     RELEASE_ASSERT(layout.stackBytes <= InvokeArguments::maxStackBytes && !(layout.stackBytes % 16));
 
     InvokeArguments arguments;
     zeroBytes(arguments.gprs);
     zeroBytes(arguments.fprs);
     arguments.stackBytes = layout.stackBytes;
-    arguments.fprCount = 0;
+    arguments.numberOfFPRsUsed = 0;
     memset(arguments.stack, 0, layout.stackBytes);
 
     for (unsigned i = 0; i < layout.arguments.size(); ++i) {
@@ -542,7 +371,7 @@ void invokeWithoutJIT(const Signature& signature, void* target, uint64_t* slots)
             break;
         case ArgLocation::Kind::FPR:
             arguments.fprs[location.regIndex] = slots[i];
-            ++arguments.fprCount;
+            ++arguments.numberOfFPRsUsed;
             break;
         case ArgLocation::Kind::Stack:
             memcpy(arguments.stack + location.stackOffset, &slots[i], layout.packing == StackPacking::Natural ? nativeSizeInBytes(location.type) : 8);
@@ -550,24 +379,22 @@ void invokeWithoutJIT(const Signature& signature, void* target, uint64_t* slots)
         }
     }
 
-    ffiInvokeTrampoline(target, &arguments);
+    stub(target, &arguments);
 
     uint64_t& returnSlot = slots[signature.argumentCount()];
     switch (layout.returnClass) {
     case ArgClass::Void:
         break;
     case ArgClass::Float:
-        returnSlot = static_cast<uint32_t>(arguments.returnFPR);
-        break;
     case ArgClass::Double:
-        returnSlot = arguments.returnFPR;
+        returnSlot = normalizeSlot(signature.returnType(), arguments.returnFPR);
         break;
     case ArgClass::Int:
-        returnSlot = normalizedIntegerReturn(signature.returnType(), arguments.returnGPR);
+        returnSlot = normalizeSlot(signature.returnType(), arguments.returnGPR);
         break;
     }
 }
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS) && FFI_INVOKE_WITHOUT_JIT_SUPPORTED
+#endif // USE(BUN_JSC_ADDITIONS)

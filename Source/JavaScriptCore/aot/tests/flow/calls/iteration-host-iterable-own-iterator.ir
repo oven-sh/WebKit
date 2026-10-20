@@ -1,0 +1,60 @@
+# A Headers object that has an iterator method of its own, and an iterator of the host that has a next of its own, run the program's functions: the loop calls the method once and the next of what it returns repeatedly, and the loop variable holds what that next yields
+# RUN: flow-links calls
+# RUN(NEXT): flow-links calls
+# RUN(NODES): flow-solve nodes
+# CHECK: : [[main]] f0 v4 -> [[open]] f1 Protocol Once
+# CHECK: : [[main]] f0 v6 -> [[step]] f2 Protocol Repeatedly cycle
+# NEXT: : [[main]] f0 v16 -> [[step]] f2 Protocol Repeatedly cycle
+# NODES: Variable(g0) = {{*}}L0#
+# NODES: Variable(g1) = {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Yielded" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="ofOwnMethod" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="ofOwnNext" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Headers
+    v1 = Construct v0
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key=@@iterator
+    v4 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v8 = ResultAt v6 index=1
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1()
+  b3():
+    v10 = Construct v0
+    v11 = PropGet v10 key="keys"
+    v12 = Call v11, v10 calleeKey="keys"
+    v13 = NewClosure function=f2
+    PropSet v12, v13 key="next"
+    v15 = IteratorOpen v12
+    v16 = IteratorResume v15
+    v17 = ResultAt v16 index=1
+    PutModuleVariable v17 variable=g1
+    Return
+}
+function f1 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f2 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Boolean boolean=false
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    Return v4
+}

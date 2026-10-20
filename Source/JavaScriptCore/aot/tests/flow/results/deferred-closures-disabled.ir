@@ -1,0 +1,45 @@
+# With deferred closures switched off no field defers its closure; its type, its store count and its initialization stay proven
+# OPTIONS: disable=flow:DeferredClosures
+# RUN: flow
+# STATISTIC: FlowDeferredClosureFields = 0
+# CHECK: field L0.0 "handler" type=f2 {{*}}location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation}
+# CHECK: field L0.1 "conditional" {{*}}location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}
+# RUN(NOTHING): flow
+# NOTHING-NOT: deferral=
+# NOTHING-NOT: deferredFunction=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}, {key="conditional" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Boolean boolean=true
+    v4 = Construct v2, -, v3
+    v5 = PropGet v4 key="handler"
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewClosure v3 function=f2
+    PropSet v3, v5 key="conditional" mode=Strict
+    Jump -> next b2()
+  b2():
+    v7 = Upcast v3 castType=undefined|null|object
+    v8 = NewClosure v7 function=f2
+    PropSet v3, v8 key="handler" mode=Strict
+    Return v3
+}
+function f2 name="handler" kind=Arrow captures=[{type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? undefined|null|L0):
+    Return
+}

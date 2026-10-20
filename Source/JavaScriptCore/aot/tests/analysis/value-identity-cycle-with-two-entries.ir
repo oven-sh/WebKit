@@ -1,0 +1,53 @@
+# In a cycle with two entries some parameter is reached before a value that one of its edges passes, whatever the order of the walk. Where every edge passes one object the parameters have its identity. Where another object enters, the parameter that merges the two is a value of its own, and so is each parameter that it reaches
+# FORM: Prepared
+# RUN: analyses identities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(v0), notTaken b3(v0)
+  b1(v2: object):
+    LoopHint
+    v4 = Upcast v2 castType=anything
+    Branch v1 -> taken b2(v4), notTaken b4()
+  b2(v5: anything):
+    Jump -> next b3(v5)
+  b3(v6: anything):
+    LoopHint
+    v8 = AssumeType v6 castType=object
+    Branch v1 -> taken b1(v8), notTaken b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v2 identity: v0
+# CHECK-NEXT: v4 identity: v0
+# CHECK-NEXT: v5 identity: v0
+# CHECK-NEXT: v6 identity: v0
+# CHECK-NEXT: v8 identity: v0
+
+function f1 name="twoObjects" parameters=[{type=object}, {type=boolean}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object, v1: boolean, v2: object):
+    Branch v1 -> taken b1(v0), notTaken b3(v2)
+  b1(v3: object):
+    LoopHint
+    v5 = Upcast v3 castType=anything
+    Branch v1 -> taken b2(v5), notTaken b4()
+  b2(v6: anything):
+    Jump -> next b3(v6)
+  b3(v7: anything):
+    LoopHint
+    v9 = AssumeType v7 castType=object
+    Branch v1 -> taken b1(v9), notTaken b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: identities:
+# CHECK-NEXT: v5 identity: v3
+# CHECK-NEXT: v6 identity: v3
+# CHECK-NEXT: v9 identity: v7
+# CHECK-NOT: identity: v0
+# CHECK-NOT: identity: v2

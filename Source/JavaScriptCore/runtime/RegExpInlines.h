@@ -232,10 +232,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
             }
-            if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
-                if (result == static_cast<int>(Yarr::flatProgramGaveUp))
-                    return result;
-            }
         }
 
 #if ENABLE(YARR_JIT_DEBUG)
@@ -251,10 +247,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-    }
-    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
-        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
-            return result;
     }
 
     ASSERT(result >= -1);
@@ -278,6 +270,8 @@ ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
         if (m_state != JITCode)
             return true;
         ASSERT(m_regExpJITCode);
+        if (m_regExpJITCode->isFromImage())
+            return true;
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCodeMatchOnly()))
             return true;
         if ((charSize == Yarr::CharSize::Char16) && (m_regExpJITCode->has16BitCodeMatchOnly()))
@@ -380,7 +374,15 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
             ASSERT(m_regExpJITCode);
             Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
 
-            if (s.is8Bit())
+            if (m_regExpJITCode->isFromImage()) {
+                Vector<int, 32> nonReturnedOvector;
+                nonReturnedOvector.grow(offsetVectorSize());
+                int* output = nonReturnedOvector.mutableSpan().data();
+                if (s.is8Bit())
+                    result = m_regExpJITCode->execute(s.span8(), startOffset, output, &regExpContext);
+                else
+                    result = m_regExpJITCode->execute(s.span16(), startOffset, output, &regExpContext);
+            } else if (s.is8Bit())
                 result = m_regExpJITCode->execute(s.span8(), startOffset, &regExpContext);
             else
                 result = m_regExpJITCode->execute(s.span16(), startOffset, &regExpContext);
@@ -416,10 +418,6 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-    }
-    if constexpr (matchFrom == Yarr::MatchFrom::CompilerThread) {
-        if (result == static_cast<int>(Yarr::flatProgramGaveUp))
-            return MatchResult(static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure), 0);
     }
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);

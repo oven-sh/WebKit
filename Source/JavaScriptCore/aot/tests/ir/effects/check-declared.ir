@@ -1,0 +1,7 @@
+# The written effects of every row lie inside those of the rows it names in its replaces column
+# RUN: check-effects
+# CHECK: valid
+# RUN(BAD): check-effects everything
+# BAD-NOT: valid
+# BAD: error: bad argument everything
+# BAD-NOT: valid

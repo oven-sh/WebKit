@@ -1,0 +1,71 @@
+# A method that an assignment replaces is listed once per function and is not fixed, a deleted method is not fixed; the other member of each class stays fixed
+# RUN: flow
+# CHECK: layout L0 flow={{*}} classFlow={{*}} prototypeNamesAreComplete=true {{*}}namedMembers=[{key="m" function=f2
+# CHECK-NOT: mutability=
+# CHECK: }, {key="m" function=f4
+# CHECK-NOT: mutability=
+# CHECK: }, {key="n" function=f3 mutability=Fixed
+# CHECK: layout L1 flow={{*}} classFlow={{*}} prototypeNamesAreComplete=true {{*}}namedMembers=[{key="m" function=f6 mutability=Fixed
+# CHECK: }, {key="n" function=f7
+# CHECK-NOT: mutability=
+# CHECK: }]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Overwritten" constructor=f1
+layout L1 kind=Instance name="Deleted" constructor=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="n"
+    v6 = FinishClass v1 layout=L0
+    v7 = PropGet v6 key="prototype"
+    v8 = NewClosure function=f4
+    PropSet v7, v8 key="m" mode=Strict
+    v10 = NewClosure function=f5
+    v11 = NewClass v10 layout=L1
+    v12 = NewClosure function=f6
+    DefineMethod v11, v12 layout=L1 key="m"
+    v14 = NewClosure function=f7
+    DefineMethod v11, v14 layout=L1 index=1 key="n"
+    v16 = FinishClass v11 layout=L1
+    v17 = PropGet v16 key="prototype"
+    v18 = PropDelete v17 key="n" mode=Strict
+    Return
+}
+function f1 name="Overwritten" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="g" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="Deleted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f6 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

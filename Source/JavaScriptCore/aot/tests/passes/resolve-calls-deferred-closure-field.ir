@@ -1,0 +1,151 @@
+# A call of a field that always holds a closure of one function over its own object enters the function directly and reads no slot
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 4
+# STATISTIC: DispatchArms = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Button" constructor=f0 fields=[{key="handler" declared={type=f1} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f1} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="reset" declared={type=f2} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="again" declared={type=f3} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f3} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f2} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="replaceable" declared={type=anything} flow={location={deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Link" constructor=f4 fields=[{key="handler" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Menu" constructor=f6 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="handler" function=f7 mutability=Fixed}]}
+function f0 name="Button" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="handler" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return v1
+}
+function f2 name="reset" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="again" flags=[TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    Return v0
+}
+function f4 name="Link" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="handler" kind=Arrow captures=[{type=L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    Return v1
+}
+function f6 name="Menu" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="handler" kind=Method flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L2, v1: anything):
+    Return v1
+}
+
+function f8 name="closure-over-the-object" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="handler"
+    v3 = Call v2, v0, v1 calleeKey="handler"
+    Return v3
+}
+# CHECK-LABEL: function f8 name="closure-over-the-object"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0, v1 function=f1
+# CHECK-NOT: PropGet
+# CHECK-NOT: Slot
+# CHECK-NOT: = Call v
+function f9 name="closure-over-nothing" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="reset"
+    v3 = Call v2, v0, v1 calleeKey="reset"
+    Return v3
+}
+# CHECK-LABEL: function f9 name="closure-over-nothing"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = CallDirect v1 function=f2
+# CHECK-NOT: PropGet
+# CHECK-NOT: Slot
+# CHECK-NOT: = Call v
+function f10 name="field-and-method" parameters=[{type=L0|L2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L2, v1: anything):
+    v2 = PropGet v0 key="handler"
+    v3 = Call v2, v0, v1 calleeKey="handler"
+    Return v3
+}
+# CHECK-LABEL: function f10 name="field-and-method"
+# CHECK-NEXT: b0(v0: L0|L2, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: ([[button]]: L0):
+# CHECK-NEXT: = CallDirect [[button]], v1 function=f1
+# CHECK: ([[menu]]: L2):
+# CHECK-NEXT: = CallDirect [[menu]], v1 function=f7
+# CHECK-NOT: PropGet
+function f11 name="after-unknown-code" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="handler"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="handler"
+    Return v4
+}
+# CHECK-LABEL: function f11 name="after-unknown-code"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: = CallDirect v0, v3 function=f1
+# CHECK-NOT: PropGet
+function f12 name="members-with-different-functions" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = PropGet v0 key="handler"
+    v3 = Call v2, v0, v1 calleeKey="handler"
+    Return v3
+}
+# CHECK-LABEL: function f12 name="members-with-different-functions"
+# CHECK-NOT: CallDirect
+# CHECK: [[either]]{{*}}= PropGet {{*}} key="handler"
+# CHECK-NOT: CallDirect
+# CHECK: = Call [[either]], {{*}}, v1 calleeKey="handler"
+# CHECK-NOT: CallDirect
+function f13 name="closure-is-also-returned" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="handler"
+    v3 = Call v2, v0, v1 calleeKey="handler"
+    Return v2
+}
+# CHECK-LABEL: function f13 name="closure-is-also-returned"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="handler"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="handler"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f14 name="function-names-its-closure" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="again"
+    v3 = Call v2, v0, v1 calleeKey="again"
+    Return v3
+}
+# CHECK-LABEL: function f14 name="function-names-its-closure"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="again"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="again"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f15 name="field-is-not-deferred" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="eager"
+    v3 = Call v2, v0, v1 calleeKey="eager"
+    Return v3
+}
+# CHECK-LABEL: function f15 name="field-is-not-deferred"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="eager"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="eager"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# Unknown code may have stored another function into the slot
+function f16 name="field-may-be-stored-again" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="replaceable"
+    v3 = Call v2, v0, v1 calleeKey="replaceable"
+    Return v3
+}
+# CHECK-LABEL: function f16 name="field-may-be-stored-again"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="replaceable"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="replaceable"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

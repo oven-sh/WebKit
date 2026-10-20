@@ -1,0 +1,109 @@
+# A constant that a block passes to its handler, or that a terminator reads, stays where it is defined: only operands of values can take a copy
+# FORM: Prepared
+# RUN: pass SinkConstants
+# STATISTIC: SinkConstantsChanges = 1
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SinkConstants SinkConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callback" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f1 name="operandInCoveredBlock" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3():
+    v3 = Call v1, -, v2
+    Return v3
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f1 name="operandInCoveredBlock"
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() handler=b3():
+# CHECK-NEXT: [[copy]]: f0 = NewClosure function=f0
+# CHECK-NEXT: = Call v1, -, [[copy]]
+
+function f2 name="handlerArgument" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3(v2):
+    v3 = Call v1
+    Return v3
+  b2():
+    Return v1
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f2 name="handlerArgument"
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() handler=b3(v2):
+# CHECK-NOT: NewClosure
+
+function f3 name="operandAndHandlerArgument" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3(v2):
+    v3 = Call v1, -, v2
+    Return v3
+  b2():
+    Return v1
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f3 name="operandAndHandlerArgument"
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK: b1() handler=b3(v2):
+# CHECK-NEXT: = Call v1, -, v2
+# CHECK-NOT: NewClosure
+
+function f4 name="stringAsHandlerArgument" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = String string="failed"
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() handler=b3(v2):
+    v3 = Call v1
+    Return v3
+  b2():
+    Return v1
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f4 name="stringAsHandlerArgument"
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: v2: "failed" = String string="failed"
+# CHECK: b1() handler=b3(v2):
+# CHECK-NOT: = String
+
+function f5 name="terminatorOperand" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: boolean, v1: function):
+    v2 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f5 name="terminatorOperand"
+# CHECK: b0(v0: boolean, v1: function):
+# CHECK-NEXT: v2: f0 = NewClosure function=f0
+# CHECK: b1():
+# CHECK-NEXT: Return v2

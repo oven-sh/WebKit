@@ -1,0 +1,275 @@
+# An array pattern over a fresh array is index reads that fold, so the array is never made, whatever stands between the steps
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(SUNK): pass ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations ResolveBuiltins SimplifyBuiltinCalls ResolveAccesses PlaceTypeTests ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode EliminateRedundantReads RetypeValues SinkAllocations SimplifyCasts EliminateDeadCode CompactBlocks
+# RUN(ORDER): pass ExpandIteration CompactBlocks
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 8
+# STATISTIC: IterationsExpandedGenerically = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="get" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="set" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="nestedPattern" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    v6 = IteratorResume v3 stepIndex=1
+    v7 = ResultAt v6 index=1
+    v8 = RequireObjectCoercible v7
+    v9 = PropGet v8 key="type"
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    v11 = Add v5, v9
+    Return v11
+  b3() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}
+# SUNK-LABEL: function f0 name="nestedPattern"
+# SUNK-NEXT: b0(v0: anything, v1: anything):
+# SUNK-NEXT: [[object0]]: {{*}} = RequireObjectCoercible v1
+# SUNK-NEXT: [[type0]]: anything = PropGet [[object0]] key="type"
+# SUNK-NEXT: [[sum0]]: {{*}} = Add v0, [[type0]]
+# SUNK-NEXT: Return [[sum0]]
+# SUNK-NEXT: }
+
+function f1 name="nestedPatternFirst" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    v6 = RequireObjectCoercible v5
+    v7 = PropGet v6 key="count"
+    v8 = IteratorResume v3 stepIndex=1
+    v9 = ResultAt v8 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    v11 = Add v7, v9
+    Return v11
+  b3() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}
+# SUNK-LABEL: function f1 name="nestedPatternFirst"
+# SUNK-NEXT: b0(v0: anything, v1: anything):
+# SUNK-NEXT: [[object1]]: {{*}} = RequireObjectCoercible v0
+# SUNK-NEXT: [[count1]]: anything = PropGet [[object1]] key="count"
+# SUNK-NEXT: [[sum1]]: {{*}} = Add [[count1]], v1
+# SUNK-NEXT: Return [[sum1]]
+# SUNK-NEXT: }
+
+function f2 name="callInDefault" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = IteratorOpen v3 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b6():
+    v5 = IteratorResume v4 stepIndex=0
+    v6 = ResultAt v5 index=1
+    v7 = TypeTest v6 testedType=undefined
+    Branch v7 -> taken b2(), notTaken b3(v6)
+  b2() handler=b6():
+    v8 = Call v2
+    Jump -> next b3(v8)
+  b3(v9) handler=b6():
+    v10 = IteratorResume v4 stepIndex=1
+    v11 = ResultAt v10 index=1
+    Jump -> next b4()
+  b4():
+    IteratorClose v4
+    Jump -> next b5()
+  b5():
+    v13 = Add v9, v11
+    Return v13
+  b6() role=IterationCleanup subject=v4:
+    v14 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v14
+}
+# SUNK-LABEL: function f2 name="callInDefault"
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK-NOT: handler=
+# SUNK: = TypeTest v0 testedType=undefined
+# SUNK: = Call v2
+# SUNK: = Add {{*}}, v1
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK-NOT: handler=
+
+function f3 name="memberTargets" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = IteratorOpen v3 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v5 = IteratorResume v4 stepIndex=0
+    v6 = ResultAt v5 index=1
+    PropSet v2, v6 key="lo"
+    v8 = IteratorResume v4 stepIndex=1
+    v9 = ResultAt v8 index=1
+    PropSet v2, v9 key="hi"
+    Jump -> next b2()
+  b2():
+    IteratorClose v4
+    Return
+  b3() role=IterationCleanup subject=v4:
+    v12 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v12
+}
+# SUNK-LABEL: function f3 name="memberTargets"
+# SUNK-NEXT: b0(v0: anything, v1: anything, v2: anything):
+# SUNK-NEXT: PropSet v2, v0 key="lo"
+# SUNK-NEXT: PropSet v2, v1 key="hi"
+# SUNK-NEXT: Return
+# SUNK-NEXT: }
+
+function f4 name="swapUnderHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b7(v0, v1):
+    v2 = NewArray v1, v0 contents=anything
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b6(v0, v1):
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    Jump -> next b3()
+  b3() handler=b6(v5, v1):
+    v6 = IteratorResume v3 stepIndex=1
+    v7 = ResultAt v6 index=1
+    Jump -> next b4()
+  b4() handler=b7(v5, v7):
+    IteratorClose v3
+    Jump -> next b5(v5, v7)
+  b5(v9, v10):
+    v11 = Sub v9, v10
+    Return v11
+  b6(v12, v13) role=IterationCleanup subject=v3 handler=b7(v12, v13):
+    v14 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v14
+  b7(v16, v17) role=CatchHandler:
+    v18 = CatchValue
+    Jump -> next b5(v16, v17)
+}
+# SUNK-LABEL: function f4 name="swapUnderHandler"
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+# SUNK: Jump -> next [[after4]](v1, v0)
+# SUNK-NEXT: [[after4]]([[a4]]: anything, [[b4]]: anything):
+# SUNK-NEXT: = Sub [[a4]], [[b4]]
+# SUNK-NOT: NewArray
+# SUNK-NOT: ElemGet
+# SUNK-NOT: GetArrayElement
+
+function f5 name="exportedNames" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    PutModuleVariable v5 variable=g0
+    v7 = IteratorResume v3 stepIndex=1
+    v8 = ResultAt v7 index=1
+    PutModuleVariable v8 variable=g1
+    Jump -> next b2()
+  b2():
+    IteratorClose v3
+    Return
+  b3() role=IterationCleanup subject=v3:
+    v11 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v11
+}
+# SUNK-LABEL: function f5 name="exportedNames"
+# SUNK-NEXT: b0(v0: anything, v1: anything):
+# SUNK-NEXT: PutModuleVariable v0 variable=g0
+# SUNK-NEXT: PutModuleVariable v1 variable=g1
+# SUNK-NEXT: Return
+# SUNK-NEXT: }
+
+function f6 name="targetWritesIterable" parameters=[{type=Array<anything, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Names]>):
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Integer integer=1
+    v3 = IteratorResume v1 stepIndex=0
+    v4 = ResultAt v3 index=1
+    ElemSet v0, v2, v4
+    v6 = IteratorResume v1 stepIndex=1
+    v7 = ResultAt v6 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Return v7
+  b3() role=IterationCleanup subject=v1:
+    v9 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v9
+}
+# The length and the element of the second step are read where the step stood, behind the store of the first target.
+# SUNK-LABEL: function f6 name="targetWritesIterable"
+# ORDER-LABEL: function f6 name="targetWritesIterable"
+# ORDER: = PropGet v0 key="length"
+# ORDER: = ElemGet v0, {{*}} [keyIsIntegral]
+# ORDER-NOT: key="length"
+# ORDER-NOT: ElemGet
+# ORDER: ElemSet v0,
+# ORDER: = PropGet v0 key="length"
+# ORDER: = ElemGet v0, {{*}} [keyIsIntegral]
+# ORDER-NOT: ElemSet
+
+function f7 name="arrayEscapesFirst" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Call v2, -, v3
+    v5 = IteratorOpen v3 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v6 = IteratorResume v5 stepIndex=0
+    v7 = ResultAt v6 index=1
+    v8 = IteratorResume v5 stepIndex=1
+    v9 = ResultAt v8 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v5
+    v11 = Add v7, v9
+    Return v11
+  b3() role=IterationCleanup subject=v5:
+    v12 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v12
+}
+# Unknown code has the array before the pattern reads it: the array is made, and what it holds is read from it.
+# SUNK-LABEL: function f7 name="arrayEscapesFirst"
+# SUNK: [[array7]]: Array = NewArray v0, v1 contents=anything
+# SUNK-NEXT: = Call v2, -, [[array7]]
+# SUNK: = GetArrayElement [[array7]],
+# ORDER-LABEL: function f7 name="arrayEscapesFirst"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

@@ -1,0 +1,90 @@
+# A function that compiled code calls with a proven layout and that nativeCode can call too is compiled twice: the function as read for the proven calls, a generic version with the types as read for everybody else
+# RUN: flow-apply
+# STATISTIC: FlowGenericVersions = 1
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[pair]]: L0 = NewObject
+# CHECK: = CallDirect [[pair]] function=f1
+# CHECK: = CallDirect [[pair]] function=f2
+# CHECK-LABEL: function f1 name="both"
+# CHECK: b0(v0: L0):
+# CHECK: : 1 = PropGet v0 key="x" {{*}}receivers=[L0]
+# CHECK-LABEL: function f2 name="provenOnly"
+# CHECK: b0(v0: L0):
+# CHECK-LABEL: function f3 name="padding"
+# CHECK-LABEL: name="both" {{*}}role=GenericVersion {{*}}parameters=[{type=anything predicted=L0}] {{*}}derivation={source=f1
+# CHECK: b0(v0: anything ~ L0):
+# CHECK: : anything = PropGet v0 key="x"
+# CHECK-NOT: role=GenericVersion
+# RUN(SIGNATURES): flow-apply
+# SIGNATURES: function f1 name="both" {{*}}parameters=[{type=L0 written=anything}]
+# SIGNATURES: function f2 name="provenOnly" {{*}}parameters=[{type=L0 written=anything}]
+# SIGNATURES: creator=Version{provenVersion=f1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f1
+    v3 = NewClosure function=f1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = CallDirect v1 function=f2
+    v8 = CallDirect function=f3
+    Return
+}
+function f1 name="both" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    Return v2
+}
+function f2 name="provenOnly" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    Return v2
+}
+function f3 name="padding" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Undefined
+    v3 = Undefined
+    v4 = Undefined
+    v5 = Undefined
+    v6 = Undefined
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = Undefined
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Undefined
+    v26 = Undefined
+    v27 = Undefined
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Undefined
+    v33 = Undefined
+    v34 = Undefined
+    v35 = Undefined
+    Return
+}

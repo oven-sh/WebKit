@@ -55,9 +55,6 @@ public:
 
 private:
     static constexpr unsigned wordBits = 64;
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr size_t minimumWordsToCompact = 8;
-#endif
     enum class Storage : uint8_t { Dense, Sparse };
 
     static size_t wordsForBits(unsigned numBits)
@@ -146,18 +143,6 @@ public:
             memcpySpan(m_dense.mutableSpan(), source);
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-        void copyFromColumns(std::span<const uint64_t> source, std::span<const unsigned> columnIndex)
-        {
-            ASSERT(m_storage == Storage::Dense);
-            std::ranges::fill(m_dense, 0);
-            WTF::forEachSetBit(source, [&] (size_t column) {
-                unsigned bit = columnIndex[column];
-                m_dense[bit / wordBits] |= static_cast<uint64_t>(1) << (bit % wordBits);
-            });
-        }
-
-#endif
         void copyFromSparse(const SparseBitVector<>& source)
         {
             ASSERT(m_storage == Storage::Sparse);
@@ -180,11 +165,7 @@ public:
     {
         ASSERT(m_computed);
         Workset workset;
-#if USE(BUN_JSC_ADDITIONS)
-        workset.initialize(m_storage, m_wordsPerWorkset);
-#else
         workset.initialize(m_storage, m_wordsPerSet);
-#endif
         return workset;
     }
 
@@ -192,18 +173,9 @@ public:
     {
         ASSERT(m_computed);
         ASSERT(workset.storage() == m_storage);
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_storage == Storage::Dense) {
-            if (m_isCompact)
-                workset.copyFromColumns(denseTailSlice(block->index()), m_columnIndex.span());
-            else
-                workset.copyFromDense(denseTailSlice(block->index()));
-        } else
-#else
         if (m_storage == Storage::Dense)
             workset.copyFromDense(denseTailSlice(block->index()));
         else
-#endif
             workset.copyFromSparse(sparseTail(block->index()));
     }
 
@@ -213,20 +185,13 @@ private:
     public:
         Iterator() = default;
 
-#if USE(BUN_JSC_ADDITIONS)
-        static Iterator makeBegin(Liveness& liveness, std::span<const uint64_t> dense, const SparseBitVector<>* sparse, Storage storage, std::span<const unsigned> columnIndex = { })
-#else
         static Iterator makeBegin(Liveness& liveness, std::span<const uint64_t> dense, const SparseBitVector<>* sparse, Storage storage)
-#endif
         {
             Iterator iter;
             iter.m_liveness = &liveness;
             iter.m_storage = storage;
             if (storage == Storage::Dense) {
                 iter.m_denseSpan = dense;
-#if USE(BUN_JSC_ADDITIONS)
-                iter.m_columnIndex = columnIndex;
-#endif
                 iter.m_wordIndex = 0;
                 iter.m_currentWord = dense.empty() ? 0 : dense[0];
                 iter.advanceDense();
@@ -253,10 +218,6 @@ private:
         {
             if (m_storage == Storage::Dense) {
                 unsigned bit = static_cast<unsigned>(m_wordIndex * wordBits + std::countr_zero(m_currentWord));
-#if USE(BUN_JSC_ADDITIONS)
-                if (!m_columnIndex.empty())
-                    bit = m_columnIndex[bit];
-#endif
                 return m_liveness->indexToValue(bit);
             }
             return m_liveness->indexToValue(*m_sparseIter);
@@ -293,9 +254,6 @@ private:
         Liveness* m_liveness { nullptr };
         Storage m_storage { Storage::Dense };
         std::span<const uint64_t> m_denseSpan;
-#if USE(BUN_JSC_ADDITIONS)
-        std::span<const unsigned> m_columnIndex;
-#endif
         size_t m_wordIndex { 0 };
         uint64_t m_currentWord { 0 };
         typename SparseBitVector<>::iterator m_sparseIter;
@@ -313,26 +271,17 @@ public:
         {
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-        Iterator begin() const LIFETIME_BOUND { return Iterator::makeBegin(m_liveness, m_dense, m_sparse, m_storage, m_liveness.m_columnIndex.span()); }
-#else
         Iterator begin() const LIFETIME_BOUND { return Iterator::makeBegin(m_liveness, m_dense, m_sparse, m_storage); }
-#endif
         Iterator end() const LIFETIME_BOUND { return Iterator::makeEnd(m_liveness, m_dense, m_sparse, m_storage); }
 
         bool contains(const Thing& thing) const
         {
             unsigned bit = m_liveness.valueToIndex(thing);
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_storage == Storage::Dense)
-                return m_liveness.denseSliceContains(m_dense, bit);
-#else
             if (m_storage == Storage::Dense) {
                 if (bit / wordBits >= m_dense.size())
                     return false;
                 return m_dense[bit / wordBits] & (static_cast<uint64_t>(1) << (bit % wordBits));
             }
-#endif
             return m_sparse->contains(bit);
         }
 
@@ -474,17 +423,12 @@ public:
         bool isLiveAtHead(typename CFG::Node block, const Thing& thing)
         {
             unsigned bit = m_liveness.valueToIndex(thing);
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_liveness.m_storage == Storage::Dense)
-                return m_liveness.denseSliceContains(m_liveness.denseHeadSlice(block->index()), bit);
-#else
             if (m_liveness.m_storage == Storage::Dense) {
                 std::span<const uint64_t> set = m_liveness.denseHeadSlice(block->index());
                 if (bit / wordBits >= set.size())
                     return false;
                 return set[bit / wordBits] & (static_cast<uint64_t>(1) << (bit % wordBits));
             }
-#endif
             return m_liveness.sparseHead(block->index()).contains(bit);
         }
 
@@ -524,10 +468,6 @@ protected:
 
     void computeDense()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        m_columnIndex.shrink(0);
-        m_isCompact = false;
-#endif
         if constexpr (!adapterStreamsActions())
             Adapter::prepareToCompute();
 
@@ -535,17 +475,7 @@ protected:
         unsigned numIndices = Adapter::numIndices();
 
         m_storage = Storage::Dense;
-#if USE(BUN_JSC_ADDITIONS)
-        m_wordsPerWorkset = wordsForBits(numIndices);
-        m_workset.initialize(Storage::Dense, m_wordsPerWorkset);
-        if (m_wordsPerWorkset >= minimumWordsToCompact) {
-            computeDenseCompact(numNodes, numIndices);
-            return;
-        }
-        m_wordsPerSet = m_wordsPerWorkset;
-#else
         m_wordsPerSet = wordsForBits(numIndices);
-#endif
 
         size_t matrixWords = static_cast<size_t>(numNodes) * m_wordsPerSet;
         m_denseStore.fill(0, 2 * matrixWords);
@@ -555,17 +485,13 @@ protected:
         // gen is initialized with a value, zero initialization is not necessary (costly).
         std::ranges::fill(killStore, 0);
         std::span<uint64_t> store = m_denseStore.mutableSpan();
-#if !USE(BUN_JSC_ADDITIONS)
         std::span<uint64_t> liveInMatrix = store.subspan(0, matrixWords);
-#endif
         std::span<uint64_t> liveOutMatrix = store.subspan(matrixWords, matrixWords);
         std::span<uint64_t> genMatrix = genStore.mutableSpan();
         std::span<uint64_t> killMatrix = killStore.mutableSpan();
 
-#if !USE(BUN_JSC_ADDITIONS)
         m_workset.initialize(Storage::Dense, m_wordsPerSet);
 
-#endif
         auto setFor = [&] (std::span<uint64_t> matrix, unsigned blockIndex) -> std::span<uint64_t> {
             return matrix.subspan(static_cast<size_t>(blockIndex) * m_wordsPerSet, m_wordsPerSet);
         };
@@ -619,124 +545,6 @@ protected:
             ++numActiveBlocks;
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-        solveDense(genMatrix, killMatrix, numActiveBlocks);
-    }
-
-    void computeDenseCompact(unsigned numNodes, unsigned numIndices)
-    {
-        struct Ends {
-            unsigned gen { 0 };
-            unsigned kill { 0 };
-            unsigned tail { 0 };
-        };
-        Vector<Ends> blockEnds(numNodes);
-        Vector<unsigned> gens;
-        Vector<unsigned> kills;
-        Vector<unsigned> tails;
-        Vector<unsigned, 64> added;
-        kills.reserveInitialCapacity(numIndices);
-        m_crossesBoundary.fill(0, m_wordsPerWorkset);
-        std::span<uint64_t> crossesBoundary = m_crossesBoundary.mutableSpan();
-
-        auto setBit = [] (std::span<uint64_t> set, unsigned index) {
-            set[index / wordBits] |= static_cast<uint64_t>(1) << (index % wordBits);
-        };
-
-        unsigned numActiveBlocks = 0;
-        for (unsigned blockIndex = 0; blockIndex < numNodes; ++blockIndex) {
-            if (auto block = m_cfg.node(blockIndex)) {
-                unsigned blockSize = Adapter::blockSize(block);
-                auto visitBoundary = [&](unsigned boundary, auto group) {
-                    if (boundary == blockSize) {
-                        if constexpr (adapterStreamsActions())
-                            Adapter::forEachUseInGroup(group, [&](unsigned index) { tails.append(index); });
-                    } else {
-                        Adapter::forEachUseInGroup(group, [&](unsigned index) {
-                            if (m_workset.add(index))
-                                added.append(index);
-                        });
-                    }
-
-                    Adapter::forEachDefInGroup(group, [&](unsigned index) {
-                        m_workset.remove(index);
-                        kills.append(index);
-                    });
-                };
-
-                if constexpr (adapterStreamsActions())
-                    Adapter::forEachActionGroupDescendingStreaming(block, visitBoundary);
-                else {
-                    Adapter::forEachActionGroupDescending(block, visitBoundary);
-                    Adapter::forEachUseAtTail(block, [&](unsigned index) {
-                        tails.append(index);
-                    });
-                }
-                for (unsigned index : added) {
-                    if (m_workset.remove(index)) {
-                        gens.append(index);
-                        setBit(crossesBoundary, index);
-                    }
-                }
-                added.shrink(0);
-                ++numActiveBlocks;
-            }
-            blockEnds[blockIndex] = { static_cast<unsigned>(gens.size()), static_cast<unsigned>(kills.size()), static_cast<unsigned>(tails.size()) };
-        }
-        for (unsigned index : tails)
-            setBit(crossesBoundary, index);
-
-        m_isCompact = true;
-        m_columnOfIndex.resize(numIndices);
-        WTF::forEachSetBit(m_crossesBoundary.span(), [&] (size_t index) {
-            m_columnOfIndex[index] = m_columnIndex.size();
-            m_columnIndex.append(static_cast<unsigned>(index));
-        });
-        m_wordsPerSet = wordsForBits(m_columnIndex.size());
-
-        size_t matrixWords = static_cast<size_t>(numNodes) * m_wordsPerSet;
-        m_denseStore.fill(0, 2 * matrixWords);
-        Vector<uint64_t> transferStore;
-        transferStore.fill(0, 2 * matrixWords);
-        std::span<uint64_t> liveOutMatrix = m_denseStore.mutableSpan().subspan(matrixWords, matrixWords);
-        std::span<uint64_t> genMatrix = transferStore.mutableSpan().subspan(0, matrixWords);
-        std::span<uint64_t> killMatrix = transferStore.mutableSpan().subspan(matrixWords, matrixWords);
-
-        Ends begin;
-        for (unsigned blockIndex = 0; blockIndex < numNodes; ++blockIndex) {
-            Ends end = blockEnds[blockIndex];
-            size_t offset = static_cast<size_t>(blockIndex) * m_wordsPerSet;
-            std::span<uint64_t> genSet = genMatrix.subspan(offset, m_wordsPerSet);
-            std::span<uint64_t> killSet = killMatrix.subspan(offset, m_wordsPerSet);
-            std::span<uint64_t> liveOutSet = liveOutMatrix.subspan(offset, m_wordsPerSet);
-            for (unsigned i = begin.gen; i < end.gen; ++i)
-                setBit(genSet, m_columnOfIndex[gens[i]]);
-            for (unsigned i = begin.kill; i < end.kill; ++i) {
-                unsigned index = kills[i];
-                if (crossesBoundary[index / wordBits] & (static_cast<uint64_t>(1) << (index % wordBits)))
-                    setBit(killSet, m_columnOfIndex[index]);
-            }
-            for (unsigned i = begin.tail; i < end.tail; ++i)
-                setBit(liveOutSet, m_columnOfIndex[tails[i]]);
-            begin = end;
-        }
-
-        solveDense(genMatrix, killMatrix, numActiveBlocks);
-    }
-
-    void solveDense(std::span<const uint64_t> genMatrix, std::span<const uint64_t> killMatrix, unsigned numActiveBlocks)
-    {
-        unsigned numNodes = m_cfg.numNodes();
-        size_t matrixWords = static_cast<size_t>(numNodes) * m_wordsPerSet;
-        std::span<uint64_t> store = m_denseStore.mutableSpan();
-        std::span<uint64_t> liveInMatrix = store.subspan(0, matrixWords);
-        std::span<uint64_t> liveOutMatrix = store.subspan(matrixWords, matrixWords);
-
-        auto setFor = [&] (auto matrix, unsigned blockIndex) {
-            return matrix.subspan(static_cast<size_t>(blockIndex) * m_wordsPerSet, m_wordsPerSet);
-        };
-
-#endif
         // Reverse-post-order seed so the backward dataflow processes a block after its successors.
         Vector<unsigned, 64> worklist;
         worklist.reserveInitialCapacity(numActiveBlocks);
@@ -795,10 +603,6 @@ protected:
     // Sparse fallback for functions whose dense matrices would exceed the budget.
     void computeSparse()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        m_columnIndex.shrink(0);
-        m_isCompact = false;
-#endif
         Adapter::prepareToCompute();
 
         unsigned numNodes = m_cfg.numNodes();
@@ -828,11 +632,7 @@ protected:
             worklist.append(blockIndex);
         }
 
-#if USE(BUN_JSC_ADDITIONS)
-        SparseBitVector<> delta;
-#else
         Vector<unsigned, 64> delta;
-#endif
         while (!worklist.isEmpty()) {
             unsigned blockIndex = worklist.takeLast();
             bool cleared = dirtyBlocks.quickClear(blockIndex);
@@ -841,15 +641,11 @@ protected:
             auto block = m_cfg.node(blockIndex);
             ASSERT(block);
 
-#if USE(BUN_JSC_ADDITIONS)
-            m_workset.copyFromSparse(sparseTail(blockIndex));
-#else
             m_workset.clear();
             sparseTail(blockIndex).forEachSetBit(
                 [&] (unsigned index) {
                     m_workset.add(index);
                 });
-#endif
             // The uses at the tail boundary are already in the tail set, so re-adding them here is a
             // no-op and needs no special case.
             Adapter::forEachActionGroupDescending(block,
@@ -858,15 +654,6 @@ protected:
                     Adapter::forEachDefInGroup(group, [&] (unsigned index) { m_workset.remove(index); });
                 });
 
-#if USE(BUN_JSC_ADDITIONS)
-            if (!sparseHead(blockIndex).merge(m_workset.sparse(), &delta))
-                continue;
-
-            for (auto predecessor : m_cfg.predecessors(block)) {
-                if (sparseTail(predecessor->index()).merge(delta) && !dirtyBlocks.quickSet(predecessor->index()))
-                    worklist.append(predecessor->index());
-            }
-#else
             auto& liveAtHead = sparseHead(blockIndex);
             delta.shrink(0);
             m_workset.sparse().forEachSetBit([&] (unsigned index) {
@@ -887,7 +674,6 @@ protected:
                 if (changed && !dirtyBlocks.quickSet(predecessor->index()))
                     worklist.append(predecessor->index());
             }
-#endif
         }
 
 #if ASSERT_ENABLED
@@ -901,30 +687,8 @@ private:
     friend class Iterable;
     friend class LiveAtHead;
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool denseSliceContains(std::span<const uint64_t> set, unsigned bit) const
-    {
-        if (m_isCompact) {
-            if (bit / wordBits >= m_crossesBoundary.size() || !(m_crossesBoundary[bit / wordBits] & (static_cast<uint64_t>(1) << (bit % wordBits))))
-                return false;
-            bit = m_columnOfIndex[bit];
-        }
-        if (bit / wordBits >= set.size())
-            return false;
-        return set[bit / wordBits] & (static_cast<uint64_t>(1) << (bit % wordBits));
-    }
-
-#endif
     void forEachInDense(std::span<const uint64_t> set, NOESCAPE const Invocable<void(const Thing&)> auto& func)
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_isCompact) {
-            WTF::forEachSetBit(set, [&] (size_t column) {
-                func(this->indexToValue(m_columnIndex[column]));
-            });
-            return;
-        }
-#endif
         WTF::forEachSetBit(set, [&] (size_t index) {
             func(this->indexToValue(static_cast<unsigned>(index)));
         });
@@ -945,30 +709,18 @@ private:
             while (word) {
                 unsigned bit = std::countr_zero(word);
                 word &= word - 1;
-#if USE(BUN_JSC_ADDITIONS)
-                unsigned index = static_cast<unsigned>(wordIndex * wordBits + bit);
-                func(this->indexToValue(m_isCompact ? m_columnIndex[index] : index));
-#else
                 func(this->indexToValue(static_cast<unsigned>(wordIndex * wordBits + bit)));
-#endif
             }
         }
     }
 
     void forEachInSparseDifference(const SparseBitVector<>& a, const SparseBitVector<>& b, NOESCAPE const Invocable<void(const Thing&)> auto& func)
     {
-#if USE(BUN_JSC_ADDITIONS)
-        a.forEachSetBitNotIn(b,
-            [&](auto index) {
-                func(this->indexToValue(static_cast<unsigned>(index)));
-            });
-#else
         a.forEachSetBit(
             [&](auto index) {
                 if (!b.contains(index))
                     func(this->indexToValue(static_cast<unsigned>(index)));
             });
-#endif
     }
 
     size_t denseHalfWords() const { return m_denseStore.size() / 2; }
@@ -991,19 +743,8 @@ private:
     Workset m_workset;
     Vector<uint64_t> m_denseStore;
     Vector<SparseBitVector<>> m_sparseStore;
-#if USE(BUN_JSC_ADDITIONS)
-    Vector<uint64_t> m_crossesBoundary;
-    Vector<unsigned> m_columnOfIndex;
-    Vector<unsigned> m_columnIndex;
-#endif
     size_t m_wordsPerSet { 0 };
-#if USE(BUN_JSC_ADDITIONS)
-    size_t m_wordsPerWorkset { 0 };
-#endif
     Storage m_storage { Storage::Dense };
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_isCompact { false };
-#endif
 #if ASSERT_ENABLED
     bool m_computed { false };
 #endif

@@ -1,0 +1,66 @@
+# A method call is linked again when a receiver it has seen gets the method later: the function that stores the method on the receiver and gives the receiver a prototype with the method is reached only through this call, and both methods are linked in the end, no method of an object outside the chain
+# RUN: flow-links calls
+# CHECK: [[caller]] f0 v9 -> [[first]] f1 Call Once
+# CHECK: [[caller]] f0 v9 -> [[own]] f2 Call Once
+# RUN(INHERITED): flow-links calls
+# INHERITED: [[caller]] f0 v9 -> [[first]] f1 Call Once
+# INHERITED: [[caller]] f0 v9 -> [[inherited]] f3 Call Once
+# RUN(NOWHERE): flow-links calls
+# NOWHERE-NOT: -> {{*}} f4
+# RUN(STARTER): flow-solve nodes
+# STARTER: , f0, v3) = {L3#[[starter]]}
+# STARTER: , f1, parameter 0) = {L3#[[starter]]}
+# RUN(OWN): flow-solve nodes
+# OWN: , f0, v1) = {L0#[[receiver]]}
+# OWN: , f2, parameter 0) = {L0#[[receiver]]}
+# RUN(PARENT): flow-solve nodes
+# PARENT: , f0, v1) = {L0#[[receiver]]}
+# PARENT: , f3, parameter 0) = {L0#[[receiver]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Receiver" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Parent" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Unrelated" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Starter" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="receiverOrStarter" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="receiver" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L3 fields=[0]
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v3 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = PropGet v7 key="m"
+    v9 = Call v8, v7 calleeKey="m"
+    Return
+}
+function f1 name="givesTheReceiverItsMethods" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="m"
+    v4 = NewClosure function=f3
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Builtin builtin=ObjectSetPrototypeOf
+    v7 = Call v6, -, v1, v5
+    v8 = NewClosure function=f4
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    Return
+}
+function f2 name="storedOnReceiver" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="storedOnParent" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="storedOnUnrelated" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

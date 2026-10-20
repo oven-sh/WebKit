@@ -1,0 +1,85 @@
+# The sites, seeds and first contents of the allocating operations
+# RUN: flow-summary f0
+# CHECK: l6 = v4
+# CHECK-NEXT: l7 = v5
+# CHECK: l17 = v15
+# CHECK: [[fieldA]] = SiteField s1 0
+# CHECK-NOT: SiteField s1 1
+# CHECK: [[fieldC]] = SiteField s1 2
+# CHECK: [[plainField]] = SiteField s2 0
+# CHECK: [[first]] = SitePosition s3 0
+# CHECK-NEXT: [[second]] = SitePosition s3 1
+# CHECK-NOT: SitePosition s4
+# CHECK: [[withHole]] = SiteSlot s4 ArrayElement
+# CHECK: [[firstArgument]] = SitePosition s8 0
+# CHECK-NEXT: [[secondArgument]] = SitePosition s8 1
+# CHECK-NEXT: [[surplus]] = SiteSlot s8 ArgumentsElement
+# CHECK-NEXT: [[resultValue]] = SiteField s9 0
+# CHECK-NEXT: [[resultDone]] = SiteField s9 1
+# CHECK-NEXT: [[suppressed]] = SiteUndeclaredPart s10
+# CHECK: s1 = Layout Operation v4 L0
+# CHECK-NEXT: s2 = Layout Operation v5 L1
+# CHECK-NEXT: s3 = Instance Operation v6 Array positions=2
+# CHECK-NEXT: s4 = Instance Operation v7 Array
+# CHECK-NEXT: s5 = Instance Operation v8 RegExp
+# CHECK-NEXT: s6 = Opaque Operation v9 Array
+# CHECK-NEXT: s7 = Instance Operation v10 Promise
+# CHECK-NEXT: s8 = Instance Operation v11 Arguments positions=2
+# CHECK-NEXT: s9 = Layout Operation v13 L(IteratorResult)
+# CHECK-NEXT: s10 = Opaque Operation v15 Error
+# CHECK-NOT: = Opaque
+# CHECK-NOT: seed l6
+# CHECK: seed l7 Site s2
+# CHECK-NEXT: seed l8 Site s3
+# CHECK-NEXT: seed l9 Site s4
+# CHECK-NEXT: seed [[hole]] Primitives [Undefined]
+# CHECK-NEXT: seed l10 Site s5
+# CHECK-NEXT: seed l11 Site s6
+# CHECK: seed l12 Site s7
+# CHECK: seed l13 Site s8
+# CHECK: seed l15 Site s9
+# CHECK-NOT: seed l16
+# CHECK: seed l17 Site s10
+# CHECK: copy l1 -> [[fieldA]]
+# CHECK-NEXT: copy l1 -> [[fieldC]]
+# CHECK-NEXT: copy l1 -> [[plainField]]
+# CHECK-NEXT: copy l1 -> [[first]]
+# CHECK-NEXT: copy l1 -> [[withHole]]
+# CHECK-NEXT: copy l1 -> [[firstArgument]]
+# CHECK-NEXT: copy l1 -> [[resultValue]]
+# CHECK-NEXT: copy l1 -> [[suppressed]]
+# CHECK-NEXT: copy l2 -> [[second]]
+# CHECK-NEXT: copy l2 -> [[secondArgument]]
+# CHECK-NEXT: copy l2 -> [[suppressed]]
+# CHECK-NEXT: copy l14 -> [[resultDone]]
+# CHECK-NEXT: copy [[hole]] -> [[withHole]]
+# CHECK: copy [[rest]] -> [[surplus]]
+# CHECK: Allocation#1 origin=v4 site=s1 prototype=l2
+# CHECK-NEXT: Allocation#2 origin=v5 site=s2
+# CHECK-NEXT: Allocation#3 origin=v6 site=s3
+# CHECK: Allocation#10 origin=v15 site=s10
+# CHECK-NOT: Allocation#11
+# CHECK: SlotAccess#0 kind=Load origin=v11 receiver=l3 contentsSlot=Element value=[[rest]]
+# CHECK-NEXT: OperandUse#0 origin=v14 operandIndex=0 result=l16
+# CHECK-NEXT: waiters
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Instance name="Three" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+layout L1 name="Plain" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="allocates" role=Library flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: object, v3: Array):
+    v4 = NewObject v2, v1, v1 layout=L0 fields=[0, 2]
+    v5 = NewObject -, v1 layout=L1 fields=[0]
+    v6 = NewArray v1, v2 contents=anything
+    v7 = NewArray v1 contents=anything holes=[1]
+    v8 = NewRegExp pattern="a" regExpFlags=[Global]
+    v9 = NewTemplateObject templateStrings=[{cooked="t" raw="t"}]
+    v10 = NewPromise
+    v11 = CreateUnmappedArguments v0, v3, v1, v2
+    v12 = Boolean boolean=false
+    v13 = CreateIteratorResult v1, v12
+    v14 = NewRuntimeError runtimeError=ConstantAssignment
+    v15 = NewSuppressedError v1, v2
+    Return
+}

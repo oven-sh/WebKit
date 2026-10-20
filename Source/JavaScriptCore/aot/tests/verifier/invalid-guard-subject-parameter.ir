@@ -1,0 +1,271 @@
+# a guard parameter proves something about an object parameter of its block only where every edge passes a guard of the object it passes
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 11
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="goodTwoAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f1 name="badGuardsOfOtherAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = AllGuards v3
+    Jump -> next b3(v2, v4)
+  b2():
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v6 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v7 = AllGuards v6
+    Jump -> next b3(v5, v7)
+  b3(v8, v9):
+    v10 = GetSlot v8, v9 key="x" receivers=[L0] level=Proven
+    Return v10
+}
+function f2 name="badOneGuardOfAnotherAllocation" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v6 = AllGuards v5
+    Jump -> next b3(v4, v6)
+  b3(v7, v8):
+    v9 = GetSlot v7, v8 key="x" receivers=[L0] level=Proven
+    Return v9
+}
+function f3 name="badGuardOfObjectThatIsNotPassed" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = AllGuards v2
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v6 = AllGuards v2
+    Jump -> next b3(v5, v6)
+  b3(v7, v8):
+    v9 = GetSlot v7, v8 key="x" receivers=[L0] level=Proven
+    Return v9
+}
+function f4 name="badAllocationsOfTwoLayouts" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f5 name="badSlotFilledByOneAllocation" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="y" receivers=[L0] level=Proven
+    Return v8
+}
+function f6 name="goodSlotFilledByBothAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f7 name="goodProofsOnEdges" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(v0 | 0), notTaken b4()
+  b2():
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b3(v1 | 0), notTaken b4()
+  b3(v5, v6):
+    v7 = GetSlotOrUndefined v5, v6 key="x" receivers=[L0] level=Proven
+    Return v7
+  b4():
+    Return
+}
+function f8 name="badProofOfTheObjectTheOtherEdgePasses" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(v0 | 0), notTaken b4()
+  b2():
+    v4 = ShapeTest v0 layouts=[L0]
+    Branch v4 -> taken b3(v1 | 0), notTaken b4()
+  b3(v5, v6):
+    v7 = GetSlotOrUndefined v5, v6 key="x" receivers=[L0] level=Proven
+    Return v7
+  b4():
+    Return
+}
+function f9 name="goodAllocatedAgainInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = AllGuards v1
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = GetSlot v3, v4 key="x" receivers=[L0] level=Proven
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = NewObject -, v6, v6 layout=L0 fields=[0, 1]
+    v9 = AllGuards v8
+    Jump -> next b1(v8, v9)
+  b3():
+    Return v6
+}
+function f10 name="badLoopPassesAnotherObjectWithTheSameGuard" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = GetSlot v4, v5 key="x" receivers=[L0] level=Proven
+    v8 = ToBoolean v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v1, v5)
+  b3():
+    Return v7
+}
+function f11 name="badLoopSwapsTwoObjects" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b1(v2, v1, v3)
+  b1(v4, v5, v6):
+    LoopHint
+    v8 = GetSlot v4, v6 key="x" receivers=[L0] level=Proven
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v5, v4, v6)
+  b3():
+    Return v8
+}
+function f12 name="goodHandlerEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = AllGuards v4
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b3(v2, v3):
+    v6 = Call v0
+    Return v6
+  b2() handler=b3(v4, v5):
+    v7 = Call v0
+    Return v7
+  b3(v8, v9) role=CatchHandler:
+    v10 = CatchValue
+    v11 = GetSlot v8, v9 key="x" receivers=[L0] level=Proven
+    Return v11
+}
+function f13 name="goodSubjectIsUnspecifiedOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = Unspecified valueType=object
+    v5 = AllGuards
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f14 name="badObjectWithoutGuardOnOneEdge" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = AllGuards v3
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = AllGuards
+    Jump -> next b3(v1, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f15 name="badAnotherParameterIsUnspecified" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = AllGuards v3
+    Jump -> next b3(v3, v1, v4)
+  b2():
+    v5 = Unspecified valueType=object
+    v6 = AllGuards
+    Jump -> next b3(v1, v5, v6)
+  b3(v7, v8, v9):
+    v10 = GetSlot v7, v9 key="x" receivers=[L0] level=Proven
+    Return v10
+}
+function f16 name="badAnotherObjectWhereSubjectIsUnspecified" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = Unspecified valueType=object
+    v5 = AllGuards
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v2, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}

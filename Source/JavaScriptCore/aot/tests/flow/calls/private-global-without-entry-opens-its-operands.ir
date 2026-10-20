@@ -1,0 +1,20 @@
+# The host's modules reach some of its functions under private names of the global object. Of one without an entry nothing says what it does: its operands can be changed in every way,
+# and it is no event of the program.
+# RUN: flow-links unseen
+# RUN(SINKS): flow-solve sinks
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+# SINKS: unknownJavaScript {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key=@"notListedAnywhere" [isFreeName]
+    v4 = Call v3, -, v1
+    Return
+}

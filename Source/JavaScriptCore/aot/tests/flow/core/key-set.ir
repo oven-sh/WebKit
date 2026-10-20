@@ -1,0 +1,79 @@
+# The class of a property key, the key set of one key, and which keys a key set may name
+# RUN: flow-key-set class k0 class k1 class k2 class k3 class k4 class k5 class k6 class k7
+# CHECK: class k0: String
+# CHECK-NEXT: class k1: Index
+# CHECK-NEXT: class k2: Index
+# CHECK-NEXT: class k3: String
+# CHECK-NEXT: class k4: String
+# CHECK-NEXT: class k5: String
+# CHECK-NEXT: class k6: Symbol
+# CHECK-NEXT: class k7: PrivateName
+# RUN(INDEX): flow-key-set index k0 index k1 index k2 index k3 index k4 index k6
+# INDEX: index k0: none
+# INDEX-NEXT: index k1: 0
+# INDEX-NEXT: index k2: 4294967294
+# INDEX-NEXT: index k3: none
+# INDEX-NEXT: index k4: none
+# INDEX-NEXT: index k6: none
+# RUN(SET): flow-key-set set k0 set k1 set k2 set k6 set k7 unite k0 k1 unite k1 k2 unite k6 k0 unite k0 k0
+# SET: set k0: {"x"}
+# SET-NEXT: set k1: {[0,0]}
+# SET-NEXT: set k2: {[4294967294,4294967294]}
+# SET-NEXT: set k6: {@@iterator}
+# SET-NEXT: set k7: {#"p"@L0}
+# SET-NEXT: unite k0 k1: {"x", [0,0]}
+# SET-NEXT: unite k1 k2: {[0,4294967294]}
+# SET-NEXT: unite k6 k0: {"x", @@iterator}
+# SET-NEXT: unite k0 k0: {"x"}
+# RUN(NUMERIC): flow-key-set set k3 set k4 set k5
+# NUMERIC: set k3: {"4294967295", [0,4294967294]}
+# NUMERIC-NEXT: set k4: {"-1", [0,4294967294]}
+# NUMERIC-NEXT: set k5: {"1.5", [0,4294967294]}
+# RUN(STRING): flow-key-set may-name string* k0 may-name string* k1 may-name string* k2 may-name string* k3 may-name string* k6 may-name string* k7
+# STRING: may-name string* k0: yes
+# STRING-NEXT: may-name string* k1: yes
+# STRING-NEXT: may-name string* k2: yes
+# STRING-NEXT: may-name string* k3: yes
+# STRING-NEXT: may-name string* k6: no
+# STRING-NEXT: may-name string* k7: no
+# RUN(NUMBER): flow-key-set may-name number* k0 may-name number* k1 may-name number* k2 may-name number* k3 may-name number* k4 may-name number* k5 may-name number* k6 may-name number* k7
+# NUMBER: may-name number* k0: no
+# NUMBER-NEXT: may-name number* k1: yes
+# NUMBER-NEXT: may-name number* k2: yes
+# NUMBER-NEXT: may-name number* k3: yes
+# NUMBER-NEXT: may-name number* k4: yes
+# NUMBER-NEXT: may-name number* k5: yes
+# NUMBER-NEXT: may-name number* k6: no
+# NUMBER-NEXT: may-name number* k7: no
+# RUN(SYMBOL): flow-key-set may-name symbol* k6 may-name symbol* k0 may-name symbol* k1 may-name symbol* k7
+# SYMBOL: may-name symbol* k6: yes
+# SYMBOL-NEXT: may-name symbol* k0: no
+# SYMBOL-NEXT: may-name symbol* k1: no
+# SYMBOL-NEXT: may-name symbol* k7: no
+# RUN(RANGE): flow-key-set may-name [0,3] k1 may-name [0,3] k2 may-name [0,3] k0 may-name [0,3] k4 may-name [1,3] k1
+# RANGE: may-name [0,3] k1: yes
+# RANGE-NEXT: may-name [0,3] k2: no
+# RANGE-NEXT: may-name [0,3] k0: no
+# RANGE-NEXT: may-name [0,3] k4: no
+# RANGE-NEXT: may-name [1,3] k1: no
+# RUN(ALL): flow-key-set may-name all k0 may-name all k2 may-name all k6 may-name all k7
+# ALL: may-name all k0: yes
+# ALL-NEXT: may-name all k2: yes
+# ALL-NEXT: may-name all k6: yes
+# ALL-NEXT: may-name all k7: no
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Instance name="Holder" fields=[{key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+function f0 name="reads" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="0"
+    v3 = PropGet v0 key="4294967294"
+    v4 = PropGet v0 key="4294967295"
+    v5 = PropGet v0 key="-1"
+    v6 = PropGet v0 key="1.5"
+    v7 = PropGet v0 key=@@iterator
+    v8 = PropGet v0 key=#"p"@L0
+    Return
+}

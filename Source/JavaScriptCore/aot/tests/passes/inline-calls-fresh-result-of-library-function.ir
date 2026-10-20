@@ -1,0 +1,60 @@
+# A library function whose result is a fresh object is worth a copy where the caller only takes the object apart
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes x1 f0
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineBenefitSunkAllocation = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
+
+function f0 name="createsPair" role=Library parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    v14 = Mul v13, v0
+    v15 = Mul v14, v0
+    v16 = Mul v15, v0
+    v17 = Mul v16, v0
+    v18 = Mul v17, v0
+    v19 = Mul v18, v0
+    v20 = Mul v19, v0
+    v21 = Mul v20, v0
+    v22 = Mul v21, v0
+    v23 = Mul v22, v0
+    v24 = Mul v23, v0
+    v25 = NewObject -, v24, v0 layout=L0 fields=[0, 1] [keepsShape]
+    Return v25
+}
+
+function f1 name="readsFreshResult" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    v2 = GetSlot v1 key="a" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: name="readsFreshResult"
+# CHECK-NOT: CallDirect
+# CHECK: = NewObject
+
+function f2 name="returnsFreshResult" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="returnsFreshResult"
+# CHECK: = CallDirect {{*}} function=f0
+# CHECK-NEXT: Return

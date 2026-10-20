@@ -1,0 +1,45 @@
+# A tail call in a function whose result is narrowed gets an assumed cast to that result and stays a tail call; where the result stays as read the tail call gets no cast
+# RUN: flow-apply
+# CHECK-LABEL: function f1 name="step" {{*}}results=[{type=L1 written=anything}]
+# CHECK: v3: anything = Call [[callee]], v0, v1
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=L1} resolution=Assume}] requirement=Allowed
+# CHECK-NOT: Return
+# CHECK-LABEL: function f2 name="next"
+# CHECK-LABEL: function f3 name="forward" {{*}}results=[{type=anything}]
+# CHECK-NOT: casts=
+# CHECK: ReturnCall v3
+# CHECK-NOT: casts=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Stepper" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="State" fields=[{key="count" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = Call v2, v1, v3
+    v5 = PropGet v4 key="count"
+    v6 = CallDirect v3 function=f3
+    Return
+}
+function f1 name="step" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="next"
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}
+function f2 name="next" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f3 name="forward" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="external" [isFreeName]
+    v3 = Call v2, -, v0
+    ReturnCall v3
+}

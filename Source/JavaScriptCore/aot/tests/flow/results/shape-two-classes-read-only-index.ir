@@ -1,0 +1,50 @@
+# A loss belongs to the allocation class, not to the layout: of two construct sites of one constructor function the objects of one get a read-only property under an index key, and the objects of the other keep their shape
+# RUN: flow
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# RUN(LOST): flow
+# LOST: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, {{*}}StoreOfOtherType]{{*}} cause=PropertyRedefined witness={function=f0 value=v8}
+# LOST: layout L0 flow={{*}}cause=PropertyRedefined witness={function=f0 value=v8}
+# LOST: variable g0 type=L0 written=anything
+# LOST: variable g1 type=object predicted=L0 written=anything
+# LOST: variable g2 type=object predicted=L0 written=anything
+# LOST: function f1 this type=object predicted=L0 written=anything
+# RUN(ONE): flow
+# ONE-COUNT-1: class {{*}} layout=L0 {{*}}cause=
+# ONE-NOT: class {{*}} layout=L0 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 name="ValueDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="lost" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="either" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Construct v0
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g1
+    v5 = Integer integer=0
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = Call v7, -, v2, v5, v6
+    v9 = Builtin builtin=MathRandom
+    v10 = Call v9
+    v11 = ToBoolean v10
+    Branch v11 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v12):
+    PutModuleVariable v12 variable=g2
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}

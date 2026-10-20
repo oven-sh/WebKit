@@ -1,0 +1,138 @@
+# The plan of an access to a private field: a slot of the declaring class's layout, never inherited from a prototype, untouched by freezing, one name per evaluation of the class
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" constructor=f0 fields=[{key=#"x"@L0 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"late"@L0 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"unknown"@L0 declared={type=number} flags=[IsPrivate]}] flow={baseState=None fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Repeated" constructor=f1 fields=[{key=#"x"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction}
+layout L2 kind=Instance name="Derived" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key=#"x"@L3 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction keys=NeverEnumerated} classFlow={evaluations=AtMostOnce}
+layout L4 kind=Instance name="CreatedLater" constructor=f4 fields=[{key=#"x"@L4 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L5 kind=Instance name="Unrelated" constructor=f5 flow={baseState=None impossibleMutations=[AddProperty]} classFlow={evaluations=AtMostOnce}
+layout L6 kind=Instance name="UnrelatedMayGainProperties" constructor=f6 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Once" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="CreatedLater" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="UnrelatedMayGainProperties" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+
+function f7 name="filled" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    v5 = PrivateHas v0, v2 layout=L0 field=0
+    Return v3
+}
+# CHECK: F7 v3 PrivateGet [[x]]: form=Slot level=Proven operation=GetSlot receivers=[L0] member=(Field level=Proven holder=L0 field=0)
+# CHECK-NEXT: F7 v4 PrivateSet [[x]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
+# CHECK-NEXT: F7 v5 PrivateHas [[x]]: form=Constant level=Proven operation=Boolean value=true receivers=[L0] member=(Field level=Proven holder=L0 field=0)
+function f8 name="stored-value-of-a-wider-type" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewClassToken layout=L0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return
+}
+# CHECK-NEXT: F8 v3 PrivateSet [[x]]: form=Slot level=Predicted operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f9 name="class-may-be-evaluated-again" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    v2 = NewClassToken layout=L1
+    v3 = PrivateGet v0, v2 layout=L1 field=0
+    PrivateSet v0, v2, v1 layout=L1 field=0
+    v5 = PrivateHas v0, v2 layout=L1 field=0
+    PrivateDefine v0, v2, v1 layout=L1 field=0
+    Return v3
+}
+# CHECK-NEXT: F9 v3 PrivateGet [[repeated]]: form=Slot level=Predicted operation=GetSlot receivers=[L1] conditions=[ClassEvaluatedOnce(L1)] missPath member=(Field level=Proven holder=L1 field=0)
+# CHECK-NEXT: F9 v4 PrivateSet [[repeated]]: form=Slot level=Predicted operation=PutSlot receivers=[L1] conditions=[ClassEvaluatedOnce(L1)] storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
+# CHECK-NEXT: F9 v5 PrivateHas [[repeated]]: form=Constant level=Predicted operation=Boolean value=true receivers=[L1] conditions=[ClassEvaluatedOnce(L1)] missPath member=(Field level=Proven holder=L1 field=0)
+# CHECK-NEXT: F9 v6 PrivateDefine [[repeated]]: form=Slot level=Predicted operation=PutSlotOrAdd receivers=[L1] conditions=[ClassEvaluatedOnce(L1)] storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
+function f10 name="slot-may-be-empty" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=1
+    PrivateSet v0, v2, v1 layout=L0 field=1
+    v5 = PrivateHas v0, v2 layout=L0 field=1
+    Return v3
+}
+# CHECK-NEXT: F10 v3 PrivateGet [[late]]: form=Slot level=Predicted operation=GetSlot receivers=[L0] proofs=[SlotFilled] missPath member=(Field level=Proven holder=L0 field=1)
+# CHECK-NEXT: F10 v4 PrivateSet [[late]]: form=Slot level=Predicted operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath member=(Field level=Proven holder=L0 field=1)
+# CHECK-NEXT: F10 v5 PrivateHas [[late]]: form=Slot level=Proven operation=IsSlotFilled receivers=[L0] member=(Field level=Proven holder=L0 field=1)
+function f11 name="nothing-known-of-the-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=2
+    PrivateSet v0, v2, v1 layout=L0 field=2
+    v5 = PrivateHas v0, v2 layout=L0 field=2
+    Return v3
+}
+# CHECK-NEXT: F11 v3 PrivateGet [[unknown]]: form=Slot level=Predicted operation=GetSlot receivers=[L0] proofs=[SlotFilled] missPath member=(Field level=Proven holder=L0 field=2)
+# CHECK-NEXT: F11 v4 PrivateSet [[unknown]]: form=Slot level=Predicted operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath member=(Field level=Proven holder=L0 field=2)
+# CHECK-NEXT: F11 v5 PrivateHas [[unknown]]: form=ByName level=Unknown receivers=[L0] member=(Field level=Proven holder=L0 field=2)
+function f12 name="field-of-the-base-class" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: L2, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return v3
+}
+# CHECK-NEXT: F12 v3 PrivateGet [[x]]: form=Slot level=Proven operation=GetSlot receivers=[L2] member=(Field level=Proven holder=L0 field=0)
+# CHECK-NEXT: F12 v4 PrivateSet [[x]]: form=Slot level=Proven operation=PutSlot receivers=[L2] storedValueFits member=(Field level=Proven holder=L0 field=0)
+function f13 name="class-and-subclass" parameters=[{type=L0|L2}] results=[{type=anything}] {
+  b0(v0: L0|L2):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    Return v2
+}
+# CHECK-NEXT: F13 v2 PrivateGet [[x]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L2] member=(Field level=Proven holder=L0 field=0)
+function f14 name="definition-at-construction" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    PrivateDefine v0, v2, v1 layout=L0 field=0
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    Return
+}
+# CHECK-NEXT: F14 v3 PrivateDefine [[x]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
+# CHECK-NEXT: F14 v4 PrivateDefine [[late]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=1)
+function f15 name="definition-at-construction-keys-never-enumerated" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: L3, v1: number):
+    v2 = NewClassToken layout=L3
+    PrivateDefine v0, v2, v1 layout=L3 field=0
+    Return
+}
+# CHECK-NEXT: F15 v3 PrivateDefine [[unlisted]]: form=Slot level=Proven operation=PutSlot receivers=[L3] storedValueFits member=(Field level=Proven holder=L3 field=0)
+function f16 name="definition-field-may-exist-already" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+  b0(v0: L4, v1: number):
+    v2 = NewClassToken layout=L4
+    PrivateDefine v0, v2, v1 layout=L4 field=0
+    Return
+}
+# CHECK-NEXT: F16 v3 PrivateDefine [[later]]: form=ByName level=Unknown receivers=[L4] member=(Field level=Proven holder=L4 field=0)
+function f17 name="receiver-of-an-unrelated-class" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
+  b0(v0: L5, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    v5 = PrivateHas v0, v2 layout=L0 field=0
+    Return v3
+}
+# CHECK-NEXT: F17 v3 PrivateGet [[x]]: form=ByName level=Unknown receivers=[L5] member=(Absent level=Proven)
+# CHECK-NEXT: F17 v4 PrivateSet [[x]]: form=ByName level=Unknown receivers=[L5] member=(Absent level=Proven)
+# CHECK-NEXT: F17 v5 PrivateHas [[x]]: form=Constant level=Proven operation=Boolean value=false receivers=[L5] member=(Absent level=Proven)
+function f18 name="receiver-of-an-unrelated-class-may-have-been-given-the-field" parameters=[{type=L6}] results=[{type=anything}] {
+  b0(v0: L6):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateHas v0, v1 layout=L0 field=0
+    Return v2
+}
+# CHECK-NEXT: F18 v2 PrivateHas [[x]]: form=Constant level=Predicted operation=Boolean value=false receivers=[L6] proofs=[NoExtraProperties] missPath member=(Absent level=Predicted proofs=[NoExtraProperties])
+function f19 name="declaring-or-unrelated-class" parameters=[{type=L0|L5}] results=[{type=anything}] {
+  b0(v0: L0|L5):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateHas v0, v1 layout=L0 field=0
+    Return v2
+}
+# CHECK-NEXT: F19 v2 PrivateHas [[x]]: form=Split level=Proven receivers=[L0, L5]

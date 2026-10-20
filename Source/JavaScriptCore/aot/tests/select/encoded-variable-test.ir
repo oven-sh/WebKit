@@ -1,0 +1,124 @@
+# A variable that holds undefined as zero is tested for undefined without being decoded: the read delivers the stored word, whose type has `absent` in the place of undefined, and the test asks for `absent`. A read that is used in another way, or whose passing side hands the value on, is decoded
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: pipeline Select
+# STATISTIC: EncodedVariableTestGroups = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Range" fields=[{key="pos" declared={type=number}}]
+variable g0 name="encoded" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="plain" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return
+}
+function f1 name="testsForUndefined" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v2 = Integer integer=0
+    Return v2
+  b2(v3):
+    v4 = PropGet v3 key="pos"
+    Return v4
+}
+# CHECK-LABEL: function f1 name="testsForUndefined"
+# CHECK: [[word]]: {{*}}absent{{*}} = GetEncodedModuleVariable variable=g0
+# CHECK-NEXT: [[test]]: boolean = TypeTest [[word]] testedType=absent
+# CHECK-NEXT: TestAndBranch [[test]] -> taken b1(), notTaken b2(| 0)
+# CHECK: b2([[object]]: L0):
+function f2 name="testsForUndefinedOrNull" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2(v3):
+    v4 = PropGet v3 key="pos"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="testsForUndefinedOrNull"
+# CHECK: [[word]]: {{*}}absent{{*}} = GetEncodedModuleVariable variable=g0
+# CHECK-NEXT: = TypeTest [[word]] testedType=
+# CHECK-NOT: GetModuleVariable
+function f3 name="handsOnThePassingValue" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    Return v5
+  b2(v6):
+    v7 = PropGet v6 key="pos"
+    Return v7
+}
+# CHECK-LABEL: function f3 name="handsOnThePassingValue"
+# CHECK-NOT: GetEncodedModuleVariable
+# CHECK: = GetModuleVariable variable=g0
+function f4 name="testsPlainVariable" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = TypeTest v0 testedType=undefined
+    Branch v1 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v2 = Integer integer=0
+    Return v2
+  b2(v3):
+    v4 = PropGet v3 key="pos"
+    Return v4
+}
+# CHECK-LABEL: function f4 name="testsPlainVariable"
+# CHECK-NOT: GetEncodedModuleVariable
+# CHECK: = GetModuleVariable variable=g1
+# CHECK-NEXT: = TypeTest {{*}} testedType=undefined
+function f5 name="stores" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f6 name="clearsAndReturnsPlainVariable" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g1
+    Return v2
+}
+function f7 name="storesBetweenReadAndTest" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Undefined
+    PutModuleVariable v1 variable=g0
+    v3 = TypeTest v0 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v4 = Integer integer=0
+    Return v4
+  b2(v5):
+    v6 = PropGet v5 key="pos"
+    Return v6
+}
+# CHECK-LABEL: function f7 name="storesBetweenReadAndTest"
+# CHECK-NOT: GetEncodedModuleVariable
+# CHECK: = GetModuleVariable variable=g0

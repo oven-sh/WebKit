@@ -5,19 +5,31 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
+#include "B3IntRange.h"
+#include "B3Limits.h"
 #include "B3NaturalLoops.h"
 #include "B3Opcode.h"
-#include <wtf/HashMap.h>
-#include <wtf/IndexMap.h>
-#include <wtf/Noncopyable.h>
+#include "B3Type.h"
+#include <expected>
+#include <wtf/Int128.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/Vector.h>
+#include <wtf/TriState.h>
 
 namespace JSC { namespace B3 {
 
-class UpsilonValue;
+class PhiChildren;
+
+struct AffineForm {
+    int64_t offset { 0 };
+    IntegerInterval exactBaseRange;
+};
+
+struct LoopTest {
+    BasicBlock* block { nullptr };
+    Value* condition { nullptr };
+};
 
 struct CountedLoop {
     BasicBlock* preHeader { nullptr };
@@ -25,46 +37,45 @@ struct CountedLoop {
     BasicBlock* test { nullptr };
     unsigned latchSuccessorIndex { 0 };
     BasicBlock* latch { nullptr };
+    bool isTopTested { false };
     Opcode relation { Oops };
     Value* inductionVariable { nullptr };
     Value* start { nullptr };
     Value* next { nullptr };
     int64_t step { 0 };
-    bool wrapsAroundInt32 { false };
-    std::optional<int64_t> saturation;
     Value* bound { nullptr };
+    Int128 farthestSafeBound { 0 };
+    bool boundIsSafe { false };
+    bool counterRangeIsSafe { false };
+    bool relationHoldsOnEntry { false };
 
-    bool increases() const { return relation == LessThan || relation == LessEqual || relation == Below || relation == BelowEqual; }
-    bool isUnsigned() const { return relation == Below || relation == BelowEqual || relation == Above || relation == AboveEqual; }
+    Value* testedValue() const { return isTopTested ? inductionVariable : next; }
+    Type type() const;
+    Signedness signedness() const { return isUnsigned() ? Signedness::Unsigned : Signedness::Signed; }
+    bool cannotWrap() const { return boundIsSafe || counterRangeIsSafe; }
+    bool isSafeBound(const IntegerInterval& boundInterval) const { return increases() ? boundInterval.max <= farthestSafeBound : boundInterval.min >= farthestSafeBound; }
+    bool increases() const { return isLessRelation(relation); }
+    bool isUnsigned() const { return isUnsignedRelation(relation); }
     bool includesEqual() const { return relation == LessEqual || relation == GreaterEqual || relation == BelowEqual || relation == AboveEqual; }
 };
 
-static constexpr int64_t maxIterationsPerStrip = 1 << 16;
-
-class UpsilonsByPhi {
-    WTF_MAKE_NONCOPYABLE(UpsilonsByPhi);
-public:
-    explicit UpsilonsByPhi(Procedure& proc)
-        : m_proc(proc)
-    {
-    }
-
-    const Vector<UpsilonValue*, 2>* find(Value* phi) const;
-
-private:
-    Procedure& m_proc;
-    mutable IndexMap<Value*, Vector<UpsilonValue*, 2>> m_map;
+struct CountedLoopInputs {
+    Procedure& proc;
+    NaturalLoops& loops;
+    const NaturalLoop& loop;
+    PhiChildren& phiChildren;
+    const ScopedLambda<bool(Value*)>& isInvariant;
+    std::optional<LoopTest> test;
 };
 
-std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops&, const NaturalLoop&, const UpsilonsByPhi&, const ScopedLambda<bool(Value*)>& isInvariant);
-std::optional<CountedLoop> analyzeTopTestedCountedLoop(NaturalLoops&, const NaturalLoop&, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi&, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut);
+JS_EXPORT_PRIVATE std::expected<AffineForm, GaveUpReason> affineFormOf(const Procedure&, Value*, Value* base, Signedness);
 
-Value* appendStripEnd(Procedure&, BasicBlock*, const CountedLoop&, Value* from, Value* bound, bool relationMayNotHold);
+JS_EXPORT_PRIVATE std::expected<CountedLoop, GaveUpReason> analyzeCountedLoop(const CountedLoopInputs&);
 
-bool relationHoldsOnEntry(const CountedLoop&);
-std::optional<bool> evaluateComparisonWithBound(const CountedLoop&, Opcode, Value* left, Value* right, Value* bound);
-bool foldComparisonsWithBounds(Procedure&);
+JS_EXPORT_PRIVATE bool relationHoldsOnEntry(Procedure&, const CountedLoop&, Value* boundOnEntry);
+
+TriState evaluateComparisonWithBound(const CountedLoop&, Opcode, Value* left, Value* right);
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

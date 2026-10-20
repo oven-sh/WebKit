@@ -1,0 +1,103 @@
+# An initializer that creates ten fields lists their keys before it stores the values: nothing is kept across the stores, so only the path that calls the run time has a frame. Where nobody enumerates the keys there is nothing to list
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(IR): pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Enumerated" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="g" declared={type=number} flags=[IsRequired]}, {key="h" declared={type=number} flags=[IsRequired]}, {key="i" declared={type=number} flags=[IsRequired]}, {key="j" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="g" declared={type=number} flags=[IsRequired]}, {key="h" declared={type=number} flags=[IsRequired]}, {key="i" declared={type=number} flags=[IsRequired]}, {key="j" declared={type=number} flags=[IsRequired]}]
+variable g0 name="keys" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Construct v5, -, v2
+    v7 = Builtin builtin=ObjectKeys
+    v8 = Call v7, -, v6
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L1
+    v12 = FinishClass v11 layout=L1
+    v13 = Construct v12, -, v2
+    v14 = PropGet v13 key="a"
+    v15 = PropGet v13 key="b"
+    v16 = Add v14, v15
+    v17 = PropGet v13 key="c"
+    v18 = Add v16, v17
+    v19 = PropGet v13 key="d"
+    v20 = Add v18, v19
+    v21 = PropGet v13 key="e"
+    v22 = Add v20, v21
+    v23 = PropGet v13 key="f"
+    v24 = Add v22, v23
+    v25 = PropGet v13 key="g"
+    v26 = Add v24, v25
+    v27 = PropGet v13 key="h"
+    v28 = Add v26, v27
+    v29 = PropGet v13 key="i"
+    v30 = Add v28, v29
+    v31 = PropGet v13 key="j"
+    v32 = Add v30, v31
+    PutModuleVariable v32 variable=g1
+    Return
+}
+function f1 name="Enumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = CallDirect v3, v1 function=f2
+    Return v3
+}
+function f2 name="initializeEnumerated" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    PropDefine v0, v1 key="g"
+    PropDefine v0, v1 key="h"
+    PropDefine v0, v1 key="i"
+    PropDefine v0, v1 key="j"
+    Return
+}
+function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = CallDirect v3, v1 function=f4
+    Return v3
+}
+function f4 name="initializeNeverEnumerated" kind=Initializer flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object ? L1, v1: number):
+    PropDefine v0, v1 key="a"
+    PropDefine v0, v1 key="b"
+    PropDefine v0, v1 key="c"
+    PropDefine v0, v1 key="d"
+    PropDefine v0, v1 key="e"
+    PropDefine v0, v1 key="f"
+    PropDefine v0, v1 key="g"
+    PropDefine v0, v1 key="h"
+    PropDefine v0, v1 key="i"
+    PropDefine v0, v1 key="j"
+    Return
+}
+# IR-LABEL: function f2 name="initializeEnumerated"
+# IR: PutSlots v0, -, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 placedKeys=
+# IR-NOT: PutSlot
+# IR-LABEL: function f4 name="initializeNeverEnumerated"
+# IR-COUNT-10: PutSlot v0, -, v1 key=
+# IR-NOT: PutSlots
+# One range with a frame, and the frame holds no spill slot and no saved register.
+# CHECK: f2: size={{*}} frame=0@[[begin]]-[[end]] entries=
+# CHECK-NEXT: operation operationAOTDidCreateFieldsAt x3
+# CHECK: f4: size={{*}} frame=none
+# CHECK-NOT: DidCreateField

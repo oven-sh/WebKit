@@ -1,0 +1,5 @@
+# Synthetic exports that are not sorted by name
+# RUN: print
+# DIAGNOSTIC: UnsortedList
+
+module m0 path="/c.cjs" displayPath="c.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="b"}, {name="a"}]

@@ -105,6 +105,44 @@ inline bool indexIsSufficientlyBeyondLengthForSparseMap(unsigned i, unsigned len
     return i >= MIN_BEYOND_LENGTH_SPARSE_INDEX && i > length;
 }
 
+enum class ArrayStoragePolicy : uint8_t {
+    UsesArrayStorageForSpeed,
+    KeepsDenseArraysDense,
+};
+
+inline bool countsValuesToStoreBeyondVector(ArrayStoragePolicy policy, unsigned index)
+{
+    return index >= (policy == ArrayStoragePolicy::KeepsDenseArraysDense ? MIN_BEYOND_LENGTH_SPARSE_INDEX : MIN_SPARSE_ARRAY_INDEX) && index <= MAX_STORAGE_VECTOR_INDEX;
+}
+
+inline bool storesBeyondVectorInDenseStorage(ArrayStoragePolicy policy, unsigned index, unsigned vectorLength, unsigned numberOfValues)
+{
+    if (index > MAX_STORAGE_VECTOR_INDEX)
+        return false;
+    if (policy == ArrayStoragePolicy::KeepsDenseArraysDense)
+        return index < MIN_BEYOND_LENGTH_SPARSE_INDEX || (index / 2 <= vectorLength && isDenseEnoughForVector(index, numberOfValues));
+    return (index < MIN_SPARSE_ARRAY_INDEX || isDenseEnoughForVector(index, numberOfValues)) && !indexIsSufficientlyBeyondLengthForSparseMap(index, vectorLength);
+}
+
+inline bool movesElementsInDenseStorage(ArrayStoragePolicy policy, unsigned numberOfElementsToMove, unsigned length, unsigned lengthThreshold)
+{
+    if (policy == ArrayStoragePolicy::KeepsDenseArraysDense)
+        return true;
+    return numberOfElementsToMove < MIN_SPARSE_ARRAY_INDEX && length <= lengthThreshold;
+}
+
+inline bool copiesIntoDenseStorage(ArrayStoragePolicy policy, uint64_t numberOfElements)
+{
+    if (policy == ArrayStoragePolicy::KeepsDenseArraysDense)
+        return numberOfElements <= MAX_STORAGE_VECTOR_LENGTH;
+    return numberOfElements < MIN_SPARSE_ARRAY_INDEX;
+}
+
+inline bool returnsFromArrayStorageWhenDense(ArrayStoragePolicy policy)
+{
+    return policy == ArrayStoragePolicy::KeepsDenseArraysDense;
+}
+
 inline IndexingHeader indexingHeaderForArrayStorage(unsigned length, unsigned vectorLength)
 {
     IndexingHeader result;

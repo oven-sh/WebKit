@@ -1,0 +1,23 @@
+# The members of a layout ascend and are allocated
+# RUN(VALID): flow-validate
+# RUN(ALL): flow-validate
+# RUN(APPLIED): flow-apply
+# VALID: valid
+# ALL-NOT: invalid
+# APPLIED: layout L0 name="Shape" flow={allocation=NeverAllocated {{*}}members=[L1, L2]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="held" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+layout L0 name="Shape"
+layout L1 name="Circle" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    PutModuleVariable v3 variable=g0
+    Return
+}

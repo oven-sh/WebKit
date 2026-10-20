@@ -1,0 +1,50 @@
+# A cast that lets no object through ends a pointer into the frame: what comes out of it may go anywhere, for the planner and for the check alike
+# FORM: Prepared
+# RUN: frame-pointers
+# RUN(PLAN): frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
+
+function f0 name="castToText" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0] storage=Frame
+    v4 = Undefined
+    Branch v0 -> taken b1(v3), notTaken b1(v4)
+  b1(v5):
+    v6 = Claim v5 castType=undefined|null|string
+    v7 = Call v1, -, v6
+    Return v7
+}
+# CHECK: function f0
+# CHECK-NEXT: allocations: [v3]
+# CHECK-NEXT: frame pointers: [v3 v5]
+
+function f1 name="plannedCastToText" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Undefined
+    Branch v0 -> taken b1(v3), notTaken b1(v4)
+  b1(v5):
+    v6 = Claim v5 castType=undefined|null|string
+    v7 = Call v1, -, v6
+    Return v7
+}
+# PLAN: function f1
+# PLAN-NEXT: v3: Frame
+
+function f2 name="plannedCastToObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Undefined
+    Branch v0 -> taken b1(v3), notTaken b1(v4)
+  b1(v5):
+    v6 = Claim v5 castType=undefined|null|object
+    v7 = Call v1, -, v6
+    Return v7
+}
+# PLAN: function f2
+# PLAN-NEXT: v3: Heap Escapes

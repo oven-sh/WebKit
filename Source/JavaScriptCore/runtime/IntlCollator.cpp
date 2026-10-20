@@ -409,7 +409,7 @@ static bool canDoASCIIUCADUCETComparisonWithUCollator(UCollator& collator)
     return !length;
 }
 
-NEVER_INLINE bool IntlCollator::updateCanDoASCIIUCADUCETComparison() const
+bool IntlCollator::updateCanDoASCIIUCADUCETComparison() const
 {
     // ICU uses the CLDR root collation order as a default starting point for ordering. (The CLDR root collation is based on the UCA DUCET.)
     // And customizes this root collation via rules.

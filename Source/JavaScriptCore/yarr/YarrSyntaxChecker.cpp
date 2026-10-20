@@ -65,9 +65,12 @@ public:
     void LEGACY_NODELETE atomNamedForwardReference(const String&) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE quantifyAtom(unsigned, unsigned, bool) { m_summary.isOnlyPatternCharacters = false; }
     void LEGACY_NODELETE disjunction(CreateDisjunctionPurpose) { m_summary.isOnlyPatternCharacters = false; }
+    void LEGACY_NODELETE willLookUpUnicodeProperty() { m_summary.hasUnicodePropertyLookup = true; }
     void LEGACY_NODELETE resetForReparsing()
     {
+        bool hasUnicodePropertyLookup = m_summary.hasUnicodePropertyLookup;
         m_summary = { };
+        m_summary.hasUnicodePropertyLookup = hasUnicodePropertyLookup;
         m_parenthesesDepth = 0;
     }
 

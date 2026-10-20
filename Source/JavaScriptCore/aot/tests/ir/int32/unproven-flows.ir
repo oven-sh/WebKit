@@ -1,0 +1,84 @@
+# A flow that is not proven is an error of the build, a constant that is no int32 one of its own kind. What entered a promise without a proof is any int32 to the flows after it, and nothing else in the function is judged differently
+# FORM: AsRead
+# RUN: pass TypeValues CheckInt32Promises
+# DIAGNOSTIC: UnprovenInt32 9
+# DIAGNOSTIC: ConstantNotInt32 5
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Variable
+typesite w3 module=m0 position=40 kind=Assertion
+function f0 name="sum" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+function f1 name="number" parameters=[{type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|number):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v1
+}
+function f2 name="untyped" parameters=[{type=anything}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v1
+}
+function f3 name="unknownTailCall" parameters=[{type=anything}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=anything predicted=number}}, {declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}}]
+}
+function f4 name="storedAssertion" parameters=[{type=undefined|null|number predicted=number}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w3 flags=[IsInt32Promise]}
+    v2 = ClaimDeclared v1 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]}
+    Return v2
+}
+function f5 name="constants" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2147483648
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @100
+    v2 = Double number=1.5
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @101
+    v4 = Double number=NaN
+    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @102
+    v6 = Double number=-0
+    v7 = ClaimDeclared v6 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @103
+    v8 = Integer integer=2147483647
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    v11 = ClaimDeclared v10 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @104
+    v12 = ClaimDeclared v8 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @105
+    Return v12
+}
+function f6 name="afterUnprovenFlow" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = URShift v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @110
+    v4 = Decrement v3
+    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @111
+    Return v5
+}
+function f7 name="besideUnprovenFlow" parameters=[{type=undefined|null|number predicted=number}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything}] {
+  b0(v0: undefined|null|number, v1: anything):
+    v2 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @120
+    v3 = Integer
+    v4 = ClaimDeclared v3 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @121
+    Jump -> next b1(v4)
+  b1(v5: undefined|null|i32):
+    v6 = Less v5, v1
+    Branch v6 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v7):
+    v8 = Decrement v7
+    v9 = ClaimDeclared v8 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @122
+    v10 = Increment v7
+    v11 = ClaimDeclared v10 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} @123
+    Jump -> next b1(v11)
+  b3(v12):
+    Return v12
+}
+# CHECK-NOT: Claim

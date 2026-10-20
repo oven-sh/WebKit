@@ -1,0 +1,1020 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTStubsPropertyProbes.h"
+
+#if ENABLE(AOT)
+
+#include "AOTFieldTable.h"
+#include "AOTInstance.h"
+#include "AOTProgramStatics.h"
+#include "AOTRuntimeTable.h"
+#include "AOTStubsBarriers.h"
+#include "JSCell.h"
+#include "JSObject.h"
+#include <limits>
+#include <wtf/MathExtras.h>
+#include <wtf/Threading.h>
+
+namespace JSC { namespace AOT {
+
+static constexpr unsigned locationShiftInCell = 8 * PackedSlot::offsetOfLocation();
+static constexpr unsigned locationBitsInCell = 8 * sizeof(PackedSlot::location);
+static constexpr unsigned kindShiftInCell = 8 * PackedSlot::offsetOfBiasedKindAndFlags();
+static constexpr unsigned nameShiftInCell = 8 * PackedSlot::offsetOfName();
+static constexpr unsigned secondPayloadWordShift = 8 * (Slot::offsetOfSecondPayloadWord() - Slot::offsetOfPayload());
+static constexpr int32_t staticsGranuleMask = InstanceLayout::granuleBelowInstance - 1;
+
+static_assert(!PackedSlot::offsetOfPayload() && locationShiftInCell == 8 * sizeof(PackedSlot::payload) && secondPayloadWordShift == 8 * sizeof(uint32_t));
+static_assert(PackedSlot::upperHalfForOwnInlineValue(1) == 1u << (nameShiftInCell - locationShiftInCell));
+static_assert(sizeof(PackedSlot) == 1u << CCallHelpers::TimesEight && sizeof(void*) == 1u << CCallHelpers::TimesEight);
+static_assert(StructureRowWords::wordShift == CCallHelpers::TimesFour && HashedSlot::uidHashShift <= CCallHelpers::TimesEight);
+static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
+static_assert(!static_cast<unsigned>(SlotAccess::Read));
+static_assert(sizeof(SiteCacheState::missesLeft) == sizeof(uint8_t));
+static_assert(numberOfSlotKinds <= 8 * sizeof(uint32_t));
+static_assert(hasOneBitSet(initialOutOfLineCapacity) && hasOneBitSet(InstanceLayout::granuleBelowInstance));
+
+static constexpr uint32_t computedStorageCapacity(int32_t wordIndex)
+{
+    uint32_t lastIndex = static_cast<uint32_t>(-wordIndex - 2) | (initialOutOfLineCapacity - 1);
+    return 1u << ((0u - clz(lastIndex)) & 31);
+}
+
+static_assert([] {
+    for (int32_t wordIndex = std::numeric_limits<int8_t>::min(); wordIndex <= Slot::wordIndexFor(firstOutOfLineOffset); ++wordIndex) {
+        if (computedStorageCapacity(wordIndex) != Slot::storageCapacityAfterAdding(wordIndex))
+            return false;
+    }
+    return true;
+}());
+
+static void computeStorageCapacity(StubAssembler& jit, GPRReg wordIndexAndResult)
+{
+    jit.neg32(wordIndexAndResult);
+    jit.sub32(TrustedImm32(2), wordIndexAndResult);
+    jit.or32(TrustedImm32(initialOutOfLineCapacity - 1), wordIndexAndResult);
+    jit.countLeadingZeros32(wordIndexAndResult, wordIndexAndResult);
+    jit.neg32(wordIndexAndResult);
+    jit.lshift32(TrustedImm32(1), wordIndexAndResult, wordIndexAndResult);
+}
+
+// InstanceLayout reserves a granule for a size of 0. A slot that names a location in the statics proves that the size is not 0.
+static constexpr uint32_t roundSizeOfStatics(uint32_t sizeOfStatics)
+{
+    return (sizeOfStatics + static_cast<uint32_t>(staticsGranuleMask)) & ~static_cast<uint32_t>(staticsGranuleMask);
+}
+
+static_assert(InstanceLayout::offsetOfStatics({ 70000, 0, 0 }) == -static_cast<ptrdiff_t>(roundSizeOfStatics(70000)) - static_cast<ptrdiff_t>(InstanceLayout::bytesReservedForPrefixAndPollPage));
+static_assert(InstanceLayout::offsetOfCards({ 70000, 0, 0 }) == InstanceLayout::offsetOfStatics({ 70000, 0, 0 }) - static_cast<ptrdiff_t>(roundSizeOfStatics(70000) >> InstanceLayout::cardShift));
+
+static constexpr uint32_t kindsWithPresence(SlotPresence presence)
+{
+    uint32_t kinds = 0;
+    for (Slot::Kind kind : allSlotKinds) {
+        if (Slot::presenceOf(kind) == presence)
+            kinds |= 1u << static_cast<unsigned>(kind);
+    }
+    return kinds;
+}
+
+static constexpr int32_t offsetOfFrontWords(SlotAccess access)
+{
+    return static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfFront(access));
+}
+
+static std::optional<GPRReg> siteRegisterOf(SlotHandlerTableTraits traits)
+{
+    switch (traits.origin) {
+    case SlotOrigin::FreeName:
+    case SlotOrigin::FreeNameForTypeOf:
+        return gprOf(traits.operation == SlotOperation::Read ? readSiteCacheRegister : storeSiteCacheRegister);
+    case SlotOrigin::ById:
+    case SlotOrigin::ByIdInStubFrame:
+    case SlotOrigin::ByVal:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+SlotHandlerOperands operandsOfSlotHandler(SlotHandlerTable table)
+{
+    const SlotHandlerTableTraits traits = traitsOf(table);
+    const bool isStore = traits.operation != SlotOperation::Read;
+    SlotHandlerOperands operands { gprOf(firstStubOperandRegister), gprOf(slotHeaderRegister) };
+    if (traits.form == SlotForm::Slot)
+        operands.payload = gprOf(slotPayloadRegister);
+    switch (traits.origin) {
+    case SlotOrigin::ById:
+    case SlotOrigin::ByIdInStubFrame:
+    case SlotOrigin::FreeName:
+    case SlotOrigin::FreeNameForTypeOf:
+        operands.identifierNumber = gprOf(slotNameRegister);
+        if (isStore)
+            operands.value = gprOf(storedValueByIdRegister);
+        break;
+    case SlotOrigin::ByVal:
+        operands.keyCell = gprOf(keyCellRegister);
+        if (isStore)
+            operands.value = gprOf(storedValueByValRegister);
+        break;
+    }
+    return operands;
+}
+
+StubSignature signatureOfSlotHandler(SlotHandlerTable table)
+{
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    const GPRReg site = siteRegisterOf(traitsOf(table)).value_or(InvalidGPRReg);
+    StubSignature signature = isReadTable(table) ? StubSignature::withGPRResult({ }) : StubSignature::withoutResult({ });
+    for (GPRReg operand : { operands.receiver, operands.header, operands.payload, operands.identifierNumber, operands.keyCell, operands.value, site }) {
+        if (operand != InvalidGPRReg)
+            signature.addOperand(operand);
+    }
+    return signature;
+}
+
+static void extractSignedBits(StubAssembler& jit, GPRReg source, unsigned shift, unsigned width, GPRReg result)
+{
+#if CPU(ARM64)
+    jit.extractSignedBitfield64(source, TrustedImm32(shift), TrustedImm32(width), result);
+#else
+    jit.lshift64(source, TrustedImm32(64 - shift - width), result);
+    jit.rshift64(TrustedImm32(64 - width), result);
+#endif
+}
+
+static void joinPayloadWords(StubAssembler& jit, GPRReg firstWordSource, GPRReg secondWordAndResult)
+{
+    RELEASE_ASSERT(firstWordSource != secondWordAndResult);
+    jit.lshift64(TrustedImm32(secondPayloadWordShift), secondWordAndResult);
+#if CPU(ARM64)
+    jit.addZeroExtend64(secondWordAndResult, firstWordSource, secondWordAndResult);
+#else
+    const GPRReg firstWord = jit.scratchRegister();
+    jit.zeroExtend32ToWord(firstWordSource, firstWord);
+    jit.or64(firstWord, secondWordAndResult);
+#endif
+}
+
+// index holds the row of the receiver's shape where the name is bound, and the row plus the name otherwise.
+static BaseIndex fieldTableEntry(const FieldTableProbe& probe, int32_t offset = 0)
+{
+    static_assert(sizeof(FieldTableEntry) == 1u << CCallHelpers::TimesFour);
+    return BaseIndex(probe.table, probe.index, CCallHelpers::TimesFour, offset + static_cast<int32_t>(probe.boundName.value_or(0) * sizeof(FieldTableEntry)));
+}
+
+static void locateFieldTableEntry(StubAssembler& jit, const FieldTableProbe& probe, JumpList& isNotCompiledObject)
+{
+    RELEASE_ASSERT(noOverlap(probe.receiver, probe.index, probe.table) && (probe.boundName || noOverlap(probe.name, probe.receiver, probe.index, probe.table)));
+    RELEASE_ASSERT(!probe.boundName || FieldTableEntry::hasColumn(*probe.boundName));
+
+    if (!probe.nameHasColumn)
+        isNotCompiledObject.append(jit.branch32(CCallHelpers::Above, probe.name, TrustedImm32(FieldTableEntry::maxName)));
+    if (!probe.receiverIsCell)
+        isNotCompiledObject.append(jit.branchIfNotCell(probe.receiver));
+    jit.load32SignedExtendTo64(Address(probe.receiver, offsetOfShapeWord), probe.index);
+    isNotCompiledObject.append(jit.branchTest32(CCallHelpers::PositiveOrZero, probe.index));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldTableEntries)), probe.table);
+    jit.load32(BaseIndex(probe.table, probe.index, CCallHelpers::TimesFour), probe.index);
+    if (!probe.boundName)
+        jit.add32(probe.name, probe.index);
+}
+
+// Where the jump is not taken, index holds the form and the operand of the entry.
+static Jump branchUnlessEntryHasName(StubAssembler& jit, const FieldTableProbe& probe)
+{
+    static_assert(FieldTableEntry::nameShift == 16);
+#if CPU(X86_64)
+    constexpr int32_t offsetOfName = FieldTableEntry::nameShift / 8;
+    Jump hasOtherName;
+    if (probe.boundName)
+        hasOtherName = jit.branch16(CCallHelpers::NotEqual, fieldTableEntry(probe, offsetOfName), TrustedImm32(static_cast<int32_t>(*probe.boundName)));
+    else {
+        jit.m_assembler.cmpw_rm(probe.name, offsetOfName, probe.table, probe.index, CCallHelpers::TimesFour);
+        hasOtherName = Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+    }
+    jit.load16(fieldTableEntry(probe), probe.index);
+    return hasOtherName;
+#else
+    jit.load32(fieldTableEntry(probe), probe.index);
+    if (probe.boundName)
+        jit.move(TrustedImm32(static_cast<int32_t>(*probe.boundName << FieldTableEntry::nameShift)), probe.table);
+    else
+        jit.lshift32(probe.name, TrustedImm32(FieldTableEntry::nameShift), probe.table);
+    jit.xor32(probe.table, probe.index);
+    return jit.branch32(CCallHelpers::Above, probe.index, TrustedImm32(FieldTableEntry::maxFormAndOperand));
+#endif
+}
+
+// operand holds a form and an operand, less the forms in front of `form`. Where the form is `form` it is left with the operand alone, otherwise with that less one form.
+static Jump branchUnlessForm(StubAssembler& jit, GPRReg operand, FieldTableEntry::Form form)
+{
+    if (form != FieldTableEntry::Form::InlineValue)
+        jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
+    return jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
+}
+
+// Takes the operand. Leaves the address of the Extension in extension and the offset of the slot in operand.
+static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg operand, GPRReg extension, JumpList& hasNoStorage)
+{
+    // The operand is the number of the granule and one more. Shifted left by its negative, the bit of the granule is the sign and the bits of later granules drop out: what is left counts
+    // the granule and those before it, which is the number of words from the start of the Extension to the granule. A shift takes its amount modulo 64.
+    static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(EncodedJSValue) && maxExtensionGranules == 64);
+    const GPRReg granuleBits = jit.scratchRegister();
+    RELEASE_ASSERT(noOverlap(receiver, operand, extension, granuleBits) && !jit.options().useWideReferences);
+    jit.load32(Address(receiver, offsetOfFirstField), extension);
+    hasNoStorage.append(jit.branchTest32(CCallHelpers::Zero, extension));
+    decodeCell32(jit, extension, extension);
+    jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), extension);
+    jit.neg32(operand);
+    jit.load64(Address(extension, offsetOfExtensionGranuleBits), granuleBits);
+    jit.lshift64(operand, granuleBits);
+    hasNoStorage.append(jit.branchTest64(CCallHelpers::PositiveOrZero, granuleBits));
+    jit.countPopulation64(granuleBits, operand, CCallHelpers::fpTempRegister);
+    jit.lshift32(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(EncodedJSValue)))), operand);
+}
+
+void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg result, JumpList& otherwise, const ScopedLambda<void()>& finish)
+{
+    using Form = FieldTableEntry::Form;
+    const GPRReg operand = probe.index;
+    const GPRReg word = probe.table;
+    auto readValue = [&](BaseIndex slot) {
+#if CPU(X86_64)
+        otherwise.append(jit.branchTest64(CCallHelpers::Zero, slot));
+        jit.load64(slot, result);
+#else
+        jit.load64(slot, word);
+        otherwise.append(jit.branchTest64(CCallHelpers::Zero, word));
+        jit.move(word, result);
+#endif
+        finish();
+    };
+
+    locateFieldTableEntry(jit, probe, otherwise);
+    otherwise.append(branchUnlessEntryHasName(jit, probe));
+    Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
+    readValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight));
+
+    isNotInlineValue.link(&jit);
+    Jump isNotInt32 = branchUnlessForm(jit, operand, Form::InlineInt32);
+    jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
+    otherwise.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
+    boxInt32(jit, word, result);
+    finish();
+
+    isNotInt32.link(&jit);
+    Jump isNotNarrowCell = branchUnlessForm(jit, operand, Form::InlineNarrowCell);
+    jit.load32(BaseIndex(probe.receiver, operand, CCallHelpers::TimesFour), word);
+    Jump isNotCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
+    decodeCell32(jit, word, result);
+    finish();
+
+    isNotCell.link(&jit);
+    otherwise.append(jit.branchTest32(CCallHelpers::Zero, word));
+    jit.move(word, result);
+    finish();
+
+    isNotNarrowCell.link(&jit);
+    if (jit.options().useWideReferences) {
+        otherwise.append(jit.jump());
+        return;
+    }
+    otherwise.append(branchUnlessForm(jit, operand, Form::OutOfLineValue));
+    locateOutOfLineValue(jit, probe.receiver, operand, word, otherwise);
+    readValue(BaseIndex(word, operand, CCallHelpers::TimesOne));
+}
+
+void returnFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, JumpList& otherwise)
+{
+    readFieldByTable(jit, probe, jit.result(), otherwise, [&] {
+        jit.returnToCaller();
+    });
+}
+
+void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg value, GPRReg scratch, SlotOperation operation, JumpList& otherwise)
+{
+    using Form = FieldTableEntry::Form;
+    static_assert(sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo && FieldRecordIndex::isStoredWithoutTypeTest == 0x80 << 8);
+    RELEASE_ASSERT(operation != SlotOperation::Read && noOverlap(value, scratch, probe.receiver, probe.index, probe.table) && signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(probe.receiver));
+    RELEASE_ASSERT(probe.boundName || scratch != probe.name);
+    const GPRReg operand = probe.index;
+    const GPRReg extension = probe.table;
+    auto storeValue = [&](BaseIndex slot) {
+        otherwise.append(jit.branchTest64(CCallHelpers::Zero, slot));
+        jit.store64(value, slot);
+        jit.linkToStub(jit.branchIfCell(value), writeBarrier());
+        jit.returnToCaller();
+    };
+
+    locateFieldTableEntry(jit, probe, otherwise);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), scratch);
+    otherwise.append(jit.branchTest8(CCallHelpers::Zero, BaseIndex(scratch, probe.index, CCallHelpers::TimesTwo, 1 + static_cast<int32_t>(probe.boundName.value_or(0) * sizeof(FieldRecordIndex))), TrustedImm32(0x80)));
+    otherwise.append(branchUnlessEntryHasName(jit, probe));
+    otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(probe.receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operation))));
+    Jump isNotInlineValue = branchUnlessForm(jit, operand, Form::InlineValue);
+    storeValue(BaseIndex(probe.receiver, operand, CCallHelpers::TimesEight));
+
+    isNotInlineValue.link(&jit);
+    Jump isNotInt32Field = branchUnlessForm(jit, operand, Form::InlineInt32);
+    const BaseIndex int32Slot(probe.receiver, operand, CCallHelpers::TimesFour);
+    otherwise.append(jit.branchIfNotInt32(value));
+    otherwise.append(jit.branch32(CCallHelpers::LessThan, value, TrustedImm32(minInlineInt32)));
+    otherwise.append(jit.branch32(CCallHelpers::Equal, int32Slot, TrustedImm32(absentInt32)));
+    jit.store32(value, int32Slot);
+    jit.returnToCaller();
+
+    isNotInt32Field.link(&jit);
+    if (jit.options().useWideReferences) {
+        otherwise.append(jit.jump());
+        return;
+    }
+    static_assert(static_cast<unsigned>(Form::OutOfLineValue) == static_cast<unsigned>(Form::InlineInt32) + 2);
+    jit.sub32(TrustedImm32(1 << FieldTableEntry::formShift), operand);
+    otherwise.append(branchUnlessForm(jit, operand, Form::OutOfLineValue));
+    locateOutOfLineValue(jit, probe.receiver, operand, extension, otherwise);
+    storeValue(BaseIndex(extension, operand, CCallHelpers::TimesOne));
+}
+
+void loadSlotKind(StubAssembler& jit, const ProbedSlot& slot, GPRReg kind)
+{
+    switch (slot.form) {
+    case SlotForm::Slot:
+        extractBits(jit, slot.header, Slot::kindShiftInHeader, 8 * sizeof(Slot::Kind), kind);
+        return;
+    case SlotForm::PackedSlot:
+        extractBits(jit, slot.header, kindShiftInCell, PackedSlot::kindBits, kind);
+        jit.xor32(TrustedImm32(PackedSlot::ownInlineValueBits & PackedSlot::kindMask), kind);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void loadOwnInlineValue(StubAssembler& jit, GPRReg object, GPRReg cell, GPRReg result)
+{
+#if CPU(X86_64)
+    jit.zeroExtend32ToWord(cell, cell);
+    jit.load64(BaseIndex(object, cell, CCallHelpers::TimesEight), result);
+#else
+    jit.load64(BaseIndex(object, cell, CCallHelpers::TimesEight, 0, CCallHelpers::Extend::ZExt32), result);
+#endif
+}
+
+static void loadShortWordIndex(StubAssembler& jit, SlotForm form, GPRReg header, GPRReg result)
+{
+    switch (form) {
+    case SlotForm::Slot:
+        jit.rshift64(header, TrustedImm32(Slot::locationShiftInHeader), result);
+        return;
+    case SlotForm::PackedSlot:
+        extractSignedBits(jit, header, locationShiftInCell, locationBitsInCell, result);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct FlagBit {
+    unsigned position;
+    bool isInverted;
+};
+
+} // namespace
+
+static FlagBit flagBitInHeader(uint8_t slotFlag)
+{
+    RELEASE_ASSERT(hasOneBitSet(slotFlag) && (slotFlag & Slot::allFlags));
+    return { Slot::flagsShiftInHeader + getLSBSet(slotFlag), false };
+}
+
+static FlagBit flagBitInCell(uint8_t packedFlag)
+{
+    RELEASE_ASSERT(hasOneBitSet(packedFlag) && !(packedFlag & PackedSlot::kindMask));
+    return { kindShiftInCell + getLSBSet(packedFlag), !!(PackedSlot::ownInlineValueBits & packedFlag) };
+}
+
+static uint8_t packedFlagFor(Slot::Kind kind, uint8_t slotFlag)
+{
+    if (slotFlag == Slot::isOwn)
+        return PackedSlot::isOwn;
+    if (slotFlag == Slot::isOutOfLine)
+        return PackedSlot::isOutOfLine;
+    RELEASE_ASSERT(slotFlag == Slot::kindFlagOf(kind));
+    return PackedSlot::kindFlag;
+}
+
+static Jump branchTestFlag(StubAssembler& jit, CCallHelpers::ResultCondition condition, GPRReg word, FlagBit flag)
+{
+    if (flag.isInverted)
+        condition = CCallHelpers::invert(condition);
+#if CPU(X86_64)
+    return jit.branchTestBit64(condition, word, TrustedImm32(flag.position));
+#else
+    return jit.branchTest64(condition, word, TrustedImm64(static_cast<int64_t>(1ull << flag.position)));
+#endif
+}
+
+Jump CachedSlot::branchIfFlag(StubAssembler& jit, uint8_t slotFlag) const
+{
+    return branchTestFlag(jit, CCallHelpers::NonZero, m_header, m_form == SlotForm::Slot ? flagBitInHeader(slotFlag) : flagBitInCell(packedFlagFor(m_kind, slotFlag)));
+}
+
+Jump CachedSlot::branchUnlessFlag(StubAssembler& jit, uint8_t slotFlag) const
+{
+    return branchTestFlag(jit, CCallHelpers::Zero, m_header, m_form == SlotForm::Slot ? flagBitInHeader(slotFlag) : flagBitInCell(packedFlagFor(m_kind, slotFlag)));
+}
+
+void CachedSlot::loadOwnWordIndex(StubAssembler& jit, GPRReg result) const
+{
+    switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::Holder:
+        if (m_form == SlotForm::Slot)
+            loadShortWordIndex(jit, m_form, m_header, result);
+        else
+            jit.signExtend32ToPtr(m_header, result);
+        return;
+    case SlotPayload::Transition:
+        loadShortWordIndex(jit, m_form, m_header, result);
+        return;
+    case SlotPayload::WordIndex:
+        RELEASE_ASSERT(m_form == SlotForm::Slot);
+        jit.signExtend32ToPtr(m_payload, result);
+        return;
+    case SlotPayload::None:
+    case SlotPayload::Field:
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraProperty:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::CustomAccessor:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CachedSlot::loadInheritedWordIndex(StubAssembler& jit, GPRReg result) const
+{
+    switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::Holder:
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::Transition:
+        loadShortWordIndex(jit, m_form, m_header, result);
+        return;
+    case SlotPayload::None:
+    case SlotPayload::WordIndex:
+    case SlotPayload::Field:
+    case SlotPayload::ExtraProperty:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::CustomAccessor:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CachedSlot::loadHolder(StubAssembler& jit, GPRReg result) const
+{
+    if (Slot::payloadOf(m_kind) == SlotPayload::FieldAndHolder) {
+        loadSecondPayloadWord(jit, result);
+        decodeCell32(jit, result, result);
+        return;
+    }
+    RELEASE_ASSERT(Slot::payloadOf(m_kind) == SlotPayload::Holder);
+    switch (m_form) {
+    case SlotForm::Slot:
+        jit.move(m_payload, result);
+        return;
+    case SlotForm::PackedSlot:
+#if CPU(ARM64)
+        jit.m_assembler.add<64>(result, cellCageBaseGPR, m_header, ARM64Assembler::UXTW, cell32Shift);
+#else
+        jit.zeroExtend32ToWord(m_header, result);
+        decodeCell32(jit, result, result);
+#endif
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CachedSlot::loadHiddenWordOffset(StubAssembler& jit, GPRReg result) const
+{
+    RELEASE_ASSERT(Slot::locationOf(m_kind) == SlotLocation::HiddenWordOffset);
+    switch (m_form) {
+    case SlotForm::Slot:
+        jit.urshift64(m_header, TrustedImm32(Slot::locationShiftInHeader), result);
+        return;
+    case SlotForm::PackedSlot:
+        RELEASE_ASSERT(Slot::payloadOf(m_kind) != SlotPayload::ExtraPropertyAddition);
+        jit.urshift64(m_header, TrustedImm32(locationShiftInCell - PackedSlot::hiddenWordOffsetShift), result);
+        jit.and32(TrustedImm32(((1 << locationBitsInCell) - 1) << PackedSlot::hiddenWordOffsetShift), result);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CachedSlot::loadFirstPayloadWord(StubAssembler& jit, GPRReg result) const
+{
+    switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::WordIndex:
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+        RELEASE_ASSERT(m_form == SlotForm::Slot);
+        jit.zeroExtend32ToWord(m_payload, result);
+        return;
+    case SlotPayload::Field:
+    case SlotPayload::Transition:
+    case SlotPayload::CustomAccessor:
+        jit.zeroExtend32ToWord(m_form == SlotForm::Slot ? m_payload : m_header, result);
+        return;
+    case SlotPayload::None:
+    case SlotPayload::Holder:
+    case SlotPayload::ExtraProperty:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void CachedSlot::loadSecondPayloadWord(StubAssembler& jit, GPRReg result) const
+{
+    const bool isPacked = m_form == SlotForm::PackedSlot;
+    switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::Field:
+        if (!isPacked)
+            break;
+        jit.move(TrustedImm32(0), result);
+        return;
+    case SlotPayload::ExtraProperty:
+        if (!isPacked)
+            break;
+        jit.zeroExtend32ToWord(m_header, result);
+        return;
+    case SlotPayload::Transition:
+        if (!isPacked)
+            break;
+        loadShortWordIndex(jit, m_form, m_header, result);
+        computeStorageCapacity(jit, result);
+        return;
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+        RELEASE_ASSERT(!isPacked);
+        break;
+    case SlotPayload::None:
+    case SlotPayload::Holder:
+    case SlotPayload::WordIndex:
+    case SlotPayload::CustomAccessor:
+    case SlotPayload::Constant:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    jit.urshift64(m_payload, TrustedImm32(secondPayloadWordShift), result);
+}
+
+void CachedSlot::loadPayloadBits(StubAssembler& jit, GPRReg result) const
+{
+    if (m_form == SlotForm::Slot) {
+        jit.move(m_payload, result);
+        return;
+    }
+    RELEASE_ASSERT(result != m_header);
+    switch (Slot::payloadOf(m_kind)) {
+    case SlotPayload::None:
+        jit.move(TrustedImm32(0), result);
+        return;
+    case SlotPayload::Holder: {
+        jit.move(TrustedImm32(0), result);
+        Jump isOwn = branchIfFlag(jit, Slot::isOwn);
+        loadHolder(jit, result);
+        isOwn.link(&jit);
+        return;
+    }
+    case SlotPayload::Field:
+    case SlotPayload::CustomAccessor:
+        loadFirstPayloadWord(jit, result);
+        return;
+    case SlotPayload::ExtraProperty:
+        jit.lshift64(m_header, TrustedImm32(secondPayloadWordShift), result);
+        return;
+    case SlotPayload::Transition: {
+        jit.move(TrustedImm32(0), result);
+        Jump keepsStorage = branchUnlessFlag(jit, Slot::growsStorage);
+        loadSecondPayloadWord(jit, result);
+        keepsStorage.link(&jit);
+        joinPayloadWords(jit, m_header, result);
+        return;
+    }
+    case SlotPayload::WordIndex:
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void loadStructureIDOfReceiver(StubAssembler& jit, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure)
+{
+    loadStructureIDOfReceiver(jit, receiver, structureID, hasNoStructure, [] { });
+}
+
+void loadStructureIDOfReceiver(StubAssembler& jit, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure, const ScopedLambda<void()>& probeCell)
+{
+    RELEASE_ASSERT(noOverlap(receiver, structureID, instanceGPR));
+    // The part below runs after the generator has returned.
+    RELEASE_ASSERT(!Thread::currentSingleton().stack().contains(&hasNoStructure));
+    Jump isNotCell = jit.branchIfNotCell(receiver);
+    probeCell();
+    jit.load32(Address(receiver, JSCell::structureIDOffset()), structureID);
+    Label hasID = jit.label();
+    jit.addOutOfLinePart([isNotCell, hasID, receiver, structureID, exits = &hasNoStructure](StubAssembler& jit) {
+        isNotCell.link(&jit);
+        Jump isNumber = jit.branchIfNumber(receiver);
+        exits->append(jit.branchIfNotBoolean(receiver, structureID));
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.booleanStructureID)), structureID);
+        jit.jump().linkTo(hasID, &jit);
+
+        isNumber.link(&jit);
+        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.numberStructureID)), structureID);
+        jit.jump().linkTo(hasID, &jit);
+    });
+}
+
+void loadFrontRow(CCallHelpers& jit, SlotAccess access, GPRReg structureID, GPRReg row, GPRReg scratch)
+{
+    const int32_t front = offsetOfFrontWords(access);
+    RELEASE_ASSERT(noOverlap(structureID, row, scratch, instanceGPR));
+    jit.urshift32(structureID, TrustedImm32(StructureRowWords::granuleShift), row);
+    jit.loadPtr(Address(instanceGPR, front + static_cast<int32_t>(OBJECT_OFFSETOF(FrontWords, rowsForStructureIDZero))), scratch);
+    jit.load32(BaseIndex(scratch, row, CCallHelpers::TimesFour), row);
+    jit.loadPtr(Address(instanceGPR, front + static_cast<int32_t>(OBJECT_OFFSETOF(FrontWords, plane))), scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, row, CCallHelpers::TimesEight), row);
+}
+
+void loadFrontCell(StubAssembler& jit, SlotAccess access, const FrontProbeRegisters& r)
+{
+    static_assert(!OBJECT_OFFSETOF(FrontWords, rowsForStructureIDZero) && OBJECT_OFFSETOF(FrontWords, plane) == sizeof(void*));
+    RELEASE_ASSERT(noOverlap(r.structureID, r.column, r.row, r.cell, r.scratch, instanceGPR));
+    jit.loadPair64(instanceGPR, TrustedImm32(offsetOfFrontWords(access)), r.scratch, r.cell);
+    jit.urshift32(r.structureID, TrustedImm32(StructureRowWords::granuleShift), r.row);
+    jit.load32(BaseIndex(r.scratch, r.row, CCallHelpers::TimesFour), r.row);
+    jit.add64(r.column, r.row);
+    jit.load64(BaseIndex(r.cell, r.row, CCallHelpers::TimesEight), r.cell);
+}
+
+Jump branchUnlessOwnInlineValue(StubAssembler& jit, GPRReg column, GPRReg cell, GPRReg scratch)
+{
+    RELEASE_ASSERT(noOverlap(column, cell, scratch));
+#if CPU(ARM64)
+    jit.xorLeftShift64(cell, column, TrustedImm32(nameShiftInCell), scratch);
+    jit.urshift64(TrustedImm32(locationShiftInCell), scratch);
+    return jit.branchTest64(CCallHelpers::NonZero, scratch);
+#else
+    jit.lshift64(column, TrustedImm32(nameShiftInCell), scratch);
+    jit.xor64(cell, scratch);
+    jit.urshift64(TrustedImm32(locationShiftInCell), scratch);
+    return Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
+#endif
+}
+
+Jump branchIfCellNameDiffers(StubAssembler& jit, GPRReg column, GPRReg cell, GPRReg scratch)
+{
+    RELEASE_ASSERT(noOverlap(column, cell, scratch));
+#if CPU(ARM64)
+    jit.subUnsignedRightShift64(column, cell, TrustedImm32(nameShiftInCell), scratch);
+    return jit.branchTest64(CCallHelpers::NonZero, scratch);
+#else
+    jit.urshift64(cell, TrustedImm32(nameShiftInCell), scratch);
+    return jit.branch32(CCallHelpers::NotEqual, scratch, column);
+#endif
+}
+
+void loadIdentifier(StubAssembler& jit, GPRReg identifierNumber, GPRReg uid, JumpList& isNotCreated)
+{
+    RELEASE_ASSERT(noOverlap(identifierNumber, uid, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), uid);
+    jit.loadPtr(BaseIndex(uid, identifierNumber, CCallHelpers::TimesEight), uid);
+    isNotCreated.append(jit.branchTestPtr(CCallHelpers::Zero, uid));
+}
+
+void findHashedSlot(StubAssembler& jit, SlotAccess access, const HashedProbeRegisters& r, JumpList& miss)
+{
+    constexpr int32_t offsetOfTable = AOT_INSTANCE_OFFSET(propertyCaches.hashedSlots);
+    constexpr ptrdiff_t offsetOfStructureID = HashedSlot::offsetOfSlot() + Slot::offsetOfStructureID();
+    RELEASE_ASSERT(noOverlap(r.structureID, r.uid, r.entry, r.header, r.payload, instanceGPR));
+    RELEASE_ASSERT(noOverlap(r.structureID, r.uid, r.entry, r.header, r.scratch, instanceGPR));
+
+    jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), r.structureID, r.header);
+    jit.urshift32(TrustedImm32(HashedSlot::structureHashShift), r.header);
+#if CPU(X86_64)
+    auto inEntry = [&](ptrdiff_t offset) { return BaseIndex(r.scratch, r.entry, CCallHelpers::TimesOne, static_cast<int32_t>(offset)); };
+    jit.x86Lea32(BaseIndex(r.header, r.uid, static_cast<CCallHelpers::Scale>(HashedSlot::uidHashShift)), r.entry);
+    jit.and64(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.hashedSlotOffsetMask)), r.entry);
+    jit.loadPtr(Address(instanceGPR, offsetOfTable), r.scratch);
+#else
+    auto inEntry = [&](ptrdiff_t offset) { return Address(r.header, static_cast<int32_t>(offset)); };
+    jit.addLeftShift32(r.header, r.uid, TrustedImm32(HashedSlot::uidHashShift), r.entry);
+    jit.loadPair64(instanceGPR, TrustedImm32(offsetOfTable), r.scratch, r.header);
+    jit.and64(r.header, r.entry);
+#endif
+    if (access != SlotAccess::Read)
+        jit.or64(TrustedImm32(static_cast<int32_t>(access)), r.uid);
+
+    JumpList isFound;
+    for (unsigned way = 0; way < HashedSlot::ways; ++way) {
+        if (way)
+            jit.xor32(TrustedImm32(HashedSlot::offsetOfWay(0, way) ^ HashedSlot::offsetOfWay(0, way - 1)), r.entry);
+#if CPU(ARM64)
+        jit.add64(r.scratch, r.entry, r.header);
+#endif
+        Jump hasOtherKey = jit.branchPtr(CCallHelpers::NotEqual, inEntry(HashedSlot::offsetOfKey()), r.uid);
+        if (way + 1 < HashedSlot::ways) {
+            isFound.append(jit.branch32(CCallHelpers::Equal, inEntry(offsetOfStructureID), r.structureID));
+            hasOtherKey.link(&jit);
+            continue;
+        }
+        miss.append(hasOtherKey);
+        miss.append(jit.branch32(CCallHelpers::NotEqual, inEntry(offsetOfStructureID), r.structureID));
+    }
+    isFound.link(&jit);
+#if CPU(X86_64)
+    jit.load64(inEntry(HashedSlot::offsetOfSlot()), r.header);
+    jit.load64(inEntry(HashedSlot::offsetOfSlot() + Slot::offsetOfPayload()), r.payload);
+#else
+    jit.loadPair64(inEntry(HashedSlot::offsetOfSlot()), r.header, r.payload);
+#endif
+}
+
+void jumpToSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg scratch)
+{
+    loadSlotKind(jit, { traitsOf(table).form, header }, scratch);
+    jumpToSlotHandlerOfKind(jit, table, header, scratch);
+}
+
+void jumpToSlotHandlerOfKind(StubAssembler& jit, SlotHandlerTable table, GPRReg header, GPRReg scratch)
+{
+    const SlotHandlerTableTraits traits = traitsOf(table);
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const int32_t offsetOfHandlers = static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfHandlers(table));
+    RELEASE_ASSERT(header == operands.header);
+    RELEASE_ASSERT(noOverlap(scratch, operands.receiver, operands.header, operands.payload, operands.value, operands.keyCell, operands.identifierNumber, siteRegisterOf(traits).value_or(InvalidGPRReg), instanceGPR));
+#if CPU(ARM64)
+    static_assert(sizeof(Instance) / sizeof(void*) <= 1 << 12, "The index of a handler is the immediate of one add.");
+    jit.add32(TrustedImm32(offsetOfHandlers / static_cast<int32_t>(sizeof(void*))), scratch);
+    jit.jumpThroughHandlerTable(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesEight), handlers);
+#else
+    jit.jumpThroughHandlerTable(BaseIndex(instanceGPR, scratch, CCallHelpers::TimesEight, offsetOfHandlers), handlers);
+#endif
+}
+
+void callSlotHandler(StubAssembler& jit, SlotHandlerTable table, GPRReg kind)
+{
+    const std::array<StubKey, numberOfSlotKinds> handlers = slotHandlerKeys(table);
+    const int32_t offsetOfHandlers = static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches) + PropertyCacheWords::offsetOfHandlers(table));
+    jit.callThroughHandlerTable(BaseIndex(instanceGPR, kind, CCallHelpers::TimesEight, offsetOfHandlers), handlers);
+}
+
+void linkToSlotExit(StubAssembler& jit, JumpList& jumps, SlotHandlerTable table, SlotExit exit)
+{
+    jit.linkToStub(jumps, slotExit(table, exit));
+}
+
+static constexpr bool takesSlotHeader(SlotFinisher finisher)
+{
+    switch (finisher) {
+    case SlotFinisher::ReadField:
+    case SlotFinisher::StoreField:
+    case SlotFinisher::CreateField:
+    case SlotFinisher::GrowStorage:
+        return true;
+    case SlotFinisher::CallGetter:
+    case SlotFinisher::CallSetterStrict:
+    case SlotFinisher::CallSetterSloppy:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
+static void unpackHeader(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver, GPRReg scratch)
+{
+    const GPRReg header = slot.header();
+    const Slot::Kind kind = slot.kind();
+    RELEASE_ASSERT(slot.form() == SlotForm::PackedSlot);
+    RELEASE_ASSERT(Slot::payloadOf(kind) == SlotPayload::Transition || Slot::payloadOf(kind) == SlotPayload::Field);
+    RELEASE_ASSERT(noOverlap(receiver, header, scratch));
+    switch (Slot::locationOf(kind)) {
+    case SlotLocation::None:
+        jit.move(TrustedImm32(0), scratch);
+        break;
+    case SlotLocation::WordIndex:
+        slot.loadOwnWordIndex(jit, scratch);
+        break;
+    case SlotLocation::HiddenWordOffset:
+        slot.loadHiddenWordOffset(jit, scratch);
+        break;
+    }
+    jit.lshift64(TrustedImm32(Slot::locationShiftInHeader), scratch);
+    jit.or64(TrustedImm64(static_cast<int64_t>(kind) << Slot::kindShiftInHeader), scratch);
+    for (uint8_t flag : { Slot::isOwn, Slot::isOutOfLine, Slot::kindFlagOf(kind) }) {
+        if (!flag)
+            continue;
+        Jump isClear = slot.branchUnlessFlag(jit, flag);
+        jit.or64(TrustedImm64(static_cast<int64_t>(flag) << Slot::flagsShiftInHeader), scratch);
+        isClear.link(&jit);
+    }
+    jit.load32(Address(receiver, JSCell::structureIDOffset()), header);
+    jit.or64(scratch, header);
+}
+
+void linkToSlotCannot(StubAssembler& jit, JumpList& jumps, SlotHandlerTable table, SlotFinisher finisher, const CachedSlot& slot)
+{
+    if (jumps.empty())
+        return;
+    const SlotHandlerTableTraits traits = traitsOf(table);
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    RELEASE_ASSERT(slot.form() == traits.form && slot.header() == operands.header);
+    jumps.link(&jit);
+    jumps.clear();
+    if (traits.form == SlotForm::PackedSlot) {
+        slot.loadPayloadBits(jit, jit.clobberRegister(slotPayloadRegister));
+        if (takesSlotHeader(finisher)) {
+            jit.clobberRegister(slotHeaderRegister);
+            unpackHeader(jit, slot, operands.receiver, jit.clobberRegister(StubRegister::T11));
+        }
+    }
+    if (traits.origin == SlotOrigin::ByVal && operands.value != InvalidGPRReg)
+        jit.move(operands.value, jit.clobberRegister(storedValueByIdRegister));
+    jit.jumpToStub(slotCannot(finisher, traits.origin));
+}
+
+void loadInheritedValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg storage, GPRReg wordIndex, GPRReg result)
+{
+    RELEASE_ASSERT(noOverlap(slot.header(), storage, wordIndex));
+    slot.loadHolder(jit, storage);
+    slot.loadInheritedWordIndex(jit, wordIndex);
+    Jump isInline = slot.branchUnlessFlag(jit, Slot::inheritedIsOutOfLine);
+    jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
+}
+
+void loadValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result)
+{
+    RELEASE_ASSERT(Slot::payloadOf(slot.kind()) == SlotPayload::Holder);
+    RELEASE_ASSERT(noOverlap(receiver, storage, wordIndex) && noOverlap(slot.header(), storage, wordIndex));
+    Jump isOwn = slot.branchIfFlag(jit, Slot::isOwn);
+    slot.loadHolder(jit, storage);
+    slot.loadInheritedWordIndex(jit, wordIndex);
+    Jump isLocated = jit.jump();
+
+    isOwn.link(&jit);
+    jit.move(receiver, storage);
+    slot.loadOwnWordIndex(jit, wordIndex);
+
+    isLocated.link(&jit);
+    Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+    jit.loadPtr(Address(storage, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
+}
+
+void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const ProbedSlot& slot, GPRReg receiver, JumpList& isUnknown)
+{
+    constexpr uint32_t presentKinds = kindsWithPresence(SlotPresence::Present);
+    constexpr uint32_t absentKinds = kindsWithPresence(SlotPresence::Absent);
+    const GPRReg kind = jit.reuseScratch(StubRegister::T10);
+    const GPRReg result = jit.result();
+    RELEASE_ASSERT(noOverlap(kind, receiver, slot.header));
+    loadSlotKind(jit, slot, kind);
+#if CPU(X86_64)
+    auto branchTestKinds = [&](CCallHelpers::ResultCondition condition, uint32_t kinds) {
+        const GPRReg mask = jit.scratchRegister();
+        jit.move(TrustedImm32(static_cast<int32_t>(kinds)), mask);
+        return jit.branchTestBit32(condition, mask, kind);
+    };
+#else
+    jit.lshift32(TrustedImm32(1), kind, kind);
+    auto branchTestKinds = [&](CCallHelpers::ResultCondition condition, uint32_t kinds) {
+        return jit.branchTest32(condition, kind, TrustedImm32(static_cast<int32_t>(kinds)));
+    };
+#endif
+    Jump isAbsent = branchTestKinds(CCallHelpers::NonZero, absentKinds);
+    isUnknown.append(branchTestKinds(CCallHelpers::Zero, presentKinds));
+    switch (question) {
+    case PresenceQuestion::In:
+        jit.move(TrustedImm32(1), result);
+        break;
+    case PresenceQuestion::HasOwn: {
+        const FlagBit isOwn = slot.form == SlotForm::Slot ? flagBitInHeader(Slot::isOwn) : flagBitInCell(PackedSlot::isOwn);
+        Jump isInHolder = branchTestFlag(jit, CCallHelpers::Zero, slot.header, isOwn);
+        jit.move(TrustedImm32(1), result);
+        jit.returnToCaller();
+
+        // The own properties of a global proxy are those of its target, which a slot names as their holder.
+        isInHolder.link(&jit);
+        isUnknown.append(jit.branch8(CCallHelpers::Equal, Address(receiver, JSCell::typeInfoTypeOffset()), TrustedImm32(GlobalProxyType)));
+        jit.move(TrustedImm32(0), result);
+        break;
+    }
+    }
+    jit.returnToCaller();
+
+    isAbsent.link(&jit);
+    jit.move(TrustedImm32(0), result);
+    jit.returnToCaller();
+}
+
+void loadStaticsBase(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics)
+{
+    constexpr int32_t offsetOfSize = OBJECT_OFFSETOF(ProgramTables, instanceSizes) + OBJECT_OFFSETOF(InstanceSizes, sizeOfStatics);
+    RELEASE_ASSERT(noOverlap(staticsBase, roundedSizeOfStatics, instanceGPR));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), roundedSizeOfStatics);
+    jit.load32(Address(roundedSizeOfStatics, offsetOfSize), roundedSizeOfStatics);
+    jit.add32(TrustedImm32(staticsGranuleMask), roundedSizeOfStatics);
+    jit.and32(TrustedImm32(~staticsGranuleMask), roundedSizeOfStatics);
+    jit.sub64(instanceGPR, roundedSizeOfStatics, staticsBase);
+    jit.sub64(TrustedImm32(static_cast<int32_t>(InstanceLayout::bytesReservedForPrefixAndPollPage)), staticsBase);
+}
+
+void markStaticsCard(StubAssembler& jit, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics)
+{
+    RELEASE_ASSERT(noOverlap(staticsBase, roundedSizeOfStatics, offsetInStatics));
+    jit.urshift32(TrustedImm32(ProgramStatics::cardShift), roundedSizeOfStatics);
+    jit.urshift32(TrustedImm32(ProgramStatics::cardShift), offsetInStatics);
+    jit.sub64(roundedSizeOfStatics, offsetInStatics);
+    jit.store8(TrustedImm32(ProgramStatics::cardIsDirty), BaseIndex(staticsBase, offsetInStatics, CCallHelpers::TimesOne));
+}
+
+Jump branchIfSiteIsFilled(StubAssembler& jit, GPRReg site)
+{
+    return jit.branchTest64(CCallHelpers::NonZero, Address(site));
+}
+
+void countSiteCacheMiss(StubAssembler& jit, GPRReg site, GPRReg scratch, JumpList& isDueForRefill)
+{
+    constexpr int32_t offsetOfMissesLeft = SiteCacheState::offsetOfMissesLeft();
+    const Address stateBias(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStateBias));
+    RELEASE_ASSERT(noOverlap(site, scratch, instanceGPR));
+#if CPU(ARM64)
+    const GPRReg missesLeft = jit.scratchRegister();
+    jit.loadPtr(stateBias, scratch);
+    jit.addUnsignedRightShift64(scratch, site, TrustedImm32(SiteCacheState::slotAddressShift), scratch);
+    jit.load8(Address(scratch, offsetOfMissesLeft), missesLeft);
+    jit.sub32(TrustedImm32(1), missesLeft);
+    jit.store8(missesLeft, Address(scratch, offsetOfMissesLeft));
+    isDueForRefill.append(jit.branchTest32(CCallHelpers::NonZero, missesLeft, TrustedImm32(UINT8_MAX + 1)));
+#else
+    jit.urshift64(site, TrustedImm32(SiteCacheState::slotAddressShift), scratch);
+    jit.add64(stateBias, scratch);
+    jit.m_assembler.subb_im(1, offsetOfMissesLeft, scratch);
+    isDueForRefill.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionC)));
+#endif
+}
+
+void countMissOfEmptySite(StubAssembler& jit, GPRReg site, GPRReg scratch, JumpList& isDueForFill)
+{
+    constexpr int32_t offsetOfMissesLeft = SiteCacheState::offsetOfMissesLeft();
+    constexpr int32_t step = SiteCacheState::firstFillStep;
+    const Address stateBias(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStateBias));
+    RELEASE_ASSERT(noOverlap(site, scratch, instanceGPR));
+#if CPU(ARM64)
+    const GPRReg count = jit.scratchRegister();
+    jit.loadPtr(stateBias, scratch);
+    jit.addUnsignedRightShift64(scratch, site, TrustedImm32(SiteCacheState::slotAddressShift), scratch);
+    jit.load8(Address(scratch, offsetOfMissesLeft), count);
+    jit.add32(TrustedImm32(step), count);
+    jit.store8(count, Address(scratch, offsetOfMissesLeft));
+    isDueForFill.append(jit.branchTest32(CCallHelpers::NonZero, count, TrustedImm32(UINT8_MAX + 1)));
+#else
+    jit.urshift64(site, TrustedImm32(SiteCacheState::slotAddressShift), scratch);
+    jit.add64(stateBias, scratch);
+    jit.m_assembler.addb_im(step, offsetOfMissesLeft, scratch);
+    isDueForFill.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionC)));
+#endif
+}
+
+void refillSiteCache(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg site, SlotAccess access)
+{
+    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
+        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
+        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
+        const GPRReg A3 = jit.reuseScratch(StubRegister::A3);
+        const GPRReg A4 = jit.reuseScratch(StubRegister::A4);
+        RELEASE_ASSERT(noOverlap(A3, identifierNumber, receiver) && A2 != receiver);
+        jit.move(site, A3);
+        jit.move(identifierNumber, A2);
+        jit.move(receiver, A1);
+        jit.move(instanceGPR, A0);
+        jit.move(TrustedImm32(static_cast<int32_t>(access)), A4);
+        jit.callOperation(Entry::operationAOTFillSiteCache, jit.reuseScratch(StubRegister::Operation));
+    });
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

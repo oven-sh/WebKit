@@ -1,0 +1,72 @@
+# The roots of the solve: entry modules and what they import, and nothing else. A start-up module is evaluated where native code reads it: flow/calls/startup-module-*.ir
+# A function of the library that native code calls is entered with a built-in that it is called for: flow/calls/native-call-*.ir
+# RUN: flow-links calls modules
+# CHECK: link 0: i0 host - -> [[main]] f0 Host Once
+# CHECK-NOT: cycle
+# CHECK: : i0 host - -> [[imported]] f2 Host Once
+# CHECK-NOT: cycle
+# CHECK: : i0 host - -> [[worker]] f1 Host Once
+# CHECK-NOT: cycle
+# CHECK-NOT: link
+# CHECK: evaluated m0 m1 m2
+# CHECK-NEXT: namespaces
+# RUN(UNLINKED): flow-links calls
+# UNLINKED-NOT: f3 Host
+# UNLINKED-NOT: f4 Host
+# UNLINKED-NOT: f5 Host
+# UNLINKED-NOT: f6 Host
+# UNLINKED-NOT: f7 Host
+# RUN(INSTANCES): flow-solve instances
+# INSTANCES: i0 host Proven
+# INSTANCES: f0 Proven
+# INSTANCES: f2 Proven
+# INSTANCES: f1 Proven
+# RUN(UNENTERED): flow-solve instances
+# UNENTERED-NOT: f3
+# UNENTERED-NOT: f4
+# UNENTERED-NOT: f5
+# UNENTERED-NOT: f6
+# UNENTERED-NOT: f7
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m2}]
+module m1 path="worker.js" displayPath="worker.js" body=f1
+module m2 path="imported.js" displayPath="imported.js" body=f2
+module m3 path="unimported.js" displayPath="unimported.js" body=f3
+module m4 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=InternalUtilInspect body=f4
+module m5 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f5
+entry module=m0
+entry module=m1
+runtimefunction id=66 function=f7
+runtimefunction id=65572 function=f6
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="worker" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="imported" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="unimported" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="startupModule" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="otherRuntimeModule" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="createOnWarning" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="libraryFunctionNobodyCalls" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

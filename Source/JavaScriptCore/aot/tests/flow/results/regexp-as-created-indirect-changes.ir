@@ -1,0 +1,73 @@
+# What changes a regular expression without naming it in an operation is seen as well: compile() called through Reflect.apply or a bound function, and an object that reaches lastIndex through a built-in or under an unknown key
+# RUN: flow
+# CHECK: variable g0 type=RegExp<"a+"[], pristine[Storage, Names]> written=anything
+# CHECK: variable g1 type=RegExp<"a+"[], pristine[Storage, Names]> written=anything
+# CHECK: variable g2 type=RegExp<"a+"[], pristine[Storage, Names]> written=anything
+# CHECK: variable g3 type=RegExp<"a+"[], pristine[Storage, Names]> written=anything
+# CHECK: variable g4 type=RegExp<"a+"[]> written=anything
+# CHECK: variable g5 type=RegExp<"a+"[]> written=anything
+# CHECK: variable g6 type=RegExp<"a+"[], pristine[Storage, Names, AsCreated]> written=anything
+# CHECK: variable g7 type=RegExp<"a+"[Global], pristine[Storage, Names, AsCreated]> written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="compiledByReflectApply" declared={type=anything} initialization=Uninitialized
+variable g1 name="compiledByBoundFunction" declared={type=anything} initialization=Uninitialized
+variable g2 name="assignedFromObject" declared={type=anything} initialization=Uninitialized
+variable g3 name="storedByReflectSet" declared={type=anything} initialization=Uninitialized
+variable g4 name="lastIndexDefined" declared={type=anything} initialization=Uninitialized
+variable g5 name="storedUnderUnknownKey" declared={type=anything} initialization=Uninitialized
+variable g6 name="frozen" declared={type=anything} initialization=Uninitialized
+variable g7 name="usedByReplace" declared={type=anything} initialization=Uninitialized
+layout L0 name="Holder" fields=[{key="lastIndex" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="subject"
+    v1 = NewObject
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=Object
+    v4 = String string="lastIndex"
+    v5 = NewRegExp pattern="a+" @10
+    PutModuleVariable v5 variable=g0
+    v7 = PropGet v5 key="compile"
+    v8 = PropGet v2 key="apply"
+    v9 = NewArray v0 contents=anything holes=[]
+    v10 = Call v8, v2, v7, v5, v9 calleeKey="apply"
+    v11 = NewRegExp pattern="a+" @20
+    PutModuleVariable v11 variable=g1
+    v13 = PropGet v11 key="compile"
+    v14 = PropGet v13 key="bind"
+    v15 = Call v14, v13, v11 calleeKey="bind"
+    v16 = Call v15, -, v0
+    v17 = NewRegExp pattern="a+" @30
+    PutModuleVariable v17 variable=g2
+    v19 = NewObject -, v1 layout=L0 fields=[0]
+    v20 = FinishObject v19
+    v21 = PropGet v3 key="assign"
+    v22 = Call v21, v3, v17, v20 calleeKey="assign"
+    v23 = NewRegExp pattern="a+" @40
+    PutModuleVariable v23 variable=g3
+    v25 = PropGet v2 key="set"
+    v26 = Call v25, v2, v23, v4, v1 calleeKey="set"
+    v27 = NewRegExp pattern="a+" @50
+    PutModuleVariable v27 variable=g4
+    v29 = PropGet v3 key="defineProperty"
+    v30 = NewObject
+    PropSet v30, v1 key="value" mode=Strict
+    v32 = Call v29, v3, v27, v4, v30 calleeKey="defineProperty"
+    v33 = NewRegExp pattern="a+" @60
+    PutModuleVariable v33 variable=g5
+    v35 = Builtin builtin=GlobalThis
+    v36 = PropGet v35 key="name" [isFreeName]
+    v37 = ToString v36
+    ElemSet v33, v37, v1 mode=Strict
+    v39 = NewRegExp pattern="a+" @70
+    PutModuleVariable v39 variable=g6
+    v41 = PropGet v3 key="freeze"
+    v42 = Call v41, v3, v39 calleeKey="freeze"
+    v43 = NewRegExp pattern="a+" regExpFlags=[Global] @80
+    PutModuleVariable v43 variable=g7
+    v45 = PropGet v0 key="replace"
+    v46 = Call v45, v0, v43, v0 calleeKey="replace"
+    Return
+}

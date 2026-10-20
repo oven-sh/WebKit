@@ -1,0 +1,44 @@
+# An await keeps its type and its prediction when it becomes a suspension, so its uses see the same type and no check is added
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="awaitsTypedValues" flags=[IsAsync] parameters=[{type=number}, {type=undefined|string}, {type=Promise<string, proven>}, {type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: number, v1: undefined|string, v2: Promise<string, proven>, v3: anything, v4: anything):
+    v5 = Await v0 @10
+    v6 = Mul v5, v5
+    v7 = Await v1 @11
+    v8 = Upcast v7 castType=undefined|string
+    v9 ~ string = Await v2 @12
+    v10 ~ number = Await v3 @13
+    v11 = Await v4 @14
+    Return v6
+}
+function f1 name="awaitsNumberInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}, {type=anything}] results=[{type=AsyncGenerator}] {
+  b0(v0: function, v1: number, v2: anything):
+    InitialYield @20
+    v4 = Await v1 @21
+    v5 = Negate v4
+    v6 ~ boolean = Await v2 @22
+    Return v5
+}
+
+# CHECK-LABEL: function f2 name="awaitsTypedValues"
+# CHECK-NOT: Claim
+# CHECK: v5: number = AwaitBySavingFrame v0, [[promise]] @10
+# CHECK-NEXT: v6: number = Mul v5, v5
+# CHECK-NEXT: v7: undefined|string = AwaitBySavingFrame v1, [[promise]] @11
+# CHECK-NEXT: v8: undefined|string = Upcast v7 castType=undefined|string
+# CHECK-NEXT: v9: anything ~ string = AwaitBySavingFrame v2, [[promise]] @12
+# CHECK-NEXT: v10: anything ~ number = AwaitBySavingFrame v3, [[promise]] @13
+# CHECK-NEXT: v11: anything = AwaitBySavingFrame v4, [[promise]] @14
+# CHECK-NOT: Claim
+
+# CHECK-LABEL: function f3 name="awaitsNumberInAsyncGenerator"
+# CHECK-NOT: Claim
+# CHECK: v4: number = AwaitBySavingFrame v1, [[generator]] @21
+# CHECK-NEXT: v5: number = Negate v4
+# CHECK-NEXT: v6: anything ~ boolean = AwaitBySavingFrame v2, [[generator]] @22
+# CHECK-NOT: Claim

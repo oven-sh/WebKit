@@ -1,0 +1,83 @@
+# Undefined and null in the type of a callee take no group away: they are no callee. Another object that may be called does
+# FORM: Prepared
+# RUN: pass GroupCallsByValue
+# CHECK: group g0 members=[f3, f4, f5, f6, f7] sites=[a0] this=[omitted] arguments=[]
+# CHECK-NEXT: group g1 members=[f13, f14, f15, f16, f17] sites=[a2] this=[omitted] arguments=[]
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calleeMayBeUndefinedOrNull" parameters=[{type=undefined|null|f3|f4|f5|f6|f7}] results=[{type=anything}] {
+  b0(v0: undefined|null|f3|f4|f5|f6|f7):
+    v1 = Call v0 accessSite=0 callees=[f3, f4, f5, f6, f7]
+    Return v1
+}
+function f1 name="calleeMayBeBuiltin" parameters=[{type=f8|f9|f10|f11|f12|builtin(MathMax)}] results=[{type=anything}] {
+  b0(v0: f8|f9|f10|f11|f12|builtin(MathMax)):
+    v1 = Call v0 accessSite=1 callees=[f8, f9, f10, f11, f12, builtin(MathMax)]
+    Return v1
+}
+function f2 name="calleeIsClosure" parameters=[{type=f13|f14|f15|f16|f17}] results=[{type=anything}] {
+  b0(v0: f13|f14|f15|f16|f17):
+    v1 = Call v0 accessSite=2 callees=[f13, f14, f15, f16, f17]
+    Return v1
+}
+function f3 name="first" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="second" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f5 name="third" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f6 name="fourth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f7 name="fifth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f8 name="sixth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f9 name="seventh" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f10 name="eighth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f11 name="ninth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f12 name="tenth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f13 name="eleventh" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f14 name="twelfth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f15 name="thirteenth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f16 name="fourteenth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f17 name="fifteenth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}

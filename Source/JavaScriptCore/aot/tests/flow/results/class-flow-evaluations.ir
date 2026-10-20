@@ -1,0 +1,122 @@
+# A class definition is evaluated at most once at the top of an ES module and in a function that runs at most once; not in a loop, in a function called from two sites, or in a CommonJS module:
+# a definition may throw, and a CommonJS body that threw is run again by the next require(), whether or not the program can remove its cache entry
+# RUN: flow
+# CHECK: function f9
+# CHECK-NOT: executions=
+# CHECK: function f11
+# CHECK: class [[top]] layout=L0 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class [[once]] layout=L1 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class [[loop]] layout=L2 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class [[twice]] layout=L3 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class [[kept]] layout=L4 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class [[removed]] layout=L5 impossibleMutations=[{{*}}LoseShape]
+# CHECK: layout L0 flow={{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L1 flow={{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L2 flow={{*}} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L3 flow={{*}} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L4 flow={{*}} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+# CHECK: layout L5 flow={{*}} classFlow={prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
+module m1 path="kept.cjs" displayPath="kept.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f9
+module m2 path="removed.cjs" displayPath="removed.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f10
+entry module=m0
+layout L0 kind=Instance name="AtTop" constructor=f1
+layout L1 kind=Instance name="InFunctionCalledOnce" constructor=f2
+layout L2 kind=Instance name="InLoop" constructor=f3
+layout L3 kind=Instance name="InFunctionCalledTwice" constructor=f4
+layout L4 kind=Instance name="InKeptModule" constructor=f5
+layout L5 kind=Instance name="InRemovedModule" constructor=f6
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = CallDirect function=f7
+    v5 = CallDirect function=f8
+    v6 = CallDirect function=f8
+    Jump -> next b1()
+  b1():
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Construct v9
+    v11 = Builtin builtin=MathRandom
+    v12 = Call v11
+    v13 = ToBoolean v12
+    LoopHint
+    Branch v13 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="AtTop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="InFunctionCalledOnce" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="InLoop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f4 name="InFunctionCalledTwice" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 fields=[]
+    Return v2
+}
+function f5 name="InKeptModule" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4 fields=[]
+    Return v2
+}
+function f6 name="InRemovedModule" module=m2 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5 fields=[]
+    Return v2
+}
+function f7 name="defineOnce" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = Construct v2
+    Return
+}
+function f8 name="defineTwice" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L3
+    v2 = FinishClass v1 layout=L3
+    v3 = Construct v2
+    Return
+}
+function f9 name="kept" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f5
+    v7 = NewClass v6 layout=L4
+    v8 = FinishClass v7 layout=L4
+    v9 = Construct v8
+    v10 = PropGet v2 key="cache"
+    v11 = PropDelete v10 key="removed.cjs" mode=Strict
+    Return
+}
+function f10 name="removed" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f6
+    v7 = NewClass v6 layout=L5
+    v8 = FinishClass v7 layout=L5
+    v9 = Construct v8
+    Return
+}

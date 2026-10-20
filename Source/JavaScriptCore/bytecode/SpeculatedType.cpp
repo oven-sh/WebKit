@@ -568,9 +568,6 @@ SpeculatedType speculationFromClassInfoInheritance(const ClassInfo* classInfo)
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_CHECK)
 #undef JSC_TYPED_ARRAY_CHECK
 
-    if (classInfo->isSubClassOf(JSFinalObject::info()))
-        return SpecFinalObject;
-
     if (classInfo->isSubClassOf(JSObject::info()))
         return SpecObjectOther;
     

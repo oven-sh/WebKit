@@ -1,0 +1,60 @@
+# No operation defines the members of a constructor function. A name of its prototype object under which seen code stores one function is listed among the members like a definition,
+# also where the function object has escaped and the name may hold anything: a test compares the holder with the listed function.
+# A name under which seen code stores two functions, a name that holds no function and a name of the function object itself are not listed
+# RUN: flow
+# CHECK: layout L0 flow={{*}} members=[{key="walk" function=f4 mutability=Fixed{{*}}}] namedMembers=[{key="walk" function=f4 mutability=Fixed{{*}}}, {key="size" {{*}}}, {key="create" side=Static function=f5
+# CHECK: layout L1 flow={{*}} members=[{key="walk" function=f4}] namedMembers=[{key="walk" function=f4}, {key="walk"}]
+# CHECK: layout L2 flow={{*}} staticNamesAreComplete=true namedMembers=[{key="walk" function=f4 {{*}}}, {key="walk" function=f5 {{*}}}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="InSight" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Escaped" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="AssignedTwice" constructor=f3 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f4
+    v5 = NewClosure function=f5
+    v6 = Integer integer=1
+    v7 = NewClosure function=f1
+    v8 = PropGet v7 key="prototype"
+    PropSet v8, v4 key="walk" mode=Strict
+    PropSet v8, v6 key="size" mode=Strict
+    PropSet v7, v5 key="create" mode=Strict
+    v12 = NewClosure function=f2
+    v13 = PropGet v12 key="prototype"
+    PropSet v13, v4 key="walk" mode=Strict
+    v15 = Call v3, -, v12
+    v16 = NewClosure function=f3
+    v17 = PropGet v16 key="prototype"
+    PropSet v17, v4 key="walk" mode=Strict
+    PropSet v17, v5 key="walk" mode=Strict
+    v20 = Construct v7
+    v21 = Construct v12
+    v22 = Construct v16
+    Return
+}
+function f1 name="InSight" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f2 name="Escaped" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="AssignedTwice" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f4 name="walk" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

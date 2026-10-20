@@ -1,0 +1,102 @@
+# The loop that only computed a removed result goes with it, and a loop that also runs unknown code stays
+# FORM: Prepared
+# RUN: pass RemoveUnusedResults
+# STATISTIC: UnusedResultsRemoved = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sumsInLoop" role=ResultWorker parameters=[{type=i32}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f1} {
+  b0(v0: i32):
+    v1 = Add v0, v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = Add v4, v7
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10, v8)
+  b3():
+    v11 = Results v1, v4
+    Return v11
+}
+# CHECK-LABEL: function f0 name="sumsInLoop"{{*}}results=[{type=number}] 
+# CHECK-NEXT: b0(v0: i32):
+# CHECK-NEXT: [[doubled]]:{{*}}= Add v0, v0
+# CHECK-NEXT: Return [[doubled]]
+# CHECK-NEXT: }
+
+function f1 name="sumsInLoop" role=ResultWrapper parameters=[{type=i32}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f0}
+
+function f2 name="callsInLoop" role=ResultWorker parameters=[{type=i32}, {type=anything}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f3} {
+  b0(v0: i32, v1: anything):
+    v2 = Add v0, v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Call v1
+    v10 = Add v5, v8
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    v13 = Results v2, v5
+    Return v13
+}
+# CHECK-LABEL: function f2 name="callsInLoop"{{*}}results=[{type=number}] 
+# CHECK: [[twice]]:{{*}}= Add v0, v0
+# CHECK: Jump -> next b1([[zero]])
+# CHECK-NEXT: b1(
+# CHECK-NEXT: LoopHint
+# CHECK: = Call v1
+# CHECK-NOT: = Results
+# CHECK: Return [[twice]]
+
+function f3 name="callsInLoop" role=ResultWrapper parameters=[{type=i32}, {type=anything}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f2}
+
+function f4 name="sumIsRead" role=ResultWorker parameters=[{type=i32}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f5} {
+  b0(v0: i32):
+    v1 = Add v0, v0
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = Add v4, v7
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10, v8)
+  b3():
+    v11 = Results v1, v4
+    Return v11
+}
+# CHECK-LABEL: function f4 name="sumIsRead"{{*}}results=[{type=number}, {type=number}] 
+# CHECK: b1(v3:{{*}}, v4:{{*}}):
+# CHECK-NEXT: LoopHint
+# CHECK: = Results v1, v4
+
+function f5 name="sumIsRead" role=ResultWrapper parameters=[{type=i32}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f4}
+
+function f6 name="reads" parameters=[{type=i32}, {type=anything}] results=[{type=number}] {
+  b0(v0: i32, v1: anything):
+    v2 = CallDirect v0 function=f0
+    v3 = ResultAt v2 index=0
+    v4 = CallDirect v0, v1 function=f2
+    v5 = ResultAt v4 index=0
+    v6 = CallDirect v0 function=f4
+    v7 = ResultAt v6 index=1
+    v8 = ResultAt v6 index=0
+    v9 = Add v3, v5
+    v10 = Add v7, v8
+    v11 = Add v9, v10
+    Return v11
+}

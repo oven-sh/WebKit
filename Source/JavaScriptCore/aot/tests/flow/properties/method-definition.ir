@@ -1,0 +1,69 @@
+# DefineMethod puts a method, a getter and a static method on the holder of its side as part of the creation of the class, and an instance field that the constructor always fills hides a method of its name
+# RUN: flow-walk f0
+# RUN(NODES): flow-solve nodes
+# RUN(OBJECTS): flow-solve objects
+# CHECK: f0@i{{*}} v12 Get {"run"}
+# CHECK-NEXT: L0#{{*}}: Value own Proven L0#{{*}} "run"
+# CHECK-NEXT: f0@i{{*}} v13 Get {"stop"}
+# CHECK-NEXT: L0#{{*}}: Value Proven f1.prototype "stop"
+# CHECK-NEXT: f0@i{{*}} v14 Get {"size"}
+# CHECK-NEXT: L0#{{*}}: Getter Proven f1.prototype "size"
+# CHECK: f0@i{{*}} v15 Get {"create"}
+# CHECK-NEXT: f1: Value own Proven f1 "create"
+# CHECK-NOT: f1
+# NODES: Property(f1.prototype, "run") = {f2}
+# NODES: Property(f1.prototype, "stop") = {f3}
+# NODES: Getter(f1.prototype, "size") = {f4}
+# NODES: Property(f1, "create") = {f5}
+# OBJECTS: f1 mutations=[] uses
+# OBJECTS: f1.prototype mutations=[BecomePrototype] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Task" constructor=f1 fields=[{key="run" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="stop"
+    v6 = NewClosure function=f4
+    DefineMethod v1, v6 layout=L0 methodKind=Getter index=2 key="size"
+    v8 = NewClosure function=f5
+    DefineMethod v1, v8 layout=L0 side=Static index=3 key="create"
+    v10 = FinishClass v1 layout=L0
+    v11 = Construct v10
+    v12 = PropGet v11 key="run"
+    v13 = PropGet v11 key="stop"
+    v14 = PropGet v11 key="size"
+    v15 = PropGet v10 key="create"
+    Return
+}
+function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2
+    PropSet v2, v5 key="run" mode=Strict
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="stop" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="create" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

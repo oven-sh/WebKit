@@ -120,9 +120,8 @@ public:
     // This function returns NonArray if the indexing types are not compatable for copying.
     IndexingType mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion);
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, JSArray* otherArray);
-#if ENABLE(AOT)
-    JS_EXPORT_PRIVATE bool tryPutIndexInPlace(VM&, unsigned index, JSValue);
-#endif
+    JS_EXPORT_PRIVATE void validatePristine(VM&) const;
+    using JSObject::ensureLength;
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, IndexingType, std::span<const EncodedJSValue>);
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);
@@ -200,7 +199,7 @@ private:
     {
         ArrayStorage* storage = arrayStorageOrNull();
         if (!storage)
-            return !hasFrozenElementsInPlace();
+            return !structure()->hasFrozenElementsInPlace();
         SparseArrayValueMap* map = storage->m_sparseMap.get();
         return !map || !map->lengthIsReadOnly();
     }
@@ -367,7 +366,7 @@ inline JSArray* asArray(JSValue value)
 
 inline bool isJSArray(JSCell* cell)
 {
-    ASSERT(cell->type() != ArrayType || cell->classInfo() == JSArray::info());
+    ASSERT((cell->classInfo() == JSArray::info()) == (cell->type() == ArrayType));
     return cell->type() == ArrayType;
 }
 

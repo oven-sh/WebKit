@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
+#include "AirFrameLayout.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
@@ -65,12 +66,9 @@ void lowerStackArgs(Code& code)
         }
     }
 
-    code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
-#if USE(BUN_JSC_ADDITIONS)
-    code.tryPlaceSpillsAboveFrameRecord();
-    code.tryPlaceCalleeSavesAtFrameBottom();
-    code.tryPushRegistersInPrologue();
-#endif
+    if (!code.frameLayout().isPlanned)
+        code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
+    const unsigned bytesBelowFrameRecord = code.bytesBelowFrameRecord();
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless
     // transformation since we can search the StackSlots array to figure out which StackSlot any
@@ -88,7 +86,7 @@ void lowerStackArgs(Code& code)
             bool extendedOffsetAddrRegInUse = false;
 
             auto stackAddr = [&] (unsigned insertionIndex, Arg arg, Width width, Value::OffsetType offsetFromFP) -> Arg {
-                int32_t offsetFromSP = offsetFromFP + code.frameSize();
+                int32_t offsetFromSP = offsetFromFP + bytesBelowFrameRecord;
 
                 if (inst.admitsExtendedOffsetAddr(arg)) {
                     // Stackmaps and patchpoints expect addr inputs relative to SP or FP only. We might as well
@@ -97,17 +95,16 @@ void lowerStackArgs(Code& code)
                     return Arg::extendedOffsetAddr(offsetFromFP);
                 }
 
-#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
-                if (code.proc().positionIndependent() && offsetFromFP < -128 && offsetFromSP >= 0 && offsetFromSP <= 127)
+#if CPU(X86_64)
+                if (code.policy().frame.prefersStackPointerAddresses && offsetFromFP < std::numeric_limits<int8_t>::min() && offsetFromSP >= 0 && offsetFromSP <= std::numeric_limits<int8_t>::max())
                     return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
 #endif
                 Arg result = Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), offsetFromFP);
                 if (result.isValidForm(Move, width))
                     return result;
 
-#if USE(BUN_JSC_ADDITIONS)
 #if CPU(ARM64)
-                if (code.placesSpillsAboveFrameRecord()) {
+                if (code.frameLayout().slotArea == SlotArea::AboveFrameRecord) {
                     if (inst.kind.opcode == Patch)
                         return Arg::extendedOffsetAddr(offsetFromFP);
                     RELEASE_ASSERT(!extendedOffsetAddrRegInUse && Arg::isValidImmForm(offsetFromFP));
@@ -117,8 +114,7 @@ void lowerStackArgs(Code& code)
                     return Arg::addr(tmp, 0);
                 }
 #else
-                RELEASE_ASSERT(!code.placesSpillsAboveFrameRecord());
-#endif
+                RELEASE_ASSERT(code.frameLayout().slotArea != SlotArea::AboveFrameRecord);
 #endif
                 result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
                 if (result.isValidForm(Move, width))
@@ -186,7 +182,7 @@ void lowerStackArgs(Code& code)
                     break;
                 }
                 case Arg::CallArg:
-                    lowerArmLea(inst.args()[0].offset() - code.frameSize(), Tmp(GPRInfo::callFrameRegister));
+                    lowerArmLea(inst.args()[0].offset() - bytesBelowFrameRecord, Tmp(GPRInfo::callFrameRegister));
                     break;
                 case Arg::Addr:
                     lowerArmLea(inst.args()[0].offset(), inst.args()[0].base());
@@ -248,7 +244,7 @@ void lowerStackArgs(Code& code)
 #else
 #error Unhandled architecture.
 #endif
-                            RELEASE_ASSERT(isValidForm(storeOpcode, operandKind, Arg::Stack));
+                            RELEASE_ASSERT(isValidForm(code.targetFeatures(), storeOpcode, operandKind, Arg::Stack));
                             insertionSet.insert(
                                 instIndex + 1, storeOpcode, inst.origin, operand,
                                 stackAddr(instIndex + 1, arg, width, arg.offset() + 4 + slot->offsetFromFP()));
@@ -258,7 +254,7 @@ void lowerStackArgs(Code& code)
                         break;
                     }
                     case Arg::CallArg:
-                        arg = stackAddr(instIndex, arg, width, arg.offset() - code.frameSize());
+                        arg = stackAddr(instIndex, arg, width, arg.offset() - bytesBelowFrameRecord);
                         break;
                     default:
                         break;

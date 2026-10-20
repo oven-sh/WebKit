@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JITCode.h"
 
-#include "AOTRuntime.h"
 #include "DFGJITCode.h"
 #include "FTLJITCode.h"
 
@@ -62,8 +61,6 @@ ASCIILiteral JITCode::typeName(JITType jitType)
         return "DFG"_s;
     case JITType::FTLJIT:
         return "FTL"_s;
-    case JITType::AOTJIT:
-        return "AOT"_s;
     default:
         CRASH();
         return ""_s;
@@ -77,7 +74,6 @@ bool JITCode::isUnlinked() const
     case JITType::HostCallThunk:
     case JITType::InterpreterThunk:
     case JITType::BaselineJIT:
-    case JITType::AOTJIT:
         return true;
     case JITType::DFGJIT:
 #if ENABLE(DFG_JIT)
@@ -138,10 +134,6 @@ const RegisterAtOffsetList* JITCode::calleeSaveRegisters() const
 #if ENABLE(FTL_JIT)
     if (m_jitType == JITType::FTLJIT)
         return static_cast<const FTL::JITCode*>(this)->calleeSaveRegisters();
-#endif
-#if ENABLE(AOT)
-    if (m_jitType == JITType::AOTJIT)
-        return static_cast<const AOT::JITCode*>(this)->calleeSaveRegisters();
 #endif
 #if ENABLE(DFG_JIT)
     if (m_jitType == JITType::DFGJIT)

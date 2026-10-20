@@ -1,0 +1,57 @@
+# Three bound functions over one built-in are called by one operation with different numbers of arguments: what a call leaves out is undefined for the built-in
+# RUN: flow-solve nodes
+# CHECK: , f0, v16) = {number}
+# CHECK: , f0, v27) = {number}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathMax
+    v1 = Builtin builtin=FunctionPrototypeBind
+    v2 = Null
+    v3 = Integer integer=3
+    v4 = Integer integer=4
+    v5 = Integer integer=1
+    v6 = Integer integer=2
+    v7 = Call v1, v0, v2, v5, v6
+    v8 = Call v1, v0, v2, v3, v4
+    v9 = Call v1, v0, v2
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="first" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v7)
+  b2():
+    v13 = PropGet v10 key="second" [isFreeName]
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v8)
+  b4():
+    Jump -> next b5(v9)
+  b5(v15):
+    v16 = Call v15
+    v17 = Builtin builtin=MathAbs
+    v18 = Builtin builtin=FunctionPrototypeBind
+    v19 = Call v18, v17, v2, v5
+    v20 = Call v18, v17, v2, v6
+    v21 = Call v18, v17, v2
+    v22 = PropGet v10 key="third" [isFreeName]
+    v23 = ToBoolean v22
+    Branch v23 -> taken b6(), notTaken b7()
+  b6():
+    Jump -> next b10(v19)
+  b7():
+    v24 = PropGet v10 key="fourth" [isFreeName]
+    v25 = ToBoolean v24
+    Branch v25 -> taken b8(), notTaken b9()
+  b8():
+    Jump -> next b10(v20)
+  b9():
+    Jump -> next b10(v21)
+  b10(v26):
+    v27 = Call v26
+    Return
+}

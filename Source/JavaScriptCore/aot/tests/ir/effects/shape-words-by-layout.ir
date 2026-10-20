@@ -1,0 +1,36 @@
+# A shape test reads the shape words of its layouts: two sets overlap when they share a layout or one of them is incomplete, and a row that writes shape words writes all of them
+# FORM: Prepared
+# RUN: effects
+# RUN(W): write-overlap
+# RUN(L): locations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Second" fields=[{key="x" declared={type=number}}]
+layout L2 name="Third" fields=[{key="x" declared={type=number}}]
+function f0 name="tests" parameters=[{type=object}, {type=L0}, {type=function}] results=[{type=undefined}] {
+  b0(v0: object, v1: L0, v2: function):
+    v3 = ShapeTest v0 layouts=[L0]
+    v4 = ShapeTest v0 layouts=[L0, L1]
+    v5 = ShapeTest v0 layouts=[L2]
+    v6 = ShapeTest v0 layouts=[L1, ..]
+    v7 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    DefineGetter v0, v2 key="x"
+    Return
+}
+# CHECK: v3 ShapeTest: reads(ShapeWords/1)
+# CHECK-NEXT: v4 ShapeTest: reads(ShapeWords/2)
+# CHECK-NEXT: v5 ShapeTest: reads(ShapeWords/1)
+# CHECK-NEXT: v6 ShapeTest: reads(ShapeWords)
+# CHECK-NEXT: v7 GetSlot: reads(ObjectFields/1)
+# CHECK-NEXT: v8 DefineGetter: {{*}}writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch,
+# W: v8 on v7: May
+# L: v3 ShapeTest: not exact
+# L: v8 DefineGetter: not exact
+# L-NEXT: overlap ShapeWords[L0] ShapeWords[L0|L1]: May
+# L-NEXT: overlap ShapeWords[L0] ShapeWords[L2]: None
+# L-NEXT: overlap ShapeWords[L0] ShapeWords[L1|?]: May
+# L-NEXT: overlap ShapeWords[L0|L1] ShapeWords[L2]: None
+# L-NEXT: overlap ShapeWords[L0|L1] ShapeWords[L1|?]: May
+# L-NEXT: overlap ShapeWords[L2] ShapeWords[L1|?]: May
+# L-NOT: overlap

@@ -68,7 +68,6 @@ public:
     // Updating UnlinkedCodeBlock.
     void setHasCheckpoints() { m_codeBlock->setHasCheckpoints(); }
     void setHasTailCalls() { m_codeBlock->setHasTailCalls(); }
-    void setAuditCost(unsigned cost) { m_codeBlock->setAuditCost(cost); }
     void setNumCalleeLocals(unsigned numCalleeLocals) { m_codeBlock->m_numCalleeLocals = numCalleeLocals; }
     void setNumVars(unsigned numVars) { m_codeBlock->m_numVars = numVars; }
     void setThisRegister(VirtualRegister thisRegister) { m_codeBlock->setThisRegister(thisRegister); }
@@ -197,9 +196,6 @@ public:
 private:
     VM& m_vm;
     Strong<UnlinkedCodeBlock> m_codeBlock;
-public:
-    UnlinkedCodeBlock* codeBlock() const { return m_codeBlock.get(); }
-private:
     // In non-RareData.
     Vector<Identifier> m_identifiers;
     Vector<WriteBarrier<Unknown>> m_constantRegisters;

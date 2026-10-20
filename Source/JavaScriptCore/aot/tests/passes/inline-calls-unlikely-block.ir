@@ -1,0 +1,65 @@
+# The copy of a block has the rarer of its own frequency and the frequency of the block with the call
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="hasUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = Mul v0, v0
+    Return v2
+  b2():
+    v3 = Add v0, v0
+    Return v3
+}
+
+function f1 name="callInOrdinaryBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    Return v2
+}
+# CHECK-LABEL: name="callInOrdinaryBlock"
+# CHECK-NOT: CallDirect
+# CHECK: Branch v1 -> taken [[unlikely1]](), notTaken [[ordinary1]]() @0:1
+# CHECK: [[unlikely1]]() frequency=Unlikely:
+# CHECK-NEXT: = Mul v0, v0
+# CHECK: [[ordinary1]]():
+# CHECK-NEXT: = Add v0, v0
+
+function f2 name="callInUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="callInUnlikelyBlock"
+# CHECK-NOT: CallDirect
+# CHECK: Branch v1 -> taken [[unlikely2]](), notTaken [[ordinary2]]() @0:1
+# CHECK: [[unlikely2]]() frequency=Unlikely:
+# CHECK-NEXT: = Mul v0, v0
+# CHECK: [[ordinary2]]() frequency=Unlikely:
+# CHECK-NEXT: = Add v0, v0
+
+function f3 name="callInRareBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: name="callInRareBlock"
+# CHECK-NOT: CallDirect
+# CHECK: Branch v1 -> taken [[unlikely3]](), notTaken [[ordinary3]]() @0:1
+# CHECK: [[unlikely3]]() frequency=Rare:
+# CHECK-NEXT: = Mul v0, v0
+# CHECK: [[ordinary3]]() frequency=Rare:
+# CHECK-NEXT: = Add v0, v0

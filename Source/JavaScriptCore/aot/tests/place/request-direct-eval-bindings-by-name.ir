@@ -1,0 +1,32 @@
+# The request of a direct eval lists the indexes of its bindings, sorted by name, after the bindings: a binding without a name first, and among bindings with the same name the inner one first
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="inner" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Environment name="outer" fields=[{key="x" declared={type=anything}}]
+evalscope e0 flags=[IsInFunction] bindings=[{name="x" layout=L0 field=0 operand=0}, {name="y" layout=L0 field=1 operand=0}, {name="x" depth=1 layout=L1 field=0 operand=1}, {kind=This operand=2}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="evaluates" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v1 layout=L1 fields=[0]
+    v4 = DirectEval v0, v1, -, v2, v3, v0 evalScope=e0
+    Return v4
+}
+# Which of "x" and "y" has the lower identifier number is not the subject.
+# CHECK: request 4 DirectEval module=m0 strict inFunction bindingsByName=[3 {{*}}0 2{{*}}]
+# CHECK-NEXT: binding name="x" kind=Variable depth=0
+# CHECK-NEXT: binding name="y" kind=Variable depth=0
+# CHECK-NEXT: binding name="x" kind=Variable depth=1
+# CHECK-NEXT: binding name=- kind=This

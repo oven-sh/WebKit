@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include <wtf/Vector.h>
 
@@ -14,11 +14,8 @@ namespace JSC { namespace B3 {
 class BasicBlock;
 class Procedure;
 
-bool versionLoops(Procedure&, Vector<BasicBlock*>& topTestedVersionHeaders);
-bool eliminateRedundantPhiCycles(Procedure&);
-bool narrowExtendedWordPhis(Procedure&);
-bool foldOutOfRangeComparisons(Procedure&);
+JS_EXPORT_PRIVATE bool versionLoops(Procedure&, Vector<BasicBlock*>& topTestedVersionHeaders);
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

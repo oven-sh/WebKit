@@ -1,0 +1,155 @@
+# The validator of an object node does what ends a stretch first, reads all members under one guard, validates them, and copies the input as the layout with the replaced members. It runs no getter and no trap: an input that is not plain data is left to the general validator, which spreads it once
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
+# STATISTIC: ValidatorsCreated = 8
+# STATISTIC: ParsersCreated = 0
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0, L1] validation=[{shape=Object{layout=L0 members=[{key="a" node=1 field=0}, {key="inner" node=2 field=1}, {key="u" node=3 field=2}] undeclared=Rejected} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L1 members=[{key="x" node=1 field=0}]} type=L1}, {type=anything}]
+expectedresult x1 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="toString" node=1 field=0}, {key="200" node=1}]} type=L2}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x2 type=object validation=[{shape=Object{members=[{key="inner" node=1}]} type=object}, {shape=Object{layout=L1 members=[{key="x" node=2 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x3 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="x" node=1 field=0}] undeclared=Validated undeclaredValue=2} type=L1}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
+expectedresult x4 type=object validation=[{shape=Dictionary{value=1} type=object}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x5 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="n" node=1 field=0 isOptional=true}, {key="d" node=2 field=1}]} type=L3}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=7}]}]
+layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="inner" declared={type=object written=L1}}, {key="u" declared={type=anything}}]
+layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
+layout L2 name="OddNames" fields=[{key="toString" declared={type=number}}]
+layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|number}}, {key="d" declared={type=number}}]
+
+# CHECK: function [[own0]] {{*}}role=Validator length=1 {{*}}parameters=[{type=anything}] results=[{type=int[0, 2]}, {type=undefined|object}] {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = JSONHasStackSpace
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: [[two0]]: 2 = Integer integer=2
+# CHECK-NEXT: [[none0]]: undefined = Undefined
+# CHECK-NEXT: [[rejectedResults0]]:{{*}}= Results [[two0]], [[none0]]
+# CHECK-NEXT: Return [[rejectedResults0]]
+# CHECK-NEXT: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: = TypeTest v0 testedType=object
+# CHECK: ([[object0]]: object):
+# CHECK-NEXT: [[isPlain0]]: boolean = IsPlainDataObject [[object0]]
+# CHECK-NEXT: Branch [[isPlain0]] -> taken [[plain0]](| 0), notTaken [[notPlain0]]()
+# CHECK: [[plain0]]({{*}}: guard):
+# CHECK-NEXT: [[isArray0]]: boolean = TypeTest [[object0]] testedType=Array
+# CHECK: [[notPlain0]]() frequency=Rare:
+# CHECK-NEXT: [[isArrayLike0]]: boolean = CallBuiltin -, [[object0]] overload=ArrayIsArray/0
+# CHECK-NEXT: Branch [[isArrayLike0]] -> taken [[arrayLike0]](), notTaken [[forGeneralValidator0]]()
+# CHECK-NEXT: [[arrayLike0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK-NEXT: [[forGeneralValidator0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: [[keys0]]: Array<string> = CallBuiltin -, [[object0]] overload=ObjectKeys/0
+# CHECK: LoopHint
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: [[hasOwn0]]: boolean = PropHasOwn [[object0]] key="u"
+# CHECK-NEXT: Branch [[hasOwn0]] -> taken [[renew0]](), notTaken [[notOwn0]]()
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: SwitchString {{*}} strings=["a", "inner", "u"] -> case [[nextKey0]](), case [[nextKey0]](), case [[nextKey0]](), otherwise [[rejected0]]()
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: [[renew0]]():
+# CHECK-NEXT: [[isPlainAgain0]]: boolean = IsPlainDataObject [[object0]]
+# CHECK-NEXT: Branch [[isPlainAgain0]] -> taken [[reads0]](| 0), notTaken [[changed0]]()
+# CHECK-NEXT: [[notOwn0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK-NEXT: [[reads0]]([[guard0]]: guard):
+# CHECK-NEXT: [[a0]]: anything = GetOwnDataProperty [[object0]], [[guard0]] key="a"
+# CHECK-NEXT: [[inner0]]: anything = GetOwnDataProperty [[object0]], [[guard0]] key="inner"
+# CHECK-NEXT: [[u0]]: anything = GetOwnDataProperty [[object0]], [[guard0]] key="u"
+# CHECK-NEXT: = TypeTest [[a0]] testedType=number
+# CHECK: [[changed0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: [[innerResults0]]:{{*}}= CallDirect [[inner0]] function=[[validatorOfInner]]
+# CHECK-NEXT: [[innerOutcome0]]: int[0, 2] = ResultAt [[innerResults0]]
+# CHECK-NEXT: Switch [[innerOutcome0]] cases=[1, 2] -> case {{*}}, case [[rejected0]](), otherwise [[unknown0]]()
+# CHECK: [[innerCopy0]]:{{*}}= ResultAt [[innerResults0]] index=1
+# CHECK: ([[innerObject0]]: object):
+# CHECK-NEXT: [[isPlainBeforeCopy0]]: boolean = IsPlainDataObject [[object0]]
+# CHECK-NEXT: Branch [[isPlainBeforeCopy0]] -> taken [[copy0]](| 0), notTaken
+# CHECK: [[copy0]]([[guardOfCopy0]]: guard):
+# CHECK-NEXT: [[clone0]]:{{*}}= CloneAs [[object0]], [[guardOfCopy0]], [[innerObject0]] layout=L0 fields=[1]
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[parsedResults0]]:{{*}}= Results [[one0]], [[clone0]]
+# CHECK-NEXT: Return [[parsedResults0]]
+# CHECK: function [[validatorOfInner]] {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x0 node=2}
+
+# CHECK: function {{*}}creator=Validator{type=L2 layout=L2 expectedResult=x1}
+# CHECK-NOT: PropHasOwn
+# CHECK-NOT: ObjectKeys
+# CHECK: ([[object1]]: object):
+# CHECK-NEXT: = IsPlainDataObject [[object1]]
+# CHECK: ([[guard1]]: guard):
+# CHECK: [[toString1]]: anything = GetOwnDataProperty [[object1]], [[guard1]] key="toString"
+# CHECK-NEXT: [[index1]]: anything = GetOwnDataProperty [[object1]], [[guard1]] key="200"
+# CHECK-NEXT: = TypeTest [[toString1]] testedType=number
+# CHECK: = TypeTest [[index1]] testedType=number
+# CHECK-NOT: IsPlainDataObject
+# CHECK: = CloneAs [[object1]], [[guard1]] layout=L2 @
+
+# CHECK: function {{*}}creator=Validator{type=object expectedResult=x2}
+# CHECK-NOT: CloneAs
+# CHECK: ([[object2]]: object):
+# CHECK: [[inner2]]: anything = GetOwnDataProperty [[object2]], {{*}} key="inner"
+# CHECK-NEXT: [[innerResults2]]:{{*}}= CallDirect [[inner2]] function=
+# CHECK: [[innerCopy2]]:{{*}}= ResultAt [[innerResults2]] index=1
+# CHECK-NEXT: [[byName2]]: anything = CallBuiltin -, [[object2]] overload=CompilerHelpersCopyOwnProperties/0
+# CHECK-NEXT: [[copy2]]: object = ToObject [[byName2]]
+# CHECK-NEXT: PropDefine [[copy2]], [[innerCopy2]] key="inner"
+# CHECK: = Results {{*}}, [[copy2]]
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+
+# CHECK: function {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x3}
+# CHECK: [[rejected3]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK-NOT: ObjectKeys
+# CHECK: [[clone3]]:{{*}}= CloneAs {{*}} layout=L1 @
+# CHECK-NEXT: [[keys3]]: Array<string> = CallBuiltin -, [[clone3]] overload=ObjectKeys/0
+# CHECK: LoopHint
+# CHECK: ([[key3]]: string):
+# CHECK-NEXT: SwitchString [[key3]] strings=["x"] -> case [[nextKey3]](), otherwise [[undeclared3]]()
+# CHECK: [[undeclared3]]():
+# CHECK-NEXT: [[extra3]]: anything = ElemGet [[clone3]], [[key3]]
+# CHECK-NEXT: [[extraIsString3]]: boolean = TypeTest [[extra3]] testedType=string
+# CHECK-NEXT: Branch [[extraIsString3]] -> taken [[extraFits3]](| 0), notTaken [[extraDiffers3]](| 0)
+# CHECK-NEXT: [[extraFits3]]({{*}}: string):
+# CHECK-NEXT: Jump -> next [[nextKey3]]()
+# CHECK-NEXT: [[extraDiffers3]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected3]]()
+
+# CHECK: function {{*}}creator=Validator{type=object expectedResult=x4}
+# CHECK-NOT: CloneAs
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: ([[object4]]: object):
+# CHECK-NEXT: = IsPlainDataObject [[object4]]
+# CHECK-NOT: CallDirect
+# CHECK: [[byName4]]: anything = CallBuiltin -, [[object4]] overload=CompilerHelpersCopyOwnProperties/0 @
+# CHECK-NEXT: [[copy4]]: object = ToObject [[byName4]]
+# CHECK-NEXT: = CallBuiltin -, [[copy4]] overload=ObjectKeys/0
+# CHECK: LoopHint
+# CHECK: = Results {{*}}, [[copy4]]
+# CHECK: ([[key4]]: string):
+# CHECK-NEXT: [[value4]]: anything = ElemGet [[copy4]], [[key4]]
+# CHECK-NEXT: = TypeTest [[value4]] testedType=number
+# CHECK-NOT: ElemDefine
+# CHECK-NOT: CloneAs
+# CHECK-NOT: GetOwnDataProperty
+
+# CHECK: function {{*}}creator=Validator{type=L3 layout=L3 expectedResult=x5}
+# CHECK: [[n5]]: anything = GetOwnDataProperty {{*}} key="n"
+# CHECK-NEXT: [[d5]]: anything = GetOwnDataProperty {{*}} key="d"
+# CHECK-NEXT: [[nIsAbsent5]]: boolean = TypeTest [[n5]] testedType=undefined
+# CHECK-NEXT: Branch [[nIsAbsent5]] -> taken [[absent5]](| 0), notTaken [[given5]](| 0)
+# CHECK-NEXT: [[afterN5]]({{*}}: undefined|number):
+# CHECK-NEXT: [[dIsAbsent5]]: boolean = TypeTest [[d5]] testedType=undefined
+# CHECK-NEXT: Branch [[dIsAbsent5]] -> taken [[useDefault5]](| 0), notTaken
+# CHECK-NEXT: [[absent5]]([[undefined5]]: undefined):
+# CHECK-NEXT: Jump -> next [[afterN5]]([[undefined5]])
+# CHECK-NEXT: [[given5]]([[givenN5]]:{{*}}):
+# CHECK-NEXT: = TypeTest [[givenN5]] testedType=number
+# CHECK: [[useDefault5]]({{*}}: undefined):
+# CHECK-NEXT: [[default5]]: 7 = Integer integer=7
+# CHECK: [[clone5]]:{{*}}= CloneAs {{*}} layout=L3 @
+# CHECK: PropDefine [[clone5]], {{*}} key="d"
+# CHECK-NOT: PropDefine

@@ -1,0 +1,156 @@
+# A proven access to a private field becomes a slot operation under the private name, without the class token as an operand
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" constructor=f0 fields=[{key=#"x"@L0 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"late"@L0 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Repeated" constructor=f1 fields=[{key=#"x"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction}
+layout L2 kind=Instance name="Derived" predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="NeverEnumerated" constructor=f3 fields=[{key=#"x"@L3 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction keys=NeverEnumerated} classFlow={evaluations=AtMostOnce}
+layout L4 kind=Instance name="CreatedLater" constructor=f4 fields=[{key=#"x"@L4 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L5 kind=Instance name="Unrelated" constructor=f5 flow={baseState=None impossibleMutations=[AddProperty]} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Once" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f4 name="CreatedLater" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+
+function f6 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0 accessSite=4
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="read"
+# CHECK: = NewClassToken layout=L0
+# CHECK-NEXT: v2: number = GetSlot v0 key=#"x"@L0 receivers=[L0] level=Proven accessSite=4
+# CHECK-NEXT: v3: number = Add v2, v2
+function f7 name="store" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f7 name="store"
+# CHECK: PutSlot v0, -, v1 key=#"x"@L0 receivers=[L0] level=Proven
+function f8 name="definition" parameters=[{type=L0}, {type=L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: L3, v2: number):
+    v3 = NewClassToken layout=L0
+    PrivateDefine v0, v3, v2 layout=L0 field=0
+    PrivateDefine v0, v3, v2 layout=L0 field=1
+    v6 = NewClassToken layout=L3
+    PrivateDefine v1, v6, v2 layout=L3 field=0
+    Return
+}
+# CHECK-LABEL: function f8 name="definition"
+# CHECK: PutSlotOrAdd v0, -, v2 key=#"x"@L0 receivers=[L0] level=Proven
+# CHECK-NEXT: PutSlotOrAdd v0, -, v2 key=#"late"@L0 receivers=[L0] level=Proven
+# CHECK: PutSlot v1, -, v2 key=#"x"@L3 receivers=[L3] level=Proven
+function f9 name="test" parameters=[{type=L0}, {type=L5}] results=[{type=anything}] {
+  b0(v0: L0, v1: L5):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateHas v0, v2 layout=L0 field=0
+    v4 = PrivateHas v0, v2 layout=L0 field=1
+    v5 = PrivateHas v1, v2 layout=L0 field=0
+    Return v3
+}
+# CHECK-LABEL: function f9 name="test"
+# CHECK: v3: true = Boolean boolean=true
+# CHECK-NEXT: v4: boolean = IsSlotFilled v0 key=#"late"@L0 receivers=[L0] level=Proven
+# CHECK-NEXT: v5: false = Boolean
+function f10 name="field-of-the-base-class" parameters=[{type=L2}, {type=L0|L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: L2, v1: L0|L2, v2: number):
+    v3 = NewClassToken layout=L0
+    v4 = PrivateGet v0, v3 layout=L0 field=0
+    PrivateSet v1, v3, v2 layout=L0 field=0
+    Return v4
+}
+# CHECK-LABEL: function f10 name="field-of-the-base-class"
+# CHECK: v4: number = GetSlot v0 key=#"x"@L0 receivers=[L2] level=Proven
+# CHECK-NEXT: PutSlot v1, -, v2 key=#"x"@L0 receivers=[L0, L2] level=Proven
+function f11 name="object-may-be-frozen" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = Builtin builtin=ObjectFreeze
+    v4 = Call v3, -, v0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f11 name="object-may-be-frozen"
+# CHECK: = Call v3, -, v0
+# CHECK-NEXT: PutSlot v0, -, v1 key=#"x"@L0 receivers=[L0] level=Proven
+function f12 name="claimed-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClassToken layout=L0
+    v2 = Claim v0 castType=L0
+    v3 = PrivateGet v2, v1 layout=L0 field=0
+    Return v3
+}
+# CHECK-LABEL: function f12 name="claimed-receiver"
+# CHECK: v3: number = GetSlot v2 key=#"x"@L0 receivers=[L0] level=Written
+
+function f13 name="class-may-be-evaluated-again" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    v2 = NewClassToken layout=L1
+    v3 = PrivateGet v0, v2 layout=L1 field=0
+    PrivateSet v0, v2, v1 layout=L1 field=0
+    v5 = PrivateHas v0, v2 layout=L1 field=0
+    PrivateDefine v0, v2, v1 layout=L1 field=0
+    Return v3
+}
+# CHECK-LABEL: function f13 name="class-may-be-evaluated-again"
+# CHECK: = NewClassToken layout=L1
+# CHECK-NEXT: = PrivateGet v0, v2 layout=L1
+# CHECK-NEXT: PrivateSet v0, v2, v1 layout=L1
+# CHECK-NEXT: = PrivateHas v0, v2 layout=L1
+# CHECK-NEXT: PrivateDefine v0, v2, v1 layout=L1
+function f14 name="slot-may-be-empty" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=1
+    PrivateSet v0, v2, v1 layout=L0 field=1
+    Return v3
+}
+# CHECK-LABEL: function f14 name="slot-may-be-empty"
+# CHECK: = NewClassToken layout=L0
+# CHECK-NEXT: = PrivateGet v0, v2 layout=L0 field=1
+# CHECK-NEXT: PrivateSet v0, v2, v1 layout=L0 field=1
+function f15 name="stored-value-may-not-fit" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = NewClassToken layout=L0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f15 name="stored-value-may-not-fit"
+# CHECK: PrivateSet v0, v2, v1 layout=L0
+function f16 name="definition-field-may-exist-already" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+  b0(v0: L4, v1: number):
+    v2 = NewClassToken layout=L4
+    PrivateDefine v0, v2, v1 layout=L4 field=0
+    Return
+}
+# CHECK-LABEL: function f16 name="definition-field-may-exist-already"
+# CHECK: PrivateDefine v0, v2, v1 layout=L4
+function f17 name="receiver-of-an-unrelated-class" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
+  b0(v0: L5, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return v3
+}
+# CHECK-LABEL: function f17 name="receiver-of-an-unrelated-class"
+# CHECK: = PrivateGet v0, v2 layout=L0
+# CHECK-NEXT: PrivateSet v0, v2, v1 layout=L0
+function f18 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    Return v2
+}
+# CHECK-LABEL: function f18 name="predicted-receiver"
+# CHECK: = PrivateGet v0, v1 layout=L0

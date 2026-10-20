@@ -1,0 +1,103 @@
+# Outside of loops the first read of characters leaves the string flat for the reads it dominates: they take the flat string, and so does a length. One read alone, reads on two separate paths and reads of two strings flatten nothing
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsInOneBlock" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: number, v2: number):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    v4 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
+    v5 = GetStringLength v0
+    v6 = Add v3, v4
+    v7 = Add v6, v5
+    Return v7
+}
+# CHECK-LABEL: function f0 name="readsInOneBlock"
+# CHECK: [[flat0]]: flatstring = FlattenString v0
+# CHECK-NEXT: v3: number = StringRangeCodeUnitOrNaN [[flat0]], -, -, v1
+# CHECK-NEXT: v4: number = StringRangeCodeUnitOrNaN [[flat0]], -, -, v2
+# CHECK-NEXT: v5: int[0, 2147483647] = GetStringLength [[flat0]]
+# CHECK-NOT: FlattenString
+
+function f1 name="readInDominatedBlocks" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: string, v1: number, v2: boolean):
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v3 overload=StringPrototypeCharCodeAt/0
+    Return v4
+  b2():
+    v5 = CallBuiltin v0, v3 overload=StringPrototypeCodePointAt/0
+    v6 = ToNumber v5
+    Return v6
+}
+# CHECK-LABEL: function f1 name="readInDominatedBlocks"
+# CHECK: [[flat1]]: flatstring = FlattenString v0
+# CHECK-NEXT: = StringRangeCodeUnitOrNaN [[flat1]], -, -, v1
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodeUnitOrNaN [[flat1]], -, -, v3
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodePointOrUndefined [[flat1]], -, -, v3
+
+function f2 name="lengthInFront" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: number):
+    v2 = GetStringLength v0
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    v4 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="lengthInFront"
+# CHECK: v2: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[flat2]]: flatstring = FlattenString v0
+# CHECK-NEXT: = StringRangeCodeUnitOrNaN [[flat2]], -, -, v1
+# CHECK-NEXT: = StringRangeCodeUnitOrNaN [[flat2]], -, -, v2
+
+function f3 name="oneRead" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="oneRead"
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodeUnitOrNaN v0, -, -, v1
+
+function f4 name="readsOnSeparatePaths" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: string, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v3
+  b2():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v4
+}
+# CHECK-LABEL: function f4 name="readsOnSeparatePaths"
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodeUnitOrNaN v0, -, -, v1
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodeUnitOrNaN v0, -, -, v1
+
+function f5 name="readsOfTwoStrings" parameters=[{type=string}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: string, v1: string, v2: number):
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
+    v4 = CallBuiltin v1, v2 overload=StringPrototypeCharCodeAt/0
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f5 name="readsOfTwoStrings"
+# CHECK-NOT: FlattenString
+# CHECK: = StringRangeCodeUnitOrNaN v0, -, -, v2
+# CHECK-NEXT: = StringRangeCodeUnitOrNaN v1, -, -, v2
+
+function f6 name="onlyLengths" parameters=[{type=string}] results=[{type=number}] {
+  b0(v0: string):
+    v1 = GetStringLength v0
+    v2 = GetStringLength v0
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="onlyLengths"
+# CHECK-NOT: FlattenString
+# CHECK: = GetStringLength v0
+# CHECK-NEXT: = GetStringLength v0

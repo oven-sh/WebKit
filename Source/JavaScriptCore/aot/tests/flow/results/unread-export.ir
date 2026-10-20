@@ -1,0 +1,63 @@
+# An export nothing reads is a variable that is never read, in a module whose namespace object is only read by name
+# RUN: flow
+# CHECK: module m1 namespaceUse=NamedReadsOnly
+# CHECK-NOT: module m2
+# CHECK: module m3 namespaceUse=NamedReadsOnly
+# CHECK: variable g0
+# CHECK-NOT: reads=
+# CHECK: variable g1 {{*}}reads=NeverRead
+# CHECK: variable g2
+# CHECK-NOT: reads=
+# CHECK: variable g5 {{*}}reads=NeverRead
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
+module m1 path="named.js" displayPath="named.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}]
+module m2 path="computed.js" displayPath="computed.js" body=f2 exports=[{name="c" variable=g2}, {name="d" variable=g3}]
+module m3 path="awaited.js" displayPath="awaited.js" body=f3 exports=[{name="e" variable=g4}, {name="f" variable=g5}]
+entry module=m0
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="b" module=m1 declared={type=anything}
+variable g2 name="c" module=m2 declared={type=anything}
+variable g3 name="d" module=m2 declared={type=anything}
+variable g4 name="e" module=m3 declared={type=anything}
+variable g5 name="f" module=m3 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="a"
+    v2 = ModuleNamespace module=m2
+    v3 = String string="c"
+    v4 = Strcat v3, v3
+    v5 = ElemGet v2, v4
+    v6 = NewClosure function=f4
+    v7 = Call v6
+    Return
+}
+function f1 name="named" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="computed" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f3 name="awaited" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g4
+    PutModuleVariable v0 variable=g5
+    Return
+}
+function f4 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m3 referrer=m0
+    v1 = Await v0
+    v2 = PropGet v1 key="e"
+    Return v2
+}

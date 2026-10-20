@@ -1,0 +1,47 @@
+# What becomes of the value read from a private field is among the uses of the object that holds it
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: function f1 parameter 0 uses=[Inspects, RetainsContents, AppliesTransitively] 
+# CHECK: function f2 parameter 0 uses=[Inspects] 
+# ALL-NOT: function f2 parameter 0 uses={{*}}Contents
+# ALL-NOT: function f2 parameter 0 uses={{*}}Transitively
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f3 fields=[{key=#"value"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}]
+layout L1 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    v6 = CallDirect v5 function=f1
+    v7 = CallDirect v5 function=f2
+    Return
+}
+function f1 name="keeps" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f2 name="tests" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    v3 = ToBoolean v2
+    Return
+}
+function f3 name="Holder" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = NewClassToken layout=L0
+    PrivateDefine v3, v4, v1 layout=L0 field=0
+    Return v3
+}

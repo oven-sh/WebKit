@@ -1,0 +1,76 @@
+# When the solver has run as often as the limit, the objects of the decisions it found last stay where they are
+# FORM: Prepared
+# OPTIONS: limit=MaxSinkingRounds:1
+# RUN: pass SinkAllocations
+# LOSS: MaxSinkingRounds x2 f0 v2
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: AllocationsSunk = 1
+# STATISTIC: TailsDuplicatedForSinking = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="mustBeBuiltBeforeLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="y" receivers=[L0]
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v0
+    v7 = ToBoolean v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Call v0, -, v2
+    Jump -> next b1()
+  b3():
+    v9 = PropGet v4 key="x" receivers=[L0]
+    Return v9
+}
+# CHECK-LABEL: function f0 name="mustBeBuiltBeforeLoop"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PropDefine v2, v1 key="y"
+# CHECK-NOT: NewObject
+# CHECK: = Call v0, -, v2
+# CHECK-NOT: PropGet
+
+function f1 name="needsNoDecision" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v3, v1 key="y" receivers=[L0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v3
+    Return v5
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="needsNoDecision"
+# CHECK: b0(
+# CHECK-NEXT: Branch v2
+# CHECK: b1():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell1]]
+
+function f2 name="secondDuplicationIsNotTried" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v3, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = Call v1, -, v3, v4
+    Return v6
+}
+# CHECK-LABEL: function f2 name="secondDuplicationIsNotTried"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: v4:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NEXT: Branch v2
+# CHECK-NOT: NewObject

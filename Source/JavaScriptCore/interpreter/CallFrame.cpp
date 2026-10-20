@@ -26,8 +26,8 @@
 #include "config.h"
 #include "CallFrame.h"
 
-#include "AOTFunction.h"
-#include "CachedTypes.h"
+#include "AOTCompiledCaller.h"
+#include "AOTCompiledFrame.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
@@ -205,18 +205,14 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
         if (!std::exchange(haveSkippedFirstFrame, true))
             return IterationStatus::Continue;
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (visitor->isTypedAOTFrame()) {
-            if (visitor->isHiddenAOTFrame(false))
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame()) {
+            const AOT::CompiledFrame& frame = visitor->compiledFrame();
+            if (frame.visibility != AOT::TraceVisibility::Visible)
                 return IterationStatus::Continue;
-            String path = visitor->sourceURL();
-            if (path.startsWith('/'))
-                sourceOrigin = SourceOrigin { URL::fileURLWithFileSystemPath(path) };
+            sourceOrigin = frame.sourceOrigin();
             return IterationStatus::Done;
         }
-#else
-        if (visitor->isTypedAOTFrame())
-            return IterationStatus::Done;
 #endif
 
         switch (visitor->codeType()) {
@@ -229,14 +225,14 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
             // In the above case, the eval function will be interpreted as the indirect call to eval inside forEach function.
             // At that time, the generated eval code should have the source origin to the original caller of the forEach function
             // instead of the source origin of the forEach function.
-            if (static_cast<FunctionExecutable*>(visitor->ownerExecutable())->isPrivateBuiltinFunction())
+            if (static_cast<FunctionExecutable*>(visitor->codeBlock()->ownerExecutable())->isPrivateBuiltinFunction())
                 return IterationStatus::Continue;
             [[fallthrough]];
 
         case StackVisitor::Frame::CodeType::Eval:
         case StackVisitor::Frame::CodeType::Module:
         case StackVisitor::Frame::CodeType::Global:
-            sourceOrigin = visitor->ownerExecutable()->sourceOrigin();
+            sourceOrigin = visitor->codeBlock()->ownerExecutable()->sourceOrigin();
             return IterationStatus::Done;
 
         case StackVisitor::Frame::CodeType::Native:
@@ -260,14 +256,14 @@ JSGlobalObject* CallFrame::globalObjectOfClosestCodeBlock(VM& vm, CallFrame* cal
     JSGlobalObject* globalObject = nullptr;
     StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
         // Note that this is OK for InlineCache Callee.
-        if (visitor->isNativeCalleeFrame()) {
+        if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
             globalObject = visitor->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
-        if (visitor->hasCode()) {
-            if (auto* function = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); function && function->isBuiltinFunction())
+        if (auto* codeBlock = visitor->codeBlock()) {
+            if (codeBlock->codeType() == CodeType::FunctionCode && static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->isBuiltinFunction())
                 return IterationStatus::Continue;
-            globalObject = visitor->lexicalGlobalObject(vm);
+            globalObject = codeBlock->globalObject();
             return IterationStatus::Done;
         }
         ASSERT(visitor->codeType() == StackVisitor::Frame::CodeType::Native);
@@ -450,7 +446,7 @@ bool isFromJSCode(void* returnAddress)
         return true;
 #endif
 #if ENABLE(AOT)
-    if (AOT::addressKind(returnAddress) != AOT::ImageAddressInfo::NotInImage || isAOTImagePC(returnAddress))
+    if (AOT::isCompiledCodePC(returnAddress))
         return true;
 #endif
 #if ENABLE(C_LOOP)

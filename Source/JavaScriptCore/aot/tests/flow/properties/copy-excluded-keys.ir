@@ -1,0 +1,52 @@
+# A rest copy leaves out a key only if the key is certain: a name in the pattern, or a computed key that is one literal
+# RUN(NAMED): flow-solve nodes
+# RUN(ONE): flow-solve nodes
+# RUN(TWO): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="RestOfName"
+layout L2 name="RestOfOneLiteral"
+layout L3 name="RestOfTwoLiterals"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=3
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    v5 = NewObject layout=L1 fields=[]
+    CopyDataProperties v5, v4 excludedKeys=["a"]
+    v7 = String string="b"
+    v8 = ToPropertyKey v7
+    v9 = NewObject layout=L2 fields=[]
+    CopyDataProperties v9, v4, v8
+    v11 = Builtin builtin=MathRandom
+    v12 = Call v11
+    v13 = ToBoolean v12
+    Branch v13 -> taken b1(), notTaken b2()
+  b1():
+    v14 = String string="a"
+    Jump -> next b3(v14)
+  b2():
+    Jump -> next b3(v7)
+  b3(v15):
+    v16 = ToPropertyKey v15
+    v17 = NewObject layout=L3 fields=[]
+    CopyDataProperties v17, v4, v16
+    Return
+}
+# NAMED-NOT: (L1#{{*}}, "a")
+# NAMED: Property(L1#{{*}}, "b") = {2}
+# NAMED-NOT: (L1#{{*}}, "a")
+# NAMED: Property(L1#{{*}}, "c") = {3}
+# NAMED-NOT: (L1#{{*}}, "a")
+# ONE-NOT: (L2#{{*}}, "b")
+# ONE: Property(L2#{{*}}, "a") = {1}
+# ONE-NOT: (L2#{{*}}, "b")
+# ONE: Property(L2#{{*}}, "c") = {3}
+# ONE-NOT: (L2#{{*}}, "b")
+# TWO: Property(L3#{{*}}, "a") = {1}
+# TWO: Property(L3#{{*}}, "b") = {2}
+# TWO: Property(L3#{{*}}, "c") = {3}

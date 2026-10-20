@@ -1,0 +1,140 @@
+# A data record that is only the argument of the constructor becomes the contents of the collection, and no record is added
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 6
+# CHECK: table 0 keys: [String("k0") String("k1") String("k2") String("k3") String("k4") String("k5") String("k6") String("k7") String("k8") String("k9") String("k10") String("k11") String("k12") String("k13") String("k14") String("k15") String("k16") String("k17") String("k18") String("k19") String("k20") String("k21") String("k22") String("k23") String("k24") String("k25") String("k26") String("k27") String("k28") String("k29") String("k30") String("k31") String("k32") String("k33") String("k34") String("k35") String("k36") String("k37") String("k38") String("k39")]
+# CHECK-NEXT: table 0 values: [Number(1) Number(2) Number(3) Number(4) Number(5) Number(6) Number(7) Number(8) Number(9) Number(10) Number(11) Number(12) Number(13) Number(14) Number(15) Number(16) Number(17) Number(18) Number(19) Number(20) Number(21) Number(22) Number(23) Number(24) Number(25) Number(26) Number(27) Number(28) Number(29) Number(30) Number(31) Number(32) Number(33) Number(34) Number(35) Number(36) Number(37) Number(38) Number(39) Number(40)]
+# CHECK-NEXT: table 1 keys: [String("a") String("b")]
+# CHECK-NEXT: table 2 keys: [String("c") String("d")]
+# CHECK-NEXT: table 3 keys: [String("e")]
+# CHECK-NEXT: table 4 keys: [Array{contents=number elements=[Number{value=1}]}]
+# CHECK-NEXT: table 5 keys: [String("f") String("g")]
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+data d0 root=Array{contents=Array<anything> elements=[Array{contents=anything elements=[String{value="k0"}, Number{value=1}]}, Array{contents=anything elements=[String{value="k1"}, Number{value=2}]}, Array{contents=anything elements=[String{value="k2"}, Number{value=3}]}, Array{contents=anything elements=[String{value="k3"}, Number{value=4}]}, Array{contents=anything elements=[String{value="k4"}, Number{value=5}]}, Array{contents=anything elements=[String{value="k5"}, Number{value=6}]}, Array{contents=anything elements=[String{value="k6"}, Number{value=7}]}, Array{contents=anything elements=[String{value="k7"}, Number{value=8}]}, Array{contents=anything elements=[String{value="k8"}, Number{value=9}]}, Array{contents=anything elements=[String{value="k9"}, Number{value=10}]}, Array{contents=anything elements=[String{value="k10"}, Number{value=11}]}, Array{contents=anything elements=[String{value="k11"}, Number{value=12}]}, Array{contents=anything elements=[String{value="k12"}, Number{value=13}]}, Array{contents=anything elements=[String{value="k13"}, Number{value=14}]}, Array{contents=anything elements=[String{value="k14"}, Number{value=15}]}, Array{contents=anything elements=[String{value="k15"}, Number{value=16}]}, Array{contents=anything elements=[String{value="k16"}, Number{value=17}]}, Array{contents=anything elements=[String{value="k17"}, Number{value=18}]}, Array{contents=anything elements=[String{value="k18"}, Number{value=19}]}, Array{contents=anything elements=[String{value="k19"}, Number{value=20}]}, Array{contents=anything elements=[String{value="k20"}, Number{value=21}]}, Array{contents=anything elements=[String{value="k21"}, Number{value=22}]}, Array{contents=anything elements=[String{value="k22"}, Number{value=23}]}, Array{contents=anything elements=[String{value="k23"}, Number{value=24}]}, Array{contents=anything elements=[String{value="k24"}, Number{value=25}]}, Array{contents=anything elements=[String{value="k25"}, Number{value=26}]}, Array{contents=anything elements=[String{value="k26"}, Number{value=27}]}, Array{contents=anything elements=[String{value="k27"}, Number{value=28}]}, Array{contents=anything elements=[String{value="k28"}, Number{value=29}]}, Array{contents=anything elements=[String{value="k29"}, Number{value=30}]}, Array{contents=anything elements=[String{value="k30"}, Number{value=31}]}, Array{contents=anything elements=[String{value="k31"}, Number{value=32}]}, Array{contents=anything elements=[String{value="k32"}, Number{value=33}]}, Array{contents=anything elements=[String{value="k33"}, Number{value=34}]}, Array{contents=anything elements=[String{value="k34"}, Number{value=35}]}, Array{contents=anything elements=[String{value="k35"}, Number{value=36}]}, Array{contents=anything elements=[String{value="k36"}, Number{value=37}]}, Array{contents=anything elements=[String{value="k37"}, Number{value=38}]}, Array{contents=anything elements=[String{value="k38"}, Number{value=39}]}, Array{contents=anything elements=[String{value="k39"}, Number{value=40}]}]} module=m0
+data d1 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]} module=m0
+data d2 root=Array{contents=string elements=[String{value="c"}, String{value="d"}]} module=m0
+data d3 root=Array{contents=Array<anything> elements=[Array{contents=anything elements=[String{value="k"}, Number{value=1}, Number{value=2}]}]} module=m0
+data d4 root=Array{contents=anything elements=[Array{contents=anything elements=[String{value="k"}, Number{value=1}]}, String{value="kv"}]} module=m0
+data d5 root=Array{contents=string elements=[String{value="e"}]} module=m0
+data d6 root=Array{contents=Array<number> elements=[Array{contents=number elements=[Number{value=1}]}]} module=m0
+data d7 root=Array{contents=Array<number> elements=[Array{contents=number elements=[Number{value=2}]}]} module=m0
+data d8 root=Array{contents=string elements=[String{value="f"}, String{value="g"}]} module=m0
+
+function f0 name="mapOfFortyPairs" results=[{type=Map<string, number>}] {
+  b0():
+    v0 = Data data=d0
+    v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f0 name="mapOfFortyPairs"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[map]]:{{*}}= NewMapFromData data=d0
+# CHECK-NEXT: Return [[map]]
+
+function f1 name="setOfRecord" results=[{type=Set<string>}] {
+  b0():
+    v0 = Data data=d1
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f1 name="setOfRecord"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[set]]:{{*}}= NewSetFromData data=d1
+# CHECK-NEXT: Return [[set]]
+
+function f2 name="recordThroughUpcast" results=[{type=Set<string>}] {
+  b0():
+    v0 = Data data=d2
+    v1 = Upcast v0 castType=anything
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f2 name="recordThroughUpcast"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[cast]]:{{*}}= NewSetFromData data=d2
+# CHECK-NEXT: Return [[cast]]
+
+function f3 name="entryOfThreeValues" results=[{type=Map<string, number>}] {
+  b0():
+    v0 = Data data=d3
+    v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f3 name="entryOfThreeValues"
+# CHECK-NOT: FromData
+# CHECK: = Data data=d3
+# CHECK-NEXT: = CallBuiltin -, v0 overload=Map/2
+# CHECK-NOT: FromData
+
+function f4 name="entryIsNoArray" results=[{type=Map<string, number>}] {
+  b0():
+    v0 = Data data=d4
+    v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f4 name="entryIsNoArray"
+# CHECK-NOT: FromData
+# CHECK: = Data data=d4
+# CHECK-NEXT: = CallBuiltin -, v0 overload=Map/2
+# CHECK-NOT: FromData
+
+function f5 name="stringsCreatedInFrontOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Data data=d5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    v5 = Call v0, -, v4
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5 name="stringsCreatedInFrontOfTheLoop"
+# CHECK-NOT: = Data
+# CHECK: LoopHint
+# CHECK-NEXT: = NewSetFromData data=d5
+
+function f6 name="arraysCreatedWithTheSet" results=[{type=Set<Array<number>>}] {
+  b0():
+    v0 = Data data=d6
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f6 name="arraysCreatedWithTheSet"
+# CHECK-NOT: = Data
+# CHECK: = NewSetFromData data=d6
+
+function f7 name="arraysSharedByTheSetsOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Data data=d7
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    v5 = Call v0, -, v4
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f7 name="arraysSharedByTheSetsOfTheLoop"
+# CHECK-NOT: FromData
+# CHECK: v2:{{*}}= Data data=d7
+# CHECK: = CallBuiltin -, v2 overload=Set/2
+# CHECK-NOT: FromData
+
+function f8 name="recordThroughProofOfFlow" results=[{type=Set<string>}] {
+  b0():
+    v0 = Data data=d8
+    v1 = AssumeType v0 castType=Array<string, proven, pristine[Storage, Names]>
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f8 name="recordThroughProofOfFlow"
+# CHECK-NOT: = Data
+# CHECK-NOT: AssumeType
+# CHECK: = NewSetFromData data=d8
+# CHECK: data d8
+# CHECK-NOT: data d9

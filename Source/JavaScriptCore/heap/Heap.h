@@ -42,10 +42,12 @@
 #include "MarkedSpace.h"
 #include "MutatorState.h"
 #include "PreciseSubspace.h"
+#include "StoredCellLog.h"
 #include "StrongSet.h"
 #include "StructureID.h"
 #include "Synchronousness.h"
 #include "WeakHandleOwner.h"
+#include <JavaScriptCore/AOTHeapCellClasses.h>
 #include <JavaScriptCore/SubspaceAccess.h>
 #include <wtf/ApproximateTime.h>
 #include <wtf/AutomaticThread.h>
@@ -71,6 +73,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class CagedAlignedMemoryAllocator;
 class CodeBlock;
 class CodeBlockSet;
 class CollectingScope;
@@ -97,6 +100,7 @@ class JSValue;
 class MachineThreads;
 class MarkStackArray;
 class MarkStackMergingConstraint;
+class MarkedBlockCage;
 class BlockDirectory;
 class MarkedVectorBase;
 class MarkingConstraint;
@@ -169,6 +173,7 @@ class Heap;
 #define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
     v(brandedStructureSpace, destructibleCellHeapCellType, BrandedStructure) \
+    FOR_EACH_JSC_AOT_STRUCTURE_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_WEBASSEMBLY_STRUCTURE_ISO_SUBSPACE(v)
 
 #define FOR_EACH_JSC_ISO_SUBSPACE(v) \
@@ -227,6 +232,7 @@ class Heap;
     FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_GLIB_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_DYNAMIC_ISO_SUBSPACE(v) \
     \
     v(apiGlobalObjectSpace, apiGlobalObjectHeapCellType, JSAPIGlobalObject) \
     v(apiValueWrapperSpace, cellHeapCellType, JSAPIValueWrapper) \
@@ -359,6 +365,8 @@ public:
     
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
+    JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from, JSCell* to);
+    StoredCellLog& storedCellLog() LIFETIME_BOUND { return m_storedCellLog; }
 
     Heap(VM&, HeapType);
     ~Heap();
@@ -368,6 +376,12 @@ public:
     VM& vm() const;
 
     MarkedSpace& objectSpace() LIFETIME_BOUND { return m_objectSpace; }
+    JS_EXPORT_PRIVATE MarkedBlockCage& cage();
+    JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
+    bool tryCollectForExhaustedCage(GCDeferralContext*);
+
+    bool validatesCellVisits() const { return m_validatesCellVisits; }
+    void setValidatesCellVisits(bool validates) { m_validatesCellVisits = validates; }
     MachineThreads& machineThreads() { return *m_machineThreads; }
 
     Collector& collector() LIFETIME_BOUND { return *m_collector; }
@@ -392,6 +406,7 @@ public:
     MutatorState mutatorState() const { return m_mutatorState; }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
     std::optional<CollectionScope> lastCollectionScope() const { return m_lastCollectionScope; }
+    bool didSkipMarkingInLastCollection() const { return m_didSkipMarkingInLastCollection; }
 #if USE(BUN_JSC_ADDITIONS)
     // The most recent collection boundary: the end of the last one, or the start of the one in progress.
     MonotonicTime lastGCBoundaryTime() const { return std::max(m_lastGCEndTime, m_currentGCStartTime); }
@@ -568,9 +583,6 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
-    void didAllocateInBlock(size_t, const BlockDirectory&);
-    void didAllocatePreciseAllocation(size_t, const Subspace&);
-    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* extraMemoryOwner);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
@@ -608,9 +620,6 @@ public:
     
     unsigned barrierThreshold() const { return m_barrierThreshold; }
     const unsigned* addressOfBarrierThreshold() const LIFETIME_BOUND { return &m_barrierThreshold; }
-    MarkStackArray& mutatorMarkStack() LIFETIME_BOUND { return *m_mutatorMarkStack; }
-    static constexpr ptrdiff_t offsetOfMutatorMarkStack() { return OBJECT_OFFSETOF(Heap, m_mutatorMarkStack); }
-    static constexpr ptrdiff_t offsetOfBarriersExecuted() { return OBJECT_OFFSETOF(Heap, m_barriersExecuted); }
 
     // If true, the GC believes that the mutator is currently messing with the heap. We call this
     // "having heap access". The GC may block if the mutator is in this state. If false, the GC may
@@ -839,6 +848,7 @@ private:
     void releaseUnusedSharedBaselineCode();
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     void updateAllocationLimits();
+    size_t memoryLimitForGrowth();
     void didFinishCollection();
     void recordCollectionTime(Seconds duration);
 #if USE(BUN_JSC_ADDITIONS)
@@ -966,6 +976,7 @@ private:
     Collector* const m_collector;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
+    StoredCellLog m_storedCellLog;
     
     StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
@@ -976,6 +987,7 @@ private:
     bool m_isSafeToCollect { false };
     bool m_isShuttingDown { false };
     bool m_mutatorShouldBeFenced { false };
+    bool m_validatesCellVisits { false };
     Lock m_wasmCalleesPendingDestructionLock;
 
     unsigned m_barrierThreshold { blackThreshold };
@@ -1142,6 +1154,7 @@ public:
     std::unique_ptr<FastMallocAlignedMemoryAllocator> fastMallocAllocator;
     std::unique_ptr<GigacageAlignedMemoryAllocator> primitiveGigacageAllocator;
     std::unique_ptr<StructureAlignedMemoryAllocator> structureAllocator;
+    std::unique_ptr<CagedAlignedMemoryAllocator> cagedAllocator;
 
     // Subspaces
     CompleteSubspace primitiveGigacageAuxiliarySpace; // Typed arrays, strings, bitvectors, etc go here.
@@ -1168,8 +1181,9 @@ public:
     
     // Whenever possible, use subspaceFor<CellType>(vm) to get one of these subspaces.
     CompleteSubspace cellSpace;
-#if USE(BUN_JSC_ADDITIONS)
-    CompleteSubspace aotClosureSpace; // AOT::Typed::Closure and environments: as a rule they die young.
+#if ENABLE(AOT)
+    CompleteSubspace aotClosureSpace;
+    CompleteSubspace cagedAuxiliarySpace;
 #endif
     CompleteSubspace destructibleObjectSpace;
 
@@ -1355,7 +1369,6 @@ private:
     IsoSubspace unlinkedFunctionExecutableSpace;
 
 
-    friend class JSC::LLIntOffsetsExtractor;
     friend class JSC::VM;
 };
 

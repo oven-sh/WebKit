@@ -147,28 +147,6 @@ public:
         return m_data[block].idomParent;
     }
     
-#if USE(BUN_JSC_ADDITIONS)
-    template<typename Functor>
-    void skipOver(NOESCAPE const Functor& isGone)
-    {
-        for (unsigned blockIndex = m_graph.numNodes(); blockIndex--;) {
-            typename Graph::Node block = m_graph.node(blockIndex);
-            if (!block)
-                continue;
-            BlockData& data = m_data[block];
-            if (m_hasKids)
-                data.idomKids.clear();
-            if (isGone(block))
-                continue;
-            typename Graph::Node parent = data.idomParent;
-            while (parent && isGone(parent))
-                parent = m_data[parent].idomParent;
-            data.idomParent = parent;
-        }
-        m_hasKids = false;
-    }
-#endif
-
     template<typename Functor>
     void forAllStrictDominatorsOf(typename Graph::Node to, NOESCAPE const Functor& functor) const
     {

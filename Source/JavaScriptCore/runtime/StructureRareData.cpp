@@ -26,10 +26,10 @@
 #include "config.h"
 #include "StructureRareData.h"
 
-#include "AOTTypedObject.h"
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CacheableIdentifierInlines.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
+#include "ImmutablePropertyNames.h"
 #include "JSCellButterfly.h"
 #include "JSObjectInlines.h"
 #include "JSPropertyNameEnumerator.h"
@@ -38,6 +38,9 @@
 #include "StructureChain.h"
 #include "StructureInlines.h"
 #include "StructureRareDataInlines.h"
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -121,6 +124,11 @@ SpecialPropertyCache& StructureRareData::ensureSpecialPropertyCacheSlow()
     return *m_specialPropertyCache.get();
 }
 
+void StructureRareData::setImmutablePropertyNames(ImmutablePropertyNames& names)
+{
+    ensureSpecialPropertyCache().m_immutablePropertyNames = &names;
+}
+
 inline void StructureRareData::giveUpOnSpecialPropertyCache(CachedSpecialPropertyKey key)
 {
     // Invalidate the memoized fast-path verdict along with the cache it is derived from.
@@ -150,26 +158,19 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
     }
 
 #if ENABLE(AOT)
-    bool isTypedStructureWithoutProperty = !ownStructure->hasPolyProto() && AOT::Typed::Object::structureGuaranteesAbsence(ownStructure, uid);
-#else
-    constexpr bool isTypedStructureWithoutProperty = false;
+    if (ownStructure->isCompiledStructure()) [[unlikely]] {
+        if (slot.isUnset() && AOT::PropertyWalk::hasPropertyOnChain(ownStructure, uid) == AOT::PropertyWalk::Presence::Absent)
+            ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)].m_value.set(vm, this, value);
+        else
+            giveUpOnSpecialPropertyCache(key);
+        return;
+    }
 #endif
-    if (!isTypedStructureWithoutProperty && (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy())) {
+
+    if (!ownStructure->propertyAccessesAreCacheable() || ownStructure->isProxy()) {
         giveUpOnSpecialPropertyCache(key);
         return;
     }
-    auto prepareChain = [&](JSObject* target) -> bool {
-        if (!isTypedStructureWithoutProperty)
-            return !!prepareChainForCaching(globalObject, ownStructure, uid, target);
-        JSValue prototype = ownStructure->storedPrototype();
-        if (!prototype.isObject())
-            return !target;
-#if ENABLE(AOT)
-        for (JSValue holder = prototype; holder.isObject(); holder = asObject(holder)->getPrototypeDirect())
-            AOT::Typed::ClassPrototype::look(asObject(holder));
-#endif
-        return !!prepareChainForCaching(globalObject, asObject(prototype), uid, target);
-    };
 
     ObjectPropertyConditionSet conditionSet;
     if (slot.isValue()) {
@@ -181,19 +182,21 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
 
         // This will not create a condition for the current structure but that is good because we know that property
         // is not on the ownStructure so we will transisition if one is added and this cache will no longer be used.
-        if (!prepareChain(slot.slotBase())) {
+        auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, slot.slotBase());
+        if (!cacheStatus) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
         conditionSet = generateConditionsForPrototypePropertyHit(vm, this, globalObject, ownStructure, slot.slotBase(), uid);
         ASSERT(!conditionSet.isValid() || conditionSet.hasOneSlotBaseCondition());
     } else if (slot.isUnset()) {
-        if (!isTypedStructureWithoutProperty && !ownStructure->propertyAccessesAreCacheableForAbsence()) {
+        if (!ownStructure->propertyAccessesAreCacheableForAbsence()) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }
 
-        if (!prepareChain(nullptr)) {
+        auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, nullptr);
+        if (!cacheStatus) {
             giveUpOnSpecialPropertyCache(key);
             return;
         }

@@ -1,0 +1,16 @@
+# A spread into a list is left in form Prepared only if ExpandIteration did not run
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: RequiredPassLeftOperation 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=Array}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array, v1: anything):
+    AppendSpread v0, v1
+    Return
+}
+function f1 name="good" parameters=[{type=Array}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array, v1: anything):
+    AppendElement v0, v1
+    Return
+}

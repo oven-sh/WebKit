@@ -1,0 +1,84 @@
+# A read on a number has walked the prototypes of numbers when a function reached through four calls stores the name on Number.prototype: the read finds it
+# RUN: flow-solve nodes
+# STATISTIC: FlowMembersRepeated >= 1
+# CHECK: Local(i{{*}}, f6, result 0) = {undefined|"late"}
+
+variable g0 name="h1" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="h2" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="h3" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f5 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f6 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = Predict v5 predicted=function @221
+    v7 = Call v6 calleeName="use" @221
+    v8 = Predict v1 predicted=function @228
+    v9 = Predict v3 predicted=function @231
+    v10 = Call v8, -, v9 calleeName="h0" @228
+    v11 = Undefined @228
+    Return v11 @228
+}
+function f1 name="h1" module=m0 position=33 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @33
+  b1():
+    v1 = GetModuleVariable variable=g1 @57
+    v2 = Predict v1 predicted=function @57
+    v3 = Call v2, -, v0 calleeName="h2" @57
+    ReturnCall v3 @57
+}
+function f2 name="h2" module=m0 position=66 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @66
+  b1():
+    v1 = GetModuleVariable variable=g2 @90
+    v2 = Predict v1 predicted=function @90
+    v3 = Call v2, -, v0 calleeName="h3" @90
+    ReturnCall v3 @90
+}
+function f3 name="h3" module=m0 position=99 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @99
+  b1():
+    v1 = Call v0 calleeName="f" @123
+    ReturnCall v1 @123
+}
+function f4 name="h0" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = GetModuleVariable variable=g0 @24
+    v2 = Predict v1 predicted=function @24
+    v3 = Call v2, -, v0 calleeName="h1" @24
+    ReturnCall v3 @24
+}
+function f5 name="install" module=m0 position=130 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @130
+  b1():
+    v0 = Builtin builtin=GlobalThis @151
+    v1 = PropGet v0 key="Number" [isFreeName] @151
+    v2 = Predict v1 predicted=builtin(Number) @151
+    v3 = PropGet v2 key="prototype" @151
+    v4 = Predict v3 predicted=builtin(NumberPrototype) @151
+    v5 = String string="late" @175
+    PropSet v4, v5 key="late" @151
+    v7 = Undefined @151
+    Return v7 @151
+}
+function f6 name="use" module=m0 position=185 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @185
+  b1():
+    v0 = Integer integer=5 @210
+    v1 = PropGet v0 key="late" @210
+    Return v1 @209
+}
+entry module=m0

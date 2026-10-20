@@ -1,0 +1,73 @@
+# An object that a caller builds only for a removed argument is not built; an object with another use or for a parameter in use stays, and so does a call of unknown code
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Details" fields=[{key="rows" declared={type=number} flags=[IsRequired]}, {key="took" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="report" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = Add v0, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="report"
+# CHECK: = CallDirect v0 function=f6
+# CHECK-NEXT: ReturnCall
+
+function f1 name="reportWithDetails" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+  b0(v0: number, v1: object):
+    v2 = PropGet v1 key="rows"
+    v3 = Add v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="reportWithDetails"
+# CHECK: = PropGet v1 key="rows"
+
+function f2 name="buildsOnlyForArgument" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Sub v2, v1
+    v4 = NewObject -, v1, v3 layout=L0 fields=[0, 1]
+    v5 = CallDirect v0, v4 function=f0
+    Return v5
+}
+# CHECK-LABEL: function f2 name="buildsOnlyForArgument"
+# CHECK-NEXT: b0(v0: number, v1: number, v2: number):
+# CHECK-NEXT: [[reported]]: number = CallDirect v0 function=f6
+# CHECK-NEXT: Return [[reported]]
+
+function f3 name="alsoReturnsObject" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = CallDirect v0, v2 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="alsoReturnsObject"
+# CHECK: [[returned]]:{{*}}= NewObject -, v1, v1 layout=L0 fields=[0, 1]
+# CHECK: Return [[returned]]
+
+function f4 name="buildsForParameterInUse" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = CallDirect v0, v2 function=f1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="buildsForParameterInUse"
+# CHECK: [[details]]:{{*}}= NewObject -, v1, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = CallDirect v0, [[details]] function=f1
+
+function f5 name="computesArgumentByUnknownCode" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = Call v1
+    v3 = CallDirect v0, v2 function=f0
+    Return v3
+}
+# CHECK-LABEL: function f5 name="computesArgumentByUnknownCode"
+# CHECK: = Call v1
+# CHECK-NEXT: = CallDirect v0 function=f6
+
+# CHECK-LABEL: function f6 name="report"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = Add v0, v0
+# CHECK-NOT: function f7

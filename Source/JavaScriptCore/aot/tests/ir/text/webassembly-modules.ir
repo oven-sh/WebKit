@@ -1,0 +1,26 @@
+# WebAssembly module lines: a byte from 0x20 to 0x7e prints as it is but for the quote and the backslash, every other as an escape of two hexadecimal digits
+# RUN: round-trip
+# CHECK: module m0 path="/a.ts" displayPath="a.ts" body=f0
+# CHECK-NEXT: module m1 path="/w.wasm" displayPath="w.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+# CHECK-NEXT: module m2 path="/v.wasm" displayPath="v.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: webassemblymodule module=m1 bytes="\x00asm\x01\x00\x00\x00 ~\x22\x5c\x7f\xff"
+# CHECK-NEXT: webassemblymodule module=m2
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0
+module m1 path="/w.wasm" displayPath="w.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+module m2 path="/v.wasm" displayPath="v.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Return
+}
+entry module=m0
+webassemblymodule module=m1 bytes="\x00asm\x01\x00\x00\x00 ~\x22\x5c\x7f\xff"
+webassemblymodule module=m2

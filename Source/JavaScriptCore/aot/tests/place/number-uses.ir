@@ -1,0 +1,80 @@
+# A number field that is predicted int32 takes an 8-byte slot when every use of what is read from it wants a double, however many conversions lie between the read and the use
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow disable=flow:NarrowedTypes
+# RUN: plan-slots accesses
+# RUN(LAYOUTS): plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="OnlyDivided" fields=[{key="width" declared={type=number predicted=i32} flags=[IsRequired]}, {key="height" declared={type=number predicted=i32} flags=[IsRequired]}, {key="depth" declared={type=number predicted=i32} flags=[IsRequired]}]
+layout L1 name="AlsoIndex" fields=[{key="line" declared={type=number predicted=i32} flags=[IsRequired]}, {key="column" declared={type=number predicted=i32} flags=[IsRequired]}, {key="page" declared={type=number predicted=i32} flags=[IsRequired]}]
+layout L2 name="ManyConversions" fields=[{key="x" declared={type=number predicted=i32} flags=[IsRequired]}, {key="y" declared={type=number predicted=i32} flags=[IsRequired]}, {key="z" declared={type=number predicted=i32} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Integer integer=2
+    v6 = NewArray v1 contents=anything
+    v7 = NewObject -, v4, v4, v4 layout=L0 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = PropGet v8 key="width"
+    v10 = Div v9, v5
+    v11 = PropGet v8 key="height"
+    v12 = Negate v11
+    v13 = Div v12, v5
+    v14 = PropGet v8 key="depth"
+    v15 = NewObject -, v4, v4, v4 layout=L1 fields=[0, 1, 2]
+    v16 = FinishObject v15
+    v17 = PropGet v16 key="line"
+    v18 = Div v17, v5
+    v19 = ElemGet v6, v17
+    v20 = PropGet v16 key="column"
+    v21 = Div v20, v5
+    v22 = ElemGet v6, v20
+    v23 = PropGet v16 key="page"
+    v24 = Div v23, v5
+    v25 = ElemGet v6, v23
+    v26 = NewObject -, v4, v4, v4 layout=L2 fields=[0, 1, 2]
+    v27 = FinishObject v26
+    v28 = PropGet v27 key="x"
+    v29 = Negate v28
+    v30 = Negate v29
+    v31 = Negate v30
+    v32 = Negate v31
+    v33 = Negate v32
+    v34 = Div v33, v5
+    v35 = PropGet v27 key="y"
+    v36 = Div v35, v5
+    v37 = PropGet v27 key="z"
+    v38 = Div v37, v5
+    Jump -> next b1(v14)
+  b1(v39):
+    v40 = Div v39, v5
+    Return
+}
+
+# CHECK: "width" {L0} read
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "height" {L0} read
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "depth" {L0} read
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "line" {L1} read
+# CHECK-NEXT: one location Int32OrDouble @
+# CHECK-NEXT: "column" {L1} read
+# CHECK-NEXT: one location Int32OrDouble @
+# CHECK-NEXT: "page" {L1} read
+# CHECK-NEXT: one location Int32OrDouble @
+# CHECK-NEXT: "x" {L2} read
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "y" {L2} read
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "z" {L2} read
+# CHECK-NEXT: one location Double @
+
+# LAYOUTS: L0 CompiledObject size=48 extension=0
+# LAYOUTS: L1 CompiledObject size=32 extension=32
+# LAYOUTS: L2 CompiledObject size=48 extension=0

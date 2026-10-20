@@ -27,8 +27,6 @@
 
 #if ENABLE(B3_JIT)
 
-#include "RegisterSet.h"
-
 namespace JSC { namespace B3 { namespace Air {
 
 class Code;
@@ -36,11 +34,7 @@ class Code;
 // This is a forward flow phase that tracks equivalence between spills slots and registers. It
 // removes loads from spill slots in cases when the contents of the spill slot can be found in (or
 // computed from) a register.
-#if USE(BUN_JSC_ADDITIONS)
-RegisterSet fixObviousSpills(Code&);
-#else
 void fixObviousSpills(Code&);
-#endif
 
 } } } // namespace JSC::B3::Air
 

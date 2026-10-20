@@ -29,6 +29,10 @@
 #include "JSCInlines.h"
 #include "LazyPropertyInlines.h"
 
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
+
 namespace JSC {
 
 LazyClassStructure::Initializer::Initializer(VM& vm, JSGlobalObject* global, LazyClassStructure& classStructure, const StructureInitializer& structureInit)
@@ -58,6 +62,11 @@ void LazyClassStructure::Initializer::setStructure(Structure* structure)
     
     if (!prototype)
         prototype = structure->storedPrototypeObject();
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]]
+        AOT::RuntimeHooks::didCreateClass(global, classStructure, structure, prototype, nullptr);
+#endif
 }
 
 void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
@@ -70,16 +79,11 @@ void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
 
     prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     classStructure.m_constructor.set(vm, global, constructor);
-}
 
-void LazyClassStructure::Initializer::didInitialize()
-{
-    if (!global->locksOrAuditsIntrinsics() || std::bit_cast<uintptr_t>(&classStructure) - std::bit_cast<uintptr_t>(global) >= sizeof(JSGlobalObject)) [[likely]]
-        return;
-    if (prototype)
-        global->makeIntrinsicImmutable(prototype, JSGlobalObject::IntrinsicKind::Prototype, JSObject::LockedObjectHistory::NewlyCreated);
-    if (constructor)
-        global->makeIntrinsicImmutable(constructor, JSGlobalObject::IntrinsicKind::Other, JSObject::LockedObjectHistory::NewlyCreated);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]]
+        AOT::RuntimeHooks::didCreateClass(global, classStructure, structure, prototype, constructor);
+#endif
 }
 
 template<typename Visitor>

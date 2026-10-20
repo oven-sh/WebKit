@@ -1,0 +1,169 @@
+# After an edge into a block is gone, its parameters have the union of what still flows in, and their users follow
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow RetypeValues
+# RUN(STALE): pass SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="trueFalseBoolean" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b6(v0)
+  b2():
+    Switch v0 cases=[0, 1] -> case b3(), case b4(), otherwise b5()
+  b3():
+    v4 = Boolean boolean=true
+    Jump -> next b6(v4)
+  b4():
+    v5 = Boolean boolean=false
+    Jump -> next b6(v5)
+  b5():
+    Jump -> next b6(v2)
+  b6(v6):
+    Return v6
+}
+# CHECK-LABEL: function f0 name="trueFalseBoolean"
+# CHECK: b6(v6: boolean):
+# STALE-LABEL: function f0 name="trueFalseBoolean"
+# STALE: b6(v6: anything):
+
+function f1 name="trueBooleanFalse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b6(v0)
+  b2():
+    Switch v0 cases=[0, 1] -> case b3(), case b4(), otherwise b5()
+  b3():
+    v4 = Boolean boolean=true
+    Jump -> next b6(v4)
+  b4():
+    Jump -> next b6(v2)
+  b5():
+    v5 = Boolean boolean=false
+    Jump -> next b6(v5)
+  b6(v6):
+    Return v6
+}
+# CHECK-LABEL: function f1 name="trueBooleanFalse"
+# CHECK: b6(v6: boolean):
+
+function f2 name="booleanTrueFalse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v1
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b6(v0)
+  b2():
+    Switch v0 cases=[0, 1] -> case b3(), case b4(), otherwise b5()
+  b3():
+    Jump -> next b6(v2)
+  b4():
+    v4 = Boolean boolean=true
+    Jump -> next b6(v4)
+  b5():
+    v5 = Boolean boolean=false
+    Jump -> next b6(v5)
+  b6(v6):
+    Return v6
+}
+# CHECK-LABEL: function f2 name="booleanTrueFalse"
+# CHECK: b6(v6: boolean):
+
+function f3 name="throughUpcast" parameters=[{type=string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: boolean, v2: anything):
+    v3 = Upcast v0 castType=anything
+    v4 = Boolean boolean=false
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v2)
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v3)
+  b4():
+    v5 = String string="x"
+    Jump -> next b5(v5)
+  b5(v6):
+    Return v6
+}
+# CHECK-LABEL: function f3 name="throughUpcast"
+# CHECK: b5(v6: string):
+
+function f4 name="usersFollow" parameters=[{type=i32}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: i32, v1: boolean, v2: anything):
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v2)
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=1
+    Jump -> next b5(v4)
+  b4():
+    Jump -> next b5(v0)
+  b5(v5):
+    v6 = Add v5, v5
+    Branch v1 -> taken b6(), notTaken b7()
+  b6():
+    Jump -> next b8(v6)
+  b7():
+    Jump -> next b8(v0)
+  b8(v7):
+    Return v7
+}
+# CHECK-LABEL: function f4 name="usersFollow"
+# CHECK: b5(v5: i32):
+# CHECK-NEXT: v6: int[-4294967296, 4294967294] = Add v5, v5
+# CHECK: b8(v7: int[-4294967296, 4294967294]):
+
+function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number|string, v1: boolean, v2: anything):
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v2)
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v0)
+  b4():
+    Jump -> next b5(v0)
+  b5(v4):
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v6):
+    Return v6
+  b7(v7):
+    Return v7
+}
+# CHECK-LABEL: function f5 name="edgeResult"
+# CHECK: b5(v4: number|string):
+# CHECK: b6(v6: string):
+# CHECK: b7(v7: number):
+
+function f6 name="anythingFlowsIn" parameters=[{type=anything}, {type=boolean}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: string):
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v2)
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=1
+    Jump -> next b5(v4)
+  b4():
+    Jump -> next b5(v0)
+  b5(v5):
+    Return v5
+}
+# CHECK-LABEL: function f6 name="anythingFlowsIn"
+# CHECK: b5(v5: anything):

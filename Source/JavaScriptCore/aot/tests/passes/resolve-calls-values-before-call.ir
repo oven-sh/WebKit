@@ -1,0 +1,111 @@
+# A copy of a member read runs at the call, so a dispatch with a rest needs every value between the read and the call to commute with unknown code
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Task" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f1 mutability=Fixed}, {key="make" side=Static function=f3 mutability=Fixed}]}
+layout L1 kind=Instance name="Plugin" constructor=f2 flags=[HasHeritage] flow={impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+function f0 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 [keepsShape]
+    Return v2
+}
+function f1 name="run" kind=Method flags=[HasThis] thisType={type=object written=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: anything):
+    Return
+}
+function f2 name="Plugin" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="make" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+function f4 name="call-between-with-rest" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f4 name="call-between-with-rest"
+# CHECK-NEXT: b0(v0: L0|L1, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = Call v2, v0, v3 calleeKey="run"
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+function f5 name="call-between-without-rest" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f5 name="call-between-without-rest"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: = CallDirect v0, v3 function=f1
+# CHECK-NOT: PropGet
+function f6 name="arithmetic-between-with-rest" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: number):
+    v2 = PropGet v0 key="run"
+    v3 = Add v1, v1
+    v4 = Call v2, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f6 name="arithmetic-between-with-rest"
+# CHECK-NEXT: b0(v0: L0|L1, v1: number):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = Add v1, v1
+# CHECK-NEXT: [[isTask]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isTask]] -> taken [[direct]](| 0), notTaken [[rest]](| 0)
+# CHECK: [[direct]]([[task]]: L0):
+# CHECK-NEXT: = CallDirect [[task]], v3 function=f1
+# CHECK: [[rest]]([[plugin]]: L1) frequency=Unlikely:
+# CHECK-NEXT: [[method]]: anything = PropGet [[plugin]] key="run" receivers=[L1]
+# CHECK-NEXT: = Call [[method]], [[plugin]], v3 calleeKey="run"
+function f7 name="allocations-between-with-rest" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="run"
+    v2 = String string="text"
+    v3 = NewClosure function=f3
+    v4 = Call v1, v0, v3 calleeKey="run"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="allocations-between-with-rest"
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: = String string="text"
+# CHECK-NEXT: = NewClosure function=f3
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: = CallDirect {{*}}, v3 function=f1
+function f8 name="runtime-error-between-with-rest" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="run"
+    v2 = NewRuntimeError runtimeError=NotDestructurable
+    v3 = Call v1, v0, v2 calleeKey="run"
+    Return v3
+}
+# CHECK-LABEL: function f8 name="runtime-error-between-with-rest"
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = NewRuntimeError runtimeError=NotDestructurable
+# CHECK-NEXT: = Call v1, v0, v2 calleeKey="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+function f9 name="call-between-static-method" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = PropGet v0 key="make"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="make"
+    Return v4
+}
+# CHECK-LABEL: function f9 name="call-between-static-method"
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: v3: anything = Call v1
+# CHECK-NEXT: = CallDirect v0, v3 function=f3

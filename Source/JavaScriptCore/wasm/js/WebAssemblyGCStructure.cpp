@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebAssemblyGCStructure.h"
 
+#include "AOTRemovableFeature.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGC.h"
 #include "JSCInlines.h"
@@ -42,7 +43,6 @@ WebAssemblyGCStructure::WebAssemblyGCStructure(VM& vm, const TypeInfo& typeInfo,
     : Structure(vm, StructureVariant::WebAssemblyGC, nullptr, typeInfo, classInfo)
     , m_rtt(WTF::move(rtt))
 {
-    static_assert(OBJECT_OFFSETOF(WebAssemblyGCStructure, m_aotFieldsStorage) == sizeof(Structure));
     setMayBePrototype(true); // Make sure that didPrototype transition does not happen.
     switch (m_rtt->kind()) {
     case Wasm::RTTKind::Function:
@@ -57,8 +57,6 @@ WebAssemblyGCStructure::WebAssemblyGCStructure(VM& vm, const TypeInfo& typeInfo,
     }
 }
 
-NEVER_INLINE WebAssemblyGCStructure::~WebAssemblyGCStructure() = default;
-
 WebAssemblyGCStructure* WebAssemblyGCStructure::create(VM& vm, const TypeInfo& typeInfo, const ClassInfo* classInfo, Ref<const Wasm::RTT>&& rtt)
 {
     ASSERT(vm.structureStructure);
@@ -70,6 +68,12 @@ WebAssemblyGCStructure* WebAssemblyGCStructure::create(VM& vm, const TypeInfo& t
         ASSERT(newStructure->type() == StructureType);
         return newStructure;
     });
+}
+
+NEVER_INLINE void WebAssemblyGCStructure::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &WebAssemblyGCStructure::destroy);
+    static_cast<WebAssemblyGCStructure*>(cell)->WebAssemblyGCStructure::~WebAssemblyGCStructure();
 }
 
 void WebAssemblyGCStructure::finishCreation(VM& vm)
@@ -94,9 +98,11 @@ void WebAssemblyGCStructure::finishCreation(VM& vm)
 template<typename Visitor>
 void WebAssemblyGCStructure::visitAdditionalChildren(JSCell* cell, Visitor& visitor)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(WebAssembly, Abort, void)
     WebAssemblyGCStructure* thisObject = uncheckedDowncast<WebAssemblyGCStructure>(uncheckedDowncast<Structure>(cell));
     for (auto& slot : thisObject->m_inlinedDisplay)
         visitor.append(slot);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 template void WebAssemblyGCStructure::visitAdditionalChildren(JSCell*, AbstractSlotVisitor&);

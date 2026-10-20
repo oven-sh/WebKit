@@ -361,6 +361,10 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (auto* callback = dynamicDowncast<JSFFICallback>(cell)) {
+            if (callback->isClosed()) [[unlikely]] {
+                throwTypeError(globalObject, scope, "bun:ffi: the JSFFICallback has been closed"_s);
+                return false;
+            }
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->nativeEntrypoint()));
             return true;
         }

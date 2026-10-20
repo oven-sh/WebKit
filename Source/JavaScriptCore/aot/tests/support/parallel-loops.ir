@@ -1,0 +1,24 @@
+# the parallel loops give the same answers at every width
+# RUN: parallel-loops
+# RUN: parallel-loops threads=2
+# RUN: parallel-loops threads=16
+# CHECK: each index once: ok
+# CHECK-NEXT: nested loops: ok
+# CHECK-NEXT: the longest indices first: ok
+# CHECK-NEXT: collect: ok
+# CHECK-NEXT: find: ok
+# CHECK-NEXT: sort: ok
+# CHECK-NEXT: sort and remove duplicates: ok
+# CHECK-NEXT: tasks: ok
+# CHECK-NEXT: width one is serial: ok
+# CHECK-NEXT: worker numbers are below the width and unique at one time: ok
+# CHECK-NEXT: build thread has the worker stack size: ok
+# CHECK-NEXT: pool threads have the worker stack size: ok
+# CHECK-NEXT: loops run on a host pool: ok
+# CHECK-NEXT: one index asks for no helper: ok
+# CHECK-NEXT: a helper that comes late does nothing: ok
+# CHECK-NEXT: no more helpers than indices: ok
+# CHECK-NEXT: a thread gets its storage back: ok
+# CHECK-NEXT: an array creates and destroys each element once: ok
+# CHECK-NEXT: resting threads take the next loop: ok
+# CHECK-NEXT: resting threads go back to the pool: ok

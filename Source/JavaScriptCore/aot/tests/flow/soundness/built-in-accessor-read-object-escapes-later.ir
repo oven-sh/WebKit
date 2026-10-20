@@ -1,0 +1,40 @@
+# __lookupSetter__ answers undefined for a data property. An object that reaches unknown code three calls later may have got a setter there, one that stays inside may not
+# RUN: flow-solve nodes
+# CHECK: , f0, v4) = {undefined|unknown}
+# CHECK: , f0, v6) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=ObjectPrototype__lookupSetter__
+    v3 = String string="a"
+    v4 = Call v2, v1, v3
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = Call v2, v5, v3
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    v9 = Call v8
+    v10 = Call v9, -, v1
+    Return
+}
+function f1 name="stage1" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="stage2" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    Return v0
+}
+function f3 name="leak" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}

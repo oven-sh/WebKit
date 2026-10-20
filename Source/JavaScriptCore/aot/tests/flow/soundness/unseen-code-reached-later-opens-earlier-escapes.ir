@@ -1,0 +1,53 @@
+# Text is evaluated only in a function that is entered later: the objects that had reached native code before are opened like those that reach it afterwards, and so is a module object
+# RUN: flow-solve sinks nodes
+# CHECK: unknownJavaScript {{*}}L0#[[early]]{{*}}ModuleObject@m0
+# CHECK: DeclaredPart(L0#[[early]], 0) = {{*}}unknown
+# CHECK: , f5, parameter 0) = {{*}}unknown
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Builtin builtin=GlobalThis
+    v7 = Integer integer=1
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = PropGet v6 key="keep" [isFreeName]
+    v11 = Call v10, -, v9
+    v12 = NewClosure function=f5
+    v13 = Call v10, -, v12
+    v14 = NewClosure function=f1
+    v15 = Call v14
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = PropGet v0 key="eval" [isFreeName]
+    v3 = Call v2, -, v1
+    Return v3
+}
+function f5 name="keptFunction" flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

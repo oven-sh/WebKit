@@ -98,6 +98,7 @@ const FUZZING = ["assertions", "coverage", "assertions-coverage"];
 //                   where there is no lto lane) is what bun ships. The asan lanes are not tested: the tests take 65 to
 //                   100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick` is --quick, for
 //                   a runner with few cores.
+//   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -110,6 +111,7 @@ const platforms = [
       amd64: { on: "linux-x64-gh", variants: ["lto"] },
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
+    testPrograms: ["testb3", "testair", "TestWTF"],
     image: () => "linux-glibc",
     args: (arch, v) => ({
       ...ICU,
@@ -246,11 +248,13 @@ const lanes = platforms.flatMap(platform =>
     names.map(variant => {
       const v = variants[variant];
       const buildType = platform.buildType?.(v) ?? v.buildType;
+      const test = platform.tested?.[arch]?.variants.includes(variant) ?? false;
       const buildArgs = {
         WEBKIT_RELEASE_TYPE: buildType,
         LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
         USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
         USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        ...(platform.testPrograms ? { TEST_PROGRAMS: test ? platform.testPrograms.join(" ") : "" } : {}),
         ...platform.args(arch, v, variant),
       };
       return {
@@ -259,7 +263,7 @@ const lanes = platforms.flatMap(platform =>
         dockerfile: platform.dockerfile,
         package_os: platform.packageOS,
         package_cpu: arch === "arm64" ? "arm64" : "x64",
-        test: platform.tested?.[arch]?.variants.includes(variant) ?? false,
+        test,
         test_runner: platform.tested?.[arch]?.on,
         test_quick: platform.tested?.[arch]?.quick ?? false,
         image: imageRef(platform, arch, buildArgs),

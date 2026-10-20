@@ -1,0 +1,29 @@
+# The slot of a number field that is predicted to hold int32s comes from its declared type alone: it takes 4 bytes without any result of flow
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow disable=flow-results
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Predicted" fields=[{key="flags" declared={type=undefined|null|number predicted=int[0, 1073741824]} flags=[IsRequired]}, {key="maybe" declared={type=undefined|null|number predicted=undefined|i32}}, {key="kind" declared={type=undefined|null|number predicted=int[0, 400]} flags=[IsRequired]}, {key="sign" declared={type=undefined|null|number predicted=null|int[-1, 1]} flags=[IsRequired]}]
+layout L1 name="FilledWithNumbers" fields=[{key="flags" declared={type=undefined|null|number predicted=int[0, 1073741824]} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|number predicted=int[0, 400]} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = NewObject -, v3, v3, v3, v3 layout=L0 fields=[0, 1, 2, 3]
+    v5 = FinishObject v4
+    v6 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    Return
+}
+# CHECK: L0 CompiledObject size=32 fields=4
+# CHECK-NEXT: "flags" OptionalInt32 @
+# CHECK-NEXT: "maybe" OptionalInt32 @
+# CHECK-NEXT: "kind" OptionalInt32 @
+# CHECK-NEXT: "sign" OptionalInt32 @
+# An allocation writes its initial values without a test, so a field that one fills with any number holds numbers.
+# CHECK: L1 CompiledObject size=32 fields=2
+# CHECK-NEXT: "flags" OptionalDouble @

@@ -1,0 +1,59 @@
+# s[1.5] and s[NaN] are undefined, s.charAt(1.5) is s[1] and s.charAt(NaN) is s[0], so an element read is a range only if its key is an integer
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fractional-key" parameters=[{type=string}, {type=number}] results=[{type=boolean}] {
+  b0(v0: string, v1: number):
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f0 name="fractional-key"
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK: : boolean = ValueEqualsLiteral v2 literal="a"
+# CHECK-NOT: StringRangeCodeUnitOr
+
+# A number without a fraction may be NaN
+function f1 name="whole-number-key" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int):
+    v2 = Add v1, v1
+    v3 = ElemGet v0, v2 [keyIsIntegral]
+    v4 = String string="a"
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="whole-number-key"
+# CHECK-NOT: StringRangeCodeUnitOr
+# CHECK: v2: int|whole = Add v1, v1
+# CHECK-NEXT: v3: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v2
+# CHECK: : boolean = ValueEqualsLiteral v3 literal="a"
+# CHECK-NOT: StringRangeCodeUnitOr
+
+function f2 name="integer-key" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int):
+    v2 = ElemGet v0, v1
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="integer-key"
+# CHECK-NOT: StringRangeCharacterOrUndefined
+# CHECK: [[unit2]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK: : boolean = StrictEq [[unit2]], [[codeUnit2]]
+
+function f3 name="fractional-char-at-index" parameters=[{type=string}, {type=number}] results=[{type=boolean}] {
+  b0(v0: string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
+    v3 = String string="a"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="fractional-char-at-index"
+# CHECK-NOT: StringPrototypeCharAt
+# CHECK-NOT: StringRangeCharacterOrEmpty
+# CHECK: [[unit3]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# CHECK: : boolean = StrictEq [[unit3]], [[codeUnit3]]

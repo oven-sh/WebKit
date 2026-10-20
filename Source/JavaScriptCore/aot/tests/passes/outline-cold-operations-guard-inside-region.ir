@@ -1,0 +1,135 @@
+# A cold guarded read moves as a whole: the test, the branch that passes the guard, the slot read that names it and the path of a miss
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="coldGuardedRead" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3) frequency=Rare:
+    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = PropGet v1 key="x"
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: GetSlot
+# CHECK-NOT: PropGet
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result0]]: anything = CallDirect v1 function=f5
+# CHECK-NEXT: Jump -> next [[join0]]([[result0]])
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: GetSlot
+# CHECK-NOT: PropGet
+
+function f1 name="coldGuardedRead2" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3) frequency=Rare:
+    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = PropGet v1 key="x"
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: ShapeTest
+# CHECK: = CallDirect v1 function=f5
+
+function f2 name="coldGuardedRead3" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3) frequency=Rare:
+    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = PropGet v1 key="x"
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: ShapeTest
+# CHECK: = CallDirect v1 function=f5
+
+function f3 name="coldGuardedRead4" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3) frequency=Rare:
+    v4 = GetSlot v1, v3 key="x" receivers=[L0] level=Predicted
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = PropGet v1 key="x"
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: ShapeTest
+# CHECK: = CallDirect v1 function=f5
+
+function f4 name="onlyMissIsCold" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="x" receivers=[L0] level=Predicted
+    Jump -> next b3(v3)
+  b2() frequency=Rare:
+    v4 = PropGet v0 key="x"
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: CallDirect
+# CHECK: [[test4]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[test4]] -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1([[guard4]]: guard):
+# CHECK-NEXT: = GetSlot v0, [[guard4]] key="x"
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: CallDirect
+
+# CHECK-LABEL: function f5 {{*}}role=OutlinedBody
+# CHECK: [[test]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[test]] -> taken [[hit]](| 0), notTaken [[miss]]()
+# CHECK: [[hit]]([[guard]]: guard)
+# CHECK-NEXT: [[slot]]: number = GetSlot v0, [[guard]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: Jump -> next [[return]]([[slot]])
+# CHECK: [[miss]]()
+# CHECK-NEXT: [[named]]: anything = PropGet v0 key="x"
+# CHECK-NEXT: Jump -> next [[return]]([[named]])
+# CHECK: [[return]]([[result]]: anything)
+# CHECK-NEXT: Return [[result]]

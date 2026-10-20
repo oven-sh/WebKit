@@ -1,0 +1,40 @@
+# The prototype property of a class is neither writable nor configurable: a store through an unknown receiver does not reach it when the class has escaped, so the class goes on allocating its own instances. The one of a constructor function is writable
+# RUN: flow-solve nodes
+# CHECK: Local({{*}}f0, v8) = {L0#[[instance]]@{{*}}}
+# CHECK: Local({{*}}f0, v12) = {{*}}unknown
+# CHECK: Property(f2, "prototype") = {{*}}unknown
+# CHECK: Property(f1, "prototype") = {f1.prototype}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Context" constructor=f1 fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Instance name="Plain" constructor=f2 fields=[{key="y" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    PropSet v5, v5 key="prototype" mode=Sloppy
+    v7 = Integer integer=1
+    v8 = Construct v2, -, v7
+    v9 = PropGet v8 key="x"
+    v10 = NewClosure function=f2
+    v11 = Call v4, -, v10
+    v12 = Construct v10, -, v7
+    Return
+}
+function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2, v1 layout=L0 fields=[0]
+    Return v3
+}
+function f2 name="Plain" flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    Return v3
+}

@@ -22,20 +22,24 @@
 #include "config.h"
 #include "Collector.h"
 
+#include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectorInlines.h"
-#include "FastMallocAlignedMemoryAllocator.h"
+#include "CollectorMechanism.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
 #include "HeapVerifier.h"
 #include "IncrementalSweeper.h"
 #include "JITWorklistInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkingConstraintSet.h"
 #include "MutatorScheduler.h"
 #include "SpaceTimeMutatorScheduler.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
+#include "StructureAlignedMemoryAllocator.h"
+#include "SubspaceInlines.h"
 #include "SynchronousStopTheWorldMutatorScheduler.h"
 #include "TypeProfiler.h"
 #include "VerifierSlotVisitorInlines.h"
@@ -97,7 +101,6 @@ private:
 
     WorkResult work() final
     {
-        m_collector.heap().fastMallocAllocator->markedBlockCage().makeCurrent();
         m_collector.collectInCollectorThread();
         return WorkResult::Continue;
     }
@@ -196,6 +199,14 @@ void Collector::assertMarkStacksEmpty()
     if (!m_sharedMutatorMarkStack->isEmpty()) {
         dataLog("FATAL: Shared mutator mark stack not empty! It has ", m_sharedMutatorMarkStack->size(), " elements.\n");
         ok = false;
+    }
+
+    {
+        Locker locker { m_markingMutex };
+        if (!m_deferredRootRegions.isEmpty()) {
+            dataLog("FATAL: ", m_deferredRootRegions.size(), " deferred root regions were not visited.\n");
+            ok = false;
+        }
     }
 
     forEachSlotVisitor(
@@ -419,23 +430,21 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1; maxHelpers && Options::useAOT()) {
-        constexpr size_t bytesPerHelper = 16 * MB;
-        size_t allocated = totalBytesAllocatedThisCycle();
-        size_t bytesToVisit = allocated / 2;
-        if (scope == CollectionScope::Full) {
-            bytesToVisit = allocated;
-            forEachHeap([&](Heap& heap) {
-                bytesToVisit += heap.m_sizeAfterLastCollect;
-            });
-        }
-        m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
-    }
-#endif
-
     m_hasStartedHelpers.store(false, std::memory_order_relaxed);
-    if (!Options::useAOT())
+    if (startsHelpersLazily()) {
+        if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1) {
+            size_t bytesPerHelper = (16 * MB) >> ((Options::disabledCollectorMechanisms() >> 8) & 7);
+            size_t allocated = totalBytesAllocatedThisCycle();
+            size_t bytesToVisit = allocated / 2;
+            if (scope == CollectionScope::Full) {
+                bytesToVisit = allocated;
+                forEachHeap([&](Heap& heap) {
+                    bytesToVisit += heap.m_sizeAfterLastCollect;
+                });
+            }
+            m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
+        }
+    } else
         startHelpers();
 
     m_constraintSet->didStartMarking();
@@ -486,18 +495,39 @@ void Collector::setUpVisitors(CollectionScope scope)
 {
     HeapVersion markingVersion = heap().objectSpace().markingVersion();
     bool isAnalyzingHeap = false;
+    bool validatesCellVisits = false;
     forEachHeap([&](Heap& heap) {
         if (heap.vm().isAnalyzingHeap())
             isAnalyzingHeap = true;
+        validatesCellVisits |= heap.validatesCellVisits();
     });
     forEachSlotVisitor(
         [&](SlotVisitor& visitor) {
-            visitor.didStartMarking(scope, markingVersion, isAnalyzingHeap);
+            visitor.didStartMarking(scope, markingVersion, isAnalyzingHeap, validatesCellVisits);
         });
     if (Options::verifyGC()) [[unlikely]] {
         m_verifierSlotVisitor = makeUnique<VerifierSlotVisitor>(*this);
         m_verifierSlotVisitor->didStartMarking(scope, isAnalyzingHeap);
     }
+}
+
+bool Collector::isNotRunning() const
+{
+    return Options::useAOT() && isEnabled(CollectorMechanism::IdlePollShortcut) && m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed);
+}
+
+bool Collector::canSkipMarking()
+{
+    bool result = true;
+    forEachHeap([&](Heap& heap) {
+        result &= heap.canSkipMarking();
+    });
+    return result;
+}
+
+bool Collector::startsHelpersLazily()
+{
+    return Options::useAOT() && isEnabled(CollectorMechanism::LazyMarkerHelpers);
 }
 
 void Collector::startHelpers()
@@ -516,7 +546,6 @@ void Collector::startHelpers()
             }
 
             Thread::registerGCThread(GCThreadType::Helper);
-            heap().fastMallocAllocator->markedBlockCage().makeCurrent();
 
             {
                 ParallelModeEnabler parallelModeEnabler(*visitor);
@@ -553,7 +582,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
         // Wondering what this does? Look at Heap::createCoreConstraints(). The DOM and others can also
         // add their own using Heap::addMarkingConstraint().
-        bool converged = heap().canSkipMarking() || m_constraintSet->executeConvergence(visitor);
+        bool converged = canSkipMarking() || m_constraintSet->executeConvergence(visitor);
 
         // FIXME: The visitor.isEmpty() check is most likely not needed.
         // https://bugs.webkit.org/show_bug.cgi?id=180310
@@ -563,6 +592,12 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         }
 
         m_scheduler->didExecuteConstraints();
+
+        Locker locker { m_markingMutex };
+        if (!m_deferredRootRegions.isEmpty()) {
+            startHelpers();
+            m_markingConditionVariable.notifyOne();
+        }
     }
 
     dataLogIf(Options::logGC(), visitor.collectorMarkStack().size(), "+", mutatorMarkStacksSize() + visitor.mutatorMarkStack().size(), " ");
@@ -1058,9 +1093,17 @@ void Collector::verifyGC()
 
     if (MarkedBlockCage::isRequired()) {
         forEachHeap([](Heap& heap) {
-            heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* block) {
-                RELEASE_ASSERT(block->alignedMemoryAllocator() != heap.fastMallocAllocator.get() || MarkedBlockCage::contains(&block->block()));
+            AlignedMemoryAllocator* cagedAllocator = heap.cagedAllocator.get();
+            MarkedBlockCage& cage = heap.cage();
+            heap.objectSpace().forEachSubspace([&](Subspace& subspace) {
+                RELEASE_ASSERT(!isJSCellKind(subspace.attributes().cellKind) || subspace.alignedMemoryAllocator() == cagedAllocator || subspace.alignedMemoryAllocator() == heap.structureAllocator.get());
+                return IterationStatus::Continue;
             });
+            heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* block) {
+                RELEASE_ASSERT(block->alignedMemoryAllocator() != cagedAllocator || cage.contains(&block->block()));
+            });
+            for (PreciseAllocation* allocation : heap.objectSpace().preciseAllocations())
+                RELEASE_ASSERT(allocation->subspace()->alignedMemoryAllocator() != cagedAllocator || cage.contains(allocation->cell()));
         });
     }
 

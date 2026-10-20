@@ -1,0 +1,66 @@
+# Unseen JavaScript holds an object: a lookup by name still predicts what the program put there, beside the unknown value, and a lookup under a key nobody names answers the unknown value alone. A store by name predicts as well, a store under such a key only hands its value over. An object nobody handed out lists what it holds
+# RUN: flow-solve nodes
+# CHECK: UnknownJavaScript() = {{*}}|f4|
+# CHECK: DeclaredPart(L0#[[kept]], 0) = {{*}}unknown|f1|{{*}}f3
+# CHECK-NEXT: DeclaredPart(L1#[[private]], 0) = {f2}
+# CHECK: , f0, v15) = {{*}}unknown|f1|{{*}}f3
+# CHECK: , f0, v17) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# CHECK-NEXT: , f0, v18) = {undefined|f2|
+# RUN(LINKS): flow-links calls unknown
+# LINKS: f0 v16 -> i{{*}} f1 Call Once
+# LINKS: f0 v16 -> i{{*}} f3 Call Once
+# LINKS: unknown-callee [[main]] v15 Accessor
+# LINKS-NEXT: unknown-callee [[main]] v16 Call
+# LINKS-NEXT: unknown-callee [[main]] v17 Accessor
+# LINKS-NOT: unknown-callee [[main]] v18
+# LINKS: unknown-callee [[main]] v20 Accessor
+# LINKS-NEXT: unknown-callee [[main]] v22 Accessor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+evalscope e0
+entry module=m0
+layout L0 name="Kept" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Private" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewClosure function=f2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -, v2
+    v9 = PropGet v6 key="text" [isFreeName]
+    v10 = Undefined
+    v11 = DirectEval v9, v10 evalScope=e0
+    v12 = Builtin builtin=MathRandom
+    v13 = Call v12
+    v14 = ToString v13
+    v15 = PropGet v2 key="run"
+    v16 = Call v15, v2 calleeKey="run"
+    v17 = ElemGet v2, v14
+    v18 = ElemGet v5, v14
+    v19 = NewClosure function=f3
+    PropSet v2, v19 key="run"
+    v21 = NewClosure function=f4
+    ElemSet v2, v14, v21 mode=Strict
+    Return
+}
+function f1 name="kept" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="private" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="storedByName" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="storedByUnknownKey" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

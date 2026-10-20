@@ -1,0 +1,41 @@
+# An object whose allocation class can lose its shape is predicted at the positions it reaches, not proven, and an object of the same layout from another site stays proven
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: class C0 layout=L0 cause=ReachesUnknownJavaScript witness={function=f0 value=v9}
+# CHECK: class C1 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, {{*}}LoseShape]
+# CHECK: variable g0 type=object predicted=L0 written=anything flow={{*}}cause=ReachesUnknownJavaScript witness={function=f0 value=v9}
+# CHECK: variable g1 type=L0 written=anything
+# CHECK: function f1 parameter 0 type=object predicted=L0 written=anything
+# CHECK: function f2 parameter 0 type=L0 written=anything
+# NOWHERE-NOT: class C1 {{*}}cause=
+# NOWHERE-NOT: variable g1 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="handedToEvaluatedText" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g1
+    v5 = Builtin builtin=Function
+    v6 = String string="point"
+    v7 = String string="delete point.x"
+    v8 = Construct v5, -, v6, v7
+    v9 = Call v8, -, v1
+    v10 = CallDirect v1 function=f1
+    v11 = CallDirect v2 function=f2
+    Return
+}
+function f1 name="takesLosable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="takesKept" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

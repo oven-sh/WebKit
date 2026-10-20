@@ -1,0 +1,48 @@
+# The elements of an argument list whose positions nobody knows reach every parameter and the rest array, and every parameter may be undefined
+# RUN: flow
+# CHECK: variable g0 type=undefined|L0 written=anything
+# CHECK: function f1 parameter 0 type=undefined|L0 written=anything
+# CHECK: function f1 parameter 1 type=undefined|L0 written=anything
+# CHECK: function f1 parameter 2 type=Array<{{*}}L0
+# CHECK: function f2 parameter 0 type=L1 written=anything
+# CHECK: function f3 parameter 0 type=L2 written=anything
+# CHECK: function f3 parameter 1 type=undefined written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Appended" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Argument" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ListedByPosition" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="collected" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray contents=anything holes=[]
+    AppendElement v2, v1
+    v4 = NewClosure function=f1
+    v5 = CallList v4, -, v2
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v6
+    v9 = NewObject -, v0 layout=L2 fields=[0]
+    v10 = NewArray v9 contents=anything holes=[]
+    v11 = NewClosure function=f3
+    v12 = CallList v11, -, v10
+    Return
+}
+function f1 name="spread" flags=[HasRestParameter] parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v2, v3
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f2 name="called" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="spreadByPosition" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

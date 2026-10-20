@@ -30,22 +30,21 @@
 #include "IsoCellSetInlines.h"
 #include "JSCellInlines.h"
 #include "MarkedSpaceInlines.h"
-#include "Options.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IsoSubspace);
 
-IsoSubspace::IsoSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* allocator, bool usesLowerTierWithAOT)
+IsoSubspace::IsoSubspace(ASCIICString name, JSC::Heap& heap, const HeapCellType& heapCellType, size_t size, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* allocator)
     : Subspace(SubspaceKind::IsoSubspace, WTF::move(name), heap)
     , m_directory(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size))
 {
-    m_remainingLowerTierPreciseCount = Options::useAOT() && !usesLowerTierWithAOT ? 0 : numberOfLowerTierPreciseCells;
+    m_remainingLowerTierPreciseCount = numberOfLowerTierPreciseCells;
     ASSERT(WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size) == cellSize());
     ASSERT(m_remainingLowerTierPreciseCount <= MarkedBlock::maxNumberOfLowerTierPreciseCells);
 
-    initialize(heapCellType, allocator ? allocator : heap.fastMallocAllocator.get());
+    initialize(heapCellType, allocator ? allocator : heap.cellAllocator());
 
     Locker locker { m_space.directoryLock() };
     m_directory.setSubspace(this);

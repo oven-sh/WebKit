@@ -1,0 +1,43 @@
+# A read of a declared field finds the field on the receiver and reports no absence: whether the field may be missing is in its own value
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v4 Get {"x"}
+# CHECK-NEXT: L0#{{*}}: Value own Proven L0#{{*}} "x"
+# CHECK-NEXT: f0@i{{*}} v5 Get {"w"}
+# CHECK-NEXT: L0#{{*}}: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v8 Get {"z"}
+# CHECK-NEXT: L1#{{*}}: Value own Proven L1#{{*}} "z"
+# CHECK-NEXT: f0@i{{*}} v11 Get {"z"}
+# CHECK-NEXT: L1#{{*}}: Value own Proven L1#{{*}} "z"
+# CHECK-NOT: Absent
+# RUN(NODES): flow-solve nodes
+# NODES: DeclaredPart(L1#{{*}}, 1) = {undefined}
+# NODES: Local(i{{*}}, f0, v4) = {1}
+# NODES: Local(i{{*}}, f0, v5) = {undefined}
+# NODES: Local(i{{*}}, f0, v8) = {undefined}
+# NODES: Local(i{{*}}, f0, v11) = {2}
+# RUN(EMPTY): flow-solve nodes
+# EMPTY-NOT: StringProperties(
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Options" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = PropGet v3 key="x"
+    v5 = PropGet v3 key="w"
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="z"
+    v9 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = PropGet v10 key="z"
+    Return
+  b1() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}

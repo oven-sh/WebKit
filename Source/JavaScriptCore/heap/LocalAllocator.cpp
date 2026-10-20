@@ -135,7 +135,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     doTestCollectionsIfNeeded(heap, deferralContext);
 
     ASSERT(!m_directory->markedSpace().isIterating());
-    heap.didAllocateInBlock(m_freeList.originalSize(), *m_directory);
+    heap.didAllocate(m_freeList.originalSize());
     
     didConsumeFreeList();
 
@@ -149,7 +149,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 #endif
     
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
+    if (Options::useAOT() && m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
         if (void* result = static_cast<CompleteSubspace*>(m_directory->m_subspace)->tryAllocateInLargerCell(heap, *m_directory, deferralContext))
             return result;
     }
@@ -180,8 +180,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT(!subspace->isPreciseOnly());
     ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
     MarkedBlock::Handle* block = m_directory->tryAllocateBlock(heap);
-    if (!block && MarkedBlockCage::isRequired() && !deferralContext && !heap.isDeferred()) [[unlikely]] {
-        heap.collectNow(Sync, CollectionScope::Full);
+    if (!block && heap.tryCollectForExhaustedCage(deferralContext)) [[unlikely]] {
         if (m_currentBlock)
             return allocate(heap, cellSize, deferralContext, failureMode);
         result = tryAllocateWithoutCollecting(cellSize);

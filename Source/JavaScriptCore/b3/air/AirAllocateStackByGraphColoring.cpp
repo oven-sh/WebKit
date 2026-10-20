@@ -29,17 +29,20 @@
 #if ENABLE(B3_JIT)
 
 #include "AirArgInlines.h"
+#include "AirBitMatrixLiveness.h"
 #include "AirCFG.h"
 #include "AirCode.h"
-#include "AirFormTable.h"
+#include "AirFormTraits.h"
 #include "AirHandleCalleeSaves.h"
 #include "AirInstInlines.h"
+#include "AirLimits.h"
 #include "AirPhaseScope.h"
 #include "AirStackAllocation.h"
 #include "AirStackAllocatorStats.h"
+#include "B3Common.h"
+#include "B3Procedure.h"
 #include "CompilerTimingScope.h"
 #include <wtf/ForbidHeapAllocation.h>
-#include <wtf/GraphOrdering.h>
 #include <wtf/InterferenceGraph.h>
 #include <wtf/Liveness.h>
 
@@ -107,7 +110,7 @@ bool isUselessMove(Inst& inst, bool coalesceSpillSlots)
 //
 // A mention carries the instruction boundary it happens at, and they land in one flat array sorted by
 // boundary: an early action of instruction i belongs to boundary i and a late action to boundary
-// i + 1, so staging the late actions of i and appending them once i is decoded keeps it sorted.
+// i + 1, so keeping the late actions of i after its early actions keeps it sorted.
 //
 // The kill candidates cannot be derived from the mentions: an instruction with no arguments at all
 // satisfies the predicate vacuously. The coalescable moves have to reach coalesceSlots in the order
@@ -132,48 +135,6 @@ public:
         uint32_t dst { 0 };
     };
 
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr uint8_t isEarlyUse = 1;
-    static constexpr uint8_t isEarlyDef = 2;
-    static constexpr uint8_t isLateUse = 4;
-    static constexpr uint8_t isLateDef = 8;
-
-    static constexpr std::array<uint8_t, 256> computeFormTimings()
-    {
-        std::array<uint8_t, 256> result { };
-        for (unsigned form = 0; form < 256; ++form) {
-            switch (static_cast<Arg::Role>((form >> formRoleShift) & formRoleMask)) {
-            case Arg::Use:
-            case Arg::ColdUse:
-                result[form] = isEarlyUse;
-                break;
-            case Arg::LateUse:
-            case Arg::LateColdUse:
-                result[form] = isLateUse;
-                break;
-            case Arg::Def:
-            case Arg::ZDef:
-                result[form] = isLateDef;
-                break;
-            case Arg::UseDef:
-            case Arg::UseZDef:
-                result[form] = isEarlyUse | isLateDef;
-                break;
-            case Arg::EarlyDef:
-            case Arg::EarlyZDef:
-                result[form] = isEarlyDef;
-                break;
-            case Arg::Scratch:
-                result[form] = isEarlyDef | isLateUse;
-                break;
-            case Arg::UseAddr:
-                break;
-            }
-        }
-        return result;
-    }
-#endif
-
     StackSlotActions(Code& code, bool coalesceSpillSlots)
         : m_code(code)
     {
@@ -181,7 +142,6 @@ public:
 
         m_blockData.grow(code.size());
 
-        Vector<Action, 8> lateActions;
         for (BasicBlock* block : code) {
             BlockData& data = m_blockData[block->index()];
             data.actionStart = m_actions.size();
@@ -191,85 +151,15 @@ public:
             unsigned blockSize = block->size();
             for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
                 Inst& inst = block->at(instIndex);
-
-                // A dead store candidate has no effects beyond its arguments and defines only spill
-                // slots, late. That is the only kind of dead stack store this phase will see.
-                // Later, we will check whether this spill is alive or not. And if it is dead, we will remove this Inst.
-                bool isKillCandidate = true;
-#if USE(BUN_JSC_ADDITIONS)
-                static constexpr std::array<uint8_t, 256> formTimings = computeFormTimings();
-                unsigned argIndex = 0;
-                if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
-                    Arg* args = inst.args().data();
-                    unsigned numberOfLateActions = 0;
-                    for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
-                        uint8_t timings = formTimings[forms[argIndex]];
-                        Arg& arg = args[argIndex];
-                        if (!arg.isStack()) [[likely]] {
-                            if (timings & (isEarlyDef | isLateDef))
-                                isKillCandidate = false;
-                            continue;
-                        }
-                        StackSlot* slot = arg.stackSlot();
-                        uint32_t index = slot->index();
-                        bool isSpill = slot->kind() == StackSlotKind::Spill;
-                        if (timings & isEarlyUse)
-                            m_actions.insert(m_actions.size() - numberOfLateActions, Action { instIndex, index, UseAction, isSpill });
-                        if (timings & isEarlyDef)
-                            m_actions.insert(m_actions.size() - numberOfLateActions, Action { instIndex, index, EarlyDefAction, isSpill });
-                        if (timings & isLateUse) {
-                            m_actions.append({ instIndex + 1, index, UseAction, isSpill });
-                            ++numberOfLateActions;
-                        }
-                        if (timings & isLateDef) {
-                            m_actions.append({ instIndex + 1, index, LateDefAction, isSpill });
-                            ++numberOfLateActions;
-                        }
-                        if ((timings & isEarlyDef) || ((timings & isLateDef) && !isSpill))
-                            isKillCandidate = false;
-                    }
-                    if (isKillCandidate && !inst.hasNonArgEffects())
-                        m_killCandidates.append(instIndex);
-                    if (inst.args().size() == 3 && isCoalescableMove(inst, coalesceSpillSlots)) [[unlikely]] {
-                        m_moveSites.append({ instIndex, inst.args()[0].stackSlot()->index(), inst.args()[1].stackSlot()->index() });
-                        if (inst.args()[0] == inst.args()[1])
-                            m_sawUselessMove = true;
-                    }
+                if (tryCollectFromFixedForms(inst, instIndex, coalesceSpillSlots)) [[likely]]
                     continue;
-                }
-#endif
-                lateActions.shrink(0);
+
+                InstScan scan;
                 inst.forEachArg(
-                    [&](Arg& arg, Arg::Role role, Bank, Width) {
-                        bool isSpill = false;
-                        if (arg.isStack()) {
-                            StackSlot* slot = arg.stackSlot();
-                            uint32_t index = slot->index();
-                            isSpill = slot->kind() == StackSlotKind::Spill;
-                            if (Arg::isEarlyUse(role))
-                                m_actions.append({ instIndex, index, UseAction, isSpill });
-                            if (Arg::isEarlyDef(role))
-                                m_actions.append({ instIndex, index, EarlyDefAction, isSpill });
-                            if (Arg::isLateUse(role))
-                                lateActions.append({ instIndex + 1, index, UseAction, isSpill });
-                            if (Arg::isLateDef(role))
-                                lateActions.append({ instIndex + 1, index, LateDefAction, isSpill });
-                        }
-                        if (Arg::isEarlyDef(role))
-                            isKillCandidate = false;
-                        else if (Arg::isLateDef(role) && !isSpill)
-                            isKillCandidate = false;
+                    [&](Arg& arg, Arg::Role role, Bank bank, Width width) {
+                        collectArg(arg, Greedy::Mentions::traitsOf(role, bank, width), instIndex, scan);
                     });
-                m_actions.appendVector(lateActions);
-
-                if (isKillCandidate && !inst.hasNonArgEffects())
-                    m_killCandidates.append(instIndex);
-
-                if (isCoalescableMove(inst, coalesceSpillSlots)) {
-                    m_moveSites.append({ instIndex, inst.args()[0].stackSlot()->index(), inst.args()[1].stackSlot()->index() });
-                    if (inst.args()[0] == inst.args()[1])
-                        m_sawUselessMove = true;
-                }
+                finishInst(inst, instIndex, scan, coalesceSpillSlots);
             }
 
             data.actionEnd = m_actions.size();
@@ -324,6 +214,66 @@ private:
         uint32_t moveStart { 0 };
         uint32_t moveEnd { 0 };
     };
+
+    struct InstScan {
+        // A dead store candidate has no effects beyond its arguments and defines only spill
+        // slots, late. That is the only kind of dead stack store this phase will see.
+        // Later, we will check whether this spill is alive or not. And if it is dead, we will remove this Inst.
+        bool isKillCandidate { true };
+        unsigned numberOfLateActions { 0 };
+    };
+
+    ALWAYS_INLINE void collectArg(Arg& arg, unsigned traits, unsigned instIndex, InstScan& scan)
+    {
+        using Mentions = Greedy::Mentions;
+        if (!arg.isStack()) [[likely]] {
+            if (traits & (Mentions::earlyDef | Mentions::lateDef))
+                scan.isKillCandidate = false;
+            return;
+        }
+        StackSlot* slot = arg.stackSlot();
+        uint32_t index = slot->index();
+        bool isSpill = slot->kind() == StackSlotKind::Spill;
+        if (traits & Mentions::earlyUse)
+            m_actions.insert(m_actions.size() - scan.numberOfLateActions, Action { instIndex, index, UseAction, isSpill });
+        if (traits & Mentions::earlyDef)
+            m_actions.insert(m_actions.size() - scan.numberOfLateActions, Action { instIndex, index, EarlyDefAction, isSpill });
+        if (traits & Mentions::lateUse) {
+            m_actions.append({ instIndex + 1, index, UseAction, isSpill });
+            ++scan.numberOfLateActions;
+        }
+        if (traits & Mentions::lateDef) {
+            m_actions.append({ instIndex + 1, index, LateDefAction, isSpill });
+            ++scan.numberOfLateActions;
+        }
+        if ((traits & Mentions::earlyDef) || ((traits & Mentions::lateDef) && !isSpill))
+            scan.isKillCandidate = false;
+    }
+
+    ALWAYS_INLINE void finishInst(Inst& inst, unsigned instIndex, const InstScan& scan, bool coalesceSpillSlots)
+    {
+        if (scan.isKillCandidate && !inst.hasNonArgEffects())
+            m_killCandidates.append(instIndex);
+        if (inst.args().size() == 3 && isCoalescableMove(inst, coalesceSpillSlots)) [[unlikely]] {
+            m_moveSites.append({ instIndex, inst.args()[0].stackSlot()->index(), inst.args()[1].stackSlot()->index() });
+            if (inst.args()[0] == inst.args()[1])
+                m_sawUselessMove = true;
+        }
+    }
+
+    ALWAYS_INLINE bool tryCollectFromFixedForms(Inst& inst, unsigned instIndex, bool coalesceSpillSlots)
+    {
+        unsigned argIndex = 0;
+        const uint8_t* forms = inst.fixedForms(argIndex);
+        if (!forms) [[unlikely]]
+            return false;
+        InstScan scan;
+        Arg* args = inst.args().data();
+        for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex)
+            collectArg(args[argIndex], Greedy::formTraits[forms[argIndex]], instIndex, scan);
+        finishInst(inst, instIndex, scan, coalesceSpillSlots);
+        return true;
+    }
 
     Code& m_code;
     bool m_sawUselessMove { false };
@@ -403,338 +353,83 @@ public:
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::liveness"_s);
         compute();
     }
+
+    bool didGiveUp() const { return false; }
+    void validate(Code&, const StackSlotActions&) { }
 };
 
-#if USE(BUN_JSC_ADDITIONS)
-class LowestFirstWorklist {
-public:
-    explicit LowestFirstWorklist(size_t size)
-        : m_words(FillWith { }, (size + 63) / 64, static_cast<uint64_t>(0))
-    {
-    }
-
-    void add(unsigned position)
-    {
-        m_words[position / 64] |= static_cast<uint64_t>(1) << (position % 64);
-        m_lowerBound = std::min<size_t>(m_lowerBound, position);
-    }
-
-    std::optional<unsigned> takeLowest()
-    {
-        for (size_t wordIndex = m_lowerBound / 64; wordIndex < m_words.size(); ++wordIndex) {
-            uint64_t word = m_words[wordIndex];
-            if (!word)
-                continue;
-            m_words[wordIndex] = word & (word - 1);
-            m_lowerBound = wordIndex * 64 + std::countr_zero(word);
-            return m_lowerBound;
-        }
-        m_lowerBound = m_words.size() * 64;
-        return std::nullopt;
-    }
-
-private:
-    Vector<uint64_t> m_words;
-    size_t m_lowerBound { 0 };
-};
-
-class StackSlotLivenessInWords {
+struct StackSlotRows {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    static constexpr size_t maxWordsPerMatrix = 1 << 20;
-    static constexpr size_t maxTailWords = 1 << 24;
-
-    class Workset {
-    public:
-        explicit Workset(size_t numberOfWords)
-            : m_words(FillWith { }, numberOfWords, static_cast<uint64_t>(0))
-        {
-        }
-
-        void add(unsigned index) { m_words[index / 64] |= static_cast<uint64_t>(1) << (index % 64); }
-        void remove(unsigned index) { m_words[index / 64] &= ~(static_cast<uint64_t>(1) << (index % 64)); }
-        bool contains(unsigned index) const { return m_words[index / 64] >> (index % 64) & 1; }
-        std::span<const uint64_t> words() const { return m_words.span(); }
-        std::span<uint64_t> mutableWords() { return m_words.mutableSpan(); }
-
-        void forEachSetBit(NOESCAPE const Invocable<void(unsigned)> auto& func) const
-        {
-            for (size_t wordIndex = 0; wordIndex < m_words.size(); ++wordIndex) {
-                for (uint64_t word = m_words[wordIndex]; word; word &= word - 1)
-                    func(wordIndex * 64 + std::countr_zero(word));
-            }
-        }
-
-    private:
-        Vector<uint64_t, 8> m_words;
-    };
-
-    StackSlotLivenessInWords(Code& code, const StackSlotActions& actions)
+    StackSlotRows(const StackSlotActions& actions)
         : actions(actions)
-        , m_wordsPerSet((actions.numIndices() + 63) / 64)
     {
-        CompilerTimingScope timingScope("Air"_s, "StackAllocator::liveness"_s);
-
-        const size_t wordsPerSet = m_wordsPerSet;
-        const size_t wordsPerMatrix = code.size() * wordsPerSet;
-        if (wordsPerMatrix > maxWordsPerMatrix) {
-            solveInSlices(code);
-            return;
-        }
-        m_store.fill(0, 4 * wordsPerMatrix);
-        uint64_t* liveAtHead = m_store.mutableSpan().data();
-        uint64_t* liveAtTail = liveAtHead + wordsPerMatrix;
-        uint64_t* gens = liveAtTail + wordsPerMatrix;
-        uint64_t* kills = gens + wordsPerMatrix;
-
-        Vector<unsigned, 64> worklist;
-        Vector<uint8_t, 64> isDirty(FillWith { }, code.size(), static_cast<uint8_t>(0));
-        for (BasicBlock* block : code) {
-            auto blockActions = actions.actionsFor(block);
-            if (blockActions.empty())
-                continue;
-            uint64_t* tail = liveAtTail + block->index() * wordsPerSet;
-            uint64_t* gen = gens + block->index() * wordsPerSet;
-            uint64_t* kill = kills + block->index() * wordsPerSet;
-            unsigned blockSize = block->size();
-            while (!blockActions.empty()) {
-                auto group = StackSlotActions::consumeLastGroup(blockActions);
-                uint64_t* uses = group.front().boundary == blockSize ? tail : gen;
-                for (const auto& action : group) {
-                    if (action.kind == StackSlotActions::UseAction)
-                        uses[action.slotIndex / 64] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
-                }
-                for (const auto& action : group) {
-                    if (action.kind != StackSlotActions::UseAction) {
-                        gen[action.slotIndex / 64] &= ~(static_cast<uint64_t>(1) << (action.slotIndex % 64));
-                        kill[action.slotIndex / 64] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
-                    }
-                }
-            }
-            isDirty[block->index()] = 1;
-            worklist.append(block->index());
-        }
-
-        while (!worklist.isEmpty()) {
-            unsigned blockIndex = worklist.takeLast();
-            isDirty[blockIndex] = 0;
-            uint64_t* head = liveAtHead + blockIndex * wordsPerSet;
-            const uint64_t* tail = liveAtTail + blockIndex * wordsPerSet;
-            const uint64_t* gen = gens + blockIndex * wordsPerSet;
-            const uint64_t* kill = kills + blockIndex * wordsPerSet;
-            uint64_t changed = 0;
-            for (size_t i = 0; i < wordsPerSet; ++i) {
-                uint64_t newHead = gen[i] | (tail[i] & ~kill[i]);
-                changed |= newHead ^ head[i];
-                head[i] = newHead;
-            }
-            if (!changed)
-                continue;
-            for (BasicBlock* predecessor : code[blockIndex]->predecessors()) {
-                uint64_t* predecessorTail = liveAtTail + predecessor->index() * wordsPerSet;
-                uint64_t predecessorChanged = 0;
-                for (size_t i = 0; i < wordsPerSet; ++i) {
-                    predecessorChanged |= head[i] & ~predecessorTail[i];
-                    predecessorTail[i] |= head[i];
-                }
-                if (predecessorChanged && !isDirty[predecessor->index()]) {
-                    isDirty[predecessor->index()] = 1;
-                    worklist.append(predecessor->index());
-                }
-            }
-        }
-        m_liveAtTail = liveAtTail;
     }
 
-    Workset makeWorkset() const { return Workset(m_wordsPerSet); }
+    unsigned numIndices() const { return actions.numIndices(); }
 
-    void copyLiveAtTailInto(Workset& workset, BasicBlock* block) const
+    bool needsLiveAtTail(BasicBlock* block) const
     {
-        uint64_t* words = workset.mutableWords().data();
-        if (!m_blockRow.isEmpty()) {
-            for (size_t i = 0; i < m_wordsPerSet; ++i)
-                words[i] = 0;
-            unsigned row = m_blockRow[block->index()];
-            for (unsigned i = m_rowFirstPiece[row]; i < m_rowFirstPiece[row + 1]; ++i) {
-                const TailPiece& piece = m_tailPieces[i];
-                const uint64_t* tail = m_liveAtTail + piece.offsetInStore;
-                for (size_t word = 0; word < piece.numberOfWords; ++word)
-                    words[piece.firstWord + word] = tail[word];
-            }
-            return;
-        }
-        const uint64_t* tail = m_liveAtTail + block->index() * m_wordsPerSet;
-        for (size_t i = 0; i < m_wordsPerSet; ++i)
-            words[i] = tail[i];
+        return !actions.actionsFor(block).empty() || !actions.killCandidatesFor(block).empty() || !actions.moveSitesFor(block).empty();
     }
 
-    bool isTooLarge() const { return m_isTooLarge; }
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    {
+        auto blockActions = actions.actionsFor(block);
+        unsigned blockSize = block->size();
+        bool isNamedHere = false;
+        while (!blockActions.empty()) {
+            auto group = StackSlotActions::consumeLastGroup(blockActions);
+            uint64_t* uses = group.front().boundary == blockSize ? tail : gen;
+            for (const auto& action : group) {
+                size_t word = action.slotIndex / 64 - firstWord;
+                if (action.kind == StackSlotActions::UseAction && word < numberOfWords) {
+                    uses[word] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+                    isNamedHere = true;
+                }
+            }
+            for (const auto& action : group) {
+                size_t word = action.slotIndex / 64 - firstWord;
+                if (action.kind != StackSlotActions::UseAction && word < numberOfWords) {
+                    gen[word] &= ~(static_cast<uint64_t>(1) << (action.slotIndex % 64));
+                    kill[word] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
+                    isNamedHere = true;
+                }
+            }
+        }
+        return isNamedHere;
+    }
 
     const StackSlotActions& actions;
+};
 
-private:
-    NEVER_INLINE void solveInSlices(Code& code)
+class StackSlotLivenessInWords final : public BitMatrixLiveness<StackSlotRows> {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    StackSlotLivenessInWords(Code& code, const StackSlotActions& actions)
+        : BitMatrixLiveness<StackSlotRows>(code, actions)
     {
-        constexpr unsigned noRow = std::numeric_limits<unsigned>::max();
-        const unsigned numberOfBlocks = code.size();
-        const size_t wordsPerSlice = std::max<size_t>(1, maxWordsPerMatrix / numberOfBlocks);
-
-        m_blockRow.fill(noRow, numberOfBlocks);
-        unsigned numberOfRows = 0;
-        for (BasicBlock* block : code) {
-            if (!actions.actionsFor(block).empty() || !actions.killCandidatesFor(block).empty() || !actions.moveSitesFor(block).empty())
-                m_blockRow[block->index()] = numberOfRows++;
-        }
-        Vector<TailPiece> pieces;
-
-        Vector<uint64_t> scratch(FillWith { }, 4 * numberOfBlocks * std::min(wordsPerSlice, m_wordsPerSet), static_cast<uint64_t>(0));
-        Vector<unsigned> sliceThatTouched(FillWith { }, numberOfBlocks, 0u);
-        Vector<unsigned> touched;
-        unsigned stamp = 0;
-
-        Vector<unsigned> blocksInPostOrder;
-        BitVector isInOrder(numberOfBlocks);
-        appendNodeIndicesInOrder(code.cfg(), GraphOrder::PostOrder, isInOrder, blocksInPostOrder);
-        for (BasicBlock* block : code) {
-            if (!isInOrder.quickSet(block->index()))
-                blocksInPostOrder.append(block->index());
-        }
-        Vector<unsigned> positionOfBlock(FillWith { }, numberOfBlocks, 0u);
-        for (unsigned position = 0; position < blocksInPostOrder.size(); ++position)
-            positionOfBlock[blocksInPostOrder[position]] = position;
-        LowestFirstWorklist worklist(blocksInPostOrder.size());
-        for (size_t firstWord = 0; firstWord < m_wordsPerSet; firstWord += wordsPerSlice) {
-            const size_t words = std::min(wordsPerSlice, m_wordsPerSet - firstWord);
-            const size_t wordsPerMatrix = numberOfBlocks * words;
-            uint64_t* liveAtHead = scratch.mutableSpan().data();
-            uint64_t* liveAtTail = liveAtHead + wordsPerMatrix;
-            uint64_t* gens = liveAtTail + wordsPerMatrix;
-            uint64_t* kills = gens + wordsPerMatrix;
-            ++stamp;
-            touched.shrink(0);
-
-            auto touch = [&](unsigned blockIndex) {
-                if (sliceThatTouched[blockIndex] == stamp)
-                    return;
-                sliceThatTouched[blockIndex] = stamp;
-                touched.append(blockIndex);
-            };
-
-            for (BasicBlock* block : code) {
-                auto blockActions = actions.actionsFor(block);
-                if (blockActions.empty())
-                    continue;
-                uint64_t* tail = liveAtTail + block->index() * words;
-                uint64_t* gen = gens + block->index() * words;
-                uint64_t* kill = kills + block->index() * words;
-                unsigned blockSize = block->size();
-                bool isNamedHere = false;
-                while (!blockActions.empty()) {
-                    auto group = StackSlotActions::consumeLastGroup(blockActions);
-                    uint64_t* uses = group.front().boundary == blockSize ? tail : gen;
-                    for (const auto& action : group) {
-                        size_t word = action.slotIndex / 64 - firstWord;
-                        if (action.kind == StackSlotActions::UseAction && word < words) {
-                            uses[word] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
-                            isNamedHere = true;
-                        }
-                    }
-                    for (const auto& action : group) {
-                        size_t word = action.slotIndex / 64 - firstWord;
-                        if (action.kind != StackSlotActions::UseAction && word < words) {
-                            gen[word] &= ~(static_cast<uint64_t>(1) << (action.slotIndex % 64));
-                            kill[word] |= static_cast<uint64_t>(1) << (action.slotIndex % 64);
-                            isNamedHere = true;
-                        }
-                    }
-                }
-                if (!isNamedHere)
-                    continue;
-                touch(block->index());
-                worklist.add(positionOfBlock[block->index()]);
-            }
-
-            while (auto position = worklist.takeLowest()) {
-                unsigned blockIndex = blocksInPostOrder[*position];
-                uint64_t* head = liveAtHead + blockIndex * words;
-                const uint64_t* tail = liveAtTail + blockIndex * words;
-                const uint64_t* gen = gens + blockIndex * words;
-                const uint64_t* kill = kills + blockIndex * words;
-                uint64_t changed = 0;
-                for (size_t i = 0; i < words; ++i) {
-                    uint64_t newHead = gen[i] | (tail[i] & ~kill[i]);
-                    changed |= newHead ^ head[i];
-                    head[i] = newHead;
-                }
-                if (!changed)
-                    continue;
-                for (BasicBlock* predecessor : code[blockIndex]->predecessors()) {
-                    uint64_t* predecessorTail = liveAtTail + predecessor->index() * words;
-                    uint64_t predecessorChanged = 0;
-                    for (size_t i = 0; i < words; ++i) {
-                        predecessorChanged |= head[i] & ~predecessorTail[i];
-                        predecessorTail[i] |= head[i];
-                    }
-                    if (!predecessorChanged)
-                        continue;
-                    touch(predecessor->index());
-                    worklist.add(positionOfBlock[predecessor->index()]);
-                }
-            }
-
-            for (unsigned blockIndex : touched) {
-                size_t offset = blockIndex * words;
-                if (unsigned row = m_blockRow[blockIndex]; row != noRow) {
-                    uint64_t any = 0;
-                    for (size_t i = 0; i < words; ++i)
-                        any |= liveAtTail[offset + i];
-                    if (any) {
-                        pieces.append(TailPiece { row, static_cast<unsigned>(firstWord), static_cast<unsigned>(words), m_store.size() });
-                        m_store.append(std::span<const uint64_t> { liveAtTail + offset, words });
-                    }
-                }
-                for (uint64_t* matrix : { liveAtHead, liveAtTail, gens, kills }) {
-                    for (size_t i = 0; i < words; ++i)
-                        matrix[offset + i] = 0;
-                }
-            }
-            if (m_store.size() > maxTailWords) {
-                m_isTooLarge = true;
-                return;
-            }
-        }
-
-        m_liveAtTail = m_store.span().data();
-        m_rowFirstPiece.fill(0, numberOfRows + 1);
-        for (const TailPiece& piece : pieces)
-            ++m_rowFirstPiece[piece.row];
-        unsigned sum = 0;
-        for (unsigned& first : m_rowFirstPiece)
-            sum += std::exchange(first, sum);
-        m_tailPieces.grow(pieces.size());
-        for (const TailPiece& piece : pieces)
-            m_tailPieces[m_rowFirstPiece[piece.row]++] = piece;
-        for (unsigned row = numberOfRows; row; --row)
-            m_rowFirstPiece[row] = m_rowFirstPiece[row - 1];
-        m_rowFirstPiece[0] = 0;
+        CompilerTimingScope timingScope("Air"_s, "StackAllocator::liveness"_s);
+        compute();
     }
 
-    struct TailPiece {
-        unsigned row;
-        unsigned firstWord;
-        unsigned numberOfWords;
-        size_t offsetInStore;
-    };
+    bool didGiveUp() const { return status() == BitMatrixLivenessStatus::GaveUp; }
 
-    size_t m_wordsPerSet;
-    Vector<uint64_t> m_store;
-    Vector<unsigned> m_blockRow;
-    Vector<unsigned> m_rowFirstPiece;
-    Vector<TailPiece> m_tailPieces;
-    const uint64_t* m_liveAtTail { nullptr };
-    bool m_isTooLarge { false };
+    void validate(Code& code, const StackSlotActions& actions)
+    {
+        StackSlotLiveness reference(code, actions);
+        auto workset = makeWorkset();
+        auto referenceWorkset = reference.makeWorkset();
+        for (BasicBlock* block : code) {
+            if (!needsLiveAtTail(block))
+                continue;
+            copyLiveAtTailInto(workset, block);
+            reference.copyLiveAtTailInto(referenceWorkset, block);
+            for (unsigned index = 0; index < actions.numIndices(); ++index)
+                RELEASE_ASSERT(workset.contains(index) == referenceWorkset.contains(index));
+        }
+    }
 };
-#endif
 
 class StackAllocatorBase {
 protected:
@@ -770,245 +465,73 @@ protected:
     Vector<unsigned> m_remappedStackSlotIndices;
 };
 
-#if USE(BUN_JSC_ADDITIONS)
-class InterferenceRows {
-public:
-    using IndexType = uint16_t;
-    static constexpr unsigned maxSize = 65535;
-    static constexpr unsigned minSizeToMirrorEdgesAtOnce = 1024;
+static_assert(AirLimits::maxSlotsForDenseInterference < std::numeric_limits<DenseIterableInterferenceGraph::IndexType>::max());
 
-    void setMaxIndex(unsigned n)
-    {
-        m_size = n;
-        m_wordsPerRow = (n + 63) / 64;
-        m_mirrorsEdgesAtOnce = n >= minSizeToMirrorEdgesAtOnce;
-        m_rows.fill(0, (m_mirrorsEdgesAtOnce ? m_wordsPerRow * 64 : static_cast<size_t>(n)) * m_wordsPerRow);
-    }
+enum class SlotPlacement : bool { AssignsOffsets, OnlyColors };
 
-    bool contains(IndexType u, IndexType v) { return row(u)[v / 64] >> (v % 64) & 1; }
+bool shouldOrderSlotsByUse(const Code& code)
+{
+    return isX86() && code.policy().frame.ordersSlotsByUse;
+}
 
-    void add(IndexType u, IndexType v)
-    {
-        row(u)[v / 64] |= static_cast<uint64_t>(1) << (v % 64);
-        row(v)[u / 64] |= static_cast<uint64_t>(1) << (u % 64);
-    }
-
-    void addAllBut(IndexType u, std::span<const uint64_t> others)
-    {
-        ASSERT(others.size() == m_wordsPerRow);
-        uint64_t* uRow = row(u);
-        uint64_t* uWord = m_rows.mutableSpan().data() + u / 64;
-        const uint64_t uBit = static_cast<uint64_t>(1) << (u % 64);
-        if (m_mirrorsEdgesAtOnce) {
-            for (size_t wordIndex = 0; wordIndex < m_wordsPerRow; ++wordIndex)
-                uRow[wordIndex] |= others[wordIndex];
-            uRow[u / 64] &= ~uBit;
-            return;
-        }
-        for (size_t wordIndex = 0; wordIndex < m_wordsPerRow; ++wordIndex) {
-            uint64_t word = others[wordIndex];
-            if (wordIndex == u / 64)
-                word &= ~uBit;
-            uint64_t newOnes = word & ~uRow[wordIndex];
-            uRow[wordIndex] |= word;
-            for (; newOnes; newOnes &= newOnes - 1)
-                uWord[(wordIndex * 64 + std::countr_zero(newOnes)) * m_wordsPerRow] |= uBit;
-        }
-    }
-
-    void mirrorEdges()
-    {
-        if (!m_mirrorsEdgesAtOnce)
-            return;
-        std::array<uint64_t, 64> upper;
-        std::array<uint64_t, 64> lower;
-        uint64_t* rows = m_rows.mutableSpan().data();
-        auto load = [&](std::array<uint64_t, 64>& tile, size_t tileRow, size_t tileColumn) {
-            uint64_t any = 0;
-            for (size_t i = 0; i < 64; ++i)
-                any |= tile[i] = rows[(tileRow * 64 + i) * m_wordsPerRow + tileColumn];
-            return any;
-        };
-        auto store = [&](const std::array<uint64_t, 64>& tile, size_t tileRow, size_t tileColumn) {
-            for (size_t i = 0; i < 64; ++i)
-                rows[(tileRow * 64 + i) * m_wordsPerRow + tileColumn] = tile[i];
-        };
-        for (size_t tileRow = 0; tileRow < m_wordsPerRow; ++tileRow) {
-            for (size_t tileColumn = tileRow; tileColumn < m_wordsPerRow; ++tileColumn) {
-                uint64_t any = load(upper, tileRow, tileColumn);
-                any |= load(lower, tileColumn, tileRow);
-                if (!any)
-                    continue;
-                transpose(lower);
-                for (size_t i = 0; i < 64; ++i)
-                    upper[i] |= lower[i];
-                store(upper, tileRow, tileColumn);
-                transpose(upper);
-                store(upper, tileColumn, tileRow);
+Vector<unsigned> useCountsOfSlots(Code& code)
+{
+    Vector<unsigned> useCounts;
+    useCounts.fill(0, code.stackSlots().size());
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            for (Arg& arg : inst.args()) {
+                if (arg.isStack())
+                    ++useCounts[arg.stackSlot()->index()];
             }
         }
     }
+    return useCounts;
+}
 
-    size_t countAmong(IndexType u, std::span<const uint64_t> others)
-    {
-        const uint64_t* uRow = row(u);
-        size_t result = 0;
-        for (size_t wordIndex = 0; wordIndex < m_wordsPerRow; ++wordIndex)
-            result += std::popcount(uRow[wordIndex] & others[wordIndex]);
-        return result;
-    }
+size_t numberOfWordsInSlots(Code& code)
+{
+    size_t numberOfWords = 0;
+    for (StackSlot* slot : code.stackSlots())
+        numberOfWords += (slot->byteSize() + StackColoring::bytesPerWord - 1) / StackColoring::bytesPerWord;
+    return numberOfWords;
+}
 
-    void forEachNotAmongRow(IndexType u, std::span<const uint64_t> others, NOESCAPE const Invocable<void(unsigned)> auto& func)
-    {
-        const uint64_t* uRow = row(u);
-        for (size_t wordIndex = 0; wordIndex < m_wordsPerRow; ++wordIndex) {
-            for (uint64_t word = others[wordIndex] & ~uRow[wordIndex]; word; word &= word - 1)
-                func(wordIndex * 64 + std::countr_zero(word));
-        }
-    }
-
-    void forEachAmong(IndexType u, std::span<const uint64_t> others, NOESCAPE const Invocable<void(unsigned)> auto& func)
-    {
-        ASSERT(others.size() == m_wordsPerRow);
-        const uint64_t* uRow = row(u);
-        for (size_t wordIndex = 0; wordIndex < m_wordsPerRow; ++wordIndex) {
-            for (uint64_t word = uRow[wordIndex] & others[wordIndex]; word; word &= word - 1)
-                func(wordIndex * 64 + std::countr_zero(word));
-        }
-    }
-
-    void mayClear(IndexType) { }
-    unsigned memoryUse() const { return m_rows.size() * sizeof(uint64_t); }
-    void dumpMemoryUseInKB() const { dataLog(memoryUse() / 1024); }
-
-    class Iterable {
-    public:
-        class iterator {
-        public:
-            iterator(const uint64_t* words, size_t numberOfWords)
-                : m_words(words)
-                , m_numberOfWords(numberOfWords)
-            {
-                if (m_numberOfWords)
-                    m_word = m_words[0];
-                skip();
-            }
-
-            IndexType operator*() const { return m_wordIndex * 64 + std::countr_zero(m_word); }
-
-            iterator& operator++()
-            {
-                m_word &= m_word - 1;
-                skip();
-                return *this;
-            }
-
-            bool operator==(std::default_sentinel_t) const { return m_wordIndex == m_numberOfWords; }
-
-        private:
-            void skip()
-            {
-                while (!m_word && m_wordIndex < m_numberOfWords) {
-                    if (++m_wordIndex < m_numberOfWords)
-                        m_word = m_words[m_wordIndex];
-                }
-            }
-
-            const uint64_t* m_words;
-            size_t m_numberOfWords;
-            size_t m_wordIndex { 0 };
-            uint64_t m_word { 0 };
-        };
-
-        Iterable(const uint64_t* words, size_t numberOfWords)
-            : m_words(words)
-            , m_numberOfWords(numberOfWords)
-        {
-        }
-
-        iterator begin() const { return iterator(m_words, m_numberOfWords); }
-        std::default_sentinel_t end() const { return { }; }
-
-    private:
-        const uint64_t* m_words;
-        size_t m_numberOfWords;
-    };
-
-    Iterable operator[](IndexType u) { return Iterable(row(u), m_wordsPerRow); }
-
-private:
-    uint64_t* row(IndexType u) { return m_rows.mutableSpan().data() + static_cast<size_t>(u) * m_wordsPerRow; }
-
-    static void transpose(std::array<uint64_t, 64>& tile)
-    {
-        uint64_t mask = 0x00000000ffffffffULL;
-        for (unsigned distance = 32; distance; distance >>= 1, mask ^= mask << distance) {
-            for (unsigned i = 0; i < 64; i = (i + distance + 1) & ~distance) {
-                uint64_t swapped = ((tile[i] >> distance) ^ tile[i + distance]) & mask;
-                tile[i] ^= swapped << distance;
-                tile[i + distance] ^= swapped;
-            }
-        }
-    }
-
-    Vector<uint64_t> m_rows;
-    size_t m_wordsPerRow { 0 };
-    unsigned m_size { 0 };
-    bool m_mirrorsEdgesAtOnce { false };
-};
-#endif
-
-template<typename InterferenceGraph>
+template<typename InterferenceGraph, typename SlotLiveness>
 class GraphColoringStackAllocator final : public StackAllocatorBase {
     using IndexType = typename InterferenceGraph::IndexType;
-#if USE(BUN_JSC_ADDITIONS)
-    using SlotLiveness = std::conditional_t<std::is_same_v<InterferenceGraph, InterferenceRows>, StackSlotLivenessInWords, StackSlotLiveness>;
-#else
-    using SlotLiveness = StackSlotLiveness;
-#endif
 public:
-    GraphColoringStackAllocator(Code& code)
+    enum class Outcome : bool { Allocated, GaveUp };
+
+    GraphColoringStackAllocator(Code& code, SlotPlacement placement)
         : StackAllocatorBase(code)
         , m_interference()
         , m_coalescableMoves()
+        , m_placement(placement)
+        , m_ordersSlotsByUse(shouldOrderSlotsByUse(code))
         , m_stats(code.proc().name())
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>)
-            return;
-#endif
-        m_interference.setMaxIndex(m_code.stackSlots().size());
     }
 
-    bool run(const Vector<StackSlot*>& assignedEscapedStackSlots)
+    Outcome run(const Vector<StackSlot*>& assignedEscapedStackSlots, StackColoring& coloring)
     {
-        bool coalesceSpillSlots = Options::coalesceSpillSlots();
+        bool coalesceSpillSlots = m_code.policy().frame.coalescesSpillSlots;
 
         StackSlotActions actions(m_code, coalesceSpillSlots);
         SlotLiveness liveness(m_code, actions);
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-            if (liveness.isTooLarge())
-                return false;
-            m_interference.setMaxIndex(m_code.stackSlots().size());
-        }
-#endif
+        if (liveness.didGiveUp())
+            return Outcome::GaveUp;
+        if (shouldValidateIRAtEachPhase(m_code.proc()))
+            liveness.validate(m_code, actions);
+        m_interference.setMaxIndex(m_code.stackSlots().size());
         buildInterferenceGraph(liveness);
 
         coalesceSlots(coalesceSpillSlots, actions.sawUselessMove());
-        assignStackLocations(assignedEscapedStackSlots);
+        assignStackLocations(assignedEscapedStackSlots, coloring);
 
-        updateFrameSizeBasedOnStackSlots(m_code);
-#if USE(BUN_JSC_ADDITIONS)
-        orderWordsByUse();
-#endif
         m_stats.frameSize = m_code.frameSize();
-        return true;
+        return Outcome::Allocated;
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    void keepInPlace(const BitVector& slots) { m_staysInPlace = slots; }
-#endif
 
 private:
     void buildInterferenceGraph(SlotLiveness& liveness)
@@ -1113,17 +636,7 @@ private:
                         // are exactly what a kill or a coalescable move suppresses.
                         if (action.kind == StackSlotActions::LateDefAction && (killedPreviousInst || previousInstIsCoalescableMove))
                             continue;
-                        uint32_t slotIndex = action.slotIndex;
-#if USE(BUN_JSC_ADDITIONS)
-                        if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-                            m_interference.addAllBut(slotIndex, workset.words());
-                            continue;
-                        }
-#endif
-                        workset.forEachSetBit(
-                            [&](unsigned otherSlotIndex) {
-                                addEdge(slotIndex, otherSlotIndex);
-                            });
+                        m_interference.addAllBut(action.slotIndex, workset);
                     }
 
                     for (const auto& action : group) {
@@ -1142,10 +655,7 @@ private:
                     });
             }
         }
-#if USE(BUN_JSC_ADDITIONS)
-        if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>)
-            m_interference.mirrorEdges();
-#endif
+        m_interference.mirrorEdges();
 
         reportInterferenceGraph();
     }
@@ -1208,406 +718,200 @@ private:
             return;
 
         for (BasicBlock* block : m_code) {
+            bool removedAny = false;
             for (Inst& inst : *block) {
                 for (Arg& arg : inst.args()) {
                     if (arg.isStack())
                         arg = Arg::stack(remapStackSlot(arg.stackSlot()), arg.offset());
                 }
-                if (isUselessMove(inst, coalesceSpillSlots))
+                if (isUselessMove(inst, coalesceSpillSlots)) {
                     inst = Inst();
+                    removedAny = true;
+                }
+            }
+            if (removedAny) {
+                block->insts().removeAllMatching(
+                    [&] (const Inst& inst) -> bool {
+                        return !inst;
+                    });
             }
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     void countSlotUses()
     {
-        if (!m_useCounts.isEmpty())
-            return;
-        m_useCounts.fill(0, m_code.stackSlots().size());
-        for (BasicBlock* block : m_code) {
-            for (Inst& inst : *block) {
-                for (Arg& arg : inst.args()) {
-                    if (arg.isStack())
-                        ++m_useCounts[arg.stackSlot()->index()];
-                }
-            }
-        }
+        if (m_useCounts.isEmpty())
+            m_useCounts = useCountsOfSlots(m_code);
     }
 
-    void orderWordsByUse()
+    struct NonInterferingSlotsAtUnit {
+        std::optional<unsigned> querySlot;
+        unsigned count { 0 };
+    };
+
+    struct FirstFitState {
+        Vector<StackColoring::UnitRange> unitsOfSlot;
+        Vector<uint64_t> hasUnits;
+        Vector<uint64_t> unitsOfEscapedSlots;
+        Vector<uint64_t> unitsOfAssignedSlots;
+        Vector<uint64_t> occupiedUnits;
+        Vector<unsigned> numberOfSlotsAtUnit;
+        Vector<NonInterferingSlotsAtUnit> nonInterferingSlotsAtUnit;
+        size_t numberOfSlotsWithUnits { 0 };
+    };
+
+    Vector<StackSlot*> slotsInAssignmentOrder()
     {
-        constexpr size_t bytesPerWord = 8;
-        constexpr size_t wordsWithinOneByteOfFramePointer = 16;
-        size_t frameSize = m_code.frameSize();
-        size_t numberOfWords = frameSize / bytesPerWord;
-        if (!isX86() || !m_code.chargesForCalleeSaves() || numberOfWords <= wordsWithinOneByteOfFramePointer || frameSize % bytesPerWord)
-            return;
-        countSlotUses();
-        auto wordsOf = [&](StackSlot* slot) {
-            size_t below = -slot->offsetFromFP();
-            return std::pair { (below - slot->byteSize()) / bytesPerWord, (below - 1) / bytesPerWord };
-        };
-        auto forEachSlotInFrame = [&](const auto& functor) {
-            for (StackSlot* slot : m_code.stackSlots()) {
-                if (!isRemappedSlotIndex(slot->index()) && slot->offsetFromFP() < 0)
-                    functor(slot);
-            }
-        };
-        Vector<unsigned> wordUseCount(FillWith { }, numberOfWords, 0u);
-        Vector<bool> isInLockedSlot(FillWith { }, numberOfWords, false);
-        Vector<bool> isMultiWordSlot(FillWith { }, numberOfWords, false);
-        forEachSlotInFrame([&](StackSlot* slot) {
-            auto [first, last] = wordsOf(slot);
-            RELEASE_ASSERT(last < numberOfWords);
-            for (size_t word = first; word <= last; ++word) {
-                wordUseCount[word] += m_useCounts[slot->index()];
-                isInLockedSlot[word] |= slot->isLocked();
-                isMultiWordSlot[word] |= first != last;
-            }
-        });
-        Vector<intptr_t> lowerWords(FillWith { }, numberOfWords, static_cast<intptr_t>(0));
-        auto moveSlots = [&] {
-            forEachSlotInFrame([&](StackSlot* slot) {
-                slot->setOffsetFromFP(slot->offsetFromFP() - lowerWords[wordsOf(slot).first] * static_cast<intptr_t>(bytesPerWord));
-                RELEASE_ASSERT(!(static_cast<size_t>(-slot->offsetFromFP()) % slot->alignment()));
+        Vector<StackSlot*> slotsInOrder;
+        for (StackSlot* slot : m_code.stackSlots())
+            slotsInOrder.append(slot);
+        if (m_ordersSlotsByUse && slotsInOrder.size() >= AirLimits::minSlotsToOrderByUse) {
+            countSlotUses();
+            std::stable_sort(slotsInOrder.begin(), slotsInOrder.end(), [&](StackSlot* a, StackSlot* b) {
+                return m_useCounts[a->index()] > m_useCounts[b->index()];
             });
-        };
-
-        struct Item {
-            size_t firstWord;
-            size_t numberOfWords;
-            unsigned referenceCount;
-            bool isAlignedTo16;
-            size_t place;
-        };
-        Vector<Item> blocks;
-        Vector<Item> singles;
-        Vector<bool> stays(FillWith { }, numberOfWords, false);
-        size_t wordsOnTop = 0;
-        bool isPossible = true;
-        forEachSlotInFrame([&](StackSlot* slot) {
-            auto [first, last] = wordsOf(slot);
-            if (!slot->isLocked()) {
-                isPossible &= first == last;
-                return;
-            }
-            if (m_staysInPlace.get(slot->index())) {
-                for (size_t word = first; word <= last; ++word)
-                    stays[word] = true;
-                wordsOnTop = std::max(wordsOnTop, last + 1);
-                return;
-            }
-            isPossible &= !(slot->byteSize() % bytesPerWord) && !(static_cast<size_t>(-slot->offsetFromFP()) % bytesPerWord) && slot->alignment() <= 2 * bytesPerWord;
-            blocks.append({ first, last - first + 1, m_useCounts[slot->index()], slot->alignment() > bytesPerWord, 0 });
-        });
-        if (isPossible && !blocks.isEmpty()) {
-            for (size_t word = 0; word < numberOfWords; ++word) {
-                if (!isInLockedSlot[word])
-                    singles.append({ word, 1, wordUseCount[word], false, 0 });
-            }
-            auto isDenser = [](const Item& a, const Item& b) {
-                return static_cast<uint64_t>(a.referenceCount) * b.numberOfWords > static_cast<uint64_t>(b.referenceCount) * a.numberOfWords;
-            };
-            std::stable_sort(blocks.begin(), blocks.end(), isDenser);
-            std::stable_sort(singles.begin(), singles.end(), isDenser);
-            size_t nextBlock = 0;
-            size_t nextSingle = 0;
-            size_t top = wordsOnTop;
-            size_t bottom = numberOfWords;
-            for (size_t word = 0; word < wordsOnTop; ++word) {
-                if (stays[word])
-                    continue;
-                if (nextSingle == singles.size()) {
-                    isPossible = false;
-                    break;
-                }
-                singles[nextSingle++].place = word;
-            }
-            auto placeOne = [&](bool fromTop) {
-                bool placesBlockNext = nextBlock < blocks.size() && (nextSingle == singles.size() || isDenser(blocks[nextBlock], singles[nextSingle]));
-                if (placesBlockNext && blocks[nextBlock].isAlignedTo16 && ((fromTop ? top + blocks[nextBlock].numberOfWords : bottom) & 1)) {
-                    if (nextSingle == singles.size())
-                        return false;
-                    placesBlockNext = false;
-                }
-                Item& item = placesBlockNext ? blocks[nextBlock++] : singles[nextSingle++];
-                if (bottom - top < item.numberOfWords)
-                    return false;
-                if (fromTop) {
-                    item.place = top;
-                    top += item.numberOfWords;
-                } else {
-                    bottom -= item.numberOfWords;
-                    item.place = bottom;
-                }
-                return true;
-            };
-            auto isLeft = [&] { return nextBlock < blocks.size() || nextSingle < singles.size(); };
-            while (isPossible && isLeft() && top < wordsWithinOneByteOfFramePointer)
-                isPossible = placeOne(true);
-            while (isPossible && isLeft() && numberOfWords - bottom < wordsWithinOneByteOfFramePointer)
-                isPossible = placeOne(false);
-            while (isPossible && isLeft())
-                isPossible = placeOne(true);
-            if (isPossible && top == bottom) {
-                auto note = [&](const Item& item) {
-                    for (size_t i = 0; i < item.numberOfWords; ++i)
-                        lowerWords[item.firstWord + i] = static_cast<intptr_t>(item.place) - static_cast<intptr_t>(item.firstWord);
-                };
-                for (auto& item : blocks)
-                    note(item);
-                for (auto& item : singles)
-                    note(item);
-                moveSlots();
-                return;
-            }
         }
-
-        Vector<size_t> words;
-        for (size_t word = 0; word < numberOfWords; ++word) {
-            if (!isInLockedSlot[word] && !isMultiWordSlot[word])
-                words.append(word);
-        }
-        Vector<size_t> places = words;
-        auto costOf = [&](size_t place) -> unsigned {
-            size_t below = (place + 1) * bytesPerWord;
-            if (below <= wordsWithinOneByteOfFramePointer * bytesPerWord)
-                return 0;
-            return frameSize - below <= 127 - (bytesPerWord - 1) ? 1 : 3;
-        };
-        std::stable_sort(places.begin(), places.end(), [&](size_t a, size_t b) {
-            return costOf(a) < costOf(b);
-        });
-        std::stable_sort(words.begin(), words.end(), [&](size_t a, size_t b) {
-            return wordUseCount[a] > wordUseCount[b];
-        });
-        for (size_t i = 0; i < words.size(); ++i)
-            lowerWords[words[i]] = static_cast<intptr_t>(places[i]) - static_cast<intptr_t>(words[i]);
-        moveSlots();
+        return slotsInOrder;
     }
 
-#endif
-    void assignStackLocations(const Vector<StackSlot*>& assignedEscapedStackSlots)
+    ALWAYS_INLINE static void markOccupied(Vector<uint64_t>& occupiedUnits, StackColoring::UnitRange units)
+    {
+        while (occupiedUnits.size() <= units.last / 64) [[unlikely]]
+            occupiedUnits.append(0);
+        for (unsigned unit = units.first; unit <= units.last; ++unit)
+            occupiedUnits[unit / 64] |= static_cast<uint64_t>(1) << (unit % 64);
+    }
+
+    static StackColoring::UnitRange computeUnitsFromOffset(StackSlot* slot)
+    {
+        RELEASE_ASSERT(slot->offsetFromFP() < 0);
+        size_t end = -slot->offsetFromFP();
+        size_t begin = end - std::min<size_t>(end, slot->byteSize());
+        return { static_cast<unsigned>(begin / StackColoring::bytesPerUnit), static_cast<unsigned>((end - 1) / StackColoring::bytesPerUnit) };
+    }
+
+    void recordUnits(FirstFitState& state, StackSlot* slot, StackColoring::UnitRange units)
+    {
+        state.unitsOfSlot[slot->index()] = units;
+        state.hasUnits[slot->index() / 64] |= static_cast<uint64_t>(1) << (slot->index() % 64);
+        ++state.numberOfSlotsWithUnits;
+        markOccupied(state.unitsOfAssignedSlots, units);
+        while (state.numberOfSlotsAtUnit.size() <= units.last) {
+            state.numberOfSlotsAtUnit.append(0);
+            state.nonInterferingSlotsAtUnit.append(NonInterferingSlotsAtUnit { });
+        }
+        for (unsigned unit = units.first; unit <= units.last; ++unit)
+            ++state.numberOfSlotsAtUnit[unit];
+    }
+
+    void prepareFirstFit(FirstFitState& state, const Vector<StackSlot*>& assignedEscapedStackSlots)
+    {
+        state.unitsOfSlot.grow(m_code.stackSlots().size());
+        state.hasUnits.fill(0, (m_code.stackSlots().size() + 63) / 64);
+        if (m_placement == SlotPlacement::OnlyColors)
+            return;
+        for (StackSlot* slot : m_code.stackSlots()) {
+            if (slot->offsetFromFP())
+                recordUnits(state, slot, computeUnitsFromOffset(slot));
+        }
+        for (StackSlot* slot : assignedEscapedStackSlots)
+            markOccupied(state.unitsOfEscapedSlots, state.unitsOfSlot[slot->index()]);
+    }
+
+    void fillOccupiedUnits(FirstFitState& state, StackSlot* slot)
+    {
+        state.occupiedUnits.shrink(0);
+        if (state.numberOfSlotsWithUnits >= AirLimits::minAssignedSlotsToWalkComplement && AirLimits::minRatioOfAssignedToNonInterfering * (state.numberOfSlotsWithUnits - m_interference.countInterferingIn(slot->index(), state.hasUnits.span())) < state.numberOfSlotsWithUnits) {
+            state.occupiedUnits.appendVector(state.unitsOfAssignedSlots);
+            const unsigned querySlot = slot->index();
+            m_interference.forEachNonInterferingIn(slot->index(), state.hasUnits.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
+                StackColoring::UnitRange units = state.unitsOfSlot[otherSlotIndex];
+                for (unsigned unit = units.first; unit <= units.last; ++unit) {
+                    NonInterferingSlotsAtUnit& nonInterfering = state.nonInterferingSlotsAtUnit[unit];
+                    if (nonInterfering.querySlot != querySlot)
+                        nonInterfering = { querySlot, 0 };
+                    if (++nonInterfering.count == state.numberOfSlotsAtUnit[unit])
+                        state.occupiedUnits[unit / 64] &= ~(static_cast<uint64_t>(1) << (unit % 64));
+                }
+            });
+            for (size_t word = 0; word < state.unitsOfEscapedSlots.size(); ++word)
+                state.occupiedUnits[word] |= state.unitsOfEscapedSlots[word];
+            return;
+        }
+        state.occupiedUnits.appendVector(state.unitsOfEscapedSlots);
+        m_interference.forEachInterferingIn(slot->index(), state.hasUnits.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
+            markOccupied(state.occupiedUnits, state.unitsOfSlot[otherSlotIndex]);
+        });
+    }
+
+    static unsigned findFirstFit(std::span<const uint64_t> occupiedUnits, unsigned unitsNeeded, unsigned unitsPerAlignment)
+    {
+        if (unitsNeeded == 2 && unitsPerAlignment == 2) {
+            for (size_t wordIndex = 0; wordIndex < occupiedUnits.size(); ++wordIndex) {
+                uint64_t freeUnits = ~occupiedUnits[wordIndex];
+                uint64_t freePairs = freeUnits & (freeUnits >> 1) & 0x5555555555555555ULL;
+                if (freePairs)
+                    return static_cast<unsigned>(64 * wordIndex + std::countr_zero(freePairs) + 2);
+            }
+            return static_cast<unsigned>(64 * occupiedUnits.size() + 2);
+        }
+        if (unitsNeeded == 1 && unitsPerAlignment == 1) {
+            size_t wordIndex = 0;
+            while (wordIndex < occupiedUnits.size() && !~occupiedUnits[wordIndex])
+                ++wordIndex;
+            return static_cast<unsigned>(wordIndex * 64 + (wordIndex < occupiedUnits.size() ? std::countr_one(occupiedUnits[wordIndex]) : 0) + 1);
+        }
+        auto isOccupied = [&](size_t unit) {
+            return unit / 64 < occupiedUnits.size() && (occupiedUnits[unit / 64] >> (unit % 64) & 1);
+        };
+        size_t end = WTF::roundUpToMultipleOf<size_t>(unitsPerAlignment, unitsNeeded);
+        for (;;) {
+            size_t unit = end;
+            while (unit > end - unitsNeeded && !isOccupied(unit - 1))
+                --unit;
+            if (unit == end - unitsNeeded)
+                break;
+            end = WTF::roundUpToMultipleOf<size_t>(unitsPerAlignment, unit + unitsNeeded);
+        }
+        return static_cast<unsigned>(end);
+    }
+
+    void assignStackLocations(const Vector<StackSlot*>& assignedEscapedStackSlots, StackColoring& coloring)
     {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::assign"_s);
 
         // Now we assign stack locations. At its heart this algorithm is just first-fit. For each
         // StackSlot we just want to find the offsetFromFP that is least negative while ensuring no
         // overlap with other StackSlots that this overlaps with.
-        Vector<StackSlot*> otherSlots;
-#if USE(BUN_JSC_ADDITIONS)
-        constexpr size_t bytesPerWord = 8;
-        constexpr size_t fewSlots = 12;
-        Vector<unsigned> wordMark;
-        Vector<unsigned> unitMark;
-        Vector<StackSlot*> slotsInOrder;
-        for (StackSlot* slot : m_code.stackSlots())
-            slotsInOrder.append(slot);
-        if (isX86() && m_code.chargesForCalleeSaves() && slotsInOrder.size() > fewSlots) {
-            countSlotUses();
-            std::stable_sort(slotsInOrder.begin(), slotsInOrder.end(), [&](StackSlot* a, StackSlot* b) {
-                return m_useCounts[a->index()] > m_useCounts[b->index()];
+        FirstFitState state;
+        prepareFirstFit(state, assignedEscapedStackSlots);
+        for (StackSlot* slot : slotsInAssignmentOrder()) {
+            if (!slot->isSpill() || isRemappedSlotIndex(slot->index()))
+                continue;
+            if (state.hasUnits[slot->index() / 64] >> (slot->index() % 64) & 1)
+                continue;
+
+            const unsigned unitsNeeded = (slot->byteSize() + StackColoring::bytesPerUnit - 1) / StackColoring::bytesPerUnit;
+            const unsigned unitsPerAlignment = std::max(1u, slot->alignment() / StackColoring::bytesPerUnit);
+            fillOccupiedUnits(state, slot);
+            const unsigned end = findFirstFit(state.occupiedUnits.span(), unitsNeeded, unitsPerAlignment);
+            recordUnits(state, slot, { end - unitsNeeded, end - 1 });
+            if (m_placement == SlotPlacement::AssignsOffsets)
+                slot->setOffsetFromFP(-static_cast<intptr_t>(end) * static_cast<intptr_t>(StackColoring::bytesPerUnit));
+        }
+
+        switch (m_placement) {
+        case SlotPlacement::AssignsOffsets:
+            updateFrameSizeBasedOnStackSlots(m_code);
+            break;
+        case SlotPlacement::OnlyColors:
+            coloring.unitsOfSlot.fill(std::nullopt, m_code.stackSlots().size());
+            WTF::forEachSetBit(state.hasUnits.span(), [&](size_t slotIndex) {
+                coloring.unitsOfSlot[slotIndex] = state.unitsOfSlot[slotIndex];
             });
-        }
-        struct SlotWords {
-            unsigned first;
-            unsigned last;
-        };
-        constexpr size_t bytesPerUnit = 4;
-        Vector<SlotWords> allSlotWords;
-        Vector<SlotWords> slotUnits;
-        Vector<uint64_t> hasOffset;
-        Vector<uint64_t> usedByEscapedSlots;
-        Vector<uint64_t> unitsUsedByEscapedSlots;
-        Vector<uint64_t> usedBySomeSlot;
-        Vector<uint64_t> taken;
-        struct HarmlessSlotsAtWord {
-            unsigned asker { 0 };
-            unsigned number { 0 };
-        };
-        Vector<unsigned> numberOfSlotsAtWord;
-        Vector<HarmlessSlotsAtWord> harmlessSlotsAtWord;
-        size_t numberOfSlotsWithOffset = 0;
-        auto take = [](Vector<uint64_t>& words, SlotWords slotWords) ALWAYS_INLINE_LAMBDA {
-            while (words.size() <= slotWords.last / 64) [[unlikely]]
-                words.append(0);
-            for (unsigned word = slotWords.first; word <= slotWords.last; ++word)
-                words[word / 64] |= static_cast<uint64_t>(1) << (word % 64);
-        };
-        auto recordOffset = [&](StackSlot* assignedSlot) {
-            if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-                size_t below = -assignedSlot->offsetFromFP();
-                allSlotWords[assignedSlot->index()] = { static_cast<unsigned>((below - assignedSlot->byteSize()) / bytesPerWord), static_cast<unsigned>((below - 1) / bytesPerWord) };
-                slotUnits[assignedSlot->index()] = { static_cast<unsigned>((below - assignedSlot->byteSize()) / bytesPerUnit), static_cast<unsigned>((below - 1) / bytesPerUnit) };
-                hasOffset[assignedSlot->index() / 64] |= static_cast<uint64_t>(1) << (assignedSlot->index() % 64);
-                ++numberOfSlotsWithOffset;
-                SlotWords words = allSlotWords[assignedSlot->index()];
-                take(usedBySomeSlot, words);
-                while (numberOfSlotsAtWord.size() <= words.last) {
-                    numberOfSlotsAtWord.append(0);
-                    harmlessSlotsAtWord.append(HarmlessSlotsAtWord { });
-                }
-                for (unsigned word = words.first; word <= words.last; ++word)
-                    ++numberOfSlotsAtWord[word];
-            }
-        };
-        if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-            allSlotWords.grow(m_code.stackSlots().size());
-            slotUnits.grow(m_code.stackSlots().size());
-            hasOffset.fill(0, (m_code.stackSlots().size() + 63) / 64);
-            for (StackSlot* slot : m_code.stackSlots()) {
-                if (slot->offsetFromFP())
-                    recordOffset(slot);
-            }
-            for (StackSlot* slot : assignedEscapedStackSlots) {
-                take(usedByEscapedSlots, allSlotWords[slot->index()]);
-                take(unitsUsedByEscapedSlots, slotUnits[slot->index()]);
-            }
-        }
-        for (StackSlot* slot : slotsInOrder) {
-            if (isRemappedSlotIndex(slot->index()))
-                continue;
-#else
-        for (StackSlot* slot : m_code.stackSlots()) {
-            if (isRemappedSlotIndex(slot->index()))
-                continue;
-#endif
-
-            if (slot->offsetFromFP()) {
-                // Already assigned an offset.
-                continue;
-            }
-
-#if USE(BUN_JSC_ADDITIONS)
-            if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-                if (slot->byteSize() == bytesPerWord && slot->alignment() == bytesPerWord) {
-                    taken.shrink(0);
-                    constexpr size_t manySlots = 256;
-                    if (numberOfSlotsWithOffset >= manySlots && 16 * (numberOfSlotsWithOffset - m_interference.countAmong(slot->index(), hasOffset.span())) < numberOfSlotsWithOffset) {
-                        taken.appendVector(usedBySomeSlot);
-                        const unsigned asker = slot->index() + 1;
-                        m_interference.forEachNotAmongRow(slot->index(), hasOffset.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
-                            SlotWords words = allSlotWords[otherSlotIndex];
-                            for (unsigned word = words.first; word <= words.last; ++word) {
-                                HarmlessSlotsAtWord& harmless = harmlessSlotsAtWord[word];
-                                if (harmless.asker != asker)
-                                    harmless = { asker, 0 };
-                                if (++harmless.number == numberOfSlotsAtWord[word])
-                                    taken[word / 64] &= ~(static_cast<uint64_t>(1) << (word % 64));
-                            }
-                        });
-                        for (size_t word = 0; word < usedByEscapedSlots.size(); ++word)
-                            taken[word] |= usedByEscapedSlots[word];
-                    } else {
-                        taken.appendVector(usedByEscapedSlots);
-                        m_interference.forEachAmong(slot->index(), hasOffset.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
-                            take(taken, allSlotWords[otherSlotIndex]);
-                        });
-                    }
-                    size_t word = 0;
-                    while (word < taken.size() && !~taken[word])
-                        ++word;
-                    size_t end = word * 64 + (word < taken.size() ? std::countr_one(taken[word]) : 0) + 1;
-                    slot->setOffsetFromFP(-static_cast<intptr_t>(end * bytesPerWord));
-                    recordOffset(slot);
-                    continue;
-                }
-            }
-            if (!(slot->byteSize() % bytesPerUnit) && slot->alignment() != bytesPerWord) {
-                unsigned mark = slot->index() + 1;
-                if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>) {
-                    taken.shrink(0);
-                    taken.appendVector(unitsUsedByEscapedSlots);
-                    m_interference.forEachAmong(slot->index(), hasOffset.span(), [&](unsigned otherSlotIndex) ALWAYS_INLINE_LAMBDA {
-                        take(taken, slotUnits[otherSlotIndex]);
-                    });
-                } else {
-                    auto markUnitsOf = [&](StackSlot* otherSlot) {
-                        size_t below = -otherSlot->offsetFromFP();
-                        size_t first = (below - otherSlot->byteSize()) / bytesPerUnit;
-                        size_t last = (below - 1) / bytesPerUnit;
-                        while (unitMark.size() <= last)
-                            unitMark.append(0);
-                        for (size_t unit = first; unit <= last; ++unit)
-                            unitMark[unit] = mark;
-                    };
-                    for (StackSlot* otherSlot : assignedEscapedStackSlots)
-                        markUnitsOf(otherSlot);
-                    for (unsigned otherSlotIndex : m_interference[slot->index()]) {
-                        if (isRemappedSlotIndex(otherSlotIndex))
-                            continue;
-                        StackSlot* otherSlot = m_code.stackSlots()[otherSlotIndex];
-                        if (otherSlot->offsetFromFP())
-                            markUnitsOf(otherSlot);
-                    }
-                }
-                auto isTaken = [&](size_t unit) {
-                    if constexpr (std::is_same_v<InterferenceGraph, InterferenceRows>)
-                        return unit / 64 < taken.size() && (taken[unit / 64] >> (unit % 64) & 1);
-                    else
-                        return unit < unitMark.size() && unitMark[unit] == mark;
-                };
-                const size_t unitsNeeded = slot->byteSize() / bytesPerUnit;
-                const size_t unitsPerAlignment = slot->alignment() / bytesPerUnit;
-                size_t end = WTF::roundUpToMultipleOf(unitsPerAlignment, unitsNeeded);
-                for (;;) {
-                    size_t unit = end;
-                    while (unit > end - unitsNeeded && !isTaken(unit - 1))
-                        --unit;
-                    if (unit == end - unitsNeeded)
-                        break;
-                    end = WTF::roundUpToMultipleOf(unitsPerAlignment, unit + unitsNeeded);
-                }
-                slot->setOffsetFromFP(-static_cast<intptr_t>(end * bytesPerUnit));
-                recordOffset(slot);
-                continue;
-            }
-            if (!(slot->byteSize() % bytesPerWord) && slot->alignment() == bytesPerWord) {
-                unsigned mark = slot->index() + 1;
-                auto markWordsOf = [&](StackSlot* otherSlot) {
-                    size_t below = -otherSlot->offsetFromFP();
-                    size_t first = (below - otherSlot->byteSize()) / bytesPerWord;
-                    size_t last = (below - 1) / bytesPerWord;
-                    while (wordMark.size() <= last)
-                        wordMark.append(0);
-                    for (size_t word = first; word <= last; ++word)
-                        wordMark[word] = mark;
-                };
-                for (StackSlot* otherSlot : assignedEscapedStackSlots)
-                    markWordsOf(otherSlot);
-                for (unsigned otherSlotIndex : m_interference[slot->index()]) {
-                    if (isRemappedSlotIndex(otherSlotIndex))
-                        continue;
-                    StackSlot* otherSlot = m_code.stackSlots()[otherSlotIndex];
-                    if (otherSlot->offsetFromFP())
-                        markWordsOf(otherSlot);
-                }
-                size_t wordsNeeded = slot->byteSize() / bytesPerWord;
-                size_t end = 0;
-                for (size_t wordsFound = 0; wordsFound < wordsNeeded; ++end)
-                    wordsFound = end < wordMark.size() && wordMark[end] == mark ? 0 : wordsFound + 1;
-                slot->setOffsetFromFP(-static_cast<intptr_t>(end * bytesPerWord));
-                recordOffset(slot);
-                continue;
-            }
-#endif
-
-            otherSlots.shrink(0);
-            otherSlots.appendVector(assignedEscapedStackSlots);
-            for (unsigned otherSlotIndex : m_interference[slot->index()]) {
-                if (isRemappedSlotIndex(otherSlotIndex))
-                    continue;
-                StackSlot* otherSlot = m_code.stackSlots()[otherSlotIndex];
-                if (otherSlot->offsetFromFP())
-                    otherSlots.append(otherSlot);
-            }
-
-            std::ranges::sort(otherSlots, std::ranges::greater { }, &StackSlot::offsetFromFP);
-            assign(slot, otherSlots);
-#if USE(BUN_JSC_ADDITIONS)
-            recordOffset(slot);
-#endif
+            coloring.numberOfUnits = state.numberOfSlotsAtUnit.size();
+            coloring.useCountOfSlot = WTF::move(m_useCounts);
+            break;
         }
     }
 
@@ -1649,94 +953,143 @@ private:
 
     InterferenceGraph m_interference;
     Vector<CoalescableMove> m_coalescableMoves;
-#if USE(BUN_JSC_ADDITIONS)
     Vector<unsigned> m_useCounts;
-    BitVector m_staysInPlace;
-#endif
+    const SlotPlacement m_placement;
+    const bool m_ordersSlotsByUse;
     AirStackAllocatorStats m_stats;
 };
 
 // Avoid computing the liveness information if there is no spill slot to allocate
-bool doTrivialStackAllocation(Code& code)
+bool doTrivialStackAllocation(Code& code, SlotPlacement placement, StackColoring& coloring)
 {
-    for (StackSlot* slot : code.stackSlots()) {
-        if (slot->offsetFromFP())
-            continue;
-        return false;
+    switch (placement) {
+    case SlotPlacement::AssignsOffsets:
+        for (StackSlot* slot : code.stackSlots()) {
+            if (slot->offsetFromFP())
+                continue;
+            return false;
+        }
+        updateFrameSizeBasedOnStackSlots(code);
+        return true;
+    case SlotPlacement::OnlyColors:
+        for (StackSlot* slot : code.stackSlots()) {
+            if (slot->isSpill())
+                return false;
+        }
+        coloring.unitsOfSlot.fill(std::nullopt, code.stackSlots().size());
+        return true;
     }
-    updateFrameSizeBasedOnStackSlots(code);
-    return true;
+    RELEASE_ASSERT_NOT_REACHED();
+    return false;
+}
+
+// An upper bound on the number of interference edges: for each spill slot, the number of slots that are live at
+// its definitions, capped at the number of other slots.
+std::optional<size_t> computeInterferenceEdgeBound(Code& code)
+{
+    StackSlotActions actions(code, code.policy().frame.coalescesSpillSlots);
+    StackSlotLivenessInWords liveness(code, actions);
+    if (liveness.didGiveUp())
+        return std::nullopt;
+
+    auto liveSlots = liveness.makeWorkset();
+    const size_t numberOfSlots = code.stackSlots().size();
+    Vector<size_t> liveSlotsAtDefinitions;
+    liveSlotsAtDefinitions.fill(0, numberOfSlots);
+    for (BasicBlock* block : code) {
+        auto blockActions = actions.actionsFor(block);
+        if (blockActions.empty())
+            continue;
+
+        liveness.copyLiveAtTailInto(liveSlots, block);
+        size_t numberOfLiveSlots = 0;
+        for (uint64_t word : liveSlots.words())
+            numberOfLiveSlots += std::popcount(word);
+
+        while (!blockActions.empty()) {
+            auto group = StackSlotActions::consumeLastGroup(blockActions);
+            for (const auto& action : group) {
+                if (action.kind == StackSlotActions::UseAction && !liveSlots.contains(action.slotIndex)) {
+                    liveSlots.add(action.slotIndex);
+                    ++numberOfLiveSlots;
+                }
+            }
+            for (const auto& action : group) {
+                if (action.kind != StackSlotActions::UseAction && action.isSpill)
+                    liveSlotsAtDefinitions[action.slotIndex] += numberOfLiveSlots;
+            }
+            for (const auto& action : group) {
+                if (action.kind != StackSlotActions::UseAction && liveSlots.contains(action.slotIndex)) {
+                    liveSlots.remove(action.slotIndex);
+                    --numberOfLiveSlots;
+                }
+            }
+        }
+    }
+
+    size_t numberOfEdges = 0;
+    for (size_t count : liveSlotsAtDefinitions)
+        numberOfEdges += std::min(count, numberOfSlots - 1);
+    return numberOfEdges;
+}
+
+bool shouldUseDenseInterferenceGraph(Code& code)
+{
+    const size_t numberOfSlots = code.stackSlots().size();
+    if (numberOfSlots >= std::numeric_limits<DenseIterableInterferenceGraph::IndexType>::max())
+        return false;
+    if (numberOfSlots <= code.proc().limit(Limit::MaxSlotsForDenseInterference))
+        return true;
+
+    // Above the limit, use the rows only if the hash sets of the sparse graph would take at least as much memory.
+    std::optional<size_t> numberOfEdges = computeInterferenceEdgeBound(code);
+    return numberOfEdges && 2 * *numberOfEdges * AirLimits::bytesPerNeighborInSparseInterference >= numberOfSlots * numberOfSlots / 8;
 }
 
 } // anonymous namespace
 
-#if USE(BUN_JSC_ADDITIONS)
-void allocateStackByGraphColoring(Code& code, RegisterSet&& namedOrClobberedRegisters)
-#else
-void allocateStackByGraphColoring(Code& code)
-#endif
+StackColoring allocateStackByGraphColoring(Code& code)
 {
     PhaseScope phaseScope(code, "allocateStackByGraphColoring"_s);
 
-#if USE(BUN_JSC_ADDITIONS)
-    BitVector wasPresentBefore;
-    for (StackSlot* slot : code.stackSlots())
-        wasPresentBefore.set(slot->index());
-#endif
     {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::calleeSaves"_s);
-#if USE(BUN_JSC_ADDITIONS)
-        handleCalleeSaves(code, WTF::move(namedOrClobberedRegisters));
-#else
         handleCalleeSaves(code);
-#endif
     }
-#if USE(BUN_JSC_ADDITIONS)
-    BitVector staysInPlace;
-    for (StackSlot* slot : code.stackSlots()) {
-        if (slot->offsetFromFP() || !wasPresentBefore.get(slot->index()))
-            staysInPlace.set(slot->index());
-    }
-#endif
 
-    Vector<StackSlot*> assignedEscapedStackSlots = [&] {
+    const SlotPlacement placement = code.policy().frame.emitsFrame ? SlotPlacement::OnlyColors : SlotPlacement::AssignsOffsets;
+
+    Vector<StackSlot*> assignedEscapedStackSlots;
+    if (placement == SlotPlacement::AssignsOffsets) {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::escapedSlots"_s);
-        return allocateAndGetEscapedStackSlotsWithoutChangingFrameSize(code);
-    }();
+        assignedEscapedStackSlots = allocateAndGetEscapedStackSlotsWithoutChangingFrameSize(code);
+    }
 
-    if (!doTrivialStackAllocation(code)) {
-#if USE(BUN_JSC_ADDITIONS)
-        if (code.stackSlots().size() < InterferenceRows::maxSize) {
-            GraphColoringStackAllocator<InterferenceRows> allocator(code);
-            allocator.keepInPlace(staysInPlace);
-            if (allocator.run(assignedEscapedStackSlots)) {
-                code.setStackIsAllocated(true);
-                return;
+    StackColoring coloring;
+    if (!doTrivialStackAllocation(code, placement, coloring)) {
+        bool isAllocated = false;
+        if (shouldUseDenseInterferenceGraph(code)) {
+            using DenseAllocator = GraphColoringStackAllocator<DenseIterableInterferenceGraph, StackSlotLivenessInWords>;
+            DenseAllocator allocator(code, placement);
+            isAllocated = allocator.run(assignedEscapedStackSlots, coloring) == DenseAllocator::Outcome::Allocated;
+        }
+        if (!isAllocated) {
+            code.proc().didReachLimit(Limit::MaxSlotsForDenseInterference);
+            if (code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {
+                GraphColoringStackAllocator<LargeIterableInterferenceGraph, StackSlotLiveness> allocator(code, placement);
+                allocator.run(assignedEscapedStackSlots, coloring);
+            } else {
+                GraphColoringStackAllocator<HugeIterableInterferenceGraph, StackSlotLiveness> allocator(code, placement);
+                allocator.run(assignedEscapedStackSlots, coloring);
             }
         }
-#endif
-        if (code.stackSlots().size() < WTF::maxSizeForSmallInterferenceGraph) {
-            GraphColoringStackAllocator<SmallIterableInterferenceGraph> allocator(code);
-#if USE(BUN_JSC_ADDITIONS)
-            allocator.keepInPlace(staysInPlace);
-#endif
-            allocator.run(assignedEscapedStackSlots);
-        } else if (code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {
-            GraphColoringStackAllocator<LargeIterableInterferenceGraph> allocator(code);
-#if USE(BUN_JSC_ADDITIONS)
-            allocator.keepInPlace(staysInPlace);
-#endif
-            allocator.run(assignedEscapedStackSlots);
-        } else {
-            GraphColoringStackAllocator<HugeIterableInterferenceGraph> allocator(code);
-#if USE(BUN_JSC_ADDITIONS)
-            allocator.keepInPlace(staysInPlace);
-#endif
-            allocator.run(assignedEscapedStackSlots);
-        }
     }
 
-    code.setStackIsAllocated(true);
+    if (placement == SlotPlacement::AssignsOffsets)
+        code.setStackIsAllocated(true);
+    else if (coloring.useCountOfSlot.isEmpty() && shouldOrderSlotsByUse(code) && numberOfWordsInSlots(code) >= AirLimits::minSlotsToOrderByUse)
+        coloring.useCountOfSlot = useCountsOfSlots(code);
+    return coloring;
 }
 
 } } } // namespace JSC::B3::Air

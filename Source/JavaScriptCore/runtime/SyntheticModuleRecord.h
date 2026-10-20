@@ -82,10 +82,6 @@ public:
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
-    JS_EXPORT_PRIVATE static JSCell* createLiveBinding(JSGlobalObject*, JSObject* source, const Identifier& name);
-    static bool isLiveBinding(JSValue held) { return held && held.isCell() && held.asCell()->type() == InternalFieldTupleType; }
-    JS_EXPORT_PRIVATE static JSValue readLiveBinding(JSGlobalObject*, JSValue held);
-
     // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
     // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May run arbitrary JS and throw.
     JS_EXPORT_PRIVATE void materializeLazyExport(JSGlobalObject*, PropertyName localName);

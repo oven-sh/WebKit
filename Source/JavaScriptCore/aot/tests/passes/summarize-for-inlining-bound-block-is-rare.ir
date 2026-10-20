@@ -1,0 +1,49 @@
+# An operation bound to the frame bars its own block from the head and no other
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0
+function f0 name="evaluatesTextInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    v2 = Undefined
+    v3 = DirectEval v0, v2 evalScope=e0
+    Return v3
+}
+# CHECK: f0: barrier=None {{*}} head=[b0 b1] {{*}} boundToFrame=[b2]
+
+function f1 name="callsInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Rare:
+    v2 = Call v0
+    Return v2
+}
+# CHECK: f1: barrier=None {{*}} head=[b0 b1]
+# CHECK-NOT: boundToFrame
+
+function f2 name="evaluatesTextInEntryBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Rare:
+    v4 = Call v0
+    Return v4
+}
+# CHECK: f2: barrier=None
+# CHECK-NOT: head=
+# CHECK: boundToFrame=[b0]
+# CHECK: outcome: Unchanged

@@ -1,0 +1,481 @@
+# A set of locations crosses a call as one mask per heap: each location keeps its heap and its part of the summary, and 70 locations of one heap stay in that heap
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="count" declared={type=number}}, {key="other" declared={type=number}}]
+layout L1 name="Vector" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L2 name="Wide" fields=[{key="k0" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k1" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k2" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k3" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k4" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k5" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k6" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k7" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k8" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k9" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k10" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k11" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k12" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k13" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k14" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k15" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k16" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k17" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k18" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k19" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k20" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k21" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k22" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k23" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k24" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k25" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k26" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k27" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k28" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k29" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k30" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k31" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k32" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k33" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k34" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k35" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k36" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k37" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k38" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k39" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k40" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k41" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k42" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k43" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k44" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k45" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k46" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k47" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k48" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k49" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k50" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k51" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k52" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k53" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k54" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k55" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k56" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k57" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k58" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k59" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k60" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k61" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k62" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k63" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k64" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k65" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k66" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k67" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k68" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="k69" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+variable g0 name="total" declared={type=number} initialization=Undefined
+variable g1 name="untouched" declared={type=number} initialization=Undefined
+function f0 name="writesFiveLocations" captures=[{type=env L0}] parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: L1, v2: number):
+    PutSlot v1, -, v2 key="x" receivers=[L1] level=Proven
+    PutSlot v1, -, v2 key="y" receivers=[L1] level=Proven
+    PutSlot v1, -, v2 key="z" receivers=[L1] level=Proven
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    PutModuleVariable v2 variable=g0
+    Return
+}
+# CHECK: f0 return: writes(ModuleVariables/1) throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/3)
+function f1 name="callsWriter" captures=[{type=env L0}] parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: L1, v2: number):
+    v3 = CallDirect v0, v1, v2 function=f0
+    Return
+}
+# CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] writes(ObjectFields/3)
+function f2 name="writesEntireHeaps" parameters=[{type=L1}, {type=function}] results=[{type=undefined}] {
+  b0(v0: L1, v1: function):
+    DefineGetter v0, v1 key="x"
+    Return
+}
+# CHECK: f2 return: {{*}}writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState){{*}} p0: [{{*}}] reads({{*}}) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties)
+function f3 name="callsBoth" captures=[{type=env L0}] parameters=[{type=L1}, {type=number}, {type=function}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: L1, v2: number, v3: function):
+    v4 = CallDirect v0, v1, v2 function=f0
+    v5 = CallDirect v1, v3 function=f2
+    Return
+}
+# CHECK: f3 return: {{*}}writes(ModuleVariables/1, ObjectFields, ShapeWords,{{*}} p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] reads({{*}}) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties)
+function f4 name="callsSeventyWriters" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    v2 = CallDirect v0, v1 function=f5
+    v3 = CallDirect v0, v1 function=f6
+    v4 = CallDirect v0, v1 function=f7
+    v5 = CallDirect v0, v1 function=f8
+    v6 = CallDirect v0, v1 function=f9
+    v7 = CallDirect v0, v1 function=f10
+    v8 = CallDirect v0, v1 function=f11
+    v9 = CallDirect v0, v1 function=f12
+    v10 = CallDirect v0, v1 function=f13
+    v11 = CallDirect v0, v1 function=f14
+    v12 = CallDirect v0, v1 function=f15
+    v13 = CallDirect v0, v1 function=f16
+    v14 = CallDirect v0, v1 function=f17
+    v15 = CallDirect v0, v1 function=f18
+    v16 = CallDirect v0, v1 function=f19
+    v17 = CallDirect v0, v1 function=f20
+    v18 = CallDirect v0, v1 function=f21
+    v19 = CallDirect v0, v1 function=f22
+    v20 = CallDirect v0, v1 function=f23
+    v21 = CallDirect v0, v1 function=f24
+    v22 = CallDirect v0, v1 function=f25
+    v23 = CallDirect v0, v1 function=f26
+    v24 = CallDirect v0, v1 function=f27
+    v25 = CallDirect v0, v1 function=f28
+    v26 = CallDirect v0, v1 function=f29
+    v27 = CallDirect v0, v1 function=f30
+    v28 = CallDirect v0, v1 function=f31
+    v29 = CallDirect v0, v1 function=f32
+    v30 = CallDirect v0, v1 function=f33
+    v31 = CallDirect v0, v1 function=f34
+    v32 = CallDirect v0, v1 function=f35
+    v33 = CallDirect v0, v1 function=f36
+    v34 = CallDirect v0, v1 function=f37
+    v35 = CallDirect v0, v1 function=f38
+    v36 = CallDirect v0, v1 function=f39
+    v37 = CallDirect v0, v1 function=f40
+    v38 = CallDirect v0, v1 function=f41
+    v39 = CallDirect v0, v1 function=f42
+    v40 = CallDirect v0, v1 function=f43
+    v41 = CallDirect v0, v1 function=f44
+    v42 = CallDirect v0, v1 function=f45
+    v43 = CallDirect v0, v1 function=f46
+    v44 = CallDirect v0, v1 function=f47
+    v45 = CallDirect v0, v1 function=f48
+    v46 = CallDirect v0, v1 function=f49
+    v47 = CallDirect v0, v1 function=f50
+    v48 = CallDirect v0, v1 function=f51
+    v49 = CallDirect v0, v1 function=f52
+    v50 = CallDirect v0, v1 function=f53
+    v51 = CallDirect v0, v1 function=f54
+    v52 = CallDirect v0, v1 function=f55
+    v53 = CallDirect v0, v1 function=f56
+    v54 = CallDirect v0, v1 function=f57
+    v55 = CallDirect v0, v1 function=f58
+    v56 = CallDirect v0, v1 function=f59
+    v57 = CallDirect v0, v1 function=f60
+    v58 = CallDirect v0, v1 function=f61
+    v59 = CallDirect v0, v1 function=f62
+    v60 = CallDirect v0, v1 function=f63
+    v61 = CallDirect v0, v1 function=f64
+    v62 = CallDirect v0, v1 function=f65
+    v63 = CallDirect v0, v1 function=f66
+    v64 = CallDirect v0, v1 function=f67
+    v65 = CallDirect v0, v1 function=f68
+    v66 = CallDirect v0, v1 function=f69
+    v67 = CallDirect v0, v1 function=f70
+    v68 = CallDirect v0, v1 function=f71
+    v69 = CallDirect v0, v1 function=f72
+    v70 = CallDirect v0, v1 function=f73
+    v71 = CallDirect v0, v1 function=f74
+    Return
+}
+# CHECK: f4 return: none throw: none p0: [{{*}}] writes(ObjectFields/[[bits]])
+# CHECK-NOT: NamedProperties
+function f5 name="writesKey0" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k0" receivers=[L2] level=Proven
+    Return
+}
+function f6 name="writesKey1" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k1" receivers=[L2] level=Proven
+    Return
+}
+function f7 name="writesKey2" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k2" receivers=[L2] level=Proven
+    Return
+}
+function f8 name="writesKey3" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k3" receivers=[L2] level=Proven
+    Return
+}
+function f9 name="writesKey4" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k4" receivers=[L2] level=Proven
+    Return
+}
+function f10 name="writesKey5" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k5" receivers=[L2] level=Proven
+    Return
+}
+function f11 name="writesKey6" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k6" receivers=[L2] level=Proven
+    Return
+}
+function f12 name="writesKey7" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k7" receivers=[L2] level=Proven
+    Return
+}
+function f13 name="writesKey8" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k8" receivers=[L2] level=Proven
+    Return
+}
+function f14 name="writesKey9" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k9" receivers=[L2] level=Proven
+    Return
+}
+function f15 name="writesKey10" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k10" receivers=[L2] level=Proven
+    Return
+}
+function f16 name="writesKey11" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k11" receivers=[L2] level=Proven
+    Return
+}
+function f17 name="writesKey12" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k12" receivers=[L2] level=Proven
+    Return
+}
+function f18 name="writesKey13" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k13" receivers=[L2] level=Proven
+    Return
+}
+function f19 name="writesKey14" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k14" receivers=[L2] level=Proven
+    Return
+}
+function f20 name="writesKey15" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k15" receivers=[L2] level=Proven
+    Return
+}
+function f21 name="writesKey16" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k16" receivers=[L2] level=Proven
+    Return
+}
+function f22 name="writesKey17" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k17" receivers=[L2] level=Proven
+    Return
+}
+function f23 name="writesKey18" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k18" receivers=[L2] level=Proven
+    Return
+}
+function f24 name="writesKey19" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k19" receivers=[L2] level=Proven
+    Return
+}
+function f25 name="writesKey20" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k20" receivers=[L2] level=Proven
+    Return
+}
+function f26 name="writesKey21" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k21" receivers=[L2] level=Proven
+    Return
+}
+function f27 name="writesKey22" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k22" receivers=[L2] level=Proven
+    Return
+}
+function f28 name="writesKey23" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k23" receivers=[L2] level=Proven
+    Return
+}
+function f29 name="writesKey24" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k24" receivers=[L2] level=Proven
+    Return
+}
+function f30 name="writesKey25" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k25" receivers=[L2] level=Proven
+    Return
+}
+function f31 name="writesKey26" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k26" receivers=[L2] level=Proven
+    Return
+}
+function f32 name="writesKey27" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k27" receivers=[L2] level=Proven
+    Return
+}
+function f33 name="writesKey28" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k28" receivers=[L2] level=Proven
+    Return
+}
+function f34 name="writesKey29" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k29" receivers=[L2] level=Proven
+    Return
+}
+function f35 name="writesKey30" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k30" receivers=[L2] level=Proven
+    Return
+}
+function f36 name="writesKey31" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k31" receivers=[L2] level=Proven
+    Return
+}
+function f37 name="writesKey32" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k32" receivers=[L2] level=Proven
+    Return
+}
+function f38 name="writesKey33" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k33" receivers=[L2] level=Proven
+    Return
+}
+function f39 name="writesKey34" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k34" receivers=[L2] level=Proven
+    Return
+}
+function f40 name="writesKey35" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k35" receivers=[L2] level=Proven
+    Return
+}
+function f41 name="writesKey36" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k36" receivers=[L2] level=Proven
+    Return
+}
+function f42 name="writesKey37" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k37" receivers=[L2] level=Proven
+    Return
+}
+function f43 name="writesKey38" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k38" receivers=[L2] level=Proven
+    Return
+}
+function f44 name="writesKey39" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k39" receivers=[L2] level=Proven
+    Return
+}
+function f45 name="writesKey40" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k40" receivers=[L2] level=Proven
+    Return
+}
+function f46 name="writesKey41" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k41" receivers=[L2] level=Proven
+    Return
+}
+function f47 name="writesKey42" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k42" receivers=[L2] level=Proven
+    Return
+}
+function f48 name="writesKey43" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k43" receivers=[L2] level=Proven
+    Return
+}
+function f49 name="writesKey44" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k44" receivers=[L2] level=Proven
+    Return
+}
+function f50 name="writesKey45" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k45" receivers=[L2] level=Proven
+    Return
+}
+function f51 name="writesKey46" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k46" receivers=[L2] level=Proven
+    Return
+}
+function f52 name="writesKey47" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k47" receivers=[L2] level=Proven
+    Return
+}
+function f53 name="writesKey48" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k48" receivers=[L2] level=Proven
+    Return
+}
+function f54 name="writesKey49" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k49" receivers=[L2] level=Proven
+    Return
+}
+function f55 name="writesKey50" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k50" receivers=[L2] level=Proven
+    Return
+}
+function f56 name="writesKey51" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k51" receivers=[L2] level=Proven
+    Return
+}
+function f57 name="writesKey52" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k52" receivers=[L2] level=Proven
+    Return
+}
+function f58 name="writesKey53" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k53" receivers=[L2] level=Proven
+    Return
+}
+function f59 name="writesKey54" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k54" receivers=[L2] level=Proven
+    Return
+}
+function f60 name="writesKey55" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k55" receivers=[L2] level=Proven
+    Return
+}
+function f61 name="writesKey56" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k56" receivers=[L2] level=Proven
+    Return
+}
+function f62 name="writesKey57" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k57" receivers=[L2] level=Proven
+    Return
+}
+function f63 name="writesKey58" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k58" receivers=[L2] level=Proven
+    Return
+}
+function f64 name="writesKey59" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k59" receivers=[L2] level=Proven
+    Return
+}
+function f65 name="writesKey60" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k60" receivers=[L2] level=Proven
+    Return
+}
+function f66 name="writesKey61" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k61" receivers=[L2] level=Proven
+    Return
+}
+function f67 name="writesKey62" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k62" receivers=[L2] level=Proven
+    Return
+}
+function f68 name="writesKey63" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k63" receivers=[L2] level=Proven
+    Return
+}
+function f69 name="writesKey64" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k64" receivers=[L2] level=Proven
+    Return
+}
+function f70 name="writesKey65" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k65" receivers=[L2] level=Proven
+    Return
+}
+function f71 name="writesKey66" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k66" receivers=[L2] level=Proven
+    Return
+}
+function f72 name="writesKey67" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k67" receivers=[L2] level=Proven
+    Return
+}
+function f73 name="writesKey68" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k68" receivers=[L2] level=Proven
+    Return
+}
+function f74 name="writesKey69" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    PutSlot v0, -, v1 key="k69" receivers=[L2] level=Proven
+    Return
+}
+function f75 name="callsCallerOfSeventy" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L2, v1: number):
+    v2 = CallDirect v0, v1 function=f4
+    Return
+}
+# CHECK: f5 return: none throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f74 return: none throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1, EnvironmentFields/1, ObjectFields/3)
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v4 CallDirect: writes(ModuleVariables/1, EnvironmentFields/1, ObjectFields/3)
+# CHECK-LABEL: function f4
+# CHECK-COUNT-70: CallDirect: writes(ObjectFields/1)
+# CHECK-NOT: CallDirect
+# CHECK-LABEL: function f75
+# CHECK-NEXT: v2 CallDirect: writes(ObjectFields/[[bits]])

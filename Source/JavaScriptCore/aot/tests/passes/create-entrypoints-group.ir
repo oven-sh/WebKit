@@ -1,0 +1,59 @@
+# Each member of a group gets a group entrypoint with the header of the group, and a generic entrypoint that names it
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints
+# RUN(COUNTED): pass GroupCallsByValue CreateEntrypoints
+# STATISTIC: GroupEntrypoints = 6
+# STATISTIC: GenericEntrypoints = 6
+# STATISTIC: CreateEntrypointsChanges = 12
+# CHECK: group g0 members=[f1, f2, f3, f4, f5, f6]
+# CHECK: outcome: Changed
+# COUNTED-COUNT-6: role=GroupEntrypoint captures=[{type=f1|f2|f3|f4|f5|f6}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}]
+# COUNTED-NOT: role=GroupEntrypoint
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=f1|f2|f3|f4|f5|f6}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1|f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f1, f2, f3, f4, f5, f6]
+    Return v2
+}
+function f1 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f5 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f6 name="sixth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f7 name="outsideGroup" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK: function [[firstGroupEntry]] name="first"{{*}}role=GroupEntrypoint{{*}}derivation={source=f1} creator=Entrypoint{target=f1 group=[f1, f2, f3, f4, f5, f6] arguments=Registers} {
+# CHECK-NEXT: b0([[closure]]: f1|f2|f3|f4|f5|f6, [[argument]]: number):
+# CHECK-NEXT: f1 = AssumeType [[closure]] castType=f1
+# CHECK-NEXT: [[result]]: number = CallDirect [[argument]] function=f1
+# CHECK-NEXT: ReturnCall [[result]] requirement=Allowed
+# CHECK: name="first"{{*}}role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers groupEntrypoint=[[firstGroupEntry]]} {
+# CHECK-NEXT: b0([[firstClosure]]: f1, [[receiver]]: anything, [[boxed]]: anything):
+# CHECK-NEXT: [[number]]: number = Claim [[boxed]] castType=number
+# CHECK-NEXT: [[genericResult]]: number = CallDirect [[number]] function=f1
+# CHECK-NEXT: ReturnCall [[genericResult]] requirement=Allowed
+# CHECK: function [[sixthGroupEntry]] name="sixth"{{*}}role=GroupEntrypoint{{*}}derivation={source=f6} creator=Entrypoint{target=f6 group=[f1, f2, f3, f4, f5, f6] arguments=Registers} {
+# CHECK: name="sixth"{{*}}role=GenericEntrypoint{{*}}groupEntrypoint=[[sixthGroupEntry]]}
+# CHECK-NOT: target=f7

@@ -1,0 +1,43 @@
+# A named read of a namespace object finds the variable of the export and ends there, and a name the module does not export is absent
+# RUN: flow-walk f0
+# RUN(NODES): flow-solve nodes
+# CHECK: f0@i{{*}} v1 Get {"a"}
+# CHECK-NEXT: namespace m1: Value own Proven namespace m1 "a"
+# CHECK-NEXT: f0@i{{*}} v3 Get {"missing"}
+# CHECK-NEXT: namespace m1: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v5 Get {"b"}
+# CHECK-NEXT: namespace m1: Value own Proven namespace m1 "b"
+# CHECK-NOT: namespace m1:
+# NODES: Variable(g0) = {1}
+# NODES: Variable(g1) = {"s"}
+# NODES: Variable(g2) = {1}
+# NODES: Variable(g3) = {undefined}
+# NODES: Variable(g4) = {"s"}
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="library.js" displayPath="library.js" body=f1 exports=[{name="a" variable=g0}, {name="b" variable=g1}]
+entry module=m0
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="b" module=m1 declared={type=anything}
+variable g2 name="readOfA" module=m0 declared={type=anything}
+variable g3 name="readOfMissing" module=m0 declared={type=anything}
+variable g4 name="readOfB" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="a"
+    PutModuleVariable v1 variable=g2
+    v3 = PropGet v0 key="missing"
+    PutModuleVariable v3 variable=g3
+    v5 = PropGet v0 key="b"
+    PutModuleVariable v5 variable=g4
+    Return
+}
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = String string="s"
+    PutModuleVariable v2 variable=g1
+    Return
+}

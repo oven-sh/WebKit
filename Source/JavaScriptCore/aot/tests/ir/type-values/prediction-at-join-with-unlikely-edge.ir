@@ -1,0 +1,43 @@
+# What a block that is seldom entered passes on does not widen the prediction of a join. Its type does count
+# FORM: Prepared
+# RUN: pass RetypeValues
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fastAndSlowPath" parameters=[{type=boolean}, {type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: Array, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2() frequency=Unlikely:
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f0 name="fastAndSlowPath"
+# CHECK: b3(v3: anything ~ Array):
+
+function f1 name="bothPathsAreLikely" parameters=[{type=boolean}, {type=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: Array, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f1 name="bothPathsAreLikely"
+# CHECK: b3(v3: anything):
+
+function f2 name="bothPathsAreUnlikely" parameters=[{type=boolean}, {type=Array}, {type=string}] results=[{type=anything}] {
+  b0(v0: boolean, v1: Array, v2: string):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    Jump -> next b3(v1)
+  b2() frequency=Unlikely:
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f2 name="bothPathsAreUnlikely"
+# CHECK: b3(v3: string|Array):

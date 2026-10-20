@@ -1,0 +1,28 @@
+# for (const c of "ab") take(c); for (const n of new Uint8Array(2)) take(n)
+# A loop over a string hands out strings and a loop over a typed array primitives: undefined (primitive 0) stands for the step that finds the end. No object and no unknown value comes out of either.
+# RUN: valueflow-why values=f0:v2 values=f0:v8
+# CHECK: IteratorResume
+# CHECK: result {{*}} 2 members: primitive0 primitive7
+# CHECK: IteratorResume
+# CHECK: result {{*}} members: primitive0 primitive1
+# CHECK-NOT: unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="character" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="number" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="ab"
+    v1 = IteratorOpen v0
+    v2 = IteratorResume v1
+    v3 = ResultAt v2 index=1
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=Uint8Array
+    v6 = Construct v5
+    v7 = IteratorOpen v6
+    v8 = IteratorResume v7
+    v9 = ResultAt v8 index=1
+    PutModuleVariable v9 variable=g1
+    Return
+}

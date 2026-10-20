@@ -1,0 +1,44 @@
+# An array literal longer than the limit has positions up to the limit and keeps its other elements in the rest; a literal within the limit stays exact
+# OPTIONS: limit=MaxPositionalParts:2
+# LOSS: MaxPositionalParts x1 f0
+# RUN: flow-sites solved
+# RUN(NODES): flow-solve nodes
+# CHECK: site {{*}} function=f0 value=v5 kind=Instance origin=Operation builtinClass=Array positions=2 class=
+# CHECK: site {{*}} function=f0 value=v6 kind=Instance origin=Operation builtinClass=Array positions=2 class=
+# NODES: Variable(g0) = {L0#[[first]]}
+# NODES-NEXT: Variable(g1) = {undefined|L2#[[third]]|L3#[[fourth]]}
+# NODES-NEXT: Variable(g2) = {L1#[[second]]}
+# NODES: DeclaredPart(Array@f0:v5, 0) = {L2#[[third]]|L3#[[fourth]]}
+# NODES-NEXT: Position(Array@f0:v5, 0) = {L0#[[first]]}
+# NODES-NEXT: Position(Array@f0:v5, 1) = {L1#[[second]]}
+# NODES-NEXT: Position(Array@f0:v6, 0) = {L0#[[first]]}
+# NODES-NEXT: Position(Array@f0:v6, 1) = {L1#[[second]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Third" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Fourth" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="firstOfLong" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="lastOfLong" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="lastOfShort" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    v6 = NewArray v1, v2 contents=anything
+    v7 = Integer integer=0
+    v8 = ElemGet v5, v7
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=3
+    v11 = ElemGet v5, v10
+    PutModuleVariable v11 variable=g1
+    v13 = ElemGet v6, v0
+    PutModuleVariable v13 variable=g2
+    Return
+}

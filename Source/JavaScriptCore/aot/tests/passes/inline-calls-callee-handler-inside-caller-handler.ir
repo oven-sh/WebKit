@@ -1,0 +1,67 @@
+# In a copy a block keeps the handler it names in the callee, and every other block gets the handler of the block with the call
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="catchesItsCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = Call v0
+    Return v3
+  b2(v4) role=CatchHandler:
+    v5 = CatchValue
+    v6 = Call v1, -, v4, v5
+    Return v6
+}
+
+function f1 name="callUnderHandler" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: number):
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v3 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    v4 = Call v3
+    Return v4
+  b2(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: name="callUnderHandler"
+# CHECK-NOT: CallDirect
+# CHECK: b1() handler=b2(v2):
+# CHECK-NEXT: Jump -> next [[entry1]]()
+# CHECK: b2(v5: number) role=CatchHandler:
+# CHECK: [[join1]](v3: anything) handler=b2(v2):
+# CHECK-NEXT: v4: anything = Call v3
+# CHECK: [[entry1]]() handler=b2(v2):
+# CHECK-NEXT: [[first1]]: anything = Call v1
+# CHECK-NEXT: Jump -> next [[covered1]]()
+# CHECK: [[covered1]]() handler=[[inner1]]([[first1]]):
+# CHECK-NEXT: [[second1]]: anything = Call v0
+# CHECK-NEXT: Jump -> next [[join1]]([[second1]])
+# CHECK: [[inner1]]([[passed1]]: anything) role=CatchHandler handler=b2(v2):
+# CHECK-NEXT: [[caught1]]: anything = CatchValue
+# CHECK-NEXT: [[third1]]: anything = Call v1, -, [[passed1]], [[caught1]]
+# CHECK-NEXT: Jump -> next [[join1]]([[third1]])
+
+function f2 name="callWithoutHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
+    v3 = Call v2
+    Return v3
+}
+# CHECK-LABEL: name="callWithoutHandler"
+# CHECK-NOT: CallDirect
+# CHECK: [[join2]](v2: anything):
+# CHECK-NEXT: v3: anything = Call v2
+# CHECK: [[entry2]]():
+# CHECK-NEXT: [[first2]]: anything = Call v1
+# CHECK-NEXT: Jump -> next [[covered2]]()
+# CHECK: [[covered2]]() handler=[[inner2]]([[first2]]):
+# CHECK-NEXT: [[second2]]: anything = Call v0
+# CHECK-NEXT: Jump -> next [[join2]]([[second2]])
+# CHECK: [[inner2]]([[passed2]]: anything) role=CatchHandler:
+# CHECK-NEXT: [[caught2]]: anything = CatchValue

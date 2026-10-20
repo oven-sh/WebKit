@@ -1,0 +1,129 @@
+# A constant record of at most MaxExpandedDataNodes nodes expands, a larger one stays Data without a loss, and so does one whose layout is never allocated
+# FORM: Prepared
+# RUN: pass ExpandData
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Status" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
+layout L1 name="NeverMade" fields=[{key="a" declared={type=number}}] flow={allocation=NeverAllocated}
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}]}
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}]}
+data d2 root=Array{contents=anything elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Hole]}]}
+data d3 root=Array{contents=anything elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]}, Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Hole]}]}
+data d4 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="404" value=Number{value=2}}, {key="b" value=Number{value=3}}]}
+data d5 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="-1" value=Number{value=2}}, {key="b" value=Number{value=3}}]}
+data d6 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}]}
+data d7 root=Array{contents=anything elements=[Number{value=1}, Object{layout=L1 members=[{key="a" value=Number{value=1}}]}]}
+data d8 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=3}}]}
+
+function f0 name="sixteenNodes" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+# CHECK-LABEL: function f0 name="sixteenNodes"
+# CHECK-COUNT-15: = Integer integer=
+# CHECK: v0:{{*}}= NewArray
+# CHECK-NOT: Data
+
+function f1 name="seventeenNodes" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d1
+    Return v0
+}
+# CHECK-LABEL: function f1 name="seventeenNodes"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d1
+# CHECK-NEXT: Return v0
+
+function f2 name="sixteenNodesNested" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d2
+    Return v0
+}
+# CHECK-LABEL: function f2 name="sixteenNodesNested"
+# CHECK-COUNT-3: = NewArray {{*}} contents=number
+# CHECK: v0:{{*}}= NewArray {{*}} contents=anything
+# CHECK-NOT: Data
+
+function f3 name="seventeenNodesNested" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d3
+    Return v0
+}
+# CHECK-LABEL: function f3 name="seventeenNodesNested"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d3
+# CHECK-NEXT: Return v0
+
+function f4 name="neighborsDecideAlone" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d1
+    v1 = Data data=d0
+    v2 = Data data=d3
+    v3 = NewArray v0, v1, v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f4 name="neighborsDecideAlone"
+# CHECK: v0:{{*}}= Data data=d1
+# CHECK: v1:{{*}}= NewArray
+# CHECK-NEXT: v2:{{*}}= Data data=d3
+# CHECK-NEXT: v3:{{*}}= NewArray v0, v1, v2 contents=anything
+
+function f5 name="arrayIndexAmongFields" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d4
+    Return v0
+}
+# CHECK-LABEL: function f5 name="arrayIndexAmongFields"
+# CHECK: [[a5]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[index5]]:{{*}}= Integer integer=2
+# CHECK-NEXT: [[b5]]:{{*}}= Integer integer=3
+# CHECK-NEXT: [[head5]]:{{*}}= NewObject -, [[a5]], [[b5]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropDefine [[head5]], [[index5]] key="404"
+# CHECK-NEXT: v0:{{*}}= FinishObject [[head5]]
+# CHECK-NEXT: Return v0
+
+function f6 name="otherKeyAmongFields" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d5
+    Return v0
+}
+# CHECK-LABEL: function f6 name="otherKeyAmongFields"
+# CHECK: [[a6]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[other6]]:{{*}}= Integer integer=2
+# CHECK-NEXT: [[b6]]:{{*}}= Integer integer=3
+# CHECK-NEXT: [[head6]]:{{*}}= NewObject -, [[a6]] layout=L0 fields=[0]
+# CHECK-NEXT: PropDefine [[head6]], [[other6]] key="-1"
+# CHECK-NEXT: PropDefine [[head6]], [[b6]] key="b"
+# CHECK-NEXT: v0:{{*}}= FinishObject [[head6]]
+# CHECK-NEXT: Return v0
+
+function f7 name="onlyFields" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d8
+    Return v0
+}
+# CHECK-LABEL: function f7 name="onlyFields"
+# CHECK: v0:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: Return v0
+# CHECK-NOT: FinishObject
+
+function f8 name="layoutNeverAllocated" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d6
+    Return v0
+}
+# CHECK-LABEL: function f8 name="layoutNeverAllocated"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d6
+# CHECK-NEXT: Return v0
+
+function f9 name="nestedLayoutNeverAllocated" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d7
+    Return v0
+}
+# CHECK-LABEL: function f9 name="nestedLayoutNeverAllocated"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= Data data=d7
+# CHECK-NEXT: Return v0

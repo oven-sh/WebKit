@@ -1,0 +1,23 @@
+# i = launder([].values()); v = i.next
+# An iterator reaches native code, and Iterator.prototype with it. Its members stay behind: nothing reads a key nobody can name, so native code applies no getter and Iterator stays outside.
+# RUN: flow-solve sinks
+# CHECK-LABEL: nativeCode {
+# CHECK: IteratorPrototype
+# CHECK-NOT: , Iterator,
+# CHECK-LABEL: unknownJavaScript {
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="launder" [isFreeName]
+    v2 = NewArray
+    v3 = PropGet v2 key="values"
+    v4 = Call v3, v2 calleeKey="values"
+    v5 = Call v1, -, v4
+    v6 = PropGet v5 key="next"
+    PutModuleVariable v6 variable=g0
+    Return
+}

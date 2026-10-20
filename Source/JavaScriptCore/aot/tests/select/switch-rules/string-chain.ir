@@ -1,0 +1,88 @@
+# An if chain that compares one value with string constants becomes one SwitchString
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchStringGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="four-strings"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: = String string="a"
+# CHECK-NEXT: = String string="b"
+# CHECK-NEXT: = String string="c"
+# CHECK-NEXT: = String string="d"
+# CHECK-NEXT: SwitchString v0 strings=["a", "b", "c", "d"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+# CHECK-NEXT: b1():
+# CHECK-NOT: StrictEq
+function f0 name="four-strings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="c"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v7 = String string="d"
+    v8 = StrictEq v0, v7
+    Branch v8 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="any-text"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: SwitchString v0 strings=["", "\u{e9}", "longer than thirty-two characters of text"] -> case b1(), case b2(), case b3(), otherwise b4()
+function f1 name="any-text" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string=""
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="\u{e9}"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="longer than thirty-two characters of text"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}
+
+# CHECK-LABEL: function f2 name="two-strings"
+# CHECK-NOT: Switch
+function f2 name="two-strings" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    Return v0
+}

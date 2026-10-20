@@ -6,15 +6,16 @@
 #include "config.h"
 #include "B3RotateLoops.h"
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
-#include "B3FixSSA.h"
 #include "B3LoopUtilities.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
-#include <wtf/IndexSet.h>
+#include "B3RegionCloner.h"
+#include "B3ValueInlines.h"
+#include "B3VariableValue.h"
 
 namespace JSC { namespace B3 {
 
@@ -39,46 +40,57 @@ public:
             return false;
 
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
-        demoteValuesEscapingTestBlocks();
+        RegionCloner cloner(m_proc);
+        for (auto& rotation : m_rotations) {
+            for (BasicBlock* block : rotation.testBlocks)
+                cloner.addBlock(block);
+        }
+        cloner.demoteEscapingValues();
+        m_proc.resetValueOwners();
         for (auto& rotation : m_rotations)
-            rotate(rotation);
-        m_proc.resetReachability();
-        m_proc.invalidateCFG();
-        return true;
+            rotate(cloner, rotation);
+        return cloner.finish();
     }
 
 private:
-    static constexpr unsigned maxNumberOfCopiedValues = 12;
-    static constexpr unsigned maxNumberOfRareBlocks = 8;
-
     struct Rotation {
         unsigned depth { 0 };
         Vector<BasicBlock*, 4> testBlocks;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
+        std::optional<InductionRecord> induction;
+        bool keepsBackEdgeToGuard { false };
     };
 
-    static bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
+    bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
     {
-        Vector<BasicBlock*, maxNumberOfRareBlocks> region { start };
+        Vector<BasicBlock*, 8> region { start };
         for (unsigned i = 0; i < region.size(); ++i) {
             if (region[i] == body || loops.innerMostLoopOf(region[i]) != &loop)
                 return false;
             for (BasicBlock* successor : region[i]->successorBlocks()) {
                 if (successor == loop.header() || !loops.belongsTo(successor, loop) || region.contains(successor))
                     continue;
-                if (region.size() == maxNumberOfRareBlocks)
+                if (region.size() == m_proc.limit(Limit::MaxRareBlocksPerRotatedLoop)) {
+                    m_proc.didReachLimit(Limit::MaxRareBlocksPerRotatedLoop, start->at(0)->origin());
                     return false;
+                }
                 region.append(successor);
             }
         }
-        return true;
+        for (unsigned i = 1; i < region.size(); ++i) {
+            for (BasicBlock* predecessor : region[i]->predecessors()) {
+                if (!region.contains(predecessor))
+                    return false;
+            }
+        }
+        return start->numPredecessors() == 1;
     }
 
-    static bool isBottomTested(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* latch)
+    bool isBottomTested(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* latch)
     {
         BasicBlock* block = latch;
-        for (unsigned i = 0; i < maxNumberOfRareBlocks; ++i) {
+        for (uint64_t i = 0; i < m_proc.limit(Limit::MaxRareBlocksPerRotatedLoop); ++i) {
             if (block->last()->opcode() == Branch)
                 return !loops.belongsTo(block->successorBlock(0), loop) || !loops.belongsTo(block->successorBlock(1), loop);
             if (block->last()->opcode() != Jump || block->numPredecessors() != 1 || block == loop.header())
@@ -89,15 +101,39 @@ private:
             }
             block = block->predecessor(0);
         }
+        m_proc.didReachLimit(Limit::MaxRareBlocksPerRotatedLoop, latch->at(0)->origin());
         return false;
+    }
+
+    static bool hasLikelyEdgeTo(BasicBlock* from, BasicBlock* to)
+    {
+        for (const FrequentedBlock& successor : from->successors()) {
+            if (successor.block() == to && isLikelySuccessor(from, successor))
+                return true;
+        }
+        return false;
+    }
+
+    std::optional<InductionRecord> findInduction(BasicBlock* header) const
+    {
+        for (Value* value : *header) {
+            if (value->opcode() != Phi)
+                continue;
+            if (std::optional<InductionRecord> record = m_proc.knownInduction(value))
+                return record;
+        }
+        return std::nullopt;
     }
 
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         Rotation rotation;
+        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
         for (BasicBlock* predecessor : loop.header()->predecessors()) {
-            if (loops.belongsTo(predecessor, loop) && predecessor->frequency() * 8 >= loop.header()->frequency())
+            if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header()))
                 rotation.latches.append(predecessor);
+            else if (loops.belongsTo(predecessor, loop))
+                rotation.keepsBackEdgeToGuard = true;
         }
         if (rotation.latches.isEmpty())
             return;
@@ -121,8 +157,10 @@ private:
                     return;
                 numberOfCopiedValues += emitsInstructions(value);
             }
-            if (numberOfCopiedValues > maxNumberOfCopiedValues)
+            if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop)) {
+                m_proc.didReachLimit(Limit::MaxCopiedValuesPerRotatedLoop, loop.header()->at(0)->origin());
                 return;
+            }
             rotation.testBlocks.append(block);
 
             BasicBlock* next = nullptr;
@@ -132,9 +170,9 @@ private:
                 for (unsigned i = 0; i < 2; ++i) {
                     const FrequentedBlock& staying = block->successor(i);
                     const FrequentedBlock& other = block->successor(1 - i);
-                    if (!loops.belongsTo(staying.block(), loop) || isRare(staying, block))
+                    if (!loops.belongsTo(staying.block(), loop) || staying.isRare())
                         continue;
-                    bool otherIsRare = isRare(other, block);
+                    bool otherIsRare = other.isRare();
                     bool otherLeaves = !loops.belongsTo(other.block(), loop);
                     if (otherLeaves && otherIsRare) {
                         next = staying.block();
@@ -145,8 +183,7 @@ private:
                     if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
                         return;
                     rotation.body = staying.block();
-                    for (BasicBlock* testBlock : rotation.testBlocks)
-                        m_testBlocks.add(testBlock);
+                    rotation.induction = findInduction(loop.header());
                     m_rotations.append(WTF::move(rotation));
                     return;
                 }
@@ -157,86 +194,68 @@ private:
         }
     }
 
-    void demoteValuesEscapingTestBlocks()
+    void rotate(RegionCloner& cloner, const Rotation& rotation)
     {
-        m_proc.resetValueOwners();
-        IndexSet<Value*> valuesToDemote;
-        for (BasicBlock* block : m_proc) {
-            for (Value* value : *block) {
-                if (value->opcode() == Phi && m_testBlocks.contains(block))
-                    valuesToDemote.add(value);
-                for (Value* child : value->children()) {
-                    if (child->owner != block && m_testBlocks.contains(child->owner))
-                        valuesToDemote.add(child);
-                }
-            }
-        }
-        demoteValues(m_proc, valuesToDemote);
-    }
-
-    void rotate(const Rotation& rotation)
-    {
-        double guardFrequency = 0;
-        for (BasicBlock* predecessor : rotation.testBlocks[0]->predecessors()) {
-            if (!rotation.latches.contains(predecessor))
-                guardFrequency += predecessor->frequency();
-        }
-        Vector<BasicBlock*, 4> copies;
-        for (BasicBlock* block : rotation.testBlocks)
-            copies.append(m_proc.addBlock(block->frequency()));
-        for (unsigned i = 0; i < rotation.testBlocks.size(); ++i) {
-            BasicBlock* block = rotation.testBlocks[i];
-            BasicBlock* copy = copies[i];
-            UncheckedKeyHashMap<Value*, Value*> map;
-            for (Value* value : *block) {
-                Value* clone = m_proc.clone(value);
-                for (Value*& child : clone->children()) {
-                    if (Value* replacement = map.get(child))
-                        child = replacement;
-                }
-                if (value->type() != Void)
-                    map.add(value, clone);
-                copy->append(clone);
-            }
-            copy->successors() = block->successors();
-            if (i + 1 < rotation.testBlocks.size())
-                copy->replaceSuccessor(rotation.testBlocks[i + 1], copies[i + 1]);
-            block->setFrequency(std::min(block->frequency(), guardFrequency));
-        }
+        RegionCloner::BlockMap copies = cloner.cloneBlocks(rotation.testBlocks.span());
+        if (rotation.induction)
+            transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
-            latch->replaceSuccessor(rotation.testBlocks[0], copies[0]);
+            latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
+        if (!rotation.keepsBackEdgeToGuard)
+            removePolls(rotation.testBlocks.span());
 
-        BasicBlock* preHeader = m_proc.addBlock(rotation.testBlocks.last()->frequency());
+        BasicBlock* preHeader = m_proc.addBlock();
         preHeader->appendNew<Value>(m_proc, Jump, rotation.body->at(0)->origin());
         preHeader->setSuccessors(FrequentedBlock(rotation.body));
         rotation.testBlocks.last()->replaceSuccessor(rotation.body, preHeader);
+
+        m_proc.addRemark({ RemarkKind::LoopRotated, GaveUpReason::None, rotation.testBlocks[0]->at(0)->origin(), std::nullopt });
+    }
+
+    static void removePolls(std::span<BasicBlock* const> blocks)
+    {
+        for (BasicBlock* block : blocks) {
+            for (Value* value : *block) {
+                if (isLoopPoll(value))
+                    value->replaceWithNop();
+            }
+        }
+    }
+
+    void transferInduction(const Rotation& rotation, const RegionCloner::BlockMap& copies)
+    {
+        const InductionRecord& record = *rotation.induction;
+        Variable* variable = nullptr;
+        for (Value* value : *record.phi->owner) {
+            if (value->opcode() == Set && value->child(0) == record.phi)
+                variable = value->as<VariableValue>()->variable();
+        }
+        if (!variable)
+            return;
+        auto copyOf = [&](Value* value) -> Value* {
+            BasicBlock* copy = copies.get(value->owner);
+            if (!copy)
+                return value;
+            size_t index = value->owner->values().find(value);
+            RELEASE_ASSERT(index != notFound);
+            return copy->at(index);
+        };
+        DemotedInduction demoted;
+        demoted.variable = variable;
+        demoted.header = rotation.body;
+        demoted.next = copyOf(record.next);
+        demoted.test = record.test ? copyOf(record.test) : nullptr;
+        demoted.step = record.step;
+        demoted.doesNotWrap = record.doesNotWrap;
+        m_proc.setKnownInduction(demoted);
     }
 
     Procedure& m_proc;
     const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
-    IndexSet<BasicBlock*> m_testBlocks;
 };
 
 } // anonymous namespace
-
-bool simplifyTerminals(Procedure& proc)
-{
-    PhaseScope phaseScope(proc, "simplifyTerminals"_s);
-    bool changed = false;
-    for (BasicBlock* block : proc) {
-        Value* terminal = block->last();
-        if (terminal->opcode() != Branch || !terminal->child(0)->hasInt())
-            continue;
-        terminal->replaceWithJump(block, terminal->child(0)->asInt() ? block->taken() : block->notTaken());
-        changed = true;
-    }
-    if (changed) {
-        proc.resetReachability();
-        proc.invalidateCFG();
-    }
-    return changed;
-}
 
 bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
 {
@@ -247,4 +266,4 @@ bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

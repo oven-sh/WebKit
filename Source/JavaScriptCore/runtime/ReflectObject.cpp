@@ -115,15 +115,27 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
     if (!argumentsObject)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the second argument be an object"_s));
 
-    uint64_t length = toLength(globalObject, argumentsObject);
-    RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
-    if (length > maxArguments || !vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length)) [[unlikely]] {
-        arguments.overflowCheckNotNeeded();
-        throwStackOverflowError(globalObject, scope);
-        return encodedJSValue();
-    }
-    for (uint64_t index = 0; index < length; ++index) {
-        arguments.append(argumentsObject->getIndex(globalObject, index));
+#if ENABLE(AOT)
+    // Bytecode spreads the list of `Reflect.construct(f, list)` itself, and throws before it reads an element of a list that does not fit the stack. Compiled code calls this function.
+    if (vm.hasCompiledCode()) {
+        uint64_t length = toLength(globalObject, argumentsObject);
+        RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
+        if (length > maxArguments || !vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length)) [[unlikely]] {
+            arguments.overflowCheckNotNeeded();
+            throwStackOverflowError(globalObject, scope);
+            return encodedJSValue();
+        }
+        for (uint64_t index = 0; index < length; ++index) {
+            arguments.append(argumentsObject->getIndex(globalObject, index));
+            RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
+        }
+    } else
+#endif
+    {
+        forEachInArrayLike(globalObject, argumentsObject, [&] (JSValue value) -> bool {
+            arguments.append(value);
+            return true;
+        });
         RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
     }
     if (arguments.hasOverflowed()) [[unlikely]] {
@@ -157,11 +169,7 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDefineProperty, (JSGlobalObject* globalObj
     // Reflect.defineProperty should not throw an error when the defineOwnProperty operation fails.
     bool shouldThrow = false;
     JSObject* targetObject = asObject(target);
-    bool isDefined = targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isDefined && targetObject->recordIfOnlyLockRejects(vm, propertyName.impl(), true))
-        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->lockViolationMessage(vm, propertyName.impl(), UnconfigurablePropertyChangeAccessMechanismError)));
-    return JSValue::encode(jsBoolean(isDefined));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow))));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.getownpropertydescriptor
@@ -254,13 +262,8 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSet, (JSGlobalObject* globalObject, CallFr
 
     // Do not raise any readonly errors that happen in strict mode.
     bool shouldThrowIfCantSet = false;
-    PutPropertySlot slot(receiver, shouldThrowIfCantSet, PutPropertySlot::ReflectSet);
-    bool isImmutableObjectIndex = receiver == target && targetObject->structure()->hasImmutableProperties() && parseIndex(propertyName);
-    bool isStored = !isImmutableObjectIndex && targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isStored && receiver == target && targetObject->recordIfOnlyLockRejects(vm, propertyName.impl(), true))
-        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->lockViolationMessage(vm, propertyName.impl(), ReadonlyPropertyWriteError)));
-    return JSValue::encode(jsBoolean(isStored));
+    PutPropertySlot slot(receiver, shouldThrowIfCantSet);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot))));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.setprototypeof
@@ -281,11 +284,6 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     bool shouldThrowIfCantSet = false;
     bool didSetPrototype = object->setPrototype(vm, globalObject, proto, shouldThrowIfCantSet);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    bool wouldInheritFromItself = false;
-    for (JSValue next = proto; !didSetPrototype && next.isObject() && !wouldInheritFromItself && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect())
-        wouldInheritFromItself = asObject(next) == object;
-    if (!didSetPrototype && !wouldInheritFromItself && object != globalObject->objectPrototype() && object->recordIfOnlyLockRejects(vm, nullptr, true))
-        return JSValue::encode(throwTypeError(globalObject, scope, object->lockViolationMessage(vm, nullptr, ReadonlyPropertyWriteError)));
     return JSValue::encode(jsBoolean(didSetPrototype));
 }
 

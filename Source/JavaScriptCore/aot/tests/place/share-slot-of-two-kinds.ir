@@ -1,0 +1,51 @@
+# Fields of one name whose representations are of two kinds. Where the accesses that reach both weigh as much as those that know the layout, both fields get the representation that holds either, as far as the cells have the bytes.
+# Where the accesses that know the layout weigh more, each field keeps its own, and the access through both has two groups
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 1
+# STATISTIC: SharesRefused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ReadTogetherNumber" fields=[{key="together" declared={type=number} flags=[IsRequired]}]
+layout L1 name="ReadTogetherAnything" fields=[{key="together" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ReadAloneNumber" fields=[{key="alone" declared={type=number} flags=[IsRequired]}]
+layout L3 name="ReadAloneAnything" fields=[{key="alone" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="together" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="alone" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v1 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v1 layout=L3 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v6 variable=g0
+    PutModuleVariable v8 variable=g1
+    PutModuleVariable v10 variable=g1
+    v15 = GetModuleVariable variable=g0
+    v16 = PropGet v15 key="together"
+    v17 = PropGet v4 key="together"
+    v18 = GetModuleVariable variable=g1
+    v19 = PropGet v18 key="alone"
+    v20 = PropGet v8 key="alone"
+    v21 = PropGet v8 key="alone"
+    Return
+}
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: "together" JSValue @16
+# CHECK: L2 CompiledObject size=32
+# CHECK-NEXT: "alone" Double @16
+# CHECK: "together" {L0 L1} read
+# CHECK-NEXT: one location JSValue @16
+# CHECK: "alone" {L2 L3} read
+# CHECK-NEXT: 2 groups: {L2} Double @16, {L3} JSValue @16

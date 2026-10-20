@@ -1,0 +1,73 @@
+# A loop over an array gives the loop variable the elements through one array iterator, a spread gives them to the array it fills, a typed array gives numbers, and nothing reaches a sink
+# RUN: flow-solve nodes sinks
+# RUN(SPREAD): flow-solve nodes
+# RUN(BYTES): flow-solve nodes
+# CHECK: Variable(g0) = {undefined|L0#[[a]]|L1#[[b]]}
+# CHECK-NEXT: Variable(g1) = {undefined|int[0, 255]}
+# CHECK-NEXT: Variable(g2) = {{*}}unknown}
+# CHECK: , f0, v4) = {ArrayIterator@f0:[[iterator]]}
+# CHECK: nativeCode {
+# CHECK-NOT: L0#
+# CHECK-NOT: L1#
+# CHECK-NOT: @f0:
+# SPREAD: Variable(g0) = {undefined|L0#[[a]]|L1#[[b]]}
+# SPREAD: DeclaredPart(Array@f0:v10, 0) = {undefined|L0#[[a]]|L1#[[b]]}
+# BYTES: , f0, v14) = {ArrayIterator@f0:[[iterator]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="element" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="byte" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="ofUnknownIterable" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewArray v1, v2 contents=anything
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v8 = ResultAt v6 index=1
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1()
+  b3():
+    v10 = NewArray contents=anything
+    AppendSpread v10, v3
+    v12 = Builtin builtin=Uint8Array
+    v13 = Construct v12, -, v0
+    v14 = IteratorOpen v13
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v16 = IteratorResume v14
+    v17 = ResultAt v16
+    Branch v17 -> taken b6(), notTaken b5()
+  b5():
+    v18 = ResultAt v16 index=1
+    PutModuleVariable v18 variable=g1
+    Jump -> next b4()
+  b6():
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="input" [isFreeName]
+    v22 = IteratorOpen v21
+    Jump -> next b7()
+  b7():
+    LoopHint
+    v24 = IteratorResume v22
+    v25 = ResultAt v24
+    Branch v25 -> taken b9(), notTaken b8()
+  b8():
+    v26 = ResultAt v24 index=1
+    PutModuleVariable v26 variable=g2
+    Jump -> next b7()
+  b9():
+    Return
+}

@@ -1,0 +1,148 @@
+# A spread of a pristine array appends its elements at once, and every other iterable is a loop that the same run expands
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 4
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="provenArray" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="provenArray"
+# CHECK: b0(v0: Array<number, pristine[Storage, Names]>):
+# CHECK-NEXT: v1: Array = NewArray contents=anything
+# CHECK-NEXT: AppendElements v1, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# ABSENT-LABEL: function f0 name="provenArray"
+
+function f1 name="namesAloneAreProven" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Names]>):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# Appending at once reads the storage, so it needs both proofs. The loop side needs the names alone, which the type has.
+# CHECK-LABEL: function f1 name="namesAloneAreProven"
+# CHECK: [[isPristine1]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine1]] -> taken [[pristine1]](| 0), notTaken
+# CHECK: [[pristine1]]([[guard1]]: guard):
+# CHECK-NEXT: AppendElements v1, v0, [[guard1]]
+# CHECK: = ElemGet
+# ABSENT-LABEL: function f1 name="namesAloneAreProven"
+# ABSENT-NOT: aspects=[Names]
+# ABSENT-NOT: @@iterator
+
+function f2 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="unknown"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Array = NewArray contents=anything
+# CHECK-NEXT: [[isArray2]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray2]] -> taken [[array2]](| 0), notTaken [[other2]](| 0)
+# CHECK-NEXT: [[after2]]():
+# CHECK-NEXT: Return v1
+# Two failing edges lead to the loop, so neither test is known to have failed there: an array with odd storage keeps the index loop.
+# CHECK-NEXT: [[loopEntry2]]([[source2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[isArrayAgain2]]: boolean = TypeTest [[source2]] testedType=Array
+# CHECK: [[array2]]([[subject2]]: Array):
+# CHECK-NEXT: [[isPristine2]]: boolean = IsPristine [[subject2]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine2]] -> taken [[pristine2]](| 0), notTaken [[changed2]]()
+# CHECK-NEXT: [[other2]]([[rest2]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[loopEntry2]]([[rest2]])
+# CHECK-NEXT: [[pristine2]]([[guard2]]: guard):
+# CHECK-NEXT: AppendElements v1, [[subject2]], [[guard2]]
+# CHECK-NEXT: Jump -> next [[after2]]()
+# CHECK-NEXT: [[changed2]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[loopEntry2]]([[subject2]])
+# CHECK-NEXT: {{*}}: int[0, 9007199254740991]) frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = PropGet {{*}} key="length"
+# CHECK: AppendElement v1,
+# CHECK: Jump -> next [[protocolHeader2]]()
+# CHECK-NEXT: [[protocolHeader2]]() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Call
+# CHECK: AppendElement v1,
+# CHECK: key=@@iterator
+# CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Names]
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# ABSENT-LABEL: function f2 name="unknown"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: handler=
+# ABSENT-COUNT-1: AppendElements
+# ABSENT-NOT: AppendElements
+
+function f3 name="set" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
+  b0(v0: Set<number, pristine[Names]>):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="set"
+# CHECK: LoopHint
+# CHECK-NEXT: [[step3]]: undefined = SetNext
+# CHECK: [[element3]]: {{*}} = ResultAt [[step3]] index=2
+# CHECK: AppendElement v1, [[value3]]
+# CHECK: ({{*}}: boolean, [[value3]]: anything,
+# CHECK: Jump -> next {{*}}, [[element3]],
+# ABSENT-LABEL: function f3 name="set"
+# ABSENT-NOT: AppendElements
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: @@iterator
+
+function f4 name="arrayNotPristine" parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# That storage and names together failed does not say that the names failed: the loop asks for the names alone.
+# CHECK-LABEL: function f4 name="arrayNotPristine"
+# CHECK: [[isPristine4]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine4]] -> taken [[pristine4]](| 0), notTaken [[changed4]]()
+# CHECK: [[loopEntry4]]([[source4]]: Array<number>) frequency=Unlikely:
+# CHECK-NEXT: [[namesArePristine4]]: boolean = IsPristine [[source4]] builtinClass=Array aspects=[Names]
+# CHECK: [[pristine4]]([[guard4]]: guard):
+# CHECK-NEXT: AppendElements v1, v0, [[guard4]]
+# CHECK: [[changed4]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[loopEntry4]](v0)
+# CHECK: = PropGet [[source4]] key="length"
+# CHECK: key=@@iterator
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# CHECK: = ElemGet [[source4]],
+# ABSENT-LABEL: function f4 name="arrayNotPristine"
+# ABSENT-NOT: TypeTest v0
+# ABSENT-NOT: testedType=Array
+
+function f5 name="number" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f5 name="number"
+# CHECK: key=@@iterator
+# CHECK: LoopHint
+# CHECK: AppendElement v1,
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# ABSENT-LABEL: function f5 name="number"
+# ABSENT-NOT: AppendElements
+# ABSENT-NOT: IsPristine
+# ABSENT-NOT: testedType=Array
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

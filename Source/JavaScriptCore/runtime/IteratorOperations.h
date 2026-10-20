@@ -115,7 +115,7 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+    JSCell* storage = storageCell;
     JSMap::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -123,7 +123,7 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+        storage = storageCell;
         entry = JSMap::Helper::iterationEntry(*storage) + 1;
 
         JSValue value;
@@ -173,7 +173,7 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    JSCell* storage = storageCell;
     JSSet::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -181,7 +181,7 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+        storage = storageCell;
         entry = JSSet::Helper::iterationEntry(*storage) + 1;
         JSValue entryKey = JSSet::Helper::getIterationEntryKey(*storage);
 
@@ -242,13 +242,9 @@ ALWAYS_INLINE void forEachInIterationRecord(JSGlobalObject* globalObject, Iterat
     auto callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, asObject(nextMethod), 0);
-        if (scope.exception()) [[unlikely]]
-            return;
-        cachedCall = &cachedCallHolder.value();
-    }
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, nextMethod.getObject(), callData, 0);
+    if (scope.exception()) [[unlikely]]
+        return;
 
     while (true) {
         JSValue next;
@@ -358,13 +354,9 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
     auto callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(&globalObject, asObject(nextMethod), 0);
-        if (scope.exception()) [[unlikely]]
-            return;
-        cachedCall = &cachedCallHolder.value();
-    }
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, &globalObject, nextMethod.getObject(), callData, 0);
+    if (scope.exception()) [[unlikely]]
+        return;
 
     while (true) {
         JSValue next;

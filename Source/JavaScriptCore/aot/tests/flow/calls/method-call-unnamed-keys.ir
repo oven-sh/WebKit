@@ -1,0 +1,37 @@
+# A call of a member also looks at the node that each holder has for the keys nobody names. While that node holds nothing to call, the call makes no statement for it. A function that arrives there later, by a store under an unknown key, is called all the same
+# RUN: flow-links calls statements
+# CHECK: f0 v6 -> i{{*}} f1 Call Once
+# CHECK-NOT: f0 v13 ->
+# CHECK: statement i{{*}} v6 n{{*}}stringProperties) Call Once
+# CHECK-NOT: statement i{{*}} v13
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = PropGet v4 key="run"
+    v6 = Call v5, v4 calleeKey="run"
+    v7 = NewClosure function=f2
+    v8 = Call v7
+    ElemSet v4, v2, v8 mode=Strict
+    v10 = NewObject layout=L0
+    v11 = FinishObject v10
+    v12 = PropGet v11 key="run"
+    v13 = Call v12, v11 calleeKey="run"
+    Return
+}
+function f1 name="stored" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="make" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    Return v0
+}

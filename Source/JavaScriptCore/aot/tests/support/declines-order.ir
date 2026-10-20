@@ -1,0 +1,29 @@
+# declines are sorted by location, kind, function and value, one for each kind and place with its lowest limit and count, whatever the threads and the order of adding
+# OPTIONS: report=Declines
+# RUN: losses declines LoopNotVersioned,f1,at=0:10 HotCallNotInlined,f1,at=0:10 HotCallNotInlined,f0,v3,at=0:10 HotCallNotInlined,f0,v2,at=0:10 AllocationNotSunk,f2,at=0:4 HotCallNotInlined,count=2 HotCallNotInlined,count=1 HotCallNotInlined,limit=MaxLayoutsInType,count=1 HotCallNotInlined,f1,at=0:10
+# RUN: losses declines LoopNotVersioned,f1,at=0:10 HotCallNotInlined,f1,at=0:10 HotCallNotInlined,f0,v3,at=0:10 HotCallNotInlined,f0,v2,at=0:10 AllocationNotSunk,f2,at=0:4 HotCallNotInlined,count=2 HotCallNotInlined,count=1 HotCallNotInlined,limit=MaxLayoutsInType,count=1 HotCallNotInlined,f1,at=0:10 threads=16 seed=1
+# RUN: losses declines LoopNotVersioned,f1,at=0:10 HotCallNotInlined,f1,at=0:10 HotCallNotInlined,f0,v3,at=0:10 HotCallNotInlined,f0,v2,at=0:10 AllocationNotSunk,f2,at=0:4 HotCallNotInlined,count=2 HotCallNotInlined,count=1 HotCallNotInlined,limit=MaxLayoutsInType,count=1 HotCallNotInlined,f1,at=0:10 threads=16 seed=2
+# CHECK: declines 6 of 9 added
+# CHECK-NEXT: AllocationNotSunk f2 - 0:4 None [0]
+# CHECK-NEXT: HotCallNotInlined f0 v2 0:10 None [0]
+# CHECK-NEXT: HotCallNotInlined f0 v3 0:10 None [0]
+# CHECK-NEXT: HotCallNotInlined f1 - 0:10 None [0]
+# CHECK-NEXT: LoopNotVersioned f1 - 0:10 None [0]
+# CHECK-NEXT: HotCallNotInlined - - - None [1]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="second" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="third" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

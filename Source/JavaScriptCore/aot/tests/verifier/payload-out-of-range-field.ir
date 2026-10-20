@@ -1,0 +1,17 @@
+# A field index stays within the fields of the layout beside it
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
+function f0 name="bad" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    Return
+}
+function f1 name="good" captures=[{type=env L0}] results=[{type=undefined}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return
+}

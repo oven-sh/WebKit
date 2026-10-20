@@ -27,21 +27,12 @@
 
 #if ENABLE(B3_JIT)
 
-#include <wtf/Vector.h>
-
 namespace JSC { namespace B3 {
 
 class Procedure;
-#if USE(BUN_JSC_ADDITIONS)
-class UpsilonValue;
-#endif
 
 // The 'Impl' version of this function does not have a scope phase. It is public so that B3ReduceStrength can use it in its fixpoint.
-#if USE(BUN_JSC_ADDITIONS)
-bool eliminateDeadCodeImpl(Procedure&, Vector<UpsilonValue*>* liveUpsilons = nullptr);
-#else
 bool eliminateDeadCodeImpl(Procedure&);
-#endif
 JS_EXPORT_PRIVATE bool eliminateDeadCode(Procedure&);
 
 } } // namespace JSC::B3

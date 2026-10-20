@@ -64,6 +64,32 @@ bool shouldValidateIRAtEachPhase()
     return Options::validateGraphAtEachPhase();
 }
 
+bool shouldValidateIR(const Procedure& procedure)
+{
+    switch (procedure.policy().validation.level) {
+    case ValidationLevel::FromOptions:
+        return shouldValidateIR();
+    case ValidationLevel::AtBoundaries:
+    case ValidationLevel::AtEachPhase:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return true;
+}
+
+bool shouldValidateIRAtEachPhase(const Procedure& procedure)
+{
+    switch (procedure.policy().validation.level) {
+    case ValidationLevel::FromOptions:
+    case ValidationLevel::AtBoundaries:
+        return shouldValidateIRAtEachPhase();
+    case ValidationLevel::AtEachPhase:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return true;
+}
+
 bool shouldSaveIRBeforePhase()
 {
     return Options::verboseValidationFailure();

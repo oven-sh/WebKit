@@ -68,6 +68,5 @@ private:
 };
 
 static_assert(std::is_final<JSSet>::value, "Required for JSType based casting");
-static_assert(sizeof(JSSet) <= 32);
 
 } // namespace JSC

@@ -32,10 +32,7 @@
 #include "config.h"
 #include "JSGlobalObject.h"
 
-#include "AOTImage.h"
-#include "AOTRuntime.h"
-#include "AOTTypedObject.h"
-
+#include "AOTRemovableFeature.h"
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "InternalFieldTuple.h"
@@ -100,7 +97,6 @@
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
 #include "HeapIterationScope.h"
-#include "ImmutableIntrinsics.h"
 #include "ImportMap.h"
 #include "IntlCache.h"
 #include "IntlCollator.h"
@@ -350,9 +346,14 @@
 #include "runtime/VM.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/FixedVector.h>
-#include <wtf/SetForScope.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/text/MakeString.h>
+
+#if ENABLE(AOT)
+#include "AOTCompiledFrame.h"
+#include "AOTFunctionDescription.h"
+#include "AOTRuntimeHooks.h"
+#endif
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JSGlobalObjectDebuggable.h"
@@ -451,11 +452,7 @@ static JSValue createAtomicsProperty(VM& vm, JSObject *object)
 static JSValue createConsoleProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    JSObject* console = ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
-#if ENABLE(AOT)
-    AOT::Typed::didCreateReplaceableGlobal(global, "console"_s, console);
-#endif
-    return console;
+    return ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
 }
 
 static JSValue createWebAssemblyProperty(VM& vm, JSObject* object)
@@ -1113,16 +1110,13 @@ void JSGlobalObject::init(VM& vm)
 
     convertToDictionary(vm);
 
-    if (vm.useImmutableIntrinsics) [[unlikely]] {
-        bool isFirstRealm = !std::exchange(vm.hasRealmWithImmutableIntrinsics, true);
-        m_hasImmutableIntrinsics = isFirstRealm;
-#if ENABLE(AOT)
-        m_hasImmutableIntrinsics |= AOT::Image::usesNumberedIntrinsics();
-#endif
-    }
-
     m_debugger = nullptr;
     updateCanFastQueueMicrotask();
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::willInitializeRealm(this);
+#endif
 
 #if ENABLE(REMOTE_INSPECTOR)
     m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*this);
@@ -1262,8 +1256,6 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
-            if (init.owner->locksOrAuditsIntrinsics()) [[unlikely]]
-                init.owner->makeIntrinsicImmutable(constructor, IntrinsicKind::Other);
         });
 
 #define INIT_TYPED_ARRAY_LATER(type) \
@@ -1368,13 +1360,8 @@ void JSGlobalObject::init(VM& vm)
         Options::allowDoubleShape() ? JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithDouble) : arrayWithContiguousStructure);
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ContiguousShape)].set(vm, this, arrayWithContiguousStructure);
 
-    auto createArrayStorageStructure = [&](IndexingType indexingType) {
-        if (!vm.useImmutableIntrinsics || m_hasImmutableIntrinsics) [[likely]]
-            return JSArray::createStructure(vm, this, m_arrayPrototype.get(), indexingType);
-        return Structure::create(vm, this, m_arrayPrototype.get(), TypeInfo(DerivedArrayType, JSArray::StructureFlags), JSArray::info(), indexingType);
-    };
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, createArrayStorageStructure(ArrayWithArrayStorage));
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, createArrayStorageStructure(ArrayWithSlowPutArrayStorage));
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithArrayStorage));
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithSlowPutArrayStorage));
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(CopyOnWriteArrayWithInt32)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithInt32));
 
     Structure* copyOnWriteArrayWithContiguous = JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithContiguous);
@@ -1623,34 +1610,29 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_regExpPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, regExpConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_shadowRealmPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    unsigned intrinsicAttributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
-    if (m_hasImmutableIntrinsics) [[unlikely]]
-        intrinsicAttributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
-    else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        intrinsicAttributes |= static_cast<unsigned>(PropertyAttribute::WouldBeFixed);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, intrinsicAttributes);
-    putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, intrinsicAttributes);
-    putDirectWithoutTransition(vm, vm.propertyNames->Array, arrayConstructor, intrinsicAttributes);
-    putDirectWithoutTransition(vm, vm.propertyNames->RegExp, regExpConstructor, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    putDirectWithoutTransition(vm, vm.propertyNames->Array, arrayConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    putDirectWithoutTransition(vm, vm.propertyNames->RegExp, regExpConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     JSIteratorConstructor* iteratorConstructor = JSIteratorConstructor::create(vm, this, JSIteratorConstructor::createStructure(vm, this, m_functionPrototype.get()), m_iteratorPrototype.get());
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Iterator)].set(vm, this, iteratorConstructor);
     m_iteratorConstructor.set(vm, this, iteratorConstructor);
-    putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useSharedArrayBuffer())
-        putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useExplicitResourceManagement()) {
-        putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), intrinsicAttributes);
-        putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), intrinsicAttributes);
-        putDirectWithoutTransition(vm, vm.propertyNames->AsyncDisposableStack, m_asyncDisposableStackStructure.constructor(this), intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->SuppressedError, m_suppressedErrorStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, vm.propertyNames->DisposableStack, m_disposableStackStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, vm.propertyNames->AsyncDisposableStack, m_asyncDisposableStackStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
 
 #define PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
     if (featureFlag) \
-        putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames-> jsName, lowerName ## Constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
 
     FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(PUT_CONSTRUCTOR_FOR_SIMPLE_TYPE)
 
@@ -1727,8 +1709,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentIteratorPrototype* segmentIteratorPrototype = IntlSegmentIteratorPrototype::create(init.vm, IntlSegmentIteratorPrototype::createStructure(init.vm, globalObject, globalObject->iteratorPrototype()));
             init.set(IntlSegmentIterator::createStructure(init.vm, globalObject, segmentIteratorPrototype));
-            if (globalObject->locksOrAuditsIntrinsics()) [[unlikely]]
-                globalObject->makeIntrinsicImmutable(segmentIteratorPrototype, IntrinsicKind::Prototype);
         });
     m_segmenterStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1741,8 +1721,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentsPrototype* segmentsPrototype = IntlSegmentsPrototype::create(init.vm, globalObject, IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
-            if (globalObject->locksOrAuditsIntrinsics()) [[unlikely]]
-                globalObject->makeIntrinsicImmutable(segmentsPrototype, IntrinsicKind::Prototype);
         });
     m_segmentDataObjectStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1796,6 +1774,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     m_defaultDateTimeFormat.initLater(
         [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(IntlDateTimeFormat, Abort, void)
             JSGlobalObject* globalObject = init.owner;
             VM& vm = init.vm;
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1803,10 +1782,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Any, IntlDateTimeFormat::Defaults::All);
             RETURN_IF_EXCEPTION(scope, void());
             init.set(dateTimeFormat);
+            JSC_END_REMOVABLE_ENTRY_POINT
         });
 
     m_defaultDateFormat.initLater(
         [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(IntlDateTimeFormat, Abort, void)
             JSGlobalObject* globalObject = init.owner;
             VM& vm = init.vm;
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1814,10 +1795,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Date, IntlDateTimeFormat::Defaults::Date);
             RETURN_IF_EXCEPTION(scope, void());
             init.set(dateTimeFormat);
+            JSC_END_REMOVABLE_ENTRY_POINT
         });
 
     m_defaultTimeFormat.initLater(
         [] (const Initializer<IntlDateTimeFormat>& init) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(IntlDateTimeFormat, Abort, void)
             JSGlobalObject* globalObject = init.owner;
             VM& vm = init.vm;
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1825,10 +1808,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             dateTimeFormat->initializeDateTimeFormat(globalObject, jsUndefined(), jsUndefined(), IntlDateTimeFormat::RequiredComponent::Time, IntlDateTimeFormat::Defaults::Time);
             RETURN_IF_EXCEPTION(scope, void());
             init.set(dateTimeFormat);
+            JSC_END_REMOVABLE_ENTRY_POINT
         });
 
     m_defaultNumberFormat.initLater(
         [] (const Initializer<IntlNumberFormat>& init) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(IntlNumberFormat, Abort, void)
             JSGlobalObject* globalObject = init.owner;
             VM& vm = init.vm;
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1836,10 +1821,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             numberFormat->initializeNumberFormat(globalObject, jsUndefined(), jsUndefined());
             RETURN_IF_EXCEPTION(scope, void());
             init.set(numberFormat);
+            JSC_END_REMOVABLE_ENTRY_POINT
         });
 
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
-    putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, intrinsicAttributes);
+    putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useTemporal()) {
         m_durationStructure.initLater(
@@ -1907,10 +1893,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             });
 
         TemporalObject* temporal = TemporalObject::create(vm, TemporalObject::createStructure(vm, this));
-        putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     if (Options::useShadowRealm())
-        putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, intrinsicAttributes);
+        putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
@@ -2056,9 +2042,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::cloneObject)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "cloneObject"_s, globalFuncCloneObject, ImplementationVisibility::Private));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(init.owner->functionPrototype());
-        });
 #if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "enqueueJob"_s, enqueueJob, ImplementationVisibility::Public));
@@ -2160,9 +2143,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::typedArrayFromFast)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "typedArrayViewTypedArrayFromFast"_s, typedArrayViewPrivateFuncTypedArrayFromFast, ImplementationVisibility::Private));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::arrayProtoValues)].initLater([] (const Initializer<JSCell>& init) {
-        init.set(init.owner->arrayProtoValuesFunction());
-    });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::arrayFromFastWithoutMapFn)].initLater([] (const Initializer<JSCell>& init) {
         init.set(JSFunction::create(init.vm, init.owner, 2, "arrayFromFastWithoutMapFn"_s, arrayConstructorPrivateFromFastWithoutMapFn, ImplementationVisibility::Private));
     });
@@ -2188,13 +2168,13 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             init.set(JSFunction::create(init.vm, init.owner, 2, "repeatCharacter"_s, stringProtoFuncRepeatCharacter, ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::importInRealm)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "importInRealm"_s, importInRealm, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 0, "importInRealm"_s, JSC_REGISTERED_HOST_FUNCTION(importInRealm), ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::evalFunction)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, init.vm.propertyNames->eval.string(), globalFuncEval, ImplementationVisibility::Public));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::evalInRealm)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "evalInRealm"_s, evalInRealm, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 0, "evalInRealm"_s, JSC_REGISTERED_HOST_FUNCTION(evalInRealm), ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::moveFunctionToRealm)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "moveFunctionToRealm"_s, moveFunctionToRealm, ImplementationVisibility::Private));
@@ -2360,9 +2340,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    if (locksOrAuditsIntrinsics()) [[unlikely]]
-        makeIntrinsicsImmutable();
-
     // Detect property change.
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->next), m_arrayIteratorProtocolWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, this->arrayPrototype(), vm.propertyNames->iteratorSymbol), m_arrayIteratorProtocolWatchpointSet);
@@ -2421,22 +2398,20 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     // The iterator protocol fast paths assume that IteratorClose is unobservable, so they must be
     // invalidated when a "return" property appears anywhere on the iterator's prototype chain.
-    if (!m_hasImmutableIntrinsics) [[likely]] {
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_arrayIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, mapIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_mapIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, setIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_setIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_arrayIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_mapIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_setIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_arrayIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_mapIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_setIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_stringIteratorPrototype.get(), vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_stringIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_stringIteratorProtocolWatchpointSet);
-        installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_stringIteratorProtocolWatchpointSet);
-    }
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_arrayIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, mapIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_mapIteratorProtocolWatchpointSet);
     installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, mapIteratorPrototype, vm.propertyNames->iteratorSymbol, m_iteratorPrototype.get()), m_mapIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, setIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_setIteratorProtocolWatchpointSet);
     installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, setIteratorPrototype, vm.propertyNames->iteratorSymbol, m_iteratorPrototype.get()), m_setIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_stringIteratorPrototype.get(), vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_stringIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_arrayIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_mapIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_setIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_iteratorPrototype.get(), vm.propertyNames->returnKeyword, objectPrototype()), m_stringIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_arrayIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_mapIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_setIteratorProtocolWatchpointSet);
+    installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, m_objectPrototype.get(), vm.propertyNames->returnKeyword, nullptr), m_stringIteratorProtocolWatchpointSet);
 
     // Array Species watchpoint.
     {
@@ -2477,12 +2452,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
-    else if (vm.useImmutableIntrinsics && !m_hasImmutableIntrinsics) [[unlikely]]
-        fireWatchpointAndMakeAllArrayStructuresSlowPut(vm);
 
 #if ENABLE(AOT)
-    if (AOT::ProgramData::get() && !BytecodeOrderRecorder::ofVM(vm))
-        AOT::Instance::ensure(this);
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::didCreateRealm(this);
 #endif
 }
 
@@ -2512,8 +2485,6 @@ bool JSGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     EXCEPTION_ASSERT((!!scope.exception() == (done && !putResult)) || !shouldThrowReadOnlyError);
     if (done)
         return putResult;
-    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        ImmutableIntrinsicsAudit::willPut(globalObject, thisObject, propertyName, slot);
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
 
@@ -2562,7 +2533,7 @@ bool JSGlobalObject::canDeclareGlobalFunction(const Identifier& ident)
     auto scope = DECLARE_THROW_SCOPE(vm());
 
     // No new top-level function, and no replacement of an existing one.
-    if (structure()->hasImmutableProperties()) [[unlikely]]
+    if (structure()->isImmutableProperty(ident.impl())) [[unlikely]]
         return false;
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::GetOwnProperty);
@@ -2620,12 +2591,13 @@ void JSGlobalObject::addSymbolTableEntry(const Identifier& ident)
     ScopeOffset offset = symbolTable()->takeNextScopeOffset(locker);
     SymbolTableEntry newEntry(VarOffset(offset), 0);
     newEntry.prepareToWatch();
-    if (vm().useImmutableIntrinsics && !m_hasImmutableIntrinsics) [[unlikely]]
-        newEntry.prepareToWatchWithoutJIT();
     symbolTable()->add(locker, ident.impl(), WTF::move(newEntry));
 
     ScopeOffset offsetForAssert = addVariables(1, jsUndefined());
     RELEASE_ASSERT(offsetForAssert == offset);
+
+    if (VM& vm = this->vm(); vm.hasCompiledCode())
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, ident.impl());
 }
 
 void JSGlobalObject::setGlobalScopeExtension(JSScope* scope)
@@ -2861,13 +2833,6 @@ inline IterationStatus ObjectsWithBrokenIndexingFinder<mode>::visit(JSObject* ob
     if (!hasBrokenIndexing(object))
         return IterationStatus::Continue;
 
-#if ENABLE(AOT)
-    for (AOT::Instance* instance : object->vm().m_aotInstances) {
-        if (instance->isArrayUnderConstruction(object))
-            return IterationStatus::Continue;
-    }
-#endif
-
     if (isInAffectedGlobalObject(object))
         m_foundObjects.append(object);
 
@@ -2888,6 +2853,79 @@ IterationStatus ObjectsWithBrokenIndexingFinder<mode>::operator()(HeapCell* cell
     return IterationStatus::Continue;
 }
 
+class ObjectsWithInterceptorInChainFinder : public MarkedBlock::VoidFunctor {
+public:
+    ObjectsWithInterceptorInChainFinder(JSObject* interceptor, Vector<JSObject*>& foundObjects, Vector<JSGlobalObject*>& affectedRealms)
+        : m_interceptor(interceptor)
+        , m_foundObjects(foundObjects)
+        , m_affectedRealms(affectedRealms)
+    {
+    }
+
+    IterationStatus operator()(HeapCell* cell, HeapCell::Kind kind) const
+    {
+        if (isJSCellKind(kind) && static_cast<JSCell*>(cell)->isObject())
+            visit(uncheckedDowncast<JSObject>(static_cast<JSCell*>(cell)));
+        return IterationStatus::Continue;
+    }
+
+private:
+    bool inheritsFromInterceptor(JSObject* object) const
+    {
+        for (JSObject* current = object; current;) {
+            if (current == m_interceptor)
+                return true;
+            JSValue prototype = current->getPrototypeDirect();
+            if (prototype.isNull())
+                return false;
+            current = asObject(prototype);
+        }
+        return false;
+    }
+
+    bool allocatesInheritorsWithBrokenIndexing(Structure* structure) const
+    {
+        return hasBrokenIndexing(structure->indexingType()) && structure->hasMonoProto() && inheritsFromInterceptor(structure->storedPrototypeObject());
+    }
+
+    void visitRealm(JSGlobalObject* realm) const
+    {
+        if (realm->isHavingABadTime())
+            return;
+        if (inheritsFromInterceptor(realm->arrayPrototype()) || inheritsFromInterceptor(realm->objectPrototype())) {
+            m_affectedRealms.append(realm);
+            return;
+        }
+        bool willClear = false;
+        realm->structureCache().forEach([&](Structure* structure) {
+            willClear = allocatesInheritorsWithBrokenIndexing(structure);
+            return willClear ? IterationStatus::Done : IterationStatus::Continue;
+        });
+        if (willClear)
+            realm->clearStructureCache(realm->vm());
+    }
+
+    void visit(JSObject* object) const
+    {
+        if (auto* function = dynamicDowncast<JSFunction>(object)) {
+            FunctionRareData* rareData = function->rareData();
+            Structure* structure = rareData ? rareData->internalFunctionAllocationStructure() : nullptr;
+            if (structure && allocatesInheritorsWithBrokenIndexing(structure))
+                rareData->clearInternalFunctionAllocationProfile(function->vm(), "An object on the prototype chain intercepts indexed accesses");
+        }
+
+        if (auto* realm = dynamicDowncast<JSGlobalObject>(object))
+            visitRealm(realm);
+
+        if (hasBrokenIndexing(object) && inheritsFromInterceptor(object))
+            m_foundObjects.append(object);
+    }
+
+    JSObject* const m_interceptor;
+    Vector<JSObject*>& m_foundObjects;
+    Vector<JSGlobalObject*>& m_affectedRealms;
+};
+
 } // end private namespace for helpers for JSGlobalObject::haveABadTime()
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -2896,13 +2934,6 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
 {
     if (isHavingABadTime())
         return;
-
-#if ENABLE(AOT)
-    for (AOT::Instance* instance : vm.m_aotInstances) {
-        if (instance->globalObject == this)
-            instance->didHaveBadTime();
-    }
-#endif
 
     // This must happen first, because the compiler thread may race with haveABadTime.
     // Let R_BT, W_BT <- Read/Fire the watchpoint, R_SC, W_SC <- Read/clear the structure cache.
@@ -3063,6 +3094,42 @@ void JSGlobalObject::haveABadTime(VM& vm)
         foundObjects.removeLast();
         ASSERT(hasBrokenIndexing(object));
         object->switchToSlowPutArrayStorage(vm);
+    }
+}
+
+void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
+{
+    ASSERT(&vm == &this->vm());
+
+    if (isHavingABadTime())
+        return;
+
+    JSObject* arrayPrototype = this->arrayPrototype();
+    JSObject* objectPrototype = this->objectPrototype();
+    bool ordinaryArraysAreOutOfReach = interceptor != arrayPrototype && interceptor != objectPrototype
+        && arrayPrototype->structure()->hasImmutableIndexedProperties() && arrayPrototype->structure()->hasImmutablePrototype()
+        && objectPrototype->structure()->hasImmutableProperties();
+    if (!ordinaryArraysAreOutOfReach) {
+        haveABadTime(vm);
+        return;
+    }
+
+    DeferGC deferGC(vm);
+
+    Vector<JSObject*> foundObjects;
+    Vector<JSGlobalObject*> affectedRealms;
+    ObjectsWithInterceptorInChainFinder finder(interceptor, foundObjects, affectedRealms);
+    {
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, finder);
+    }
+
+    for (JSGlobalObject* realm : affectedRealms)
+        realm->haveABadTime(vm);
+
+    for (JSObject* object : foundObjects) {
+        if (hasBrokenIndexing(object))
+            object->switchToSlowPutArrayStorage(vm);
     }
 }
 
@@ -3246,8 +3313,12 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitFunctionStructures(thisObject->m_ordinaryFunctions);
     visitor.append(thisObject->m_boundFunctionStructure);
     visitor.append(thisObject->m_trustedScriptStructure);
+#if ENABLE(AOT)
     for (auto& structure : thisObject->m_aotClosureStructures)
         visitor.append(structure);
+    for (auto& structure : thisObject->m_aotSlimClosureStructures)
+        visitor.append(structure);
+#endif
 
     thisObject->m_customGetterFunctionStructure.visit(visitor);
     thisObject->m_customSetterFunctionStructure.visit(visitor);
@@ -3356,8 +3427,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSGlobalObject);
 
-IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
+NEVER_INLINE IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
 {
+    JSC_REMOVABLE_DEFINITION(IntlCollation, &JSGlobalObject::cachedLocaleCompareCollator);
     VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3377,8 +3449,9 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     return collator;
 }
 
-IntlNumberFormat* JSGlobalObject::cachedToLocaleStringNumberFormat(JSString* locale)
+NEVER_INLINE IntlNumberFormat* JSGlobalObject::cachedToLocaleStringNumberFormat(JSString* locale)
 {
+    JSC_REMOVABLE_DEFINITION(IntlNumberFormat, &JSGlobalObject::cachedToLocaleStringNumberFormat);
     VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3425,6 +3498,8 @@ void JSGlobalObject::addStaticGlobals(std::span<GlobalPropertyInfo> globals)
             variable = &variableAt(offset);
         }
         symbolTablePutTouchWatchpointSet(vm(), this, global.identifier, global.value, variable, watchpointSet);
+        if (vm().hasCompiledCode())
+            vm().invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, global.identifier.impl());
     }
 }
 
@@ -3535,117 +3610,6 @@ void JSGlobalObject::tryInstallSpeciesWatchpoint(JSObject* prototype, JSObject* 
 
     speciesWatchpoint = makeUnique<SpeciesWatchpoint>(this, speciesCondition, speciesWatchpointSet);
     speciesWatchpoint->install(vm);
-}
-
-void JSGlobalObject::makeIntrinsicValueImmutable(JSObject& holder, PropertyName name, JSValue value, unsigned attributes)
-{
-    VM& vm = this->vm();
-    if (name.isPrivateName() || attributes & PropertyAttribute::CustomAccessorOrValue)
-        return;
-    if (attributes & PropertyAttribute::Accessor) {
-        auto* accessor = uncheckedDowncast<GetterSetter>(value);
-        if (!accessor->isGetterNull())
-            accessor->getter()->lockProperties(vm, JSObject::LockedObjectExtensibility::StaysExtensible);
-        if (!accessor->isSetterNull())
-            accessor->setter()->lockProperties(vm, JSObject::LockedObjectExtensibility::StaysExtensible);
-        return;
-    }
-    JSObject* object = value.getObject();
-    if (!object)
-        return;
-    if (name == vm.propertyNames->prototype) {
-        makeIntrinsicImmutable(object, IntrinsicKind::Prototype);
-        return;
-    }
-    if (object->type() == JSFunctionType) {
-        makeIntrinsicImmutable(object, IntrinsicKind::Other);
-        return;
-    }
-    if (object->type() != InternalFunctionType && (holder.structure()->hasImmutableProperties() || holder.structure()->typeInfo().wouldHaveImmutableProperties() || object->isGlobalObject() || object->type() == GlobalProxyType || object->classInfo() == ConsoleObject::info()))
-        return;
-    makeIntrinsicImmutable(object, IntrinsicKind::Other);
-}
-
-static bool isErrorPrototype(JSObject* object)
-{
-    for (; object; object = object->getPrototypeDirect().getObject()) {
-        if (object->inherits<ErrorPrototype>())
-            return true;
-    }
-    return false;
-}
-
-void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind, JSObject::LockedObjectHistory history)
-{
-    VM& vm = this->vm();
-    if (object->structure()->inheritorsMayOverrideReadOnlyProperties() || object->structure()->typeInfo().wouldHaveFixedProperties())
-        return;
-    if (kind == IntrinsicKind::Prototype && isErrorPrototype(object))
-        return;
-    if (m_isNumberingIntrinsics && object->hasNonReifiedStaticProperties())
-        object->reifyAllStaticProperties(this);
-    object->lockProperties(vm, kind == IntrinsicKind::Prototype ? JSObject::LockedObjectExtensibility::BecomesNonExtensible : JSObject::LockedObjectExtensibility::StaysExtensible, history);
-    if (object->classInfo() == ErrorConstructor::info())
-        object->putDirect(vm, vm.propertyNames->stackTraceLimit, object->getDirect(vm, vm.propertyNames->stackTraceLimit), static_cast<unsigned>(PropertyAttribute::None));
-    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        makeIntrinsicValueImmutable(*object, entry.key(), object->getDirect(entry.offset()), entry.attributes());
-        return true;
-    });
-}
-
-void JSGlobalObject::lockHostClassPrototype(JSObject* prototype)
-{
-    if (!locksOrAuditsIntrinsics())
-        return;
-    VM& vm = this->vm();
-    prototype->putDirect(vm, vm.propertyNames->builtinNames().hostClassPrototypePrivateName(), jsBoolean(true), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    prototype->lockProperties(vm, JSObject::LockedObjectExtensibility::BecomesNonExtensible, JSObject::LockedObjectHistory::NewlyCreated);
-}
-
-void JSGlobalObject::makeIntrinsicsImmutable()
-{
-    VM& vm = this->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-#if ENABLE(AOT)
-    if (vm.useImmutableIntrinsics)
-        AOT::Typed::installGeneratorMethods(this);
-#endif
-    static constexpr ASCIILiteral names[] = {
-        "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
-        "Math"_s, "JSON"_s, "Reflect"_s, "Date"_s, "WeakMap"_s, "WeakSet"_s, "ArrayBuffer"_s,
-        "Error"_s, "TypeError"_s, "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "EvalError"_s, "URIError"_s, "AggregateError"_s,
-        "Uint8Array"_s, "DataView"_s, "Proxy"_s, "WeakRef"_s, "BigInt"_s, "parseInt"_s, "parseFloat"_s, "isNaN"_s, "isFinite"_s,
-        "encodeURIComponent"_s, "decodeURIComponent"_s, "encodeURI"_s, "decodeURI"_s,
-    };
-    constexpr unsigned numberOfNamesWithNumberedProperties = 18;
-    RELEASE_ASSERT(names[numberOfNamesWithNumberedProperties - 1] == "ArrayBuffer"_s);
-    bool numbersIntrinsics = true;
-#if ENABLE(AOT)
-    numbersIntrinsics = AOT::Image::usesNumberedIntrinsics();
-#endif
-    numbersIntrinsics &= vm.useImmutableIntrinsics;
-    for (unsigned i = 0; i < std::size(names) && numbersIntrinsics; ++i) {
-        SetForScope isNumberingIntrinsics(m_isNumberingIntrinsics, i < numberOfNamesWithNumberedProperties);
-        JSValue value = get(this, Identifier::fromString(vm, names[i]));
-        scope.assertNoException();
-        RELEASE_ASSERT(value.isObject());
-        makeIntrinsicImmutable(asObject(value), IntrinsicKind::Other);
-    }
-    if (numbersIntrinsics)
-        m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names, numberOfNamesWithNumberedProperties);
-
-    structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
-        if ((entry.attributes() & fixed) == fixed || entry.attributes() & PropertyAttribute::WouldBeFixed)
-            makeIntrinsicValueImmutable(*this, entry.key(), getDirect(entry.offset()), entry.attributes());
-        return true;
-    });
-    for (JSObject* prototype : std::initializer_list<JSObject*> {
-        m_iteratorPrototype.get(), m_iteratorHelperPrototype.get(), m_asyncIteratorPrototype.get(), m_arrayIteratorPrototype.get(), m_mapIteratorPrototype.get(), m_setIteratorPrototype.get(), m_stringIteratorPrototype.get(),
-        m_regExpStringIteratorStructure->storedPrototypeObject(), m_wrapForValidIteratorStructure->storedPrototypeObject(), m_asyncFromSyncIteratorStructure->storedPrototypeObject(),
-        m_generatorFunctionPrototype.get(), m_asyncFunctionPrototype.get(), m_asyncGeneratorFunctionPrototype.get(), m_generatorPrototype.get(), m_asyncGeneratorPrototype.get(),
-    })
-        makeIntrinsicImmutable(prototype, IntrinsicKind::Prototype);
 }
 
 void JSGlobalObject::installSaneChainWatchpoints()
@@ -3991,10 +3955,8 @@ void JSGlobalObject::setName(const String& name)
 void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 {
 #if ENABLE(AOT)
-    for (AOT::Instance* instance : vm.m_aotInstances) {
-        if (instance->globalObject == this)
-            instance->clearGlobalPropertyValues();
-    }
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::didChangeGlobalLexicalBindings(this);
 #endif
     if (++m_globalLexicalBindingEpoch == Options::thresholdForGlobalLexicalBindingEpoch()) {
         // Since the epoch overflows, we should rewrite all the CodeBlock to adjust to the newly started generation.
@@ -4004,12 +3966,6 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
                 return;
             codeBlock->notifyLexicalBindingUpdate();
         });
-#if ENABLE(AOT)
-        for (AOT::Instance* instance : vm.m_aotInstances) {
-            if (instance->globalObject == this)
-                instance->clearResolvedGlobalScopes();
-        }
-#endif
     }
 }
 
@@ -4024,10 +3980,21 @@ static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Continue;
-        if (visitor->hasCode()) {
-            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame()) {
+            if (AOT::FunctionDescription(visitor->compiledFrame().function).builtinKind() != AOT::StackTraceBuiltinKind::None)
                 return IterationStatus::Continue;
             if (visitor->lexicalGlobalObject(vm) == target) {
+                result = true;
+                return IterationStatus::Done;
+            }
+            return IterationStatus::Continue;
+        }
+#endif
+        if (auto* codeBlock = visitor->codeBlock()) {
+            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
+                return IterationStatus::Continue;
+            if (codeBlock->globalObject() == target) {
                 result = true;
                 return IterationStatus::Done;
             }
@@ -4076,9 +4043,17 @@ void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {
     m_microtaskQueue = WTF::move(queue);
 #if ENABLE(AOT)
-    AOT::microtaskQueueingDidChange(vm());
+    if (vm().hasCompiledCode())
+        didChangeMicrotaskQueueing();
 #endif
 }
+
+#if ENABLE(AOT)
+void JSGlobalObject::didChangeMicrotaskQueueing()
+{
+    AOT::RuntimeHooks::didChangeMicrotaskQueueing(vm());
+}
+#endif
 
 void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
@@ -4095,11 +4070,6 @@ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPro
 
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*)
 {
-}
-
-void JSGlobalObject::setAuditFunction(VM& vm, JSObject* function)
-{
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].set(vm, this, function);
 }
 
 void JSGlobalObject::setConsoleClient(WeakPtr<ConsoleClient>&& consoleClient)
@@ -4181,9 +4151,6 @@ void JSGlobalObject::finishCreation(VM& vm)
     init(vm);
     setGlobalThis(vm, JSGlobalProxy::create(vm, JSGlobalProxy::createStructure(vm, this, getPrototypeDirect()), this));
     ASSERT(type() == GlobalObjectType);
-#if ENABLE(AOT)
-    AOT::Typed::didFinishCreation(this);
-#endif
 }
 
 void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
@@ -4195,9 +4162,6 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
     init(vm);
     setGlobalThis(vm, thisValue);
     ASSERT(type() == GlobalObjectType);
-#if ENABLE(AOT)
-    AOT::Typed::didFinishCreation(this);
-#endif
 }
 
 #ifdef JSC_GLIB_API_ENABLED

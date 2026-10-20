@@ -1,0 +1,148 @@
+# A constructor reads a name of its object behind super(), and the parent class that stores the name arrives only when the key of the heritage gets undefined, after the order of execution was computed: the read finds the stored value beside the one on the prototype
+# var late; const parents = { a: class { }, undefined: class { constructor() { this.x = 1 } } }; function key() { return late }
+# class Made extends parents[key()] { constructor() { super(); this.seen = this.x } }  Made.prototype.x = "proto"; new Made().seen; var late = "a"
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(L2#[[made]], 0) = {{*}}1|"proto"}
+
+layout L0 kind=Instance module=m0 position=31 constructor=f2
+layout L1 kind=Instance module=m0 position=53 constructor=f3 fields=[{key="x" declared={type=anything predicted=1}}]
+layout L2 kind=Instance name="Made" module=m0 position=134 constructor=f4 fields=[{key="seen" declared={type=anything}}] flags=[HasHeritage]
+layout L3 module=m0 position=26 fields=[{key="a" declared={type=anything predicted=function} flags=[IsRequired]}, {key="undefined" declared={type=anything predicted=function} flags=[IsRequired]}]
+variable g0 name="late" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="/$bunfs/root/main" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @0
+    v2 = ClaimDeclared v1 declared={type=anything predicted=function} @0
+    v3 = NewClosure function=f2 @31
+    v4 = NewClass v3 layout=L0 @31
+    PutModuleVariable v4 variable=g1 @31
+    v6 = FinishClass v4 layout=L0 @31
+    v7 = ClaimDeclared v6 declared={type=anything predicted=function} @28
+    v8 = NewClosure function=f3 @53
+    v9 = NewClass v8 layout=L1 @53
+    PutModuleVariable v9 variable=g2 @53
+    v11 = FinishClass v9 layout=L1 @53
+    v12 = ClaimDeclared v11 declared={type=anything predicted=function} @42
+    v13 = NewObject -, v7, v12 layout=L3 fields=[0, 1] @26
+    v14 = FinishObject v13 @26
+    v15 = Predict v14 predicted=L3 @16
+    v16 = Predict v2 predicted=function @155
+    v17 = Call v16 calleeName="key" @155
+    v18 = ElemGet v15, v17 @147
+    v19 = ResolveHeritage v18 @128
+    v20 = NewClosure function=f4 @128
+    v21 = NewClass v20, v18, v19 layout=L2 @128
+    PutModuleVariable v21 variable=g3 @128
+    v23 = FinishClass v21 layout=L2 @128
+    v24 = ClaimDeclared v23 declared={type=anything predicted=function} @128
+    v25 = ClaimDeclared v23 declared={type=anything predicted=function} @128
+    v26 = PropGet v25 key="prototype" @213
+    v27 = Predict v26 predicted=L2 @213
+    v28 = String string="proto" @232
+    PropSet v27, v28 key="x" @213
+    v30 = Construct v25 calleeName="Made" @259
+    v31 = Predict v30 predicted=L2 @255
+    v32 = PropGet v31 key="seen" @255
+    v33 = String string="a" @283
+    v34 = Predict v33 predicted=string @276
+    PutModuleVariable v34 variable=g0 @276
+    v36 = Builtin builtin=GlobalThis @288
+    v37 = PropGet v36 key="print" [isFreeName] @288
+    v38 = Call v37, -, v32 calleeName="print" @288
+    v39 = Undefined @288
+    Return v39 @288
+}
+function f1 name="key" module=m0 position=96 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @96
+  b1():
+    v0 = GetModuleVariable variable=g0 @120
+    Return v0 @120
+}
+function f2 name="a" module=m0 position=31 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @31
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @31
+    v2 = NewObject v1 layout=L0 @31
+    Return v2 @31
+}
+function f3 name="undefined" module=m0 position=61 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @61
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @53
+    v2 = NewObject v1 layout=L1 @53
+    v3 = Predict v2 predicted=L1 @77
+    v4 = Integer integer=1 @86
+    v5 = ClaimDeclared v4 declared={type=anything predicted=number} @77
+    PropSet v3, v5 key="x" @77
+    v7 = Undefined @77
+    v8 = TypeTest v7 testedType=object @77
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @77
+  b2(v9):
+    Jump -> next b4(v9) @77
+  b3(v10):
+    Jump -> next b4(v2) @77
+  b4(v11):
+    Return v11 @77
+}
+function f4 name="Made" module=m0 position=164 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: function, v1: anything):
+    Jump -> next b1() @164
+  b1():
+    v2 = Absent @164
+    v3 = GetSuperBase v0 @180
+    v4 = SuperConstruct v3, v1 layout=L2 @180
+    v5 = TypeTest v2 testedType=absent @180
+    Branch v5 -> taken b2(| 0), notTaken b14(| 0) @180
+  b2(v6):
+    v7 = TypeTest v4 testedType=absent @189
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0) @189
+  b3(v8) frequency=Unlikely:
+    v9 = NewRuntimeError runtimeError=UninitializedThis @189
+    Throw v9 @189
+  b4(v10):
+    v11 = Predict v10 predicted=L2 @189
+    v12 = TypeTest v10 testedType=absent @201
+    Branch v12 -> taken b5(| 0), notTaken b6(| 0) @201
+  b5(v13) frequency=Unlikely:
+    v14 = NewRuntimeError runtimeError=UninitializedThis @201
+    Throw v14 @201
+  b6(v15):
+    v16 = Predict v15 predicted=L2 @201
+    v17 = PropGet v16 key="x" @201
+    PropSet v11, v17 key="seen" @189
+    v19 = Undefined @189
+    v20 = TypeTest v19 testedType=object @189
+    Branch v20 -> taken b7(| 0), notTaken b8(| 0) @189
+  b7(v21):
+    Jump -> next b12(v21) @189
+  b8(v22):
+    v23 = TypeTest v22 testedType=undefined @189
+    Branch v23 -> taken b9(| 0), notTaken b13(| 0) @189
+  b9(v24):
+    v25 = TypeTest v15 testedType=absent @189
+    Branch v25 -> taken b10(| 0), notTaken b11(| 0) @189
+  b10(v26) frequency=Unlikely:
+    v27 = NewRuntimeError runtimeError=UninitializedThis @189
+    Throw v27 @189
+  b11(v28):
+    Jump -> next b12(v28) @189
+  b12(v29):
+    Return v29 @189
+  b13(v30) frequency=Unlikely:
+    v31 = NewRuntimeError runtimeError=DerivedConstructorResult name="Made" @189
+    Throw v31 @189
+  b14(v32) frequency=Unlikely:
+    v33 = NewRuntimeError runtimeError=ThisAlreadyBound @180
+    Throw v33 @180
+}
+entry module=m0

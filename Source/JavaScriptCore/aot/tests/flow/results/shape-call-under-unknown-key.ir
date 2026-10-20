@@ -1,0 +1,52 @@
+# A table of functions called under a string nobody knows keeps its shape, and neither the table, its functions nor the argument reach native code: the key may name a member of Object.prototype, and each of those says what it does to its receiver. With a second argument that is a function the key may name __defineGetter__, which defines an accessor on the table
+# OPTIONS: disable=flow:CallVersions
+# RUN: flow
+# RUN(DEFINED): flow
+# RUN(SINKS): flow-solve sinks
+# CHECK: class {{*}} closureFunction=f1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript,
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK: class {{*}} layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK: class {{*}} layout=L2
+# DEFINED-NOT: class {{*}} layout=L2 {{*}}RedefineProperty
+# DEFINED-NOT: class {{*}} layout=L2 {{*}}AddProperty
+# DEFINED-NOT: class {{*}} layout=L2 {{*}}LoseShape
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT:  f1,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handlers" fields=[{key="open" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Argument" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="HandlersTakingFunction" fields=[{key="open" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="which" [isFreeName]
+    v3 = TypeOf v2
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = ElemGet v5, v3
+    v8 = Call v7, v5, v6
+    v9 = NewClosure function=f2
+    v10 = NewObject -, v9 layout=L2 fields=[0]
+    v11 = NewClosure function=f3
+    v12 = ElemGet v10, v3
+    v13 = Call v12, v10, v3, v11
+    Return
+}
+function f1 name="open" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="openWith" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="callback" results=[{type=anything}] {
+  b0():
+    Return
+}

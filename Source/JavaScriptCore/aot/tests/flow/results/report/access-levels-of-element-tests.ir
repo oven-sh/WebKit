@@ -1,0 +1,32 @@
+# `index in array` is reported and counted like a read of the element: predicted once it tests the element itself under the tests of its array, unknown while it stays an access by key
+# RUN: flow-report through=PlaceTypeTests
+# RUN(UNGUARDED): flow-report through=ResolveAccesses
+# OPTIONS: report=Flow only-passes=ResolveAccesses,PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName] @1
+    v2 = Integer integer=0
+    v3 = NewArray v1 contents=anything
+    v4 = ElemHas v3, v2 @10
+    v5 = ElemGet v3, v2 @11
+    v6 = Predict v1 predicted=Array<anything>
+    v7 = ElemHas v6, v2 @20
+    v8 = ElemHas v1, v2 @30
+    v9 = NewArray v4, v5, v7, v8 contents=anything
+    PropSet v0, v9 key="output" [isFreeName] @2
+    Return
+}
+# CHECK: access-count m0 accesses=[2, 4, 0, 0]
+# CHECK: access m0:10 Has Predicted
+# CHECK-NEXT: access m0:11 Read Predicted
+# CHECK-NEXT: access m0:20 Has Predicted
+# CHECK-NEXT: access m0:30 Has Predicted
+# UNGUARDED: access-count m0 accesses=[6, 0, 0, 0]
+# UNGUARDED: access m0:10 Has Unknown
+# UNGUARDED-NEXT: access m0:11 Read Unknown
+# UNGUARDED-NEXT: access m0:20 Has Unknown
+# UNGUARDED-NEXT: access m0:30 Has Unknown

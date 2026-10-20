@@ -1,0 +1,84 @@
+# A class is evaluated at most once when its NewClass is outside every cycle of a function that runs at most once. A constructor function counts by the creations of its closure, or is created at link
+# RUN: flow
+# RUN(SITES): flow-sites solved
+# CHECK: layout L0 {{*}}classFlow={evaluations=AtMostOnce
+# CHECK: layout L1 flow=
+# CHECK-NOT: evaluations
+# CHECK: layout L3 {{*}}classFlow={evaluations=AtMostOnce
+# CHECK: layout L4 flow=
+# CHECK-NOT: evaluations
+# CHECK: layout L5 {{*}}classFlow={evaluations=AtMostOnce
+# SITES: class {{*}} closure=f3 sites=[
+# SITES-NOT: class {{*}} closure=f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="TopLevel" constructor=f2
+layout L1 kind=Instance name="InFunction" constructor=f3
+layout L2 kind=Instance name="InCycle" constructor=f4
+layout L3 kind=Instance name="FunctionAtTopLevel" constructor=f5 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="FunctionInFunction" constructor=f6 flags=[IsConstructorFunction]
+layout L5 kind=Instance name="HoistedFunction" constructor=f7 flags=[IsConstructorFunction]
+variable g0 name="HoistedFunction" module=m0 declared={type=function} initialization=Function function=f7
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f1
+    v4 = Call v3
+    v5 = Call v3
+    v6 = Integer integer=1
+    v7 = NewClosure function=f5
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewClosure function=f4
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = ToBoolean v6
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="makeClass" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = NewClosure function=f6
+    Return v2
+}
+function f2 name="TopLevel" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = FinishObject v2
+    Return v3
+}
+function f3 name="InFunction" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = FinishObject v2
+    Return v3
+}
+function f4 name="InCycle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = FinishObject v2
+    Return v3
+}
+function f5 name="FunctionAtTopLevel" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="FunctionInFunction" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="HoistedFunction" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

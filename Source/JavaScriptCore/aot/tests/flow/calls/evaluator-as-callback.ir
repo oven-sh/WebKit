@@ -1,0 +1,24 @@
+# A built-in that calls its operand applies it where the program calls the built-in: `setTimeout(Function, 0, text)` and `Reflect.apply(eval, undefined, [text])` evaluate text, and the call is the witness
+# RUN: flow-links unseen
+# CHECK: unseen EvaluatesText Function f0:v5
+# CHECK: unseen EvaluatesText Eval f0:v11
+# CHECK: unknown-javascript yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="setTimeout" [isFreeName]
+    v3 = PropGet v0 key="Function" [isFreeName]
+    v4 = Integer
+    v5 = Call v2, -, v3, v4, v1
+    v6 = Builtin builtin=Reflect
+    v7 = PropGet v6 key="apply"
+    v8 = PropGet v0 key="eval" [isFreeName]
+    v9 = Undefined
+    v10 = NewArray v1 contents=anything
+    v11 = Call v7, v6, v8, v9, v10 calleeKey="apply"
+    Return
+}

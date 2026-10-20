@@ -1,0 +1,38 @@
+# The entry point is a CommonJS file whose body may throw, and no site requires it. Nobody catches what it throws and nobody is there to require it again, so the body runs at most once,
+# and so does what only it calls. helper.cjs may throw too and is required by a site, which may be inside a try: it may run again.
+# With a site that requires the entry point: flow/results/commonjs-entry-point-that-is-required-may-run-again.ir
+# RUN: flow
+# CHECK: function f0 executions=AtMostOnce
+# CHECK: function f1
+# CHECK-NOT: executions=
+# CHECK: function f2 {{*}}executions=AtMostOnce
+# CHECK: function f3
+# CHECK-NOT: executions=
+# CHECK: function f4
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="helper.cjs" displayPath="helper.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = RequireModule module=m1 referrer=m0 specifier="./helper.cjs"
+    v7 = CallDirect function=f2
+    Return
+}
+function f1 name="helper" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = CallDirect function=f3
+    Return
+}
+function f2 name="calledByMain" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="calledByHelper" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="unused" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

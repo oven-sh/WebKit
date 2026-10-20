@@ -1,0 +1,15 @@
+# The program hands Function itself to a built-in that keeps its operand and does not declare a call of it: the evaluator only travels as a value, which is no event, and the run time refuses it
+# RUN: flow-links unseen
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="emitWarning"
+    v3 = Call v2, v1, v0 calleeKey="emitWarning"
+    Return
+}

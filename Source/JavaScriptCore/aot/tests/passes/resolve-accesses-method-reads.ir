@@ -1,0 +1,165 @@
+# A read of a method or of a deferred closure field whose value is only called becomes a closure of the function, which stands in for the one the class or the object holds
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Scanner" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true members=[{key="m" function=f2 mutability=Fixed}, {key="capturing" function=f3 mutability=Fixed}, {key="recursive" function=f4 mutability=Fixed}, {key="changing" function=f2}] namedMembers=[{key="m" function=f2 mutability=Fixed}, {key="capturing" function=f3 mutability=Fixed}, {key="recursive" function=f4 mutability=Fixed}, {key="changing" function=f2}]}
+layout L1 kind=Instance name="SubScanner" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L2 name="Widget" fields=[{key="onObject" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="onNothing" declared={type=f6} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="SubScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f3 name="capturing" kind=Method flags=[HasThis] captures=[{type=number}] results=[{type=anything}]
+function f4 name="recursive" kind=Method flags=[HasThis, TakesCallee] results=[{type=anything}]
+function f5 name="onObject" kind=Arrow captures=[{type=L2}] results=[{type=anything}]
+function f6 name="onNothing" kind=Arrow results=[{type=anything}]
+
+function f7 name="read-then-called" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="read-then-called"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: f2 = NewClosure function=f2
+# CHECK-NEXT: = Call v1
+function f8 name="member-call" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+# CHECK-LABEL: function f8 name="member-call"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: f2 = NewClosure function=f2
+# CHECK-NEXT: = Call v1, v0 calleeKey="m"
+function f9 name="called-through-upcast" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Upcast v1 castType=anything
+    v3 = Call v2
+    Return v3
+}
+# CHECK-LABEL: function f9 name="called-through-upcast"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: f2 = NewClosure function=f2
+# CHECK-NEXT: v2: f2 = Upcast v1
+function f10 name="inherited-by-every-member" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="inherited-by-every-member"
+# CHECK: v1: f2 = NewClosure function=f2
+function f11 name="deferred-closure-over-the-object" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="onObject"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="deferred-closure-over-the-object"
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: v1: f5 = NewClosure v0 function=f5
+# CHECK-NEXT: = Call v1
+function f12 name="deferred-closure-over-nothing" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="onNothing"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="deferred-closure-over-nothing"
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: v1: f6 = NewClosure function=f6
+function f13 name="deferred-closure-escapes" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="onObject"
+    v2 = Call v1
+    Return v1
+}
+# CHECK-LABEL: function f13 name="deferred-closure-escapes"
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: v1: f5 = GetDeferredClosureSlot v0 key="onObject" receivers=[L2] level=Proven
+
+function f14 name="value-is-returned" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1
+    Return v1
+}
+# CHECK-LABEL: function f14 name="value-is-returned"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="m"
+function f15 name="value-is-stored" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1
+    PutModuleVariable v1 variable=g0
+    Return v2
+}
+# CHECK-LABEL: function f15 name="value-is-stored"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="m"
+function f16 name="value-is-an-argument" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f16 name="value-is-an-argument"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="m"
+function f17 name="value-is-compared" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2
+    v4 = StrictEq v2, v1
+    Return v4
+}
+# CHECK-LABEL: function f17 name="value-is-compared"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="m"
+function f18 name="value-is-never-called" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="m"
+    Return
+}
+# CHECK-LABEL: function f18 name="value-is-never-called"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="m"
+function f19 name="method-needs-its-closure" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="capturing"
+    v2 = Call v1
+    v3 = PropGet v0 key="recursive"
+    v4 = Call v3
+    Return v4
+}
+# CHECK-LABEL: function f19 name="method-needs-its-closure"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="capturing"
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: = PropGet v0 key="recursive"
+function f20 name="method-may-be-replaced" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="changing"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f20 name="method-may-be-replaced"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="changing"
+function f21 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="m"
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f21 name="predicted-receiver"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="m"

@@ -1,0 +1,20 @@
+# An element of a typed array has the element type of the view, from the payload of GetTypedArrayElement or from the class of the receiver of ElemGet
+# typedArrayType is the number of JSC's TypedArrayType: 2 for Uint8, 10 for Float64, 11 for BigInt64
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v4: undefined|int[0, 255]
+# CHECK-NEXT: v5: undefined|bigint
+# CHECK-NEXT: v6: undefined|number
+# CHECK-NEXT: v7: undefined|int[0, 255]
+# CHECK-NEXT: v8: undefined|bigint
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="t" parameters=[{type=Uint8Array}, {type=BigInt64Array}, {type=Float64Array}, {type=int}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: BigInt64Array, v2: Float64Array, v3: int):
+    v4 = GetTypedArrayElement v0, v3 typedArrayType=2
+    v5 = GetTypedArrayElement v1, v3 typedArrayType=11
+    v6 = GetTypedArrayElement v2, v3 typedArrayType=10
+    v7 = ElemGet v0, v3
+    v8 = ElemGet v1, v3
+    Return
+}

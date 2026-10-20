@@ -1,0 +1,46 @@
+# block 0 has one parameter for each capture, for each of the flags HasThis, TakesCallee, HasNewTarget, HasArgumentCount and HasHiddenRest, and for each parameter
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: EntryParametersMismatch 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badMissingParameter" parameters=[{type=number}] results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f1 name="badSecondParameter" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    Return
+}
+function f2 name="goodParameter" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f3 name="badMissingCapture" captures=[{type=string}] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f4 name="badMissingThis" flags=[HasThis] thisType={type=object} parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f5 name="badMissingCallee" flags=[TakesCallee] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f6 name="badMissingNewTarget" flags=[HasNewTarget] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f7 name="badMissingArgumentCount" flags=[HasArgumentCount] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f8 name="badMissingHiddenRest" flags=[HasHiddenRest] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f9 name="goodEveryKind" flags=[HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest] captures=[{type=string}] thisType={type=object} parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: object, v2: function, v3: anything, v4: int[0, 4294967295], v5: number, v6: Array):
+    Return
+}

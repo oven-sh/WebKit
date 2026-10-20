@@ -31,6 +31,7 @@
 #include "JSObject.h"
 #include "MacroAssemblerCodeRef.h"
 #include <atomic>
+#include <optional>
 
 namespace JSC {
 
@@ -97,11 +98,13 @@ private:
     ~JSFFICallback();
 
     void finishCreation(VM&, JSObject* callable);
+    void releasePoolEntry();
 
     WriteBarrier<JSObject> m_callable;
     Ref<FFI::Signature> m_signature;
     Vector<char, 64> m_returnCString;
     MacroAssemblerCodeRef<JITThunkPtrTag> m_entryCode;
+    std::optional<unsigned> m_poolEntry;
     void* m_embedderContext { nullptr }; // opaque, embedder-owned; passed to threadsafe dispatch
     std::atomic<unsigned> m_threadsafeState { 0 }; // closedBit | pending-invocation count (see above)
     bool m_threadsafe { false };

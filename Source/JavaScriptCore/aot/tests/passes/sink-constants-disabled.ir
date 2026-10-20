@@ -1,0 +1,28 @@
+# With the pass switched off a constant stays where it is defined
+# FORM: Prepared
+# OPTIONS: disable=pass:SinkConstants
+# RUN: pass SinkConstants
+# STATISTIC: SinkConstantsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
+  b0(v0: boolean, v1: string):
+    v2 = String string="cold"
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Strcat v1, v2
+    Return v3
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="oneUserBlock"
+# CHECK-NEXT: b0(v0: boolean, v1: string):
+# CHECK-NEXT: v2: "cold" = String string="cold"
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: string = Strcat v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

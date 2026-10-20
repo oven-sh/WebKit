@@ -86,12 +86,7 @@ public:
         return status() == Status::Evaluated;
     }
 
-    void setStatus(Status newStatus)
-    {
-        m_status = newStatus;
-        if (newStatus == Status::Evaluated)
-            releaseLinkingData();
-    }
+    void setStatus(Status newStatus) { m_status = newStatus; }
     void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }
 

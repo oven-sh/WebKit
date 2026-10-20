@@ -1,0 +1,171 @@
+# Code is generated for each operation that the expansion of iterations leaves, and each calls its own operation of the run time and nothing else
+# FORM: Placed
+# OPTIONS: check=ValidateBackEnd
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="forInOpen" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    Return
+}
+# The poll is the stack check of the prologue, which every function with a call has in text of this form.
+# CHECK: f0: size=
+# CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f1 name="forInStep" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    v3 = ForInStep v1, v0 position=v2
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = ResultAt v3 index=2
+    Return v5
+}
+# CHECK-NEXT: f1: size=
+# CHECK-NEXT: operation operationAOTEnumeratorNext x1
+# CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f2 name="isEnumeratorCurrent" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    v3 = ForInStep v1, v0 position=v2
+    v4 = ResultAt v3 index=2
+    v5 = IsEnumeratorCurrent v1, v0, v4
+    Return v5
+}
+# The test is loads and compares: no call beside the two of the function above.
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: operation operationAOTEnumeratorNext x1
+# CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f3 name="enumeratorGetByVal" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    v3 = ForInStep v1, v0 position=v2
+    v4 = ResultAt v3 index=1
+    v5 = ResultAt v3 index=2
+    v6 = IsEnumeratorCurrent v1, v0, v5
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    v8 = EnumeratorGetByVal v0, v4, v1, v5, v7
+    Return v8
+  b2():
+    Return v4
+}
+# A compiled object's field is found through the cache of keyed reads. An ordinary object's property is loaded at its offset.
+# CHECK-NEXT: f3: size=
+# CHECK-NEXT: operation operationAOTEnumeratorNext x1
+# CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
+# CHECK-NEXT: stub GetByValCachedCells x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f4 name="destructureIterable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = DestructureIterable v0 count=2
+    v2 = ResultAt v1
+    v3 = ResultAt v1 index=1
+    Return v3
+}
+# CHECK-NEXT: f4: size=
+# CHECK-NEXT: operation operationAOTDestructureIterable x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f5 name="requireAttachedTypedArray" parameters=[{type=Uint8Array<number>}] results=[{type=undefined}] {
+  b0(v0: Uint8Array<number>):
+    RequireAttachedTypedArray v0
+    Return
+}
+# CHECK-NEXT: f5: size=
+# CHECK-NEXT: operation operationAOTThrowIfTypedArrayIsDetached x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f6 name="createAsyncFromSyncIterator" parameters=[{type=object}, {type=anything}] results=[{type=object}] {
+  b0(v0: object, v1: anything):
+    v2 = CreateAsyncFromSyncIterator v0, v1
+    Return v2
+}
+# CHECK-NEXT: f6: size=
+# CHECK-NEXT: operation operationAOTCreateAsyncFromSyncIterator x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f7 name="throwNotIterable" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ThrowNotIterable v0
+    Unreachable
+}
+# CHECK-NEXT: f7: size=
+# CHECK-NEXT: operation operationAOTThrowNotIterable x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f8 name="throwNotIterableInSpread" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ThrowNotIterable v0 [isSpread]
+    Unreachable
+}
+# CHECK-NEXT: f8: size=
+# CHECK-NEXT: operation operationAOTThrowNotIterable x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f9 name="collectionTable" parameters=[{type=Map<anything, anything>}] results=[{type=anything}] {
+  b0(v0: Map<anything, anything>):
+    v1 = CollectionTable v0
+    Return v1
+}
+# One load and a select: no call, so no frame.
+# CHECK-NEXT: f9: size={{*}} frame=none
+
+function f10 name="mapNext" parameters=[{type=Map<anything, anything>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Map<anything, anything>, v1: anything, v2: i32):
+    v3 = MapNext v0, v1, v2
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = ResultAt v3 index=2
+    v7 = ResultAt v3 index=3
+    Return v7
+}
+# CHECK-NEXT: f10: size=
+# CHECK-NEXT: operation operationAOTMapNext x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f11 name="setNext" parameters=[{type=Set<anything>}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Set<anything>, v1: anything, v2: i32):
+    v3 = SetNext v0, v1, v2
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    v6 = ResultAt v3 index=2
+    Return v6
+}
+# CHECK-NEXT: f11: size=
+# CHECK-NEXT: operation operationAOTSetNext x1
+# CHECK-NEXT: stub PollAtPrologue x1
+
+function f12 name="enumeratorGetByValInRareCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    v3 = ForInStep v1, v0 position=v2
+    v4 = ResultAt v3 index=1
+    v5 = ResultAt v3 index=2
+    v6 = IsEnumeratorCurrent v1, v0, v5
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7) frequency=Rare:
+    v8 = EnumeratorGetByVal v0, v4, v1, v5, v7
+    Return v8
+  b2():
+    Return v4
+}
+# CHECK-NEXT: f12: size=
+# CHECK-NEXT: operation operationAOTEnumeratorGetByVal x1
+# CHECK-NEXT: operation operationAOTEnumeratorNext x1
+# CHECK-NEXT: operation operationAOTGetPropertyEnumerator x1
+# CHECK-NEXT: stub PollAtPrologue x1
+# CHECK-NOT: operation
+# CHECK-NOT: stub

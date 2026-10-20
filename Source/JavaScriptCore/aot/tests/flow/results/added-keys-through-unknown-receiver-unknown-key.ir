@@ -1,0 +1,32 @@
+# A store through an unknown receiver under a string nobody knows may give every escaped object any name: the list of added names is not complete
+# RUN: flow
+# RUN(NOWHERE): flow
+# OPTIONS: disable=flow:AppendedFields
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachUnknownJavaScript,
+# CHECK: class {{*}} layout=L1 impossibleMutations=[ReachNativeCode, {{*}}AddProperty{{*}}] {{*}}addedKeysAreComplete=true
+# NOWHERE-NOT: layout=L0 impossibleMutations=[{{*}}AddProperty
+# NOWHERE-NOT: layout=L0 {{*}}addedKeysAreComplete
+# NOWHERE-NOT: layout L0 {{*}}addedKeysAreComplete
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Escaped" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="escaped" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v1
+    v8 = PropGet v5 key="input" [isFreeName]
+    v9 = PropGet v5 key="which" [isFreeName]
+    v10 = ToString v9
+    ElemSet v8, v10, v0 mode=Strict
+    Return
+}

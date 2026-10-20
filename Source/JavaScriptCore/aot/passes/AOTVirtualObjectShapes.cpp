@@ -1,0 +1,239 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTVirtualObjectShapes.h"
+
+#if ENABLE(AOT)
+
+#include <algorithm>
+#include <wtf/CommaPrinter.h>
+#include <wtf/PrintStream.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+KeyOrderTable::KeyOrderTable()
+{
+    m_nodes.append(Node { });
+}
+
+KeyOrderID KeyOrderTable::append(KeyOrderID order, uint32_t field)
+{
+    uint64_t key = static_cast<uint64_t>(order.index()) << 32 | field;
+    return m_children.ensure(key, [&] {
+        KeyOrderID child(m_nodes.size());
+        m_nodes.append(Node { order, field, lengthOf(order) + 1 });
+        return child;
+    }).iterator->value;
+}
+
+Vector<uint32_t, 8> KeyOrderTable::fieldsOf(KeyOrderID order) const
+{
+    Vector<uint32_t, 8> result(lengthOf(order));
+    size_t position = result.size();
+    while (order != emptyKeyOrder) {
+        const Node& node = m_nodes[order.index()];
+        result[--position] = node.field;
+        order = node.parent;
+    }
+    return result;
+}
+
+VirtualFamily::VirtualFamily()
+{
+    m_shapes.append(VirtualShape { });
+}
+
+uint32_t VirtualFamily::addDescription(const VirtualObjectDescription& description)
+{
+    auto index = static_cast<uint32_t>(m_descriptions.size());
+    m_descriptions.append(description);
+    return index;
+}
+
+uint32_t VirtualFamily::ensureField(const VirtualField& field)
+{
+    if (std::optional<uint32_t> existing = findField(field))
+        return *existing;
+    auto number = static_cast<uint32_t>(m_fields.size());
+    m_fields.append(field);
+    return number;
+}
+
+std::optional<uint32_t> VirtualFamily::findField(const VirtualField& field) const
+{
+    size_t number = m_fields.find(field);
+    if (number == notFound)
+        return std::nullopt;
+    return static_cast<uint32_t>(number);
+}
+
+VirtualShapeID VirtualFamily::intern(VirtualShape&& shape)
+{
+    size_t existing = m_shapes.find(shape);
+    if (existing != notFound)
+        return VirtualShapeID(existing);
+    VirtualShapeID id(m_shapes.size());
+    m_shapes.append(WTF::move(shape));
+    return id;
+}
+
+static uint64_t tagBitKey(BlockID block, VirtualShapeID shape)
+{
+    return static_cast<uint64_t>(block.index()) << 32 | shape.index();
+}
+
+std::optional<uint8_t> VirtualFamily::tagBitFor(BlockID block, VirtualShapeID shape, uint64_t maxTagBits)
+{
+    if (std::optional<uint8_t> existing = findTagBit(block, shape))
+        return existing;
+    if (m_numberOfTagBits >= std::min<uint64_t>(maxTagBits, maxTagBitsInInt32))
+        return std::nullopt;
+    auto tagBit = static_cast<uint8_t>(m_numberOfTagBits++);
+    m_tagBits.add(tagBitKey(block, shape), tagBit);
+    return tagBit;
+}
+
+std::optional<uint8_t> VirtualFamily::findTagBit(BlockID block, VirtualShapeID shape) const
+{
+    return m_tagBits.getOptional(tagBitKey(block, shape));
+}
+
+void VirtualFamily::shareTagBit(BlockID block, VirtualShapeID shape, uint8_t existingTagBit)
+{
+    RELEASE_ASSERT(existingTagBit < m_numberOfTagBits);
+    bool isNewEntry = m_tagBits.add(tagBitKey(block, shape), existingTagBit).isNewEntry;
+    RELEASE_ASSERT(isNewEntry);
+}
+
+std::optional<uint8_t> VirtualFamily::reserveConsecutiveTagBits(unsigned count, uint64_t maxTagBits)
+{
+    RELEASE_ASSERT(m_numberOfTagBits == m_numberOfReservedTagBits);
+    if (static_cast<uint64_t>(m_numberOfTagBits) + count > std::min<uint64_t>(maxTagBits, maxTagBitsInInt32))
+        return std::nullopt;
+    auto first = static_cast<uint8_t>(m_numberOfTagBits);
+    m_numberOfTagBits += count;
+    m_numberOfReservedTagBits += count;
+    return first;
+}
+
+void VirtualFamily::forgetTagBits()
+{
+    m_tagBits.clear();
+    m_numberOfTagBits = m_numberOfReservedTagBits;
+}
+
+static void dumpDescription(PrintStream& out, const VirtualObjectDescription& description)
+{
+    out.print("v", description.allocation.index(), " ", nameOf(description.kind));
+    if (description.layout)
+        out.print(" L", description.layout.index());
+    if (description.function)
+        out.print(" f", description.function.index());
+    if (description.absentResult)
+        out.print(" absent=", nameOf(*description.absentResult));
+}
+
+static void dumpShape(PrintStream& out, const VirtualShape& shape)
+{
+    switch (shape.kind) {
+    case VirtualShapeKind::Cell:
+        out.print("cell");
+        return;
+    case VirtualShapeKind::Constant:
+        out.print(nameOf(shape.constant));
+        return;
+    case VirtualShapeKind::Fields:
+        break;
+    }
+    out.print("description=", shape.descriptionIndex, " stored(");
+    CommaPrinter comma(","_s);
+    for (size_t field : shape.stored)
+        out.print(comma, field);
+    out.print(") order=", shape.order.index(), " length=", shape.length);
+}
+
+void VirtualFamily::dump(PrintStream& out) const
+{
+    for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
+        out.print("description ", index, ": ");
+        dumpDescription(out, m_descriptions[index]);
+        out.println();
+    }
+    for (uint32_t field = 0; field < m_fields.size(); ++field)
+        out.println("field ", field, ": ", m_fields[field]);
+    for (uint32_t shape = 0; shape < m_shapes.size(); ++shape) {
+        out.print("s", shape, ": ");
+        dumpShape(out, m_shapes[shape]);
+        out.println();
+    }
+}
+
+TypeID typeOfShape(const ShapeContext& context, const VirtualShape& shape)
+{
+    switch (shape.kind) {
+    case VirtualShapeKind::Cell:
+        return { };
+    case VirtualShapeKind::Constant:
+        return typeOf(shape.constant);
+    case VirtualShapeKind::Fields:
+        return context.family.descriptionOf(shape).type;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool hasStored(const VirtualShape& shape, uint32_t field)
+{
+    return shape.kind == VirtualShapeKind::Fields && shape.stored.get(field);
+}
+
+static void addStoredField(const VirtualFamily& family, KeyOrderTable& orders, VirtualShape& shape, uint32_t field)
+{
+    bool wasStored = shape.stored.set(field);
+    if (wasStored)
+        return;
+    if (family.descriptionOf(shape).hasKeyOrder && family.fieldAt(field).isProperty())
+        shape.order = orders.append(shape.order, field);
+}
+
+VirtualShape shapeAtAllocation(const VirtualObjectContext& context, VirtualFamily& family, KeyOrderTable& orders, uint32_t descriptionIndex)
+{
+    const VirtualObjectDescription& description = family.descriptionAt(descriptionIndex);
+    VirtualShape shape;
+    shape.kind = VirtualShapeKind::Fields;
+    shape.descriptionIndex = descriptionIndex;
+    shape.length = initialLengthOf(context.function, description);
+    forEachInitialField(context, description, [&](const VirtualField& initialField, ValueID) {
+        addStoredField(family, orders, shape, family.ensureField(initialField));
+    });
+    if (description.kind == VirtualObjectKind::Array)
+        addStoredField(family, orders, shape, family.ensureField(VirtualField::part(VirtualFieldKind::Length)));
+    return shape;
+}
+
+VirtualShape shapeAfterStore(const VirtualFamily& family, KeyOrderTable& orders, const VirtualShape& shape, uint32_t field)
+{
+    RELEASE_ASSERT(shape.kind == VirtualShapeKind::Fields);
+    ASSERT(family.descriptionOf(shape).kind != VirtualObjectKind::Array || family.fieldAt(field).kind != VirtualFieldKind::Element || family.fieldAt(field).index < shape.length);
+    VirtualShape result = shape;
+    addStoredField(family, orders, result, field);
+    return result;
+}
+
+VirtualShape shapeAfterAppend(VirtualFamily& family, const VirtualShape& shape, bool isHole, uint32_t& appendedField)
+{
+    RELEASE_ASSERT(shape.kind == VirtualShapeKind::Fields);
+    RELEASE_ASSERT(family.descriptionOf(shape).kind == VirtualObjectKind::Array);
+    appendedField = family.ensureField(VirtualField::element(shape.length));
+    VirtualShape result = shape;
+    ++result.length;
+    if (!isHole)
+        result.stored.set(appendedField);
+    return result;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

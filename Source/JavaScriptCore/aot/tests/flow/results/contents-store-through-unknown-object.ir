@@ -1,0 +1,28 @@
+# escaped = new Map(); x = launder(escaped); Map.prototype.set.call(x, 1, 2); apart = new Map()
+# The receiver of the call is the unknown object alone, which stands for every escaped object: the escaped map may be stored to after its creation. No key names what is stored,
+# so the store reaches an escaped object whatever names it has. It adds no property. A map that stays with the program is not reached.
+# RUN: flow
+# CHECK: class [[escaped]] builtinClass=Map {{*}}impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType]
+# CHECK: class [[apart]] builtinClass=Map {{*}}BecomePrototype, StoreAfterCreation, StoreOfOtherType]
+# CHECK: site {{*}} function=f0 builtinClass=Map allocationClass={{*}} location={module=m0 position=10}
+# CHECK: site {{*}} function=f0 builtinClass=Map allocationClass={{*}} location={module=m0 position=30}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="apart" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="launder" [isFreeName]
+    v2 = Builtin builtin=Map
+    v3 = Construct v2 @10
+    v4 = Call v1, -, v3
+    v5 = Builtin builtin=MapPrototype
+    v6 = PropGet v5 key="set"
+    v7 = Integer integer=1
+    v8 = Integer integer=2
+    v9 = Call v6, v4, v7, v8
+    v10 = Construct v2 @30
+    PutModuleVariable v10 variable=g0
+    Return
+}

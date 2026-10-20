@@ -1,0 +1,86 @@
+# A heritage that holds two classes proves no base, and the two classes keep their shapes; a heritage that went through a function returning its argument holds one class and proves it
+# RUN: flow
+# RUN(NOWHERE): flow
+# STATISTIC: FlowProvenBases = 1
+# CHECK: class {{*}} layout=L2 {{*}}cause=UnknownBase
+# CHECK: layout L0 flow={baseState=None members=[L0, L2, L3]
+# CHECK: layout L1 flow={baseState=None members=[L1]
+# CHECK: layout L2 flow={{*}}cause=UnknownBase impossibleMutations=[
+# CHECK: layout L3 flow={baseState=Layout base=L0
+# NOWHERE-NOT: layout L2 {{*}}baseState=
+# NOWHERE-NOT: layout L2 {{*}}base=L
+# NOWHERE-NOT: layout=L2 {{*}}LoseShape
+# NOWHERE-NOT: layout=L0 {{*}}cause=
+# NOWHERE-NOT: layout=L1 {{*}}cause=
+# NOWHERE-NOT: layout=L3 {{*}}cause=
+# NOWHERE-NOT: layout L0 {{*}}cause=
+# NOWHERE-NOT: layout L1 {{*}}cause=
+# NOWHERE-NOT: layout L3 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" constructor=f2
+layout L2 kind=Instance name="D" predictedBase=L0 constructor=f3 flags=[HasHeritage]
+layout L3 kind=Instance name="F" predictedBase=L0 constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Builtin builtin=MathRandom
+    v7 = Call v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v5)
+  b3(v9):
+    v10 = NewClosure function=f3
+    v11 = ResolveHeritage v9
+    v12 = NewClass v10, v9, v11 layout=L2
+    v13 = FinishClass v12 layout=L2
+    v14 = NewClosure function=f5
+    v15 = Call v14, -, v2
+    v16 = NewClosure function=f4
+    v17 = ResolveHeritage v15
+    v18 = NewClass v16, v15, v17 layout=L3
+    v19 = FinishClass v18 layout=L3
+    v20 = Construct v13
+    v21 = Construct v19
+    v22 = Construct v2
+    v23 = Construct v5
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="B" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="D" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f4 name="F" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f5 name="mixin" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

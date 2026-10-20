@@ -1,0 +1,80 @@
+# `return Symbol("dog")` in a function that runs at most once returns the KeyConstant: the tail call is demoted, so the caller never gets a fresh symbol under the literal type. A function called twice keeps its tail call and returns `symbol`
+# RUN: flow-apply
+# STATISTIC: ReturnCallsDemoted = 3
+# CHECK: variable g0 name="once" module=m0 declared={type=symbol("dog")@m0:25 written=anything}
+# CHECK: variable g1 name="first" module=m0 declared={type=symbol written=anything}
+# CHECK: variable g2 name="second" module=m0 declared={type=symbol written=anything}
+# CHECK: variable g3 name="nameless" module=m0 declared={type=symbol@m0:75 written=anything}
+# CHECK: variable g4 name="throughAnother" module=m0 declared={type=symbol("inner")@m0:125 written=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="once" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="first" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="second" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="nameless" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="throughAnother" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = CallDirect function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = CallDirect function=f2
+    PutModuleVariable v4 variable=g2
+    v6 = CallDirect function=f3
+    PutModuleVariable v6 variable=g3
+    v8 = CallDirect function=f4
+    PutModuleVariable v8 variable=g4
+    Return
+}
+function f1 name="makeOnce" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="dog"
+    v2 = Call v0, -, v1 @25
+    ReturnCall v2
+}
+# CHECK-LABEL: function f1 name="makeOnce"{{*}}results=[{type=symbol("dog")@m0:25
+# CHECK: = Call v0, -, v1
+# CHECK-NEXT: [[once]]: symbol("dog")@m0:25 = KeyConstant key=symbol("dog")@m0:25
+# CHECK-NEXT: Return [[once]]
+function f2 name="makeTwice" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="cat"
+    v2 = Call v0, -, v1 @50
+    ReturnCall v2
+}
+# CHECK-LABEL: function f2 name="makeTwice"{{*}}results=[{type=symbol written
+# CHECK: [[twice]]: anything = Call v0, -, v1
+# CHECK-NEXT: ReturnCall [[twice]]
+function f3 name="makeNameless" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = Call v0 @75
+    ReturnCall v1
+}
+# CHECK-LABEL: function f3 name="makeNameless"
+# CHECK: = Call v0
+# CHECK-NEXT: [[nameless]]: symbol@m0:75 = KeyConstant key=symbol@m0:75
+# CHECK-NEXT: Return [[nameless]]
+function f4 name="makeThroughAnother" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f5
+    ReturnCall v0
+}
+# CHECK-LABEL: function f4 name="makeThroughAnother"
+# CHECK: [[inner]]: symbol("inner")@m0:125 = CallDirect function=f5
+# CHECK-NEXT: ReturnCall [[inner]]
+function f5 name="makeInner" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="inner"
+    v2 = Call v0, -, v1 @125
+    ReturnCall v2
+}
+# CHECK-LABEL: function f5 name="makeInner"
+# CHECK: = Call v0, -, v1
+# CHECK-NEXT: [[constant]]: symbol("inner")@m0:125 = KeyConstant key=symbol("inner")@m0:125
+# CHECK-NEXT: Return [[constant]]

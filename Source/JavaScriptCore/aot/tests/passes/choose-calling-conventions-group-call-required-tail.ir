@@ -1,0 +1,43 @@
+# A required tail call of a group joins the caller and every group entrypoint: where they differ all return boxed
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 2
+# CHECK: f0 Direct ({{*}}) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}) -> ({{*}}:JSValue)
+# CHECK-COUNT-5: :Double) -> ({{*}}:JSValue) boxed-result closures=
+# CHECK-NOT: closures=
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="mustJump"
+# CHECK: v2: number = CallGroup v0, v1 function=
+# CHECK-NEXT: ReturnCall v2
+function f0 name="mustJump" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}] results=[{type=number|string}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f2, f3, f4, f5, f6]
+    ReturnCall v2 casts=[{declared={type=number|string} resolution=Assume}]
+}
+function f1 name="usesResult" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f2, f3, f4, f5, f6]
+    Return v2
+}
+function f2 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f5 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f6 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}

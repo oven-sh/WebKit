@@ -1,0 +1,61 @@
+# A virtual object has at most as many shapes at a merge as the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxVirtualObjectVariants:2
+# RUN: pass SinkAllocations
+# LOSS: MaxVirtualObjectVariants f0 v2
+# STATISTIC: AllocationsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+
+function f0 name="threeShapesAtOneMerge" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    PropDefine v2, v1 key="b" receivers=[L0]
+    Jump -> next b4()
+  b2():
+    PropDefine v2, v1 key="c" receivers=[L0]
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v6 = PropGet v2 key="a" receivers=[L0]
+    v7 = PropGet v3 key="a" receivers=[L0]
+    v8 = Add v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f0 name="threeShapesAtOneMerge"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Switch v1
+# CHECK: b1():
+# CHECK-NEXT: PropDefine v2, v1 key="b"
+# CHECK: b2():
+# CHECK-NEXT: PropDefine v2, v1 key="c"
+# CHECK: b4([[a0]]: anything):
+# CHECK-NEXT: v6:{{*}}= PropGet v2 key="a"
+# CHECK-NEXT: v7: anything = Upcast [[a0]] castType=anything
+
+function f1 name="twoShapesAtOneMerge" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    PropDefine v2, v1 key="b" receivers=[L0]
+    Jump -> next b4()
+  b2():
+    PropDefine v2, v0 key="b" receivers=[L0]
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v5 = PropGet v2 key="a" receivers=[L0]
+    Return v5
+}
+# CHECK-LABEL: function f1 name="twoShapesAtOneMerge"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropDefine
+# CHECK-NOT: PropGet

@@ -53,20 +53,17 @@ public:
 
     void run()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (!m_procedure.hasEverAdded(DoubleToFloat) && !m_procedure.hasEverAdded(FloatToDouble)) {
+        bool mayFindWork = m_procedure.hasEverAdded(DoubleToFloat) || m_procedure.hasEverAdded(FloatToDouble);
+        if (!mayFindWork && !shouldValidateIR(m_procedure)) {
             for (BasicBlock* block : m_procedure) {
-                for (Value* value : *block) {
-                    for (Value*& child : value->children()) {
-                        if (child->opcode() == Identity)
-                            child = child->foldIdentity();
-                    }
-                }
+                for (Value* value : *block)
+                    value->performSubstitution();
             }
             return;
         }
-#endif
-        if (!findCandidates())
+        bool foundCandidates = findCandidates();
+        RELEASE_ASSERT(mayFindWork || !foundCandidates);
+        if (!foundCandidates)
             return;
 
         findPhisContainingFloat();

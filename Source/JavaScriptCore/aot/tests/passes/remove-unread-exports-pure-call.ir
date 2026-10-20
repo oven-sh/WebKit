@@ -1,0 +1,42 @@
+# A call annotated as pure goes with the store of its answer into a variable nobody reads, and so does the annotated call that made its argument: the value is never made, so nobody sees it let go. The predictions that the front end puts between a call and its store go with them.
+# The same call without the annotation stays, and so does the store of its answer, which may be an object that somebody observes. An annotated call whose answer has another use stays with its store too
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: only-passes=RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 1
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1}]
+module m1 path="/maps.ts" displayPath="maps.ts" body=f1 exports=[{name="annotated" variable=g0}, {name="plain" variable=g1}, {name="used" variable=g2}]
+entry module=m0
+variable g0 name="annotated" module=m1 declared={type=anything}
+variable g1 name="plain" module=m1 declared={type=anything}
+variable g2 name="used" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f1 name="maps" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="make" [isFreeName]
+    v2 = Call v1, - [isAnnotatedPure]
+    v3 = Predict v2 predicted=object
+    v4 = Construct v1, -, v3 [isAnnotatedPure]
+    v5 = Predict v4 predicted=object
+    PutModuleVariable v5 variable=g0
+    v7 = Call v1, -
+    PutModuleVariable v7 variable=g1
+    v9 = Call v1, - [isAnnotatedPure]
+    PutModuleVariable v9 variable=g2
+    v11 = Call v1, -, v9
+    Return
+}
+# CHECK-LABEL: function f1 name="maps"
+# CHECK-NOT: isAnnotatedPure
+# CHECK-NOT: Predict
+# CHECK: v7: anything = Call v1 accessSite
+# CHECK-NEXT: PutModuleVariable v7 variable=g1
+# CHECK-NEXT: v9: anything = Call v1 {{*}}[isAnnotatedPure]
+# CHECK-NEXT: PutModuleVariable v9 variable=g2

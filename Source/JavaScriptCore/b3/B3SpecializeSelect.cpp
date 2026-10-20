@@ -57,10 +57,9 @@ public:
 
     bool run()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (!m_proc.hasEverAdded(Select) || !m_proc.hasEverAdded(Check))
+        bool mayFindWork = m_proc.hasEverAdded(Select) && m_proc.hasEverAdded(Check);
+        if (!mayFindWork && !shouldValidateIR(m_proc))
             return false;
-#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
@@ -68,6 +67,7 @@ public:
 
         // specialize() always inserts blocks, so this is true exactly when one fired.
         bool changed = m_blockInsertionSet.execute();
+        RELEASE_ASSERT(mayFindWork || !changed);
         if (changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();

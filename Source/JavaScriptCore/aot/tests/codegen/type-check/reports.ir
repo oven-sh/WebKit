@@ -1,0 +1,55 @@
+# A report that can fail has one call site and goes on to the return, one that always passes has no code of its own, and a Claim throws whatever the policy is
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: check=validate-back-end type-errors=log
+# CHECK: f0: size={{*}} sites=1 handlers=0 
+# CHECK: f1: size={{*}} sites=0 handlers=0 
+# CHECK: f2: size={{*}} sites=1 handlers=0 
+# CHECK: f3: size={{*}} sites=1 handlers=0 
+# CHECK: f4: size={{*}} sites=1 handlers=0 
+# CHECK: f5: size={{*}} sites=1 handlers=1 
+# CHECK: f6: size={{*}} sites=1 handlers=0 
+# STATISTIC: TypeChecksInB3 = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Variable
+function f0 name="mayFail" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    ReportMismatch v0 expectedType=undefined|null|number site=w0
+    Return v0
+}
+function f1 name="alwaysPasses" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    ReportMismatch v0 expectedType=undefined|null|number site=w0
+    Return v0
+}
+function f2 name="neverPasses" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    ReportMismatch v0 expectedType=undefined|null|number site=w0
+    Return v0
+}
+function f3 name="withoutSite" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    ReportMismatch v0 expectedType=undefined|null|object
+    Return v0
+}
+function f4 name="unboxedNumber" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    ReportMismatch v0 expectedType=undefined|null|i32 site=w0
+    Return v0
+}
+function f5 name="underHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    ReportMismatch v0 expectedType=undefined|null|number site=w0
+    Return v0
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f6 name="claim" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=number
+    Return v1
+}

@@ -1,0 +1,282 @@
+# A field defers its closure where every allocation of its layout gives it a closure of one function, over nothing or over the object, before anything else can see the object.
+# The allocation lists the closure, which is made on demand, and the reads of the field make it
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 10
+# STATISTIC: ClosuresDeferredInFields = 11
+# STATISTIC: StoresListedByAllocations = 10
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="StoredBehindTheAllocation" constructor=f1 fields=[{key="count" declared={type=anything}}, {key="onData" declared={type=function}}, {key="onEnd" declared={type=function}}, {key="onError" declared={type=function}}]
+layout L1 name="ListedAsUndefinedFirst" fields=[{key="id" declared={type=anything}}, {key="read" declared={type=anything}}, {key="last" declared={type=anything}}]
+layout L2 name="ListedByTheAllocation" fields=[{key="run" declared={type=anything}}]
+layout L3 name="OtherStoresBetween" fields=[{key="first" declared={type=anything}}, {key="name" declared={type=anything}}, {key="items" declared={type=anything}}, {key="second" declared={type=anything}}]
+layout L4 name="TwoAllocations" fields=[{key="run" declared={type=anything}}]
+layout L5 name="ClosureUsedTwice" fields=[{key="run" declared={type=anything}}]
+layout L6 name="StoredBehindCall" fields=[{key="run" declared={type=anything}}]
+layout L7 name="StoredBehindRead" fields=[{key="id" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L8 name="TwoFunctions" fields=[{key="run" declared={type=anything}}]
+layout L9 name="OneAllocationGivesNothing" fields=[{key="run" declared={type=anything}}]
+layout L10 name="StoredElsewhere" fields=[{key="run" declared={type=anything}}]
+layout L11 kind=Instance name="HasSubclass" constructor=f2 fields=[{key="run" declared={type=anything}}]
+layout L12 kind=Instance name="Subclass" predictedBase=L11 constructor=f3 fields=[{key="own" declared={type=anything}}, {key="run" declared={type=anything} flags=[IsInherited] originLayout=L11 originField=0}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L11}
+layout L13 name="BehindStoreThatStays" fields=[{key="self" declared={type=anything}}, {key="run" declared={type=anything}}]
+layout L14 name="ClosureOfAnotherBlock" fields=[{key="run" declared={type=anything}}]
+layout L15 name="CapturesEnvironment" fields=[{key="run" declared={type=anything}}]
+layout L16 kind=Environment name="scope" fields=[{key="count" declared={type=anything}}]
+layout L17 name="ReadWithFieldThatMayBeEmpty" fields=[{key="shared" declared={type=anything}}]
+layout L18 name="MayBeEmpty" fields=[{key="shared" declared={type=anything} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L19 kind=Instance name="PrototypeMaySelectAnotherClass" constructor=f4 fields=[{key="run" declared={type=anything}}]
+layout L20 name="StoredTwice" fields=[{key="run" declared={type=anything}}]
+layout L21 name="ClosureMadeBeforeCall" fields=[{key="run" declared={type=anything}}]
+
+# CHECK: layout L0 {{*}}{key="count" declared={type=anything}}, {key="onData" declared={type=function} flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f7} occupancy=AlwaysFilled}}, {key="onEnd" declared={type=function} flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f8} occupancy=AlwaysFilled}}, {key="onError" declared={type=function} flow={location={initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f9} occupancy=AlwaysFilled}}]
+# CHECK: layout L1 {{*}}{key="read" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f7} occupancy=AlwaysFilled}}, {key="last" declared={type=anything}}]
+# CHECK: layout L2 {{*}}deferral=CapturesNothing deferredFunction=f9}
+# CHECK: layout L3 {{*}}{key="first" {{*}}deferredFunction=f7} occupancy=AlwaysFilled}}, {key="name" declared={type=anything}}, {key="items" declared={type=anything}}, {key="second" {{*}}deferredFunction=f8} occupancy=AlwaysFilled}}]
+# CHECK: layout L4 {{*}}deferral=CapturesNothing deferredFunction=f9}
+# CHECK: layout L5 name="ClosureUsedTwice" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L6 name="StoredBehindCall" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L7 name="StoredBehindRead" fields=[{key="id" declared={type=anything}}, {key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L8 name="TwoFunctions" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L9 name="OneAllocationGivesNothing" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L10 name="StoredElsewhere" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L11 kind=Instance name="HasSubclass" constructor=f2 fields=[{key="run" declared={type=anything}}]
+# CHECK: layout L13 name="BehindStoreThatStays" fields=[{key="self" declared={type=anything}}, {key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L14 name="ClosureOfAnotherBlock" fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L15 name="CapturesEnvironment" fields=[{key="run" declared={type=anything}}]
+# CHECK: layout L17 name="ReadWithFieldThatMayBeEmpty" fields=[{key="shared" declared={type=anything}}]
+# CHECK: layout L19 kind=Instance name="PrototypeMaySelectAnotherClass" constructor=f4 fields=[{key="run" declared={type=anything}}]
+# CHECK-NEXT: layout L20 {{*}}deferral=CapturesNothing deferredFunction=f10}
+# CHECK-NEXT: layout L21 {{*}}deferral=CapturesNothing deferredFunction=f9}
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Undefined
+    v2 = NewObject -, v0, v1, v0 layout=L1 fields=[0, 1, 2]
+    v3 = NewClosure v2 function=f7
+    PutSlotOrAdd v2, v2, v3 key="read" receivers=[L1] level=Proven
+    PutModuleVariable v2 variable=g0
+    v6 = NewClosure function=f9
+    v7 = Upcast v6 castType=anything
+    v8 = NewObject -, v7 layout=L2 fields=[0]
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject layout=L3 fields=[]
+    v11 = Upcast v10 castType=object
+    v12 = NewClosure v11 function=f7
+    PutSlotOrAdd v10, v10, v12 key="first" receivers=[L3] level=Proven
+    v14 = String string="name"
+    PutSlotOrAdd v10, v10, v14 key="name" receivers=[L3] level=Proven
+    v16 = NewArray v14 contents=anything holes=[]
+    PutSlotOrAdd v10, v10, v16 key="items" receivers=[L3] level=Proven
+    v18 = NewClosure v10 function=f8
+    v19 = Upcast v18 castType=anything
+    PutSlotOrAdd v10, v10, v19 key="second" receivers=[L3] level=Proven
+    PutModuleVariable v10 variable=g0
+    v22 = NewClosure function=f9
+    v23 = NewObject -, v22 layout=L4 fields=[0]
+    PutModuleVariable v23 variable=g0
+    v25 = NewObject layout=L4 fields=[]
+    v26 = NewClosure function=f9
+    PutSlotOrAdd v25, v25, v26 key="run" receivers=[L4] level=Proven
+    PutModuleVariable v25 variable=g0
+    v29 = NewClosure function=f9
+    v30 = NewObject -, v29 layout=L20 fields=[0]
+    v31 = NewClosure function=f10
+    PutSlot v30, v30, v31 key="run" receivers=[L20] level=Proven
+    PutModuleVariable v30 variable=g0
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[read]]: f7 = NewClosure function=f7 [isMadeOnDemand]
+# CHECK-NEXT: [[literal]]:{{*}}= NewObject -, v0, [[read]], v0 layout=L1 fields=[0, 1, 2]
+# CHECK-NEXT: PutModuleVariable [[literal]] variable=g0
+# CHECK-NEXT: [[run]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: [[cast]]:{{*}}= Upcast [[run]] castType=anything
+# CHECK-NEXT: = NewObject -, [[cast]] layout=L2 fields=[0]
+# CHECK: [[first]]: f7 = NewClosure function=f7 [isMadeOnDemand]
+# CHECK-NEXT: [[name]]:{{*}}= String string="name"
+# CHECK-NEXT: [[items]]:{{*}}= NewArray [[name]]
+# CHECK-NEXT: [[second]]: f8 = NewClosure function=f8 [isMadeOnDemand]
+# CHECK-NEXT: [[secondCast]]:{{*}}= Upcast [[second]] castType=anything
+# CHECK-NEXT: [[object]]:{{*}}= NewObject -, [[first]], [[name]], [[items]], [[secondCast]] layout=L3 fields=[0, 1, 2, 3]
+# CHECK-NEXT: = Upcast [[object]] castType=object
+# CHECK-NEXT: PutModuleVariable [[object]] variable=g0
+# CHECK-NEXT: [[listed]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject -, [[listed]] layout=L4 fields=[0]
+# CHECK: [[stored]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject -, [[stored]] layout=L4 fields=[0]
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: = NewClosure function=f9
+# CHECK-NEXT: [[later]]: f10 = NewClosure function=f10 [isMadeOnDemand]
+# CHECK-NEXT: = NewObject -, [[later]] layout=L20 fields=[0]
+# CHECK-NEXT: PutModuleVariable
+# CHECK-NEXT: Return
+
+function f1 name="StoredBehindTheAllocation" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = NewClosure function=f9
+    v3 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v4 = NewClosure v3 function=f8
+    v5 = NewClosure v3 function=f7
+    PutSlotOrAdd v3, -, v5 key="onData" receivers=[L0] level=Proven
+    PutSlotOrAdd v3, -, v4 key="onEnd" receivers=[L0] level=Proven
+    PutSlotOrAdd v3, -, v2 key="onError" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f1 name="StoredBehindTheAllocation"
+# CHECK: [[onError]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: [[onEnd]]: f8 = NewClosure function=f8 [isMadeOnDemand]
+# CHECK-NEXT: [[onData]]: f7 = NewClosure function=f7 [isMadeOnDemand]
+# CHECK-NEXT: [[instance]]: L0 = NewObject -, v1, [[onData]], [[onEnd]], [[onError]] layout=L0 fields=[0, 1, 2, 3] [keepsShape]
+# CHECK-NEXT: Return [[instance]]
+
+function f2 name="HasSubclass" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11 {
+  b0(v0: anything):
+    v1 = NewObject layout=L11 fields=[] [keepsShape]
+    v2 = NewClosure v1 function=f7
+    PutSlotOrAdd v1, -, v2 key="run" receivers=[L11] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f2 name="HasSubclass"
+# CHECK: = NewObject layout=L11
+# CHECK-NEXT: = NewClosure v1 function=f7
+# CHECK-NEXT: PutSlotOrAdd
+
+function f3 name="Subclass" module=m0 kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L12 {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="PrototypeMaySelectAnotherClass" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L19 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L19
+    v2 = NewClosure function=f9
+    v3 = NewObject v1, v2 layout=L19 fields=[0]
+    Return v3
+}
+# CHECK-LABEL: function f4 name="PrototypeMaySelectAnotherClass"
+# CHECK: = NewClosure function=f9
+# CHECK-NEXT: = NewObject v1, v2 layout=L19 fields=[0]
+
+function f5 name="fieldsThatKeepTheirClosures" module=m0 parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewClosure function=f9
+    v3 = NewObject -, v2 layout=L5 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v5 = NewObject layout=L6 fields=[]
+    v6 = Call v0
+    v7 = NewClosure v5 function=f7
+    PutSlotOrAdd v5, v5, v7 key="run" receivers=[L6] level=Proven
+    v9 = NewObject -, v0 layout=L7 fields=[0]
+    v10 = GetSlotOrUndefined v9, v9 key="id" receivers=[L7] level=Proven
+    v11 = NewClosure v9 function=f7
+    PutSlotOrAdd v9, v9, v11 key="run" receivers=[L7] level=Proven
+    v13 = NewClosure function=f9
+    v14 = NewObject -, v13 layout=L8 fields=[0]
+    v15 = NewClosure function=f10
+    v16 = NewObject -, v15 layout=L8 fields=[0]
+    v17 = NewClosure function=f9
+    v18 = NewObject -, v17 layout=L9 fields=[0]
+    v19 = NewObject layout=L9 fields=[]
+    v20 = NewClosure function=f9
+    v21 = NewObject -, v20 layout=L10 fields=[0]
+    PutModuleVariable v21 variable=g0
+    PutSlot v21, v21, v0 key="run" receivers=[L10] level=Proven
+    v24 = NewObject layout=L13 fields=[]
+    PutSlotOrAdd v24, v24, v24 key="self" receivers=[L13] level=Proven
+    v26 = NewClosure v24 function=f7
+    PutSlotOrAdd v24, v24, v26 key="run" receivers=[L13] level=Proven
+    v28 = NewObject -, v0 layout=L16 fields=[0]
+    v29 = NewClosure v28 function=f11
+    v30 = NewObject -, v29 layout=L15 fields=[0]
+    v31 = NewClosure function=f9
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v33 = NewObject -, v31 layout=L14 fields=[0]
+    PutModuleVariable v33 variable=g0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v10
+}
+# CHECK-LABEL: function f5 name="fieldsThatKeepTheirClosures"
+# CHECK-NOT: isMadeOnDemand
+# CHECK: PutSlotOrAdd v5, v5, v7 key="run"
+# CHECK: PutSlotOrAdd v9, v9, v11 key="run"
+# CHECK: PutSlot v21, v21, v0 key="run"
+# CHECK: PutSlotOrAdd v24, v24, v24 key="self"
+# CHECK: PutSlotOrAdd v24, v24, v26 key="run"
+# CHECK-NOT: isMadeOnDemand
+
+function f6 name="reads" module=m0 parameters=[{type=L0}, {type=L1}, {type=L17|L18}, {type=L2|L4}] results=[{type=anything}] {
+  b0(v0: L0, v1: L1, v2: L17|L18, v3: L2|L4):
+    v4 = IsSlotFilled v0 key="onData" receivers=[L0] level=Proven
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5: guard):
+    v6 = GetSlot v0, v5 key="onData" receivers=[L0] level=Proven
+    v7 = GetSlotOrUndefined v1 key="read" receivers=[L1] level=Proven
+    v8 = GetSlotOrUndefined v1 key="id" receivers=[L1] level=Proven
+    v9 = GetSlotOrUndefined v2 key="shared" receivers=[L17, L18] level=Proven
+    v10 = GetSlotOrUndefined v3 key="run" receivers=[L2, L4] level=Proven
+    v11 = NewClosure function=f9
+    v12 = NewObject -, v11 layout=L17 fields=[0]
+    v13 = NewObject layout=L18 fields=[]
+    v14 = GetSlotOrUndefined v0 key="onEnd" receivers=[L0] level=Proven
+    v15 = TypeTest v14 testedType=undefined
+    PutModuleVariable v15 variable=g0
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f6 name="reads"
+# CHECK: = IsSlotFilled v0 key="onData"
+# CHECK: = GetDeferredClosureSlot v0, v5 key="onData" receivers=[L0] level=Proven
+# CHECK-NEXT: = GetDeferredClosureSlot v1 key="read" receivers=[L1] level=Proven
+# CHECK-NEXT: = GetSlotOrUndefined v1 key="id"
+# CHECK-NEXT: = GetSlotOrUndefined v2 key="shared"
+# CHECK-NEXT: = GetDeferredClosureSlot v3 key="run" receivers=[L2, L4] level=Proven
+# CHECK-NEXT: = NewClosure function=f9
+# CHECK-NEXT: = NewObject -, v11 layout=L17
+# CHECK: [[narrowed]]: function = GetDeferredClosureSlot v0 key="onEnd" receivers=[L0] level=Proven
+# CHECK-NEXT: : false = TypeTest [[narrowed]] testedType=undefined
+
+function f7 name="overObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    Return
+}
+function f8 name="alsoOverObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    Return
+}
+function f9 name="overNothing" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f10 name="alsoOverNothing" module=m0 kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="overEnvironment" module=m0 kind=Arrow captures=[{type=env L16}] results=[{type=anything}] {
+  b0(v0: env L16):
+    Return
+}
+function f12 name="closureMadeBeforeCall" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f9
+    v2 = Upcast v1 castType=anything
+    v3 = Call v0
+    v4 = NewObject -, v2 layout=L21 fields=[0]
+    Return v4
+}
+# CHECK-LABEL: function f12 name="closureMadeBeforeCall"
+# CHECK: = Call v0
+# CHECK-NEXT: [[made]]: f9 = NewClosure function=f9 [isMadeOnDemand]
+# CHECK-NEXT: [[madeCast]]:{{*}}= Upcast [[made]] castType=anything
+# CHECK-NEXT: = NewObject -, [[madeCast]] layout=L21 fields=[0]

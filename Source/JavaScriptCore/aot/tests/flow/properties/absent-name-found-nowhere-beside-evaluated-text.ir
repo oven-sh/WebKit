@@ -1,0 +1,20 @@
+# Text evaluated at run time may add a name to a built-in prototype, so a read of the program that finds its name nowhere answers unknown and closes nothing
+# RUN: flow-walk
+# CHECK: f0@{{*}} v6 Get {"red"}
+# CHECK: Array@f0:v5: Unknown Predicted ArrayPrototype
+# RUN(TABLES): tables constants
+# TABLES-NOT: closedAbsentName holder=ArrayPrototype name="red"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = PropGet v0 key="Function" [isFreeName]
+    v3 = Call v2, -, v1
+    v4 = Integer integer=1
+    v5 = NewArray v4 contents=anything
+    v6 = PropGet v5 key="red"
+    Return
+}

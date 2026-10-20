@@ -1,0 +1,749 @@
+# An array is allocated with room for the elements that later appends add to it
+# FORM: Prepared
+# OPTIONS: limit=MaxPlannedArrayCapacity:8
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 18
+# LOSS: MaxPlannedArrayCapacity x1 f24 v1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threePushes" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v3 = Upcast v1 castType=Array<anything>
+    v4 = CallBuiltin v3, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: [[c0]]: {{*}} = Integer integer=3
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c0]]
+
+function f1 name="appendsAfterElements" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    AppendElement v1, v0
+    Jump -> next b1()
+  b1():
+    AppendElement v1, v0
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK: [[c1]]: {{*}} = Integer integer=3
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c1]]
+
+function f2 name="oneConditionalPush" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: [[c2]]: {{*}} = Integer integer=1
+# CHECK-NEXT: = NewArray {{*}}capacity=[[c2]]
+
+function f3 name="spreadBetweenElements" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = NewArray v1 contents=anything
+    AppendElements v4, v0, v3
+    AppendElement v4, v1
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f3
+# CHECK: b1(v3: guard):
+# CHECK-NEXT: [[length3]]: {{*}} = GetArrayLength v0, v3
+# CHECK-NEXT: [[constant3]]: {{*}} = Integer integer=2
+# CHECK-NEXT: [[sum3]]: {{*}} = Add [[constant3]], [[length3]]
+# CHECK-NEXT: = NewArray v1 contents=anything capacity=[[sum3]]
+# CHECK-NOT: TypeTest
+# CHECK-NOT: Branch
+
+function f4 name="pushInCountedLoop" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK: [[sum5]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum5]]
+
+function f5 name="loopStartsLater" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=7
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK: = Integer integer=-7
+# CHECK: [[sum6]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum6]]
+
+function f6 name="boundIsNumber" parameters=[{type=number}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: number, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v8 = Integer integer=1
+    v9 = Add v4, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK: [[whole7]]: {{*}} = BitOr v0,
+# CHECK: [[roundedUp7]]: {{*}} = Add [[whole7]],
+# CHECK: [[sum7]]: {{*}} = Add {{*}}, [[roundedUp7]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum7]]
+
+function f7 name="boundIsArrayLength" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = NewArray contents=anything
+    v5 = Integer integer=0
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = GetArrayLength v0, v3
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    v11 = CallBuiltin v4, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Jump -> next b2(v13)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f7
+# CHECK: b1(v3: guard):
+# CHECK-NEXT: [[length8]]: {{*}} = GetArrayLength v0, v3
+# CHECK: [[sum8]]: {{*}} = Add {{*}}, [[length8]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum8]]
+# CHECK: v8: {{*}} = GetArrayLength v0, v3
+
+function f8 name="lengthChangesInLoop" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = NewArray contents=anything
+    v5 = Integer integer=0
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = GetArrayLength v0, v3
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    v11 = CallBuiltin v4, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    AppendElement v0, v1
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    Jump -> next b2(v14)
+  b4():
+    Return v4
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f8
+# CHECK-NOT: capacity=
+
+function f9 name="guardNotAvailableAtLiteral" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    v5 = Integer integer=0
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = GetArrayLength v0, v4
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10):
+    v11 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Jump -> next b2(v13)
+  b4():
+    Return v2
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f9
+# CHECK-NOT: capacity=
+
+function f10 name="storeAtCounter" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    ElemSet v2, v7, v1 mode=Strict
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f10
+# CHECK: [[sum9]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum9]]
+
+function f11 name="storeAtLength" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    ElemSet v2, v8, v1 mode=Strict
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f11
+# CHECK: [[sum10]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum10]]
+
+function f12 name="pushInForOf" parameters=[{type=Array<anything>}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>):
+    v1 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v1 -> taken b1(| 0), notTaken b5()
+  b1(v2):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b2(v4)
+  b2(v5):
+    LoopHint
+    v7 = GetArrayLength v0, v2
+    v8 = Less v5, v7
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    v10 = GetArrayElement v0, v9, v2 level=Proven [keyIsIntegral]
+    v11 = Integer integer=1
+    v12 = Add v9, v11
+    v13 = CallBuiltin v3, v10 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2(v12)
+  b4():
+    Return v3
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f12
+# CHECK: b1(v2: guard):
+# CHECK-NEXT: [[length11]]: {{*}} = GetArrayLength v0, v2
+# CHECK: [[sum11]]: {{*}} = Add {{*}}, [[length11]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum11]]
+
+function f13 name="literalInsideOuterLoop" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    v7 = NewArray contents=anything
+    v8 = Integer integer=0
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v0
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = CallBuiltin v7, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = Integer integer=1
+    v15 = Add v12, v14
+    Jump -> next b3(v15)
+  b5():
+    v16 = Call v1, -, v7
+    v17 = Integer integer=1
+    v18 = Add v6, v17
+    Jump -> next b1(v18)
+  b6():
+    v19 = Undefined
+    Return v19
+}
+# CHECK-LABEL: function f13
+# CHECK: [[sum12]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum12]]
+
+function f14 name="twoLoopVersions" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Branch v2 -> taken b1(v4), notTaken b3(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3(v12):
+    LoopHint
+    v14 = Less v12, v0
+    Branch v14 -> taken b4(| 0), notTaken b5()
+  b4(v15):
+    v16 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v17 = Integer integer=1
+    v18 = Add v15, v17
+    Jump -> next b3(v18)
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f14
+# CHECK: [[sum13]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum13]]
+
+function f15 name="twoConditionalPushes" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v4 = CallBuiltin v2, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f15
+# CHECK-NOT: capacity=
+
+function f16 name="unknownIterableSpread" parameters=[{type=anything}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v1, v0
+    v5 = PropGet v4 key="done"
+    v6 = ToBoolean v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = PropGet v4 key="value"
+    AppendElement v2, v7
+    Jump -> next b1()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f16
+# CHECK-NOT: capacity=
+
+function f17 name="conditionalSpread" parameters=[{type=Array<anything>}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: boolean):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = NewArray contents=anything
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    AppendElements v4, v0, v3
+    Jump -> next b3()
+  b3():
+    Return v4
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f17
+# CHECK-NOT: capacity=
+
+function f18 name="conditionalPushInLoop" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f18
+# CHECK-NOT: capacity=
+
+function f19 name="twoPushesPerIteration" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f19
+# CHECK-NOT: capacity=
+
+function f20 name="loopExitsEarly" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything, v2: boolean):
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8):
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v2 -> taken b4(), notTaken b3()
+  b3():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b4():
+    Return v3
+}
+# CHECK-LABEL: function f20
+# CHECK-NOT: capacity=
+
+function f21 name="pushTwoLoopsDeep" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7):
+    v8 = Integer integer=0
+    Jump -> next b3(v8)
+  b3(v9):
+    LoopHint
+    v11 = Less v9, v0
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = Integer integer=1
+    v15 = Add v12, v14
+    Jump -> next b3(v15)
+  b5():
+    v16 = Integer integer=1
+    v17 = Add v7, v16
+    Jump -> next b1(v17)
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f21
+# CHECK-NOT: capacity=
+
+function f22 name="twoLoopsInSequence" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3(v3)
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3(v11):
+    LoopHint
+    v13 = Less v11, v0
+    Branch v13 -> taken b4(| 0), notTaken b5()
+  b4(v14):
+    v15 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v16 = Integer integer=1
+    v17 = Add v14, v16
+    Jump -> next b3(v17)
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f22
+# CHECK-NOT: capacity=
+
+function f23 name="literalWithHole" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray v0, v0 contents=anything holes=[1]
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f23
+# CHECK-NOT: capacity=
+
+function f24 name="limit" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v3 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f24
+# CHECK-NOT: capacity=
+
+function f25 name="atLimit" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v3 = CallBuiltin v1, v0, v0, v0, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f25
+# CHECK: [[eight]]: {{*}} = Integer integer=8
+# CHECK-NEXT: = NewArray contents=anything capacity=[[eight]]
+
+function f26 name="inclusiveBound" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = LessEq v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f26
+# CHECK: = Integer integer=1
+# CHECK: [[sum24]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum24]]
+
+function f27 name="pushInCountdownLoop" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v4):
+    LoopHint
+    v6 = Greater v4, v3
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Sub v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f27
+# CHECK: [[sum25]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum25]]
+
+function f28 name="storeAtOtherIndex" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: int[0, 1000], v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    ElemSet v2, v0, v1 mode=Strict
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f28
+# CHECK-NOT: capacity=
+
+function f29 name="storeOutsideLoop" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = Integer integer=0
+    ElemSet v1, v2, v0 mode=Strict
+    Return v1
+}
+# CHECK-LABEL: function f29
+# CHECK-NOT: capacity=
+
+function f30 name="boundIsLengthGetter" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f30
+# CHECK: b0(v0: Array, v1: anything):
+# CHECK-NEXT: [[length30]]: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: [[sum30]]: {{*}} = Add {{*}}, [[length30]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum30]]
+# CHECK: v6: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+
+function f31 name="boundIsTypedArrayLengthGetter" parameters=[{type=Uint8Array}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Uint8Array, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=TypedArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f31
+# CHECK: [[length31]]: {{*}} = CallBuiltin v0 overload=TypedArrayPrototypeLength/0
+# CHECK: [[sum31]]: {{*}} = Add {{*}}, [[length31]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum31]]
+
+function f32 name="lengthGetterOfArrayGrownInLoop" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f32
+# CHECK-NOT: capacity=
+
+function f33 name="lengthGetterWithUnknownCodeInLoop" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: Array<anything>, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Call v1
+    v10 = CallBuiltin v2, v9 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f33
+# CHECK-NOT: capacity=
+
+function f34 name="lengthGetterOfArrayMadeAfterLiteral" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = NewArray v0, v0 contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = CallBuiltin v2 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f34
+# CHECK-NOT: capacity=

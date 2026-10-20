@@ -1,0 +1,86 @@
+# An operation with a natural result is evaluated on flow's values with the result rules of the IR
+# RUN: flow-solve nodes
+# CHECK: Local({{*}}f1, parameter 0) = {1}
+# CHECK-NEXT: Local({{*}}f1, parameter 1) = {2}
+# CHECK: Local({{*}}f1, v2) = {3}
+# CHECK-NEXT: Local({{*}}f1, v3) = {number}
+# CHECK-NEXT: Local({{*}}f1, v4) = {string}
+# CHECK-NOT: f1, v6)
+# CHECK-NOT: f1, v7)
+# CHECK: Local({{*}}f2, v6) = {"b"|@@iterator}
+# CHECK-NEXT: Local({{*}}f2, v7) = {1|"b"}
+# CHECK-NEXT: Local({{*}}f2, v8) = {"a"}
+# CHECK-NEXT: Local({{*}}f2, v9) = {"b"|@@iterator}
+# CHECK-NEXT: Local({{*}}f2, v10) = {string}
+# RUN(OBJECTS): flow-solve nodes
+# OBJECTS: Local({{*}}f3, parameter 0) = {Array@f0:v4}
+# OBJECTS-NEXT: Local({{*}}f3, parameter 1) = {Array@f0:v4|L0#[[record]]}
+# OBJECTS: Local({{*}}f3, v2) = {true}
+# OBJECTS-NEXT: Local({{*}}f3, v3) = {false}
+# OBJECTS-NEXT: Local({{*}}f3, v4) = {true}
+# OBJECTS-NEXT: Local({{*}}f3, v5) = {false}
+# OBJECTS-NEXT: Local({{*}}f3, v6) = {boolean}
+# OBJECTS-NEXT: Local({{*}}f3, v7) = {true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = CallDirect v0, v1 function=f1
+    v3 = CallDirect v0 function=f2
+    v4 = NewArray v0 contents=anything
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = Boolean boolean=true
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v5)
+  b3(v7):
+    v8 = CallDirect v4, v7 function=f3
+    Return
+}
+function f1 name="arithmetic" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = Div v0, v1
+    v4 = TypeOf v0
+    v5 = TypeTest v0 testedType=string
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = Add v6, v1
+    Return v7
+  b2():
+    Return v2
+}
+function f2 name="keys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    v2 = String string="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="b"
+    Jump -> next b3(v3, v3)
+  b2():
+    v4 = Builtin builtin=Symbol
+    v5 = PropGet v4 key="iterator"
+    Jump -> next b3(v5, v0)
+  b3(v6, v7):
+    v8 = ToPropertyKey v2
+    v9 = ToPropertyKey v6
+    v10 = ToPropertyKey v7
+    Return v8
+}
+function f3 name="objects" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=Array
+    v3 = TypeTest v0 testedType=Map
+    v4 = ToBoolean v0
+    v5 = LogicalNot v4
+    v6 = TypeTest v1 testedType=Array
+    v7 = ToBoolean v1
+    Return
+}

@@ -1,0 +1,107 @@
+# Arithmetic on integer ranges computes a range; a result that may be -0, NaN or past the exact integers adds whole
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v6: int[-1, 9]
+# CHECK: v7: int[-2, 8]
+# CHECK: v8: int[3, 6]
+# CHECK: v9: int[1, 4]
+# CHECK: v10: int[2, 5]
+# CHECK: v11: int[2, 15]
+# CHECK: v12: int[-15, 20]
+# CHECK: v13: int[-12, 16]|whole
+# CHECK: v14: int[-5, -2]
+# CHECK: v15: int[-4, 3]|whole
+# CHECK: v16: int[0, 2]
+# CHECK: v17: int[0, 3]|whole
+# CHECK: v18: int|whole
+# CHECK: v19: int[0, 3]
+# CHECK: v20: int[0, 5]
+# CHECK: v21: i32
+# CHECK: v22: int[0, 7]
+# CHECK: v23: int[0, 7]
+# CHECK: v24: int[-6, -3]
+# CHECK: v25: i32
+# CHECK: v26: int[1, 2]
+# CHECK: v27: int[0, 5]
+# CHECK: v28: int[0, 5]
+# CHECK: v29: int[0, 4294967295]
+# CHECK: v30: number
+# CHECK: v31: number
+# CHECK-LABEL: function f1
+# CHECK: v5: int[0, 5]
+# CHECK: v6: int[-4, 4]
+# CHECK: v7: int
+# CHECK-NOT: [
+# CHECK: v8: int[-5, 5]
+# CHECK: v9: i32
+# CHECK-LABEL: function f2
+# CHECK: v3: int[0, 31]
+# CHECK: v4: int[0, 31]
+# CHECK: v5: int[0, 1]
+# CHECK: v6: i32
+# CHECK-LABEL: function f3
+# CHECK: v6: int[0, 4294967295]
+# CHECK: v7: int[0, 4]
+# CHECK: v8: 0
+# CHECK: v9: int[9007199254740990, 9007199254740991]
+# CHECK: v10: int[0, 9007199254740991]
+# CHECK: v11: int[0, 9007199254740991]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="r" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[1, 3]}, {type=int[9007199254740990, 9007199254740992]}, {type=number}, {type=int[1, 1]}] results=[{type=undefined}] {
+  b0(v0: int[2, 5], v1: int[-3, 4], v2: int[1, 3], v3: int[9007199254740990, 9007199254740992], v4: number, v5: int[1, 1]):
+    v6 = Add v0, v1
+    v7 = Sub v0, v1
+    v8 = Increment v0
+    v9 = Decrement v0
+    v10 = ToNumber v0
+    v11 = Mul v0, v2
+    v12 = Mul v0, v1
+    v13 = Mul v1, v1
+    v14 = Negate v0
+    v15 = Negate v1
+    v16 = Mod v0, v2
+    v17 = Mod v0, v1
+    v18 = Add v3, v3
+    v19 = BitAnd v0, v2
+    v20 = BitAnd v0, v1
+    v21 = BitAnd v1, v1
+    v22 = BitOr v0, v2
+    v23 = BitXor v0, v2
+    v24 = BitNot v0
+    v25 = LShift v0, v2
+    v26 = RShift v0, v5
+    v27 = RShift v0, v2
+    v28 = URShift v0, v2
+    v29 = URShift v1, v2
+    v30 = Div v0, v2
+    v31 = Add v0, v4
+    Return
+}
+function f1 name="q" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[1, 3]}, {type=int[-2147483648, -2147483648]}, {type=int[-1, -1]}] results=[{type=undefined}] {
+  b0(v0: int[2, 5], v1: int[-3, 4], v2: int[1, 3], v3: int[-2147483648, -2147483648], v4: int[-1, -1]):
+    v5 = DivideIntegers v0, v2
+    v6 = DivideIntegers v1, v2
+    v7 = DivideIntegers v0, v1
+    v8 = DivideIntegers v0, v1 rounding=ToInt32
+    v9 = DivideIntegers v3, v4 rounding=ToInt32
+    Return
+}
+function f2 name="pastInt32" parameters=[{type=int[-2147483645, 2147483650]}, {type=int[31, 31]}, {type=int|whole}] results=[{type=undefined}] {
+  b0(v0: int[-2147483645, 2147483650], v1: int[31, 31], v2: int|whole):
+    v3 = BitAnd v0, v1
+    v4 = BitAnd v2, v1
+    v5 = URShift v0, v1
+    v6 = BitOr v0, v1
+    Return
+}
+function f3 name="lengths" parameters=[{type=int[0, 4294967295]}, {type=int[-3, 4]}, {type=int[-5, -2]}, {type=int[9007199254740990, 9007199254740992]}, {type=number}, {type=int|whole}] results=[{type=undefined}] {
+  b0(v0: int[0, 4294967295], v1: int[-3, 4], v2: int[-5, -2], v3: int[9007199254740990, 9007199254740992], v4: number, v5: int|whole):
+    v6 = ToLength v0
+    v7 = ToLength v1
+    v8 = ToLength v2
+    v9 = ToLength v3
+    v10 = ToLength v4
+    v11 = ToLength v5
+    Return
+}

@@ -1,0 +1,70 @@
+# A value that is Unspecified on some path stays in the function that knows the state which tells: in a part that is cut off it would be a parameter like any other, which validation tests and code generation reads through wherever it likes
+# FORM: Selected
+# RUN: pass SplitFunctionsAtCalls
+# STATISTIC: SplitFunctionsAtCallsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}]
+function f0 name="unspecifiedOnOnePath" parameters=[{type=boolean}, {type=L0}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: function, v3: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v4 = Unspecified valueType=L0
+    Jump -> next b3(v4)
+  b3(v5: L0):
+    v6 = TypeTest v3 testedType=number
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    Return v3
+  b5():
+    v7 = Call v2, -, v0, v5
+    Return v7
+}
+# CHECK-LABEL: function f0 name="unspecifiedOnOnePath"
+# CHECK-NOT: CallDirect
+# CHECK: anything = Call v2, -, v0, v5
+
+function f1 name="unspecifiedThroughCast" parameters=[{type=boolean}, {type=L0}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: function, v3: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v4 = Unspecified valueType=L0
+    Jump -> next b3(v4)
+  b3(v5: L0):
+    v6 = Upcast v5 castType=object
+    v7 = TypeTest v3 testedType=number
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    Return v3
+  b5():
+    v8 = Call v2, -, v0, v6
+    Return v8
+}
+# CHECK-LABEL: function f1 name="unspecifiedThroughCast"
+# CHECK-NOT: CallDirect
+# CHECK: anything = Call v2, -, v0, v6
+
+function f2 name="specifiedOnBothPaths" parameters=[{type=boolean}, {type=L0}, {type=function}, {type=anything}, {type=L0}] results=[{type=anything}] {
+  b0(v0: boolean, v1: L0, v2: function, v3: anything, v4: L0):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5: L0):
+    v6 = TypeTest v3 testedType=number
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    Return v3
+  b5():
+    v7 = Call v2, -, v0, v5
+    Return v7
+}
+# CHECK-LABEL: function f2 name="specifiedOnBothPaths"
+# CHECK-NOT: = Call v2
+# CHECK: anything = CallDirect v0, v2, v5 function=f3
+# CHECK: function f3 name="specifiedOnBothPaths" module=m0 role=Continuation{{*}}parameterMap=[{original=0}, {original=2}, {}]

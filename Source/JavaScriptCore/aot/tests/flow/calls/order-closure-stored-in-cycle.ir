@@ -1,0 +1,59 @@
+# In a cycle of modules nobody knows when the partner reads an export, but a closure is entered through a variable only after it was stored there: what the body stores above that store keeps its proof. A hoisted function is there from the start
+# RUN: flow-order timelines locations failed
+# CHECK: timeline f1: f2 unknown, f3 after b0#3, f4 unknown
+# CHECK: g0: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g1: Unknown AtMostOnce
+# CHECK-NEXT: g2: Unknown AtMostOnce
+# CHECK-NEXT: g3: SetAtCreation AtMostOnce
+# CHECK-NEXT: g4: Unknown AtMostOnce
+# CHECK-NEXT: read-before-initialization g1
+# CHECK-NEXT: read-before-initialization g2
+# CHECK-NEXT: read-before-initialization g4
+# CHECK-NOT: read-before-initialization
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="cache.js" displayPath="cache.js" body=f1 requests=[{target=m2}] exports=[{name="get" variable=g1}, {name="getHoisted" variable=g3}]
+module m2 path="partner.js" displayPath="partner.js" body=f2 requests=[{target=m1}]
+entry module=m0
+variable g0 name="storedAboveClosure" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="get" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g2 name="storedBelowClosure" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g3 name="getHoisted" module=m1 declared={type=function} initialization=Function function=f4
+variable g4 name="readByHoistedFunction" module=m1 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="cache" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    PutModuleVariable v2 variable=g1
+    PutModuleVariable v0 variable=g2
+    PutModuleVariable v0 variable=g4
+    Return
+}
+function f2 name="partner" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="get"
+    v2 = Call v1
+    v3 = GetModuleVariable variable=g3
+    v4 = Call v3
+    Return
+}
+function f3 name="get" module=m1 kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="storedAboveClosure"
+    v2 = GetModuleVariable variable=g2
+    v3 = CheckInitialized v2 name="storedBelowClosure"
+    Return v3
+}
+function f4 name="getHoisted" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g4
+    v1 = CheckInitialized v0 name="readByHoistedFunction"
+    Return v1
+}

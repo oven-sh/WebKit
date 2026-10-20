@@ -1,0 +1,88 @@
+# A call of a bound function calls its target with the bound receiver and the bound arguments in front of its own, and nothing that was bound is in a sink
+# RUN: flow-links calls operands
+# RUN(CONSTRUCT): flow-links calls operands
+# RUN(MANY): flow-links calls operands
+# RUN(CALLED): flow-solve nodes
+# RUN(MADE): flow-solve nodes
+# RUN(MIXED): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# LOSS: MaxPositionalParts f0
+# CHECK: link [[call]]: [[main]] f0 v12 -> [[target]] f1 Call Once
+# CHECK: operand {{*}}(BoundFunction@f0:v11{{*}}.part1) -> {{*}}(f1:l0) link [[call]]
+# CHECK: operand {{*}}(Array@f0:v11.element{{*}}.position0) -> {{*}}(f1:l1) link [[call]]
+# CHECK: operand {{*}}(f0:l{{*}}) -> {{*}}(f1:l2) link [[call]]
+# CONSTRUCT: link [[construct]]: [[main]] f0 v16 -> [[made]] f2 Construct Once
+# CONSTRUCT-NOT: (f2:l0) link
+# CONSTRUCT: operand {{*}}(Array@f0:v15.element{{*}}.position0) -> {{*}}(f2:l1) link [[construct]]
+# CONSTRUCT-NOT: (f2:l0) link
+# MANY: link [[mixed]]: [[main]] f0 v20 -> [[many]] f3 Call Once
+# MANY: operand {{*}}(BoundFunction@f0:v19{{*}}.part1) -> {{*}}(f3:l0) link [[mixed]]
+# CALLED: , f0, v1) = {L0#[[receiver]]}
+# CALLED: , f0, v3) = {L1#[[bound]]}
+# CALLED: , f0, v5) = {L2#[[passed]]}
+# CALLED: , f1, parameter 0) = {L0#[[receiver]]}
+# CALLED-NEXT: , f1, parameter 1) = {L1#[[bound]]}
+# CALLED-NEXT: , f1, parameter 2) = {L2#[[passed]]}
+# MADE: , f0, v3) = {L1#[[bound]]}
+# MADE: , f2, parameter 0) = {L4#[[made]]}
+# MADE-NEXT: , f2, parameter 1) = {L1#[[bound]]}
+# MIXED: , f0, v1) = {L0#[[receiver]]}
+# MIXED: , f0, v3) = {L1#[[bound]]}
+# MIXED: , f0, v5) = {L2#[[passed]]}
+# MIXED: , f0, v7) = {L3#[[last]]}
+# MIXED: , f3, parameter 0) = {L0#[[receiver]]}
+# MIXED-NEXT: , f3, parameter 1) = {undefined|1|L1#[[bound]]|L2#[[passed]]|L3#[[last]]}
+# MIXED-NEXT: , f3, parameter 2) = {undefined|1|L1#[[bound]]|L2#[[passed]]|L3#[[last]]}
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: L2#
+# SINKS-NOT: L3#
+# SINKS-NOT: f1
+# SINKS-NOT: f2
+# SINKS-NOT: f3
+# SINKS-NOT: @f0:
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Receiver" fields=[{key="r" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Bound" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Passed" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="LastBound" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Instance name="Made" constructor=f2 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L3 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = PropGet v9 key="bind"
+    v11 = Call v10, v9, v2, v4 calleeKey="bind"
+    v12 = Call v11, -, v6
+    v13 = NewClosure function=f2
+    v14 = PropGet v13 key="bind"
+    v15 = Call v14, v13, v2, v4 calleeKey="bind"
+    v16 = Construct v15
+    v17 = NewClosure function=f3
+    v18 = PropGet v17 key="bind"
+    v19 = Call v18, v17, v2, v4, v0, v0, v0, v0, v0, v0, v0, v8 calleeKey="bind"
+    v20 = Call v19, -, v6
+    Return
+}
+function f1 name="target" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}
+function f2 name="Made" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="many" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}

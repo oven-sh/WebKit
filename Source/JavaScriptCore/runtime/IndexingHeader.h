@@ -118,6 +118,11 @@ public:
     // used on a copy of the IndexingHeader.
     size_t preCapacity(Structure*);
     size_t indexingPayloadSizeInBytes(Structure*);
+
+    uint64_t& elementsStartOffset(size_t propertyCapacity)
+    {
+        return *(reinterpret_cast<uint64_t*>(this) - propertyCapacity - 1);
+    }
     
 private:
     friend class LLIntOffsetsExtractor;

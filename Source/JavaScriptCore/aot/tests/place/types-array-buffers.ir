@@ -1,0 +1,29 @@
+# The run-time type record of a class of buffers names the sharing mode, and the record of both classes names the cell type alone
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables types
+# CHECK: type ArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[SharingModeIs(ArrayBuffer)]
+# CHECK: type SharedArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[SharingModeIs(SharedArrayBuffer)]
+# CHECK: type ArrayBuffer{{*}}|SharedArrayBuffer{{*}} offset={{*}}primitives=0x0 tests=[CellTypeIs({{*}})]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="unshared" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="shared" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="either" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    v1 = Builtin builtin=ArrayBuffer
+    v2 = Construct v1, -, v0
+    v3 = Builtin builtin=SharedArrayBuffer
+    v4 = Construct v3, -, v0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v4 variable=g2
+    v9 = GetModuleVariable variable=g0
+    v10 = GetModuleVariable variable=g1
+    v11 = GetModuleVariable variable=g2
+    Return
+}

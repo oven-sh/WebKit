@@ -1,0 +1,64 @@
+# The summary of a CommonJS body reads module.exports and one element for each imported name: a named import holds that member, the default import the whole value and, unless the annotation is ignored, the member default; what a host value exports is unknown
+# RUN: flow-summary f1
+# CHECK: seed [[module]] ModuleBuiltin ModuleObject m1
+# CHECK: seed [[keyA]] String "a"
+# CHECK: seed [[keyDefault]] String "default"
+# CHECK: PropertyAccess#{{*}} kind=Load use=Value receiver=[[module]] key="exports" value=[[exports]] thrown=
+# CHECK: ElementAccess#{{*}} kind=Load use=Value receiver=[[exports]] key=[[keyA]] value=
+# CHECK: ElementAccess#{{*}} kind=Load use=Value receiver=[[exports]] key=[[keyDefault]] value=
+# RUN(IGNORING): flow-summary f2
+# IGNORING: seed [[module]] ModuleBuiltin ModuleObject m2
+# IGNORING: seed [[keyA]] String "a"
+# IGNORING: PropertyAccess#{{*}} kind=Load use=Value receiver=[[module]] key="exports" value=[[exports]] thrown=
+# IGNORING: ElementAccess#{{*}} kind=Load use=Value receiver=[[exports]] key=[[keyA]] value=
+# RUN(NODEFAULT): flow-summary f2
+# NODEFAULT-NOT: String "default"
+# RUN(SOLVE): flow-solve nodes
+# SOLVE: Variable(g0) = {undefined|L0#[[a]]}
+# SOLVE-NEXT: Variable(g1) = {undefined|L1#[[default]]|ModuleObjectExports@m1}
+# SOLVE-NEXT: Variable(g2) = {undefined|L0#[[otherA]]}
+# SOLVE-NEXT: Variable(g3) = {{*}}ModuleObjectExports@m2}
+# SOLVE-NEXT: Variable(g4) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# RUN(WHOLE): flow-solve nodes
+# WHOLE-NOT: Variable(g3) = {{*}}unknown
+# WHOLE-NOT: Variable(g3) = {{*}}L1#
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}, {target=m3}]
+module m1 path="/annotated.cjs" displayPath="annotated.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1 syntheticExports=[{name="a" variable=g0}, {name="default" variable=g1}]
+module m2 path="/ignoring.cjs" displayPath="ignoring.cjs" kind=CommonJs exportRule=CommonJsIgnoringAnnotation requireResult=ModuleExports body=f2 syntheticExports=[{name="a" variable=g2}, {name="default" variable=g3}]
+module m3 path="host:value" displayPath="host:value" kind=External exportRule=RuntimeModule externalKind=HostValue referrer=m0 syntheticExports=[{name="a" variable=g4}]
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Default" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="a" module=m1 declared={type=anything}
+variable g1 name="default" module=m1 declared={type=anything}
+variable g2 name="a" module=m2 declared={type=anything}
+variable g3 name="default" module=m2 declared={type=anything}
+variable g4 name="a" module=m3 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = GetModuleVariable variable=g3
+    v4 = GetModuleVariable variable=g4
+    Return
+}
+function f1 name="annotated" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PropSet v1, v7 key="a"
+    v9 = NewObject -, v6 layout=L1 fields=[0]
+    PropSet v1, v9 key="default"
+    Return
+}
+function f2 name="ignoring" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PropSet v1, v7 key="a"
+    v9 = NewObject -, v6 layout=L1 fields=[0]
+    PropSet v1, v9 key="default"
+    Return
+}

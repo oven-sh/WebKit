@@ -1,0 +1,53 @@
+# A variable that holds the unknown object and more objects than the limit takes no object that has already reached native code: the unknown object stands for it. An object that has not escaped is still listed
+# RUN: flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# OPTIONS: limit=MaxEscapedObjectsBesideUnknown:1
+# CHECK: Variable(g0) = {{*}}unknown|L0#[[first]]|L3#[[kept]]}
+# SINKS: nativeCode {{*}}L0#{{*}}L1#{{*}}L2#
+# SINKS-NOT: L3#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="EscapedFirst" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="EscapedSecond" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="EscapedThird" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Kept" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Holder" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="mixed" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="second" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="third" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    PutModuleVariable v5 variable=g2
+    v7 = NewObject -, v2 layout=L2 fields=[0]
+    PutModuleVariable v7 variable=g3
+    v9 = NewObject -, v2 layout=L3 fields=[0]
+    PutModuleVariable v9 variable=g4
+    v11 = Call v1, -, v3, v5, v7
+    PutModuleVariable v11 variable=g0
+    v13 = NewClosure function=f1
+    v14 = NewObject -, v13 layout=L4 fields=[0]
+    v15 = PropGet v14 key="run"
+    v16 = Call v15, v14
+    Return
+}
+function f1 name="storesLate" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g2
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g3
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g4
+    PutModuleVariable v6 variable=g0
+    Return
+}

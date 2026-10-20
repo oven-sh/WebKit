@@ -1,0 +1,87 @@
+# A name stored on instances of a class and of its proven subclass is appended to the base alone and inherited below; a name stored on the subclass alone is the subclass's own field
+# RUN: flow
+# RUN(NOWHERE): flow
+# STATISTIC: FlowAppendedFields = 2
+# STATISTIC: FlowProvenBases = 2
+# CHECK: layout L0 flow={baseState=None
+# CHECK-NEXT: field L0.0 "extra" type=1 flags=[IsAppendedByFlow] flow={location={writers=AllKnown
+# CHECK-NEXT: layout L1 flow={baseState=Layout base=L0
+# CHECK-NEXT: field L1.0 "extra" type=1 flags=[IsInherited, IsAppendedByFlow] originLayout=L0 originField=0
+# CHECK-NEXT: layout L2 flow={
+# CHECK-NEXT: layout L3 flow={baseState=Layout base=L2
+# CHECK-NEXT: field L3.0 "mark" type=2 flags=[IsAppendedByFlow] flow={location={writers=AllKnown
+# NOWHERE-NOT: field L1.0 {{*}}flow={
+# NOWHERE-NOT: field L1.1
+# NOWHERE-NOT: field L2.0
+# NOWHERE-NOT: field L3.1
+# NOWHERE-NOT: addedKeys=["extra"
+# NOWHERE-NOT: addedKeys=["mark"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Plain" constructor=f3
+layout L3 kind=Instance name="Marked" predictedBase=L2 constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = NewClosure function=f4
+    v11 = ResolveHeritage v9
+    v12 = NewClass v10, v9, v11 layout=L3
+    v13 = FinishClass v12 layout=L3
+    v14 = Construct v2
+    v15 = Construct v6
+    v16 = Construct v13
+    v17 = NewClosure function=f5
+    v18 = Call v17, v14
+    v19 = Call v17, v15
+    v20 = NewClosure function=f6
+    v21 = Call v20, v16
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f4 name="Marked" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f5 name="addExtra" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="extra" mode=Strict
+    Return
+}
+function f6 name="addMark" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="mark" mode=Strict
+    Return
+}

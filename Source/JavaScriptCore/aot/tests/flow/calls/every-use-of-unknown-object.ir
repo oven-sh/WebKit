@@ -1,0 +1,30 @@
+# An entry that declares every use of an operand does all of it to the unknown object too, that is to every object that has reached native code: Reflect.set with a receiver nobody knows stores into the escaped record and redefines it.
+# A record that stays in the program keeps its proofs
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(L0#{{*}}, 0) = {{*}}unknown}
+# CHECK: DeclaredPart(L1#{{*}}, 0) = {1}
+# RUN(OBJECTS): flow-solve objects
+# OBJECTS: o0 unknown mutations=[{{*}}RedefineProperty{{*}}ChangePrototype
+# OBJECTS: L1#{{*}} mutations=[] uses
+# RUN(UNSEEN): flow-links unseen
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Escaped" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="launder" [isFreeName]
+    v5 = Call v4, -, v1
+    v6 = Builtin builtin=ReflectSet
+    v7 = String string="k"
+    v8 = String string="s"
+    v9 = Call v6, -, v5, v7, v8, v5
+    Return
+}

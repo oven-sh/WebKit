@@ -1,0 +1,39 @@
+# A read that nothing ever flows out of is assumed to be never and its block ends behind the cast; the same read with an object among its receivers goes on
+# RUN: flow-apply
+# CHECK-LABEL: function f1 name="readsNull"
+# CHECK: v1: anything = PropGet v0 key="x"
+# CHECK-NEXT: : never = AssumeType v1 castType=never
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: Add
+# CHECK-LABEL: function f2 name="readsNullOrPoint"
+# CHECK: v1: {{*}} = PropGet v0 key="x"
+# CHECK-NOT: castType=never
+# CHECK-NOT: Unreachable
+# CHECK: = Add
+# CHECK-NEXT: Return
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v2 function=f2
+    v4 = CallDirect v0 function=f2
+    v5 = CallDirect v0 function=f1
+    Return
+}
+function f1 name="readsNull" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}
+function f2 name="readsNullOrPoint" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}

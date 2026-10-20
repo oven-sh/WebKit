@@ -25,15 +25,18 @@
 
 #pragma once
 
-#include "AOTFunction.h"
+#include "AOTCompiledFrameExit.h"
+#include "AOTShownFrameFilter.h"
 #include "BytecodeIndex.h"
 #include "CalleeBits.h"
 #include "LineColumn.h"
 #include "SourceID.h"
 #include "WasmIndexOrName.h"
+#include <cstddef>
 #include <wtf/Function.h>
 #include <wtf/Indenter.h>
 #include <wtf/IterationStatus.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -47,15 +50,17 @@ class CodeBlock;
 class CodeOrigin;
 class JSCell;
 class JSFunction;
+class JSGlobalObject;
 class ClonedArguments;
 class Register;
 class RegisterAtOffsetList;
-class ScriptExecutable;
 class StackVisitor;
-class UnlinkedCodeBlock;
+class UnwindFunctorBase;
+class VM;
 
 namespace AOT {
-struct Data;
+class CompiledFrameIterator;
+struct CompiledFrame;
 }
 
 template<typename T>
@@ -85,23 +90,15 @@ public:
         CallFrame* callerFrame() const { return m_callerFrame; }
         EntryFrame* entryFrame() const { return m_entryFrame; }
         CalleeBits callee() const { return m_callee; }
-        CodeBlock* codeBlock() const
-        {
-            if (m_aotFunction && !m_codeBlock) [[unlikely]]
-                return createCodeBlock();
-            return m_codeBlock;
-        }
-        bool hasCode() const { return m_codeBlock || m_aotFunction; }
+        CodeBlock* codeBlock() const { return m_codeBlock; }
         JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObject(VM&) const;
-        AOT::FunctionRef aotFunction() const { return m_aotFunction; }
-        CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
-        bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
-        bool isTypedAOTFrame() const { return m_aotFunction && m_typedAOTFunction != UINT32_MAX; }
-        uint32_t typedAOTFunction() const { return m_typedAOTFunction; }
-        JS_EXPORT_PRIVATE bool isHiddenAOTFrame(bool isAtTheTop = false) const;
-        bool isTailDeleted() const { return m_isTailDeleted; }
-        JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
-        JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
+#if ENABLE(AOT)
+        bool isCompiledFrame() const { return !!m_compiledFrames; }
+        JS_EXPORT_PRIVATE const AOT::CompiledFrame& compiledFrame() const;
+        JS_EXPORT_PRIVATE bool isConstructCall() const;
+#else
+        static constexpr bool isCompiledFrame() { return false; }
+#endif
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
         InlineCallFrame* inlineCallFrame() const {
 #if ENABLE(DFG_JIT)
@@ -112,7 +109,7 @@ public:
         }
         void* returnPC() const { return m_returnPC; }
 
-        bool isNativeFrame() const { return !hasCode() && !isNativeCalleeFrame(); }
+        bool isNativeFrame() const { return !codeBlock() && !isNativeCalleeFrame() && !isCompiledFrame(); }
         bool isInlinedDFGFrame() const { return !isNativeCalleeFrame() && !!inlineCallFrame(); }
         bool isNativeCalleeFrame() const { return m_callee.isNativeCallee(); }
         Wasm::IndexOrName const wasmFunctionIndexOrName()
@@ -137,9 +134,6 @@ public:
 
 #if ENABLE(ASSEMBLER)
         const RegisterAtOffsetList* calleeSaveRegistersForUnwinding();
-#if ENABLE(AOT)
-        const AOT::ImageFunction* compiledFunctionForUnwinding() const;
-#endif
 #endif
 
         ClonedArguments* createArguments(VM&);
@@ -153,10 +147,14 @@ public:
 
     private:
         Frame() { }
+#if ENABLE(AOT)
+        WTF_MAKE_NONCOPYABLE(Frame);
+        JS_EXPORT_PRIVATE ~Frame();
+#else
         ~Frame() { }
+#endif
 
         void LEGACY_NODELETE setToEnd();
-        JS_EXPORT_PRIVATE CodeBlock* createCodeBlock() const;
 
 #if ENABLE(DFG_JIT)
         InlineCallFrame* m_inlineDFGCallFrame { nullptr };
@@ -167,15 +165,8 @@ public:
         EntryFrame* m_callerEntryFrame { nullptr };
         CallFrame* m_callerFrame { nullptr };
         CalleeBits m_callee { };
-        mutable CodeBlock* m_codeBlock { nullptr };
-        AOT::FunctionRef m_aotFunction;
-        CallFrame* m_aotAdapterFrame { nullptr };
-        AOT::FunctionRef m_frameAOTFunction;
-        unsigned m_aotInlineFrame { 0 };
-        uint32_t m_typedAOTFunction { UINT32_MAX };
-        bool m_isTailDeleted { false };
+        CodeBlock* m_codeBlock { nullptr };
         void* m_returnPC { nullptr };
-        void* m_callerReturnPC { nullptr };
         size_t m_index { 0 };
         size_t m_argumentCountIncludingThis { 0 };
         BytecodeIndex m_bytecodeIndex { };
@@ -184,6 +175,11 @@ public:
         Wasm::IndexOrName m_wasmFunctionIndexOrName { };
         size_t m_wasmFunctionIndex { 0 };
         uint32_t m_wasmCallSiteIndexBits { };
+#if ENABLE(AOT)
+        static constexpr size_t compiledFrameIteratorCapacity = 1024;
+        AOT::CompiledFrameIterator* m_compiledFrames { nullptr };
+        alignas(void*) std::byte m_compiledFramesStorage[compiledFrameIteratorCapacity];
+#endif
 
         friend class StackVisitor;
     };
@@ -193,15 +189,15 @@ public:
         TerminateIfTopEntryFrameIsEmpty,
     };
 
+    enum class CompiledFrameVisit : bool { ShownFrames, EachRunOnce };
+
+    template<typename Functor>
+    static constexpr CompiledFrameVisit compiledFrameVisitFor = std::is_base_of_v<UnwindFunctorBase, Functor> ? CompiledFrameVisit::EachRunOnce : CompiledFrameVisit::ShownFrames;
+
     template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, StackVisitorFunctor Functor>
     static void visit(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame = false)
     {
-        constexpr bool wantsOnlyHandlers = requires { Functor::wantsOnlyHandlers; };
-        StackVisitor visitor(startFrame, vm, skipFirstFrame, wantsOnlyHandlers);
-        if constexpr (requires { functor.didSkipAOTAdapterAtTop(startFrame); }) {
-            if (visitor.m_aotAdapterSkippedAtTop) [[unlikely]]
-                functor.didSkipAOTAdapterAtTop(visitor.m_aotAdapterSkippedAtTop);
-        }
+        StackVisitor visitor(startFrame, vm, skipFirstFrame, compiledFrameVisitFor<Functor>);
         if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
             return;
         while (visitor->callFrame()) {
@@ -213,10 +209,10 @@ public:
     }
 
 #if ENABLE(AOT)
-    template <StackVisitorFunctor Functor>
-    static void visitCompiledFrameCallers(VM& vm, CallFrame* compiledFrame, void* returnPC, NOESCAPE const Functor& functor)
+    template<StackVisitorFunctor Functor>
+    static void visitFrom(VM& vm, const AOT::CompiledFrameExit& exit, NOESCAPE const Functor& functor)
     {
-        StackVisitor visitor(vm, compiledFrame, returnPC);
+        StackVisitor visitor(vm, exit, compiledFrameVisitFor<Functor>);
         while (visitor->callFrame()) {
             IterationStatus status = functor(visitor);
             if (status != IterationStatus::Continue)
@@ -229,57 +225,46 @@ public:
     Frame& operator*() { return m_frame; }
     ALWAYS_INLINE Frame* operator->() { return &m_frame; }
 #if ENABLE(AOT)
-    JS_EXPORT_PRIVATE unsigned gotoLastPlainCompiledCaller(std::span<AOT::StackTraceFrame>);
-    JS_EXPORT_PRIVATE bool isAtConstructedCompiledFrame();
-    JS_EXPORT_PRIVATE bool gotoLastCompiledCallerWithoutHandlers(CPURegister* calleeSaveRegistersBuffer, std::span<const int8_t> bufferSlotsByRegIndex);
+    AOT::CompiledFrameIterator& compiledFrames() { return *m_frame.m_compiledFrames; }
 #endif
     void unwindToMachineCodeBlockFrame();
 
     bool topEntryFrameIsEmpty() const { return m_topEntryFrameIsEmpty; }
 
 private:
-    JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame, bool wantsOnlyHandlers = false);
+    JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame, CompiledFrameVisit);
 #if ENABLE(AOT)
-    JS_EXPORT_PRIVATE StackVisitor(VM&, CallFrame* compiledFrame, void* returnPC);
+    JS_EXPORT_PRIVATE StackVisitor(VM&, const AOT::CompiledFrameExit&, CompiledFrameVisit);
 #endif
 
     JS_EXPORT_PRIVATE void gotoNextFrame();
 
     void readFrame(CallFrame*);
-    template<bool mayVisitAOTFrames> void gotoNextFrameImpl();
-    void gotoNextPlainFrame();
-    template<bool mayVisitAOTFrames> void readFrameImpl(CallFrame*);
-    template<bool mayVisitAOTFrames> void readInlinableNativeCalleeFrame(CallFrame*);
-    template<bool mayVisitAOTFrames> void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
-    void findCaller(CallFrame*);
-    CallFrame* skipStubFrames(CallFrame*, EntryFrame*&, void*& returnPC, CallFrame*& adapter);
-#if ENABLE(AOT)
-    void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
-    bool isAtConstructedInlineFrame();
-    bool isCalledByConstruction();
-    bool isCalledByConstructOrConstructedWrapper();
-    bool wasEnteredByConstruct();
-    AOT::ImageAddressInfo classify(const void* address);
-    bool gotoNextAOTFrame();
-    void gotoNextFrameInCompiledProgram();
-    bool tryGotoCompiledCaller();
-#endif
+    void readInlinableNativeCalleeFrame(CallFrame*);
+    void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
 #if ENABLE(DFG_JIT)
-    template<bool mayVisitAOTFrames> void readInlinedFrame(CallFrame*, CodeOrigin*);
+    void readInlinedFrame(CallFrame*, CodeOrigin*);
 #endif
-    template<bool mayVisitAOTFrames> CallFrame* LEGACY_NODELETE updatePreviousReturnPCIfNecessary(CallFrame*);
+    CallFrame* LEGACY_NODELETE updatePreviousReturnPCIfNecessary(CallFrame*);
+#if ENABLE(AOT)
+    bool tryEnterCompiledFrames(CallFrame*);
+    bool showFirstCompiledFrame();
+    bool showNextCompiledFrame();
+    void setCompiledFrame(CallFrame*, const void* returnAddress);
+    CallFrame* leaveCompiledFrames();
+    void gotoNextCompiledFrame();
+    void startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame);
+#endif
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
-    AOT::InlineFrameReader m_inlineFrameReader;
-    const void* m_classifiedAddress { nullptr };
-    AOT::ImageAddressInfo m_classification;
-    AOT::Instance* m_aotInstance { nullptr };
-    AOT::Instance* m_onlyAOTInstance { nullptr };
-    CallFrame* m_aotAdapterSkippedAtTop { nullptr };
     bool m_topEntryFrameIsEmpty { false };
-    bool m_wantsOnlyHandlers { false };
-    bool m_mayVisitAOTFrames { false };
+#if ENABLE(AOT)
+    VM& m_vm;
+    AOT::ShownFrameFilter m_shownFrameFilter;
+    CompiledFrameVisit m_compiledFrameVisit;
+    bool m_nextFrameIsPublished { false };
+#endif
 };
 
 class CallerFunctor {

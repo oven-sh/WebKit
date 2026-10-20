@@ -28,19 +28,18 @@
 
 #if ENABLE(B3_JIT)
 
-#if USE(BUN_JSC_ADDITIONS)
 #include "AirFormTable.h"
-#endif
 #include "AirInstInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
-#if USE(BUN_JSC_ADDITIONS)
 void Inst::fillForms()
 {
-    ASSERT(kind.opcode == Patch && m_size && m_size <= maxNumberOfForms + 1);
-    formsAfterSpecial()[0] = formsAreNotFixed;
+    ASSERT(kind.opcode == Patch && m_size);
+    if (m_size > maxNumberOfForms + 1)
+        return;
+    setFormsState(FormsState::NotFixed);
     if (!args()[0].special()->hasFixedForms(*this))
         return;
     std::array<uint8_t, maxNumberOfForms + 1> forms;
@@ -59,13 +58,29 @@ void Inst::fillForms()
     if (forms[0] != ENCODE_INST_FORM(Arg::Use, GP, pointerWidth()))
         return;
     if (m_size == 1) {
-        formsAfterSpecial()[0] = formsAreNone;
+        setFormsState(FormsState::NoArguments);
         return;
     }
     memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
 }
 
-#endif
+bool Inst::hasCurrentForms()
+{
+    ASSERT(kind.opcode == Patch && m_size);
+    if (m_size > maxNumberOfForms + 1 || formsState() != FormsState::Fixed)
+        return true;
+    std::span<const uint8_t> forms = unsafeMakeSpan(formsAfterSpecial(), m_size - 1);
+    unsigned next = 0;
+    bool isCurrent = true;
+    forEachArgCustom(
+        [&] (Arg&, Arg::Role role, Bank bank, Width width) {
+            if (next && next < m_size)
+                isCurrent &= forms[next - 1] == ENCODE_INST_FORM(role, bank, width);
+            ++next;
+        });
+    return isCurrent && next == m_size;
+}
+
 bool Inst::hasEarlyDef()
 {
     if (kind.opcode == Patch && !extraEarlyClobberedRegs().isEmpty())

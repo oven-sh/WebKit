@@ -228,7 +228,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
     # -L everywhere: WebKit's cmake stages the WTF/bmalloc framework headers
     # as *symlinks* into the source tree when the host filesystem supports
@@ -248,6 +248,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -rL /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
     cp -L /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/builtins/verified-overloads.txt /output/Source/JavaScriptCore/aot/builtins && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
     # The sanitizer runtime is a dylib the executables name as @rpath/libclang_rt.asan_osx_dynamic.dylib, and the rpath
     # clang adds is this container's resource directory. So it ships next to them, and @executable_path is an rpath.

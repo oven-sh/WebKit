@@ -120,10 +120,6 @@ public:
     static StackBounds currentThreadStackBoundsForEmbedder() { return currentThreadStackBounds(); }
 #endif
 
-#if OS(LINUX)
-    WTF_EXPORT_PRIVATE static void useAuxiliaryVectorForMainThread();
-#endif
-
 private:
     StackBounds(void* origin, void* end)
         : m_origin(origin)
@@ -145,9 +141,6 @@ private:
     }
 
     WTF_EXPORT_PRIVATE static StackBounds currentThreadStackBoundsInternal();
-#if OS(LINUX)
-    static StackBounds mainThreadStackBoundsFromAuxiliaryVector();
-#endif
 
     // Obtaining stack bounds from the OS may be slow; only Thread class should do it.
     // Other callers should use the cached bounds via Thread::currentSingleton().stack()

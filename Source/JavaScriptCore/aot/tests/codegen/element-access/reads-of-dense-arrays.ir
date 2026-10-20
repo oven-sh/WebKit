@@ -1,0 +1,54 @@
+# A read from an array that has no holes tests for none: its code differs from the code of the same read from an array that may have one, in each storage kind, and so does the code of `in`
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# CHECK: f0: size=[[int32]] 
+# CHECK-NOT: f1: size=[[int32]] 
+# CHECK: f2: size=[[double]] 
+# CHECK-NOT: f3: size=[[double]] 
+# CHECK: f4: size=[[contiguous]] 
+# CHECK-NOT: f5: size=[[contiguous]] 
+# CHECK: f6: size=[[has]] 
+# CHECK-NOT: f7: size=[[has]] 
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="denseInt32" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage, Dense]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    Return v2
+}
+function f1 name="int32" parameters=[{type=Array<i32, proven, Int32, pristine[Storage]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    Return v2
+}
+function f2 name="denseDouble" parameters=[{type=Array<number, proven, Double, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage, Dense]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    Return v2
+}
+function f3 name="double" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    Return v2
+}
+function f4 name="denseContiguous" parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, Contiguous, pristine[Storage, Dense]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    Return v2
+}
+function f5 name="contiguous" parameters=[{type=Array<string, proven, Contiguous, pristine[Storage]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<string, proven, Contiguous, pristine[Storage]>, v1: i32):
+    v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+    Return v2
+}
+function f6 name="denseHas" parameters=[{type=Array<i32, proven, Int32, pristine[Storage, Dense]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage, Dense]>, v1: i32):
+    v2 = HasArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    Return v2
+}
+function f7 name="has" parameters=[{type=Array<i32, proven, Int32, pristine[Storage]>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<i32, proven, Int32, pristine[Storage]>, v1: i32):
+    v2 = HasArrayElement v0, v1 arrayStorage=Int32 level=Proven
+    Return v2
+}

@@ -1,0 +1,30 @@
+# An object of a layout among the callees cannot be called: the closure beside it is linked, no callee counts as unknown and the argument reaches no sink
+# RUN: flow-links calls unknown
+# RUN(SINKS): flow-solve sinks
+# CHECK: link [[call]]: [[caller]] f0 v7 -> [[callee]] f1 Call Once
+# CHECK-NOT: link
+# CHECK-NOT: unknown-callee {{*}} v7
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="NotCallable" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Argument" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="callee" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v0 layout=L1 fields=[0]
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -, v5
+    Return
+}
+function f1 name="callable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

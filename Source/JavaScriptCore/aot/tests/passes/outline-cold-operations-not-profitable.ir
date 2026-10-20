@@ -1,0 +1,98 @@
+# A site stays where it is when a shared body would not make the program smaller: it has no equal, or it is no larger than the call
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = PropGet v1 key="console"
+    v5 = CallMethod v4, v3, v3, v3, v2 key="unique"
+    Return v5
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK: = PropGet v1 key="console"
+# CHECK-NEXT: = CallMethod {{*}} key="unique"
+# CHECK-NOT: CallDirect
+
+function f1 name="sitesSmallerThanCall" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = Mul v1, v2 form=Numbers
+    Return v3
+  b2() frequency=Rare:
+    v4 = Mul v1, v2 form=Numbers
+    Return v4
+  b3() frequency=Rare:
+    v5 = Mul v1, v2 form=Numbers
+    Return v5
+  b4() frequency=Rare:
+    v6 = Mul v1, v2 form=Numbers
+    Return v6
+  b5() frequency=Rare:
+    v7 = Mul v1, v2 form=Numbers
+    Return v7
+  b6() frequency=Rare:
+    v8 = Mul v1, v2 form=Numbers
+    Return v8
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = Mul v1, v2
+# CHECK-NOT: CallDirect
+
+function f2 name="largeSites" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = PropGet v1 key="console"
+    v5 = CallMethod v4, v3, v3, v3, v2 key="repeated"
+    Return v5
+  b2() frequency=Rare:
+    v6 = String string="fatal"
+    v7 = PropGet v1 key="console"
+    v8 = CallMethod v7, v6, v6, v6, v2 key="repeated"
+    Return v8
+  b3() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = PropGet v1 key="console"
+    v11 = CallMethod v10, v9, v9, v9, v2 key="repeated"
+    Return v11
+  b4() frequency=Rare:
+    v12 = String string="fatal"
+    v13 = PropGet v1 key="console"
+    v14 = CallMethod v13, v12, v12, v12, v2 key="repeated"
+    Return v14
+  b5() frequency=Rare:
+    v15 = String string="fatal"
+    v16 = PropGet v1 key="console"
+    v17 = CallMethod v16, v15, v15, v15, v2 key="repeated"
+    Return v17
+  b6() frequency=Rare:
+    v18 = String string="fatal"
+    v19 = PropGet v1 key="console"
+    v20 = CallMethod v19, v18, v18, v18, v2 key="repeated"
+    Return v20
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallMethod
+# CHECK-COUNT-6: anything = CallDirect v1, v2 function=f3
+# CHECK-NOT: CallMethod
+
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: = CallMethod {{*}} key="repeated"

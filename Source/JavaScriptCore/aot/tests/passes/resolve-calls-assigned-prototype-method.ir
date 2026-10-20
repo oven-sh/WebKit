@@ -1,0 +1,67 @@
+# A method that is stored on the prototype object of a constructor function before anything can look it up is called directly, without the read of the member
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveCalls
+# RUN: pipeline ResolveCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Early" constructor=f4 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Early" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f5
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="prototype"
+    v4 = NewClosure function=f2
+    PropSet v3, v4 key="double" mode=Strict
+    v6 = Call v0
+    v7 = Call v1
+    v8 = GetModuleVariable variable=g1
+    v9 = PropGet v8 key="prototype"
+    v10 = NewClosure function=f2
+    PropSet v9, v10 key="double" mode=Strict
+    v12 = Call v1
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f2 name="double" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}
+function f3 name="usesPoint" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=2
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="double"
+    v4 = Call v3, v2 calleeKey="double"
+    Return v4
+}
+# CHECK-LABEL: function f3 name="usesPoint"
+# CHECK-NOT: PropGet
+# CHECK: CallDirect {{*}} function=f2
+function f4 name="Early" flags=[HasThis] thisType={type=anything predicted=L1} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f5 name="usesEarly" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Integer integer=2
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="double"
+    v4 = TypeOf v3
+    Return v4
+}
+# CHECK-LABEL: function f5 name="usesEarly"
+# CHECK: PropGet {{*}} key="double"

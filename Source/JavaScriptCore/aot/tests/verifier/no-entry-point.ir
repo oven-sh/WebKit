@@ -1,0 +1,6 @@
+# A program with a module and no entry point
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: NoEntryPoint 1
+
+module m0 path="/a.ts" displayPath="a.ts"

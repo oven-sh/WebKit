@@ -29,6 +29,7 @@
 #include "config.h"
 #include "RegExpCache.h"
 
+#include "AOTRemovableFeature.h"
 #include "HeapCellInlines.h"
 #include "StrongInlines.h"
 #include "WeakInlines.h"
@@ -60,18 +61,19 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     vm.addRegExpToTrace(regExp);
 #endif
 
-    if (!regExp->isValid() || regExp->hasSourceInPieces())
+    if (!regExp->isValid())
         return regExp;
 
     {
         Locker locker { m_lock };
-        weakAdd(m_weakCache, regExp->key(), Weak<RegExp>(regExp, this));
+        weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
         return regExp;
     }
 }
 
-RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
+NEVER_INLINE RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern specificPattern)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::createFromCache);
     return vm.regExpCache()->lookupOrCreate(vm, patternString, flags, [&] {
         RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
         regExp->finishCreationFromCache(vm, numSubpatterns, WTF::move(atom), specificPattern);
@@ -79,20 +81,23 @@ RegExp* RegExp::createFromCache(VM& vm, const String& patternString, OptionSet<Y
     });
 }
 
-RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
+NEVER_INLINE RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, static_cast<RegExp* (RegExpCache::*)(VM&, const String&, OptionSet<Yarr::Flags>)>(&RegExpCache::lookupOrCreate));
     return lookupOrCreate(vm, patternString, flags, [&] { return RegExp::createWithoutCaching(vm, patternString, flags); });
 }
 
-RegExp* RegExpCache::ensureEmptyRegExpSlow(VM& vm)
+NEVER_INLINE RegExp* RegExpCache::ensureEmptyRegExpSlow(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCache::ensureEmptyRegExpSlow);
     RegExp* regExp = RegExp::create(vm, emptyString(), { });
     m_emptyRegExp = regExp;
     return regExp;
 }
 
-void RegExpCache::finalize(Handle<Unknown> handle, void*)
+NEVER_INLINE void RegExpCache::finalize(Handle<Unknown> handle, void*)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCache::finalize);
     Locker locker { m_lock };
     RegExp* regExp = static_cast<RegExp*>(handle.get().asCell());
     weakRemove(m_weakCache, regExp->key(), regExp);
@@ -100,8 +105,6 @@ void RegExpCache::finalize(Handle<Unknown> handle, void*)
 
 void RegExpCache::addToStrongCache(RegExp* regExp)
 {
-    if (regExp->hasSourceInPieces())
-        return;
     String pattern = regExp->pattern();
     if (pattern.length() > maxStrongCacheablePatternLength)
         return;

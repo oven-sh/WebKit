@@ -1,0 +1,52 @@
+# A coroutine that never suspends by itself is split like any other, and only an unsplit coroutine with a body is split
+# FORM: Prepared
+# RUN: pass SplitCoroutines SplitCoroutines
+# STATISTIC: CoroutinesSplit = 2
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="neverAwaits" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f0 name="neverAwaits"
+# CHECK: role=CoroutineRamp
+# CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1}
+# CHECK: [[promise]]: Promise = NewPromise
+# CHECK-NEXT: [[started]]: anything = CallDirect v0, [[promise]] function=f4
+# CHECK-NEXT: [[claimed]]: Promise = Claim [[started]] castType=Promise cause=AddedByPass
+# CHECK-NEXT: Return [[claimed]]
+function f1 name="neverYields" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
+  b0(v0: function, v1: number):
+    InitialYield
+    Return v1
+}
+# CHECK-LABEL: function f1 name="neverYields"
+# CHECK: role=CoroutineRamp
+# CHECK: creator=Coroutine{ramp=f1 body=f5 promiseParameter=2}
+function f2 name="plain" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK-LABEL: function f2 name="plain"
+# CHECK-NOT: role=
+# CHECK-NOT: creator=
+# CHECK: b0(v0: number):
+# CHECK-NEXT: Return v0
+function f3 name="declaredOnly" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}]
+# CHECK-LABEL: function f3 name="declaredOnly"
+# CHECK-NOT: role=
+# CHECK-NOT: creator=
+
+# CHECK-LABEL: function f4 name="neverAwaits"
+# CHECK: role=CoroutineBody
+# CHECK: b0(v0: number, [[driver]]: undefined|Promise):
+# CHECK-NEXT: [[result]]: anything = ReturnAsyncResult [[driver]], v0
+# CHECK-NEXT: Return [[result]]
+# CHECK-LABEL: function f5 name="neverYields"
+# CHECK: role=CoroutineBody
+# CHECK-COUNT-1: YieldBySavingFrame
+# CHECK-NOT: YieldBySavingFrame
+# CHECK: Return v1
+# CHECK-NOT: function f6

@@ -44,7 +44,6 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
-#include "JSModuleEnvironment.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
@@ -377,8 +376,6 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
-    if (m_auditCost) [[unlikely]]
-        m_codeBlock->setAuditCost(m_auditCost);
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
     // Also, this allows us to use one bit of bytecode for some flag, including "ignore-result-flag".
@@ -464,7 +461,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     // Generator, async function, and async generator bodies hold no tail positions at all
     // (IsInTailPosition steps 4 to 7): their "return" is not a plain return. An async generator
     // awaits the returned value, and a tail call would jump over that await.
-    , m_allowTailCallOptimization(Options::useTailCalls() && !(vm.auditsImmutableIntrinsics() && !codeBlock->isBuiltinFunction()) && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode() && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
+    , m_allowTailCallOptimization(Options::useTailCalls() && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode() && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
     , m_allowCallIgnoreResultOptimization(m_defaultAllowCallIgnoreResultOptimization)
     , m_needsToUpdateArrowFunctionContext(functionNode->usesArrowFunction() || functionNode->usesEval())
     , m_ecmaMode(ECMAMode::fromBool(functionNode->isStrictMode()))
@@ -967,16 +964,12 @@ IGNORE_GCC_WARNINGS_END
         emitPutDerivedConstructorToArrowFunctionContextScope();
     }
 
-    auto* functionProvider = functionNode->source().provider();
-    bool hasAuditedParameters = functionProvider && functionProvider->auditSites() && !functionProvider->auditSites()->functionParameters(m_scopeNode->source().startOffset()).empty();
-    if (isAsyncFunctionWrapperParseMode(parseMode) && (!isSimpleParameterList || hasAuditedParameters))
+    if (isAsyncFunctionWrapperParseMode(parseMode) && !isSimpleParameterList)
         m_asyncFuncParametersTryCatchInfo = { newLabel(), newTemporary() };
 
     asyncFuncParametersTryCatchWrap([&]() {
         // All "addVar()"s needs to happen before "initializeDefaultParameterValuesAndSetupFunctionScopeStack()" is called
         // because a function's default parameter ExpressionNodes will use temporary registers.
-        if (auto* provider = functionNode->source().provider(); provider && provider->auditSites()) [[unlikely]]
-            emitParameterAudits(*provider->auditSites(), parameters);
         initializeDefaultParameterValuesAndSetupFunctionScopeStack(parameters, isSimpleParameterList, functionNode, functionSymbolTable, symbolTableConstantIndex, captures, shouldCreateArgumentsVariableInParameterScope);
     });
 
@@ -1156,12 +1149,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
     createVariable(m_vm.propertyNames->starNamespacePrivateName, VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
     createVariable(m_vm.propertyNames->builtinNames().moduleLoaderPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
-    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->starNamespacePrivateName.impl()).scopeOffset() == JSModuleEnvironment::starNamespaceScopeOffset());
-    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl()).scopeOffset() == JSModuleEnvironment::moduleLoaderScopeOffset());
     if (moduleProgramNode->features() & ImportMetaFeature)
         createVariable(m_vm.propertyNames->builtinNames().metaPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
 
-    unsigned firstVarScopeOffset = moduleEnvironmentSymbolTable->scopeSize();
     for (auto& entry : moduleProgramNode->varDeclarations()) {
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
@@ -1173,7 +1163,6 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), lookUpVarKind(entry.key.get(), entry.value), moduleEnvironmentSymbolTable, IgnoreExisting);
     }
-    codeBlock->setVarScopeOffsets(firstVarScopeOffset, moduleEnvironmentSymbolTable->scopeSize() - firstVarScopeOffset);
 
     VariableEnvironment& lexicalVariables = moduleProgramNode->lexicalVariables();
     instantiateLexicalVariables(lexicalVariables, ScopeType::LetConstScope, moduleEnvironmentSymbolTable, ScopeRegisterType::Block, lookUpVarKind);
@@ -1466,194 +1455,6 @@ void BytecodeGenerator::initializeParameters(FunctionParameters& parameters)
         }
         if (!nonSimpleArguments)
             initializeNextParameter();
-    }
-}
-
-void BytecodeGenerator::emitParameterAudits(const AuditSites& auditSites, FunctionParameters& parameters)
-{
-    if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
-        return;
-    for (auto& site : auditSites.functionParameters(m_scopeNode->source().startOffset())) {
-        if (site.index >= parameters.size() || parameters.at(site.index).first->isRestParameter())
-            continue;
-        if (AuditSites::valueClasses(site.passes).containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody }) && !m_auditsDisabledRegister) {
-            m_auditsDisabledRegister = newBlockScopeVariable();
-            emitLoad(m_auditsDisabledRegister.get(), jsBoolean(false));
-        }
-        RefPtr<RegisterID> argument = site.index + 1 < m_parameters.size() ? &m_parameters[site.index + 1] : emitGetArgument(newTemporary(), site.index);
-        emitAudit(argument.get(), site.id, AuditSites::valueClasses(site.passes), site.least, site.most);
-    }
-}
-
-static unsigned numberOfValueClassTests(OptionSet<AuditedValueClass> classes)
-{
-    using enum AuditedValueClass;
-    unsigned count = classes.contains(Number) + classes.contains(String) + classes.contains(Symbol) + classes.contains(BigInt);
-    count += classes.containsAny({ False, True });
-    count += classes.containsAny({ Undefined, Null });
-    count += classes.containsAny({ Object, Function });
-    count += classes.contains(Object) && !classes.contains(Function);
-    return count;
-}
-
-void BytecodeGenerator::emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<AuditedValueClass> classes, Label& target)
-{
-    using enum AuditedValueClass;
-    if (classes.contains(Number))
-        emitJumpIfTrue(emitIsNumber(newTemporary(), value), target);
-    if (classes.contains(String))
-        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, StringType), target);
-    if (classes.containsAll({ Object, Function }))
-        emitJumpIfTrue(emitIsObject(newTemporary(), value), target);
-    else if (classes.contains(Function))
-        emitJumpIfTrue(emitUnaryOp<OpTypeofIsFunction>(newTemporary(), value), target);
-    else if (classes.contains(Object)) {
-        Ref<Label> notObject = newLabel();
-        emitJumpIfFalse(emitIsObject(newTemporary(), value), notObject.get());
-        emitJumpIfFalse(emitUnaryOp<OpTypeofIsFunction>(newTemporary(), value), target);
-        emitLabel(notObject.get());
-    }
-    if (classes.containsAll({ False, True }))
-        emitJumpIfTrue(emitUnaryOp<OpIsBoolean>(newTemporary(), value), target);
-    else if (classes.containsAny({ False, True }))
-        emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), value, emitLoad(nullptr, jsBoolean(classes.contains(True)))), target);
-    if (classes.containsAll({ Undefined, Null }))
-        emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), value), target);
-    else if (classes.contains(Undefined))
-        emitJumpIfTrue(emitIsUndefined(newTemporary(), value), target);
-    else if (classes.contains(Null))
-        emitJumpIfTrue(emitIsNull(newTemporary(), value), target);
-    if (classes.contains(Symbol))
-        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, SymbolType), target);
-    if (classes.contains(BigInt)) {
-#if USE(BIGINT32)
-        emitJumpIfTrue(emitUnaryOp<OpIsBigInt>(newTemporary(), value), target);
-#else
-        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, HeapBigIntType), target);
-#endif
-    }
-}
-
-RefPtr<RegisterID> BytecodeGenerator::emitCallerChecksResult(uint32_t id)
-{
-    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
-    RefPtr<RegisterID> result = newTemporary();
-    CallArguments arguments(*this, nullptr, 3);
-    emitLoad(arguments.thisRegister(), jsUndefined());
-    emitLoad(arguments.argumentRegister(0), jsUndefined());
-    emitLoad(arguments.argumentRegister(1), jsNumber(id));
-    emitLoad(arguments.argumentRegister(2), jsBoolean(true));
-    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
-    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
-        callFrame.append(newTemporary());
-    OpCall::emit(this, result.get(), function.get(), arguments.argumentCountIncludingThis(), arguments.stackOffset(), nextValueProfileIndex());
-    return result;
-}
-
-void BytecodeGenerator::emitElementReadAudit(RegisterID* base, RegisterID* subscript, uint32_t id)
-{
-    unsigned begin = instructions().size();
-    Ref<Label> done = newLabel();
-    if (m_auditsDisabledRegister)
-        emitJumpIfTrue(m_auditsDisabledRegister.get(), done.get());
-    emitJumpIfTrue(emitIsCellWithType(newTemporary(), base, ArrayType), done.get());
-    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
-    RefPtr<RegisterID> result = newTemporary();
-    CallArguments arguments(*this, nullptr, 4);
-    emitLoad(arguments.thisRegister(), jsUndefined());
-    move(arguments.argumentRegister(0), base);
-    emitLoad(arguments.argumentRegister(1), jsNumber(id));
-    move(arguments.argumentRegister(2), subscript);
-    emitLoad(arguments.argumentRegister(3), jsBoolean(true));
-    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
-    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
-        callFrame.append(newTemporary());
-    OpCall::emit(this, result.get(), function.get(), arguments.argumentCountIncludingThis(), arguments.stackOffset(), nextValueProfileIndex());
-    emitLabel(done.get());
-    for (unsigned offset = begin; offset < instructions().size();) {
-        auto instruction = instructions().at(offset);
-        m_auditCost += opcodeLengths[instruction->opcodeID()] + 1;
-        offset += instruction->size();
-    }
-}
-
-void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most)
-{
-    ASSERT(value->refCount());
-    auto fails = AuditSites::allValueClasses() - passes;
-    if (!fails)
-        return;
-
-    unsigned begin = instructions().size();
-    Ref<Label> done = newLabel();
-    if (m_auditsDisabledRegister)
-        emitJumpIfTrue(m_auditsDisabledRegister.get(), done.get());
-    if (fails == OptionSet<AuditedValueClass> { AuditedValueClass::Undefined, AuditedValueClass::Null })
-        emitJumpIfFalse(emitIsUndefinedOrNull(newTemporary(), value), done.get());
-    else if (numberOfValueClassTests(fails) < numberOfValueClassTests(passes)) {
-        Ref<Label> failed = newLabel();
-        emitJumpIfValueClassIsIn(value, fails, failed.get());
-        emitJump(done.get());
-        emitLabel(failed.get());
-    } else
-        emitJumpIfValueClassIsIn(value, passes, done.get());
-
-    if (least <= most && fails.contains(AuditedValueClass::Number)) {
-        OperandTypes numbers(ResultType::numberType(), ResultType::numberType());
-        Ref<Label> outside = newLabel();
-        emitJumpIfFalse(emitIsNumber(newTemporary(), value), outside.get());
-        RefPtr<RegisterID> zero = emitLoad(nullptr, jsNumber(0));
-        RefPtr<RegisterID> whole = emitBinaryOp(op_bitor, newTemporary(), value, zero.get(), numbers);
-        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), whole.get(), value), outside.get());
-        if (least > std::numeric_limits<int32_t>::min())
-            emitJumpIfTrue(emitBinaryOp(op_less, newTemporary(), value, emitLoad(nullptr, jsNumber(least)), numbers), outside.get());
-        if (most < std::numeric_limits<int32_t>::max())
-            emitJumpIfTrue(emitBinaryOp(op_greater, newTemporary(), value, emitLoad(nullptr, jsNumber(most)), numbers), outside.get());
-        if (least <= 0 && most >= 0) {
-            emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), value, zero.get()), done.get());
-            RefPtr<RegisterID> inverse = emitBinaryOp(op_div, newTemporary(), emitLoad(nullptr, jsNumber(1)), value, numbers);
-            emitJumpIfFalse(emitBinaryOp(op_less, newTemporary(), inverse.get(), zero.get(), numbers), done.get());
-        } else
-            emitJump(done.get());
-        emitLabel(outside.get());
-    }
-
-    if (passes.contains(AuditedValueClass::Array) && fails.contains(AuditedValueClass::Object))
-        emitJumpIfTrue(emitIsJSArray(newTemporary(), value), done.get());
-
-    if (passes.contains(AuditedValueClass::TaggedObject) && fails.contains(AuditedValueClass::Object)) {
-        Ref<Label> notObject = newLabel();
-        emitJumpIfFalse(emitIsCellWithType(newTemporary(), value, FinalObjectType), notObject.get());
-        emitJumpIfTrue(emitHasStructureWithFlags(newTemporary(), value, Structure::s_hasNonEnumerablePropertiesBits), done.get());
-        RefPtr<RegisterID> prototype = emitGetPrototypeOf(newTemporary(), value);
-        emitJumpIfTrue(emitIsCellWithType(newTemporary(), prototype.get(), FinalObjectType), done.get());
-        emitLabel(notObject.get());
-    }
-
-    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
-    RefPtr<RegisterID> result = newTemporary();
-    CallArguments arguments(*this, nullptr, 2);
-    emitLoad(arguments.thisRegister(), jsUndefined());
-    move(arguments.argumentRegister(0), value);
-    emitLoad(arguments.argumentRegister(1), jsNumber(id));
-    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
-    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
-        callFrame.append(newTemporary());
-    OpCall::emit(this, result.get(), function.get(), arguments.argumentCountIncludingThis(), arguments.stackOffset(), nextValueProfileIndex());
-    if (passes.containsAll({ AuditedValueClass::Acts, AuditedValueClass::HasSecondBody })) {
-        Ref<Label> fits = newLabel();
-        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), result.get(), function.get()), fits.get());
-        emitLoad(m_auditsDisabledRegister.get(), jsBoolean(true));
-        emitJump(done.get());
-        emitLabel(fits.get());
-    }
-    if (passes.contains(AuditedValueClass::Acts))
-        move(value, result.get());
-    emitLabel(done.get());
-    for (unsigned offset = begin; offset < instructions().size();) {
-        auto instruction = instructions().at(offset);
-        m_auditCost += opcodeLengths[instruction->opcodeID()] + 1;
-        offset += instruction->size();
     }
 }
 
@@ -2914,18 +2715,6 @@ std::optional<Variable> BytecodeGenerator::tryResolveVariable(ExpressionNode* ex
 
 // Indicates the least upper bound of resolve type based on local scope. The bytecode linker
 // will start with this ResolveType and compute the least upper bound including intercepting scopes.
-JSValue BytecodeGenerator::immutableGlobalNamedBy(const Variable& variable)
-{
-    if (variable.isResolved() || !m_parentDeclaredNames || shouldEmitTypeProfilerHooks())
-        return { };
-    auto& names = *m_vm.propertyNames;
-    const Identifier& name = variable.ident();
-    JSValue value = name == names.undefinedKeyword ? jsUndefined() : name == names.NaN ? jsNaN() : name == names.Infinity ? jsNumber(std::numeric_limits<double>::infinity()) : JSValue();
-    if (!value || resolveType() != GlobalProperty || !m_parentDeclaredNames->resolvesToGlobalScope(name.impl()))
-        return { };
-    return value;
-}
-
 ResolveType BytecodeGenerator::resolveType()
 {
     for (unsigned i = m_lexicalScopeStack.size(); i--; ) {
@@ -3144,18 +2933,6 @@ RegisterID* BytecodeGenerator::emitPutById(RegisterID* base, const Identifier& p
     unsigned propertyIndex = addConstant(property);
 
     m_staticPropertyAnalyzer.putById(base, propertyIndex);
-
-    if (m_auditsDisabledRegister && !property.isSymbol()) {
-        Ref<Label> asTypedCode = newLabel();
-        Ref<Label> done = newLabel();
-        emitJumpIfFalse(m_auditsDisabledRegister.get(), asTypedCode.get());
-        OpPutByVal::emit(this, base, emitLoad(nullptr, property), value, ecmaMode());
-        emitJump(done.get());
-        emitLabel(asTypedCode.get());
-        OpPutById::emit(this, base, propertyIndex, value, PutByIdFlags::create(ecmaMode()));
-        emitLabel(done.get());
-        return value;
-    }
 
     OpPutById::emit(this, base, propertyIndex, value, PutByIdFlags::create(ecmaMode())); // is not direct
     return value;
@@ -4239,19 +4016,9 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
         CallOp::emit(this, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset());
         if (shouldEmitTypeProfilerHooks())
             emitLoad(dst, jsUndefined());
-    } else if constexpr (opcodeID == op_tail_call) {
-        if (m_auditedTailCall) {
-            Ref<Label> dropsFrame = newLabel();
-            Ref<Label> returned = newLabel();
-            emitJumpIfTrue(emitCallerChecksResult(*m_auditedTailCall).get(), dropsFrame.get());
-            OpCall::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), nextValueProfileIndex());
-            emitJump(returned.get());
-            emitLabel(dropsFrame.get());
-            CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset());
-            emitLabel(returned.get());
-        } else
-            CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset());
-    } else
+    } else if constexpr (opcodeID == op_tail_call)
+        CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset());
+    else
         CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), nextValueProfileIndex());
     
     if (expectedFunction != NoExpectedFunction)
@@ -4295,19 +4062,9 @@ RegisterID* BytecodeGenerator::emitCallVarargs(RegisterID* dst, RegisterID* func
     
     // Emit call.
     ASSERT(dst != ignoredResult());
-    if constexpr (VarargsOp::opcodeID == op_tail_call_varargs) {
-        if (m_auditedTailCall) {
-            Ref<Label> dropsFrame = newLabel();
-            Ref<Label> returned = newLabel();
-            emitJumpIfTrue(emitCallerChecksResult(*m_auditedTailCall).get(), dropsFrame.get());
-            OpCallVarargs::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset, nextValueProfileIndex());
-            emitJump(returned.get());
-            emitLabel(dropsFrame.get());
-            VarargsOp::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset);
-            emitLabel(returned.get());
-        } else
-            VarargsOp::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset);
-    } else
+    if constexpr (VarargsOp::opcodeID == op_tail_call_varargs)
+        VarargsOp::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset);
+    else
         VarargsOp::emit(this, dst, func, thisRegister, arguments ? arguments : VirtualRegister(0), firstFreeRegister, firstVarArgOffset, nextValueProfileIndex());
     ASSERT(m_codeBlock->hasCheckpoints());
     return dst;
@@ -5528,21 +5285,6 @@ RegisterID* BytecodeGenerator::emitGetPropertyEnumerator(RegisterID* dst, Regist
     OpGetPropertyEnumerator::emit(this, dst, base);
     return dst;
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-RegisterID* BytecodeGenerator::emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last)
-{
-    ASSERT(dst != src && first <= last);
-    Ref<Label> done = newLabel();
-    for (unsigned type = first; type < last; ++type) {
-        emitIsCellWithType(dst, src, static_cast<JSType>(type));
-        emitJumpIfTrue(dst, done.get());
-    }
-    emitIsCellWithType(dst, src, last);
-    emitLabel(done.get());
-    return dst;
-}
-#endif
 
 RegisterID* BytecodeGenerator::emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType type)
 {

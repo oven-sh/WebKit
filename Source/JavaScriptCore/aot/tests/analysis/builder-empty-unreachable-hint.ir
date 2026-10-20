@@ -1,0 +1,21 @@
+# A recorded frequency counts as contents: an unreachable block that has nothing else is emptied and loses it
+# FORM: Prepared
+# RUN: empty-unreachable-blocks function=f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unlikelyUnreachableBlock" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+  b1() frequency=Unlikely:
+    Unreachable
+  b2():
+    Unreachable
+}
+# CHECK: emptied: 1
+# CHECK-NEXT: function f0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Unreachable

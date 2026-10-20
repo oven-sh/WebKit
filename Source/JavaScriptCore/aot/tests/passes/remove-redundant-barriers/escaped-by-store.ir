@@ -1,0 +1,21 @@
+# A store to an object the function has just allocated needs no barrier until the object is stored in a module variable.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={members=[L0]}
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="escaped-by-store" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    PutModuleVariable v1 variable=g0
+    PutSlot v1, -, v0 key="y" receivers=[L0] level=Proven
+    Return
+}
+# CHECK: PutSlot v1, -, v0 key="x"{{*}}[ownerCannotBeMarked]
+# CHECK: PutModuleVariable
+# CHECK-NEXT: PutSlot v1, -, v0 key="y"
+# CHECK-NOT: ownerCannotBeMarked

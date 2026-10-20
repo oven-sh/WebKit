@@ -1,0 +1,20 @@
+# With wide references a collection is embedded as with narrow ones
+# FORM: Prepared
+# OPTIONS: references=wide
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 1
+# CHECK: table 0 keys: [String("a")]
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="setOfStrings" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = NewArray v0 contents=string
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: NewArray
+# CHECK: [[set]]: Set<string> = NewSetFromData data=d0
+# CHECK-NEXT: Return [[set]]

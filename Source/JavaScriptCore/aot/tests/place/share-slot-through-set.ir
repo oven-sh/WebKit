@@ -1,0 +1,52 @@
+# An access through a set of two layouts asks for one location in both, and gets it where the bytes are free. Fields that no access reaches through one set lie where each layout alone puts them
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 1
+# STATISTIC: SharesRefused = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ReadTogetherA" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="ReadTogetherB" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="ReadAloneA" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L3 name="ReadAloneB" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = GetModuleVariable variable=g0
+    v10 = PropGet v9 key="x"
+    v11 = PropGet v4 key="y"
+    v12 = PropGet v7 key="y"
+    v13 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
+    v14 = FinishObject v13
+    v15 = NewObject -, v2, v2 layout=L3 fields=[0, 1]
+    v16 = FinishObject v15
+    v17 = PropGet v14 key="x"
+    v18 = PropGet v16 key="x"
+    Return
+}
+# CHECK: L0 CompiledObject
+# CHECK-NEXT: "x" Double @16
+# CHECK-NEXT: "y" Double @24
+# CHECK: L1 CompiledObject
+# CHECK-NEXT: "y" Double @24
+# CHECK-NEXT: "x" Double @16
+# CHECK: L2 CompiledObject
+# CHECK-NEXT: "x" Double @16
+# CHECK-NEXT: "y" Double @24
+# CHECK: L3 CompiledObject
+# CHECK-NEXT: "y" Double @16
+# CHECK-NEXT: "x" Double @24
+# CHECK: "x" {L0 L1} read weight={{*}} sites=1
+# CHECK-NEXT: one location Double @16

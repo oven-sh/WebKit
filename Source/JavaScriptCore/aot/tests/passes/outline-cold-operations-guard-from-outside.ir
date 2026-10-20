@@ -1,0 +1,106 @@
+# A slot read whose guard comes from a test in front of the cold code stays in its function: a guard cannot be passed to a shared body
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 2
+# STATISTIC: ColdSitesOutlined = 12
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="target" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="guardFromOutside" parameters=[{type=number}, {type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: object, v2: anything):
+    v3 = ShapeTest v1 layouts=[L0]
+    Branch v3 -> taken b1(| 0), notTaken b8()
+  b1(v4):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v7 = CallMethod v6, v5, v5, v5, v5, v2 key="fail"
+    Return v7
+  b3() frequency=Rare:
+    v8 = String string="fatal"
+    v9 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v10 = CallMethod v9, v8, v8, v8, v8, v2 key="fail"
+    Return v10
+  b4() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v13 = CallMethod v12, v11, v11, v11, v11, v2 key="fail"
+    Return v13
+  b5() frequency=Rare:
+    v14 = String string="fatal"
+    v15 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v16 = CallMethod v15, v14, v14, v14, v14, v2 key="fail"
+    Return v16
+  b6() frequency=Rare:
+    v17 = String string="fatal"
+    v18 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v19 = CallMethod v18, v17, v17, v17, v17, v2 key="fail"
+    Return v19
+  b7() frequency=Rare:
+    v20 = String string="fatal"
+    v21 = GetSlot v1, v4 key="target" receivers=[L0] level=Predicted
+    v22 = CallMethod v21, v20, v20, v20, v20, v2 key="fail"
+    Return v22
+  b8():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK: b1([[guard]]: guard):
+# CHECK-NOT: CallMethod
+# CHECK: [[target]]: anything = GetSlot v1, [[guard]] key="target"
+# CHECK-NEXT: = CallDirect [[target]], v2 function=f2
+# CHECK-COUNT-5: = GetSlot v1, [[guard]] key="target"
+# CHECK-NOT: CallMethod
+
+function f1 name="provenReceiver" parameters=[{type=number}, {type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: L0, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v5 = CallMethod v4, v3, v3, v3, v3, v2 key="fail"
+    Return v5
+  b2() frequency=Rare:
+    v6 = String string="fatal"
+    v7 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v8 = CallMethod v7, v6, v6, v6, v6, v2 key="fail"
+    Return v8
+  b3() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v11 = CallMethod v10, v9, v9, v9, v9, v2 key="fail"
+    Return v11
+  b4() frequency=Rare:
+    v12 = String string="fatal"
+    v13 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v14 = CallMethod v13, v12, v12, v12, v12, v2 key="fail"
+    Return v14
+  b5() frequency=Rare:
+    v15 = String string="fatal"
+    v16 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v17 = CallMethod v16, v15, v15, v15, v15, v2 key="fail"
+    Return v17
+  b6() frequency=Rare:
+    v18 = String string="fatal"
+    v19 = GetSlot v1 key="target" receivers=[L0] level=Proven
+    v20 = CallMethod v19, v18, v18, v18, v18, v2 key="fail"
+    Return v20
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: GetSlot
+# CHECK-COUNT-6: anything = CallDirect v1, v2 function=f3
+# CHECK-NOT: GetSlot
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK-NOT: guard
+# CHECK-NOT: GetSlot
+# CHECK: = CallMethod v0, {{*}}, v1 key="fail"
+# CHECK-LABEL: function f3 {{*}}role=OutlinedBody
+# CHECK: [[slot]]: anything = GetSlot v0 key="target" receivers=[L0] level=Proven
+# CHECK-NEXT: = CallMethod [[slot]], {{*}}, v1 key="fail"

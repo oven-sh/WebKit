@@ -1,0 +1,117 @@
+# A test in a loop of a value that is defined outside is placed on the entry of the loop, where it narrows the value as it is defined. The old test keeps its operand, so what a cast on the way to it has added, such as what flow proved about the class, goes on to the operations behind it; it folds as a test that an equal test dominates
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="sink" declared={type=anything} initialization=Undefined
+
+function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = AssumeType v0 castType=undefined|Array<number, proven, pristine[Storage, Names]>
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer
+    v7 = GetArrayElement v5, v6 level=Proven [keyIsIntegral]
+    Branch v1 -> taken b1(), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="castAddsProofs"
+# CHECK: LoopHint
+# CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=undefined|Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: true = TypeTest v3 testedType=Array
+# CHECK: (v5: Array<number, proven, pristine[Storage, Names]>):
+# CHECK: = GetArrayElement v5, v6 level=Proven
+# CHECK: = TypeTest v0 testedType=Array
+# SIMPLE-LABEL: function f0 name="castAddsProofs"
+# SIMPLE: = TypeTest v0 testedType=Array
+# SIMPLE: LoopHint
+# SIMPLE-NOT: TypeTest
+# SIMPLE: frequency=Unlikely:
+# SIMPLE-NEXT: LoopHint
+
+function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = AssumeType v0 castType=undefined|Array<number, proven, pristine[Storage, Names]>
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = TypeTest v2 testedType=Array
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Integer
+    v7 = GetArrayElement v5, v6 level=Proven [keyIsIntegral]
+    PutModuleVariable v7 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b3(v9):
+    v10 = Upcast v9 castType=undefined
+    PutModuleVariable v10 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1 name="castOutsideTheLoop"
+# CHECK: = GetArrayElement {{*}} level=Proven
+# CHECK: = Upcast {{*}} castType=undefined
+# SIMPLE-LABEL: function f1 name="castOutsideTheLoop"
+# SIMPLE: = TypeTest v2 testedType=Array
+# SIMPLE: ([[array1]]: Array<number, proven, pristine[Storage, Names]>):
+# SIMPLE-NOT: TypeTest
+# SIMPLE: = GetArrayElement [[array1]], {{*}} level=Proven
+# SIMPLE-NOT: TypeTest
+# SIMPLE-LABEL: function f2 name="checkedCast"
+
+function f2 name="checkedCast" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Claim v0 castType=number|string cause=AddedByPass
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = TypeTest v2 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = GetStringLength v5
+    PutModuleVariable v6 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b3(v8):
+    v9 = ToInt32 v8
+    PutModuleVariable v9 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f2 name="checkedCast"
+# CHECK: = GetStringLength
+# CHECK: = ToInt32
+# SIMPLE: = TypeTest v2 testedType=string
+# SIMPLE-NOT: TypeTest
+# SIMPLE: = GetStringLength
+# SIMPLE-NOT: TypeTest
+# SIMPLE: = ToInt32
+# SIMPLE-NOT: TypeTest
+# SIMPLE-LABEL: function f3 name="castAddsNothing"
+
+function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = TypeTest v0 testedType=Array
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    Branch v1 -> taken b1(), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3 name="castAddsNothing"
+# CHECK-NOT: AssumeType
+# CHECK: LoopHint
+# CHECK-NEXT: v3: true = TypeTest [[narrowed3]] testedType=Array
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: ([[narrowed3]]: Array):

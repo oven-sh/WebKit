@@ -1,0 +1,89 @@
+# An access by key has the effects of the element form its plan proves, else it is unknown code; the element forms have their written effects, with the lookup by name only where the position may be no index
+# FORM: Prepared
+# RUN: effects
+# RUN(ONLY): effects f0
+# RUN(INDEX): effects f2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="typedArray" parameters=[{type=Uint8Array}, {type=number}, {type=object}, {type=string}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: number, v2: object, v3: string, v4: anything):
+    v5 = ElemGet v0, v1
+    v6 = ElemGet v0, v2
+    v7 = ElemGet v0, v3
+    v8 = ElemGet v0, v4
+    ElemSet v0, v1, v1
+    ElemSet v0, v1, v4
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v5 ElemGet: reads(TypedArrayStorage, TypedArrayElements, AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v6 ElemGet: unknownCode
+# CHECK-NEXT: v7 ElemGet: unknownCode
+# CHECK-NEXT: v8 ElemGet: unknownCode
+# CHECK-NEXT: v9 ElemSet: reads(TypedArrayStorage) writes(TypedArrayElements)
+# CHECK-NEXT: v10 ElemSet: unknownCode
+# ONLY-NOT: throws
+function f1 name="otherReceivers" parameters=[{type=Array<number>}, {type=number}, {type=object}, {type=string}, {type=L0}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: number, v2: object, v3: string, v4: L0):
+    v5 = ElemGet v0, v1
+    v6 = ElemGet v2, v1
+    v7 = ElemGet v3, v1
+    v8 = String string="x"
+    v9 = ElemGet v4, v8
+    v10 = ElemGet v2, v8
+    v11 = GetStringLength v3
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v5 ElemGet: unknownCode
+# CHECK-NEXT: v6 ElemGet: unknownCode
+# CHECK-NEXT: v7 ElemGet: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK: v9 ElemGet: reads(ObjectFields/1)
+# CHECK-NEXT: v10 ElemGet: unknownCode
+# CHECK-NEXT: v11 GetStringLength: none
+function f2 name="guardedArrayAtIndex" parameters=[{type=Array<number>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: int[0, 10], v2: number):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = HasArrayStorage v0 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v8 GetArrayElement: reads(Elements/1, ArrayStorage)
+# CHECK-NEXT: v9 HasArrayElement: reads(Elements/1, ArrayStorage)
+# CHECK-NEXT: v10 PutArrayElement: reads(Elements/1, ArrayStorage, AllocatorState) writes(Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects
+# INDEX: v7 AllGuards
+# INDEX-NOT: NamedProperties
+# INDEX-NOT: StringStorage
+function f3 name="guardedArrayAtAnyNumber" parameters=[{type=Array<number>}, {type=number}, {type=int[-1, 10]}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: number, v2: int[-1, 10]):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = HasArrayStorage v0 arrayStorage=Double
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v9 = HasArrayElement v0, v1, v7 arrayStorage=Double level=Predicted
+    v10 = GetArrayElement v0, v2, v7 arrayStorage=Double level=Predicted [keyIsIntegral]
+    PutArrayElement v0, v1, v1, v7 arrayStorage=Double level=Predicted
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: v8 GetArrayElement: reads(NamedProperties, Elements/1, ArrayStorage, StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v9 HasArrayElement: reads(NamedProperties, Elements/1, ArrayStorage, StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v10 GetArrayElement: reads(NamedProperties, Elements/1, ArrayStorage, StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v11 PutArrayElement: reads(Elements/1, ArrayStorage, AllocatorState) writes(NamedProperties, Elements/1, ArrayStorage, AllocatorState, RuntimeState) throws collects

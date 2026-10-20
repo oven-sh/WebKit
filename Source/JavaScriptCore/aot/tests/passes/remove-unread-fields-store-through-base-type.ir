@@ -1,0 +1,66 @@
+# A slot store through a base class and two subclasses writes one declared field: it goes with the field, and a read through one subclass keeps the field in all three
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Node" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Leaf" predictedBase=L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}, {key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Branch" predictedBase=L0 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=0}, {key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L0 originField=1}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
+layout L3 kind=Instance name="ReadNode" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Instance name="ReadLeaf" predictedBase=L3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L3 originField=0}, {key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L3 originField=1}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L3}
+layout L5 kind=Instance name="ReadBranch" predictedBase=L3 fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="id" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L3 originField=0}, {key="n" declared={type=anything} flags=[IsRequired, IsInherited] originLayout=L3 originField=1}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L3}
+# CHECK: layout L0 kind=Instance name="Node" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L3 kind=Instance name="ReadNode" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+
+function f0 name="builds" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = NewObject v1, v0, v0, v0 layout=L1 fields=[0, 1, 2]
+    v4 = NewObject -, v0, v0, v0 layout=L2 fields=[0, 1, 2]
+    v5 = NewArray v2, v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f0 name="builds"
+# CHECK: = NewObject -, v0 layout=L0 fields=[1]
+# CHECK-NEXT: = NewObject v1, v0, v0 layout=L1 fields=[0, 2]
+# CHECK-NEXT: = NewObject -, v0, v0 layout=L2 fields=[0, 2]
+
+function f1 name="stores" parameters=[{type=L0|L1|L2}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0|L1|L2, v1: anything):
+    PutSlot v0, -, v1 key="id" receivers=[L0, L1, L2] level=Proven
+    PutSlot v0, -, v1 key="n" receivers=[L0, L1, L2] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1 name="stores"
+# CHECK-NOT: key="id"
+# CHECK: PutSlot v0, -, v1 key="n" receivers=[L0, L1, L2]
+# CHECK-NOT: key="id"
+
+function f2 name="buildsRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v2 = NewObject -, v0, v0, v0 layout=L4 fields=[0, 1, 2]
+    v3 = NewObject -, v0, v0, v0 layout=L5 fields=[0, 1, 2]
+    v4 = NewArray v1, v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f2 name="buildsRead"
+# CHECK: = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+# CHECK-NEXT: = NewObject -, v0, v0, v0 layout=L4 fields=[0, 1, 2]
+# CHECK-NEXT: = NewObject -, v0, v0, v0 layout=L5 fields=[0, 1, 2]
+
+function f3 name="storesRead" parameters=[{type=L3|L4|L5}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L3|L4|L5, v1: anything):
+    PutSlot v0, -, v1 key="id" receivers=[L3, L4, L5] level=Proven
+    Return
+}
+# CHECK-LABEL: function f3 name="storesRead"
+# CHECK: PutSlot v0, -, v1 key="id" receivers=[L3, L4, L5]
+
+function f4 name="callsThroughOneSubclass" parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = GetSlot v0 key="id" receivers=[L5] level=Proven
+    v2 = Call v1, v0
+    Return v2
+}

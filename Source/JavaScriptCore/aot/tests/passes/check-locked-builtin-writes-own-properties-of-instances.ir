@@ -1,0 +1,17 @@
+# A store to an own property that every instance of a built-in class has writes to the instance and to no built-in object
+# FORM: AsRead
+# RUN: pipeline CheckLockedBuiltinWrites
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything @10
+    v1 = Integer integer=0 @11
+    PropSet v0, v1 key="length" @12
+    v3 = NewRegExp pattern="a" regExpFlags=[Global] @13
+    PropSet v3, v1 key="lastIndex" @14
+    Return
+}
+# CHECK: PropSet

@@ -317,7 +317,6 @@ public:
     void dumpForBacktrace(PrintStream&) const;
 
     JS_EXPORT_PRIVATE JSObject* synthesizePrototype(JSGlobalObject*) const;
-    JS_EXPORT_PRIVATE JSObject* synthesizePrototype(JSGlobalObject*, PropertyName, bool isForStore) const;
     inline bool requireObjectCoercible(JSGlobalObject*) const; // Defined in ExceptionHelpers.h
 
     // Constants used for Int52. Int52 isn't part of JSValue right now, but JSValues may be

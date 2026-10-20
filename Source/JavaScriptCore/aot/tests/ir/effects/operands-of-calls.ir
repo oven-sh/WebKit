@@ -1,0 +1,89 @@
+# A call does with an operand what the summary of each callee says of the entry parameter it lands in; an operand that lands in no parameter, or a callee nobody named, gets every use
+# FORM: Prepared
+# RUN: operands summaries f5 f6 f7 f8
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="value" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+function f0 name="storesIntoThis" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: L0, v1: object):
+    PutSlot v0, -, v1 key="value" receivers=[L0] level=Proven
+    Return
+}
+function f1 name="returnsArgument" parameters=[{type=object}] results=[{type=object}] {
+  b0(v0: object):
+    Return v0
+}
+function f2 name="ignoresArgument" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    Return
+}
+function f3 name="countsArguments" flags=[HasArgumentCount] parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: int[0, 4294967295], v1: object):
+    Return
+}
+function f4 name="returnsItself" flags=[TakesCallee] results=[{type=function}] {
+  b0(v0: function):
+    Return v0
+}
+function f5 name="directCalls" parameters=[{type=L0}, {type=object}] results=[{type=undefined}] {
+  b0(v0: L0, v1: object):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v2 CallDirect 0: [Inspects] writes(ObjectFields/1)
+# CHECK-NEXT: v2 CallDirect 1: [Inspects, Retains] in operand 0
+# CHECK-NEXT: v3 CallDirect 0: [Inspects, Returns]
+# CHECK-NEXT: v4 CallDirect 0: [Inspects]
+# CHECK-NOT: writes
+function f6 name="callsByValue" parameters=[{type=f0}, {type=L0}, {type=object}, {type=object}, {type=f1|f2}] results=[{type=undefined}] {
+  b0(v0: f0, v1: L0, v2: object, v3: object, v4: f1|f2):
+    v5 = Call v0, v1, v2 callees=[f0]
+    v6 = Call v4, -, v2 callees=[f1, f2]
+    v7 = Call v0, v1, v2, v3 callees=[f0]
+    v8 = Call v0, v1, v2 callees=[f0, ..]
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v5 Call 0: [Calls]
+# CHECK-NEXT: v5 Call 1: [Inspects] writes(ObjectFields/1)
+# CHECK-NEXT: v5 Call 2: [Inspects, Retains] in operand 1
+# CHECK-NEXT: v6 Call 0: [Calls]
+# CHECK-NEXT: v6 Call 2: [Inspects, Returns]
+# CHECK-NEXT: v7 Call 0: [Calls]
+# CHECK-NEXT: v7 Call 1: [Inspects] writes(ObjectFields/1)
+# CHECK-NEXT: v7 Call 2: [Inspects, Retains] in operand 1
+# CHECK-NEXT: v7 Call 3: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents] reads(EnvironmentFields, ObjectFields, {{*}}) writes(EnvironmentFields, ObjectFields,
+# CHECK-NEXT: v8 Call 0: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+# CHECK-NEXT: v8 Call 1: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+# CHECK-NEXT: v8 Call 2: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+function f7 name="otherCalleeSets" parameters=[{type=f3}, {type=f4}, {type=object}] results=[{type=undefined}] {
+  b0(v0: f3, v1: f4, v2: object):
+    v3 = Call v0, -, v2 callees=[f3]
+    v4 = Call v1 callees=[f4]
+    v5 = Call v2, v2, v2 callees=[]
+    Return
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v3 Call 0: [Calls]
+# CHECK-NEXT: v3 Call 2: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+# CHECK-NEXT: v4 Call 0: [Inspects, Returns, Calls]
+# CHECK-NEXT: v5 Call 0: [Calls]
+# CHECK-NEXT: v5 Call 1: [Inspects]
+# CHECK-NEXT: v5 Call 2: [Inspects]
+function f8 name="callsGroup" parameters=[{type=f0|f2}, {type=L0}, {type=object}] results=[{type=undefined}] {
+  b0(v0: f0|f2, v1: L0, v2: object):
+    v3 = CallGroup v0, v1, v2 function=f9 callees=[f0, f2]
+    Return
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: v3 CallGroup 0: [Calls]
+# CHECK-NEXT: v3 CallGroup 1: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+# CHECK-NEXT: v3 CallGroup 2: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
+function f9 name="storesIntoThis" role=GroupEntrypoint flags=[HasThis] captures=[{type=f0|f2}] thisType={type=L0} parameters=[{type=object}] results=[{type=undefined}] derivation={source=f0} creator=Entrypoint{target=f0 group=[f0, f2] arguments=Registers} {
+  b0(v0: f0|f2, v1: L0, v2: object):
+    v3 = CallDirect v1, v2 function=f0
+    Return
+}

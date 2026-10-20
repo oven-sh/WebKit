@@ -1,0 +1,55 @@
+# A prediction that says no more than the type or the prediction of its operand goes, and one that narrows stays
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="typeIsInsidePrediction" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = Predict v0 predicted=number
+    Return v1
+}
+# CHECK-LABEL: function f0 name="typeIsInsidePrediction"
+# CHECK-NEXT: b0(v0: i32):
+# CHECK-NEXT: Return v0
+
+function f1 name="operandHasSamePrediction" parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Predict v0 predicted=number
+    Return v1
+}
+# CHECK-LABEL: function f1 name="operandHasSamePrediction"
+# CHECK-NEXT: b0(v0: anything ~ number):
+# CHECK-NEXT: Return v0
+
+function f2 name="predictedTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Predict v0 predicted=number
+    v2 = Predict v1 predicted=number
+    Return v2
+}
+# CHECK-LABEL: function f2 name="predictedTwice"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything ~ number = Predict v0 predicted=number
+# CHECK-NEXT: Return v1
+
+function f3 name="narrowsType" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Predict v0 predicted=number
+    Return v1
+}
+# CHECK-LABEL: function f3 name="narrowsType"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything ~ number = Predict v0 predicted=number
+# CHECK-NEXT: Return v1
+
+function f4 name="narrowsPrediction" parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Predict v0 predicted=i32
+    Return v1
+}
+# CHECK-LABEL: function f4 name="narrowsPrediction"
+# CHECK-NEXT: b0(v0: anything ~ number):
+# CHECK-NEXT: v1: anything ~ i32 = Predict v0 predicted=i32
+# CHECK-NEXT: Return v1

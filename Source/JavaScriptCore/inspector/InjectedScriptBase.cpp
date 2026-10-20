@@ -70,7 +70,7 @@ static RefPtr<JSON::Value> jsToInspectorValue(JSC::JSGlobalObject* globalObject,
     if (value.isObject()) {
         JSC::VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (value.inherits<JSC::JSArray>()) {
+        if (isJSArray(value)) {
             auto inspectorArray = JSON::Array::create();
             auto& array = *asArray(value);
             unsigned length = array.length();

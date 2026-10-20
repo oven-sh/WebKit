@@ -1,0 +1,50 @@
+# An object follows arguments, a module variable, block parameters and a return; a block parameter no value enters stays empty
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {{*}}L0#
+# CHECK-NOT: Variable(g1)
+# CHECK: Local({{*}}f0, v1) = {L0#[[item]]}
+# CHECK: Local({{*}}f0, v3) = {{*}}L0#[[item]]}
+# RUN(WRITER): flow-solve nodes
+# WRITER: Local({{*}}f1, parameter 0) = {L0#[[item]]}
+# RUN(READER): flow-solve nodes
+# READER: Local({{*}}f2, result 0) = {{*}}L0#[[item]]}
+# READER: Local({{*}}f2, v0) = {{*}}L0#[[item]]}
+# READER-NOT: f2, v2)
+# READER: Local({{*}}f2, v3) = {{*}}L0#[[item]]}
+# READER-NEXT: Local({{*}}f2, v4) = {{*}}L0#[[item]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Item" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="shared" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="unused" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect function=f2
+    Return
+}
+function f1 name="write" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    Jump -> next b4(v3)
+  b4(v4):
+    LoopHint
+    Branch v1 -> taken b4(v4), notTaken b5()
+  b5():
+    Return v4
+}

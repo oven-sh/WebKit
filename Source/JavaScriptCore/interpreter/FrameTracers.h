@@ -167,15 +167,15 @@ public:
 
 class AOTOperationPrologueCallFrameTracer {
 public:
-    ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallFrame* callFrame)
+    ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallerFrameAndPC* operationFrameRecord)
 #if ASSERT_ENABLED
         : m_vm(vm)
 #endif
     {
-        ASSERT(callFrame);
-        ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(vm.topEntryFrame));
+        ASSERT(operationFrameRecord);
+        ASSERT(reinterpret_cast<void*>(operationFrameRecord) < reinterpret_cast<void*>(vm.topEntryFrame));
         assertStackPointerIsAligned();
-        vm.topCallFrame = callFrame;
+        vm.topCallFrame = std::bit_cast<CallFrame*>(operationFrameRecord);
     }
 
 #if ASSERT_ENABLED

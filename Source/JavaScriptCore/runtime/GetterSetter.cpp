@@ -40,8 +40,7 @@ void GetterSetter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.append(thisObject->m_getter);
-    visitor.append(thisObject->m_setter);
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(GetterSetter);

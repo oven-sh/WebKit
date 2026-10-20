@@ -11,7 +11,7 @@ namespace JSC { namespace B3 { namespace Air {
 
 class Code;
 
-void forwardRegisterCopies(Code&);
+JS_EXPORT_PRIVATE void forwardRegisterCopies(Code&);
 
 } } } // namespace JSC::B3::Air
 

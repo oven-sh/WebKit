@@ -33,10 +33,13 @@ namespace JSC {
 
 inline size_t IndexingHeader::preCapacity(Structure* structure)
 {
-    if (!hasAnyArrayStorage(structure->indexingType())) [[likely]]
-        return 0;
-    
-    return arrayStorage()->m_indexBias;
+    if (hasAnyArrayStorage(structure->indexingType())) [[unlikely]]
+        return arrayStorage()->m_indexBias;
+
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        return elementsStartOffset(structure->outOfLineCapacity());
+
+    return 0;
 }
 
 inline size_t IndexingHeader::indexingPayloadSizeInBytes(Structure* structure)

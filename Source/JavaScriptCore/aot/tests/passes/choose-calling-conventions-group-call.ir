@@ -1,0 +1,56 @@
+# The call of a group names the first group entrypoint, passes its arguments unboxed and has the result type of the group
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# RUN(COUNTED): pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 1
+# STATISTIC: ReturnCallsDemoted = 6
+# CHECK: [[entry]] Direct ([[closure]]:Cell, [[argument]]:Double) -> ([[result]]:Double) closures=AllSlim
+# CHECK-NEXT: GenericRegisters ({{*}}) -> ({{*}}:JSValue) value-entry=[[entry]]
+# COUNTED-COUNT-6: :Cell, {{*}}:Double) -> ({{*}}:Double) closures=AllSlim
+# COUNTED-NOT: closures=
+# COUNTED: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="caller"
+# CHECK: v2: number = CallGroup v0, v1 function=[[entry]] accessSite=0 callees=[f2, f3, f4, f5, f6, f7]
+function f0 name="caller" parameters=[{type=f2|f3|f4|f5|f6|f7}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6|f7, v1: number):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f2, f3, f4, f5, f6, f7]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="callsUnknownFunction"
+# CHECK: v2: anything = Call v0, -, v1 accessSite=1
+function f1 name="callsUnknownFunction" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Call v0, -, v1 accessSite=1
+    Return v2
+}
+function f2 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f5 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f6 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f7 name="sixth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+# CHECK: function [[entry]] name="first"{{*}}role=GroupEntrypoint
+# CHECK: ReturnCall
+# CHECK: name="first"{{*}}role=GenericEntrypoint
+# CHECK: [[unboxed]]: number = CallDirect
+# CHECK-NEXT: Return [[unboxed]]

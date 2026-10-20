@@ -1,0 +1,9 @@
+# the merge of a phase with fewer tasks than threads numbers the types in task order
+# RUN: arena-merge 10
+# RUN: arena-merge 10 threads=16 seed=9
+# CHECK: new types 25 from 10 tasks
+# CHECK: n24 = int[0,1008]
+# CHECK-NEXT: task 0: [n0 n1 n2]
+# CHECK: task 8: [n0 n24 n2]
+# CHECK-NEXT: task 9: [none]
+# CHECK-NOT: FAILED

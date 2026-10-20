@@ -1,0 +1,69 @@
+# The record that a built-in's own code makes (the step of a Map iterator, the counts of setFromBase64) is an ordinary object: flow follows its fields, proves and predicts no layout for it, and does not count it among the objects of the layout. The step that a library function allocates keeps its proof
+# RUN: flow
+# CHECK: class C1 layout=L(IteratorResult) impossibleMutations=[{{*}}, LoseShape]
+# CHECK: class C{{*}} layout=L(ReadAndWrittenCounts) impossibleMutations=[{{*}}, StoreOfOtherType] {{*}}cause=NonLayoutObject witness={function=f0 value=v19
+# CHECK: class C{{*}} layout=L(IteratorResult) impossibleMutations=[{{*}}, StoreOfOtherType] {{*}}cause=NonLayoutObject witness={function=f0 value=v5
+# CHECK: layout L(IteratorResult) flow={baseState=None members=[L(IteratorResult)] allocationClasses=[1] {{*}}, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: field L(IteratorResult).0 "value" type=undefined
+# CHECK-NEXT: field L(IteratorResult).1 "done" type=true
+# CHECK: layout L(ReadAndWrittenCounts) flow={allocation=NeverAllocated
+# CHECK: variable g0 type=object written=anything {{*}}cause=NonLayoutObject witness={function=f0 value=v5}}
+# CHECK-NEXT: variable g1 type=L(IteratorResult) written=anything
+# CHECK-NEXT: variable g2 type=object written=anything {{*}}cause=NonLayoutObject witness={function=f0 value=v19}}
+# CHECK-NEXT: variable g3 type=int[0, 4294967296] written=anything
+# RUN(APPLY): flow-apply
+# APPLY: [[stepOfMap]]: anything = Call {{*}}callees=[builtin(MapIteratorPrototypeNext)]
+# APPLY-NEXT: : object = AssumeType [[stepOfMap]] castType=object
+# APPLY-NEXT: PutModuleVariable
+# APPLY: [[stepOfArray]]: anything = Call {{*}}callees=[f1, builtin(ArrayIteratorPrototypeNext)]
+# APPLY-NEXT: : L(IteratorResult) = AssumeType [[stepOfArray]] castType=L(IteratorResult)
+# APPLY: [[counts]]: anything = Call {{*}}callees=[builtin(Uint8ArrayPrototypeSetFromBase64)]
+# APPLY-NEXT: [[object]]: object = AssumeType [[counts]] castType=object
+# APPLY-NOT: receivers=
+# APPLY: [[read]]: anything = PropGet [[object]] key="read"
+# APPLY-NEXT: : int[0, 4294967296] = AssumeType [[read]] castType=int[0, 4294967296]
+# APPLY: : L(IteratorResult) = CreateIteratorResult v1, v2 allocationSite=1 [keepsShape]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=70 function=f1
+variable g0 name="stepOfMap" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="stepOfArray" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="counts" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="read" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="keys"
+    v3 = Call v2, v1 calleeKey="keys"
+    v4 = PropGet v3 key="next"
+    v5 = Call v4, v3 calleeKey="next"
+    PutModuleVariable v5 variable=g0
+    v7 = Integer integer=1
+    v8 = NewArray v7 contents=anything
+    v9 = PropGet v8 key="values"
+    v10 = Call v9, v8 calleeKey="values"
+    v11 = PropGet v10 key="next"
+    v12 = Call v11, v10 calleeKey="next"
+    PutModuleVariable v12 variable=g1
+    v14 = Builtin builtin=Uint8Array
+    v15 = Integer integer=8
+    v16 = Construct v14, -, v15
+    v17 = PropGet v16 key="setFromBase64"
+    v18 = String string="AQID"
+    v19 = Call v17, v16, v18 calleeKey="setFromBase64"
+    PutModuleVariable v19 variable=g2
+    v21 = PropGet v19 key="read"
+    PutModuleVariable v21 variable=g3
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = CreateIteratorResult v1, v2
+    Return v3
+}

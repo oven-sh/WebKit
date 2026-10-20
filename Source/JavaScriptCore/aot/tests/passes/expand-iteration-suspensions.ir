@@ -1,0 +1,294 @@
+# An await or a yield in the body of a loop changes nothing about its expansion: where the iteration stands is in values, not in an object
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 5
+# STATISTIC: IterationsExpandedGenerically = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Source" fields=[{key="x" declared={type=number}}]
+
+function f0 name="noSuspension" parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array<number, pristine[Names]>, v1: anything):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v7 = Add v6, v6
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0 name="noSuspension"
+# CHECK: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length0]]: anything = PropGet v0 key="length"
+# CHECK-NEXT: [[limit0]]: int[0, 9007199254740991] = ToLength [[length0]]
+# CHECK-NEXT: [[inRange0]]: boolean = Less [[index0]], [[limit0]]
+# CHECK-NEXT: Branch [[inRange0]] -> taken [[read0]](| 0), notTaken
+# CHECK: b3():
+# CHECK-NEXT: = Add v6, v6
+# CHECK-NEXT: Jump -> next b1([[carried0]])
+# CHECK: (v5: boolean, v6: anything, [[carried0]]: int[0, 9007199254740991]):
+# CHECK: [[read0]]([[proven0]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[element0]]: {{*}} = ElemGet v0, [[proven0]] [keyIsIntegral]
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next0]]: int[1, 9007199254740991] = Add [[proven0]], [[one0]]
+# ABSENT-LABEL: function f0 name="noSuspension"
+
+function f1 name="awaitInBody" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=1}
+function f2 name="awaitInBodyOverMap" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1}
+function f3 name="yieldInBody" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f8 promiseParameter=2}
+function f4 name="yieldInBodyOverMap" role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=Generator}] creator=Coroutine{ramp=f4 body=f9 promiseParameter=2}
+function f5 name="awaitInBodyOverObject" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object written=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1}
+
+function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=1} {
+  b0(v0: Array<number, pristine[Names]>, v1: undefined|Promise):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v7 = AwaitBySavingFrame v6, v1
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+  b5():
+    v10 = Undefined
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+}
+# CHECK-LABEL: function f6 name="awaitInBody"
+# CHECK: b1([[index6]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length6]]: anything = PropGet v0 key="length"
+# CHECK-NEXT: [[limit6]]: int[0, 9007199254740991] = ToLength [[length6]]
+# CHECK-NEXT: [[inRange6]]: boolean = Less [[index6]], [[limit6]]
+# CHECK-NEXT: Branch [[inRange6]] -> taken [[read6]](| 0), notTaken
+# CHECK: b3():
+# CHECK-NEXT: = AwaitBySavingFrame v6, v1
+# CHECK-NEXT: Jump -> next b1([[carried6]])
+# CHECK: (v5: boolean, v6: anything, [[carried6]]: int[0, 9007199254740991]):
+# CHECK: [[read6]]([[proven6]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[element6]]: {{*}} = ElemGet v0, [[proven6]] [keyIsIntegral]
+# CHECK-NEXT: [[one6]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next6]]: int[1, 9007199254740991] = Add [[proven6]], [[one6]]
+# ABSENT-LABEL: function f6 name="awaitInBody"
+# ABSENT-NOT: = New
+# ABSENT-NOT: = Call
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: handler=
+
+function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+  b0(v0: Map<string, number, pristine[Names]>, v1: undefined|Promise):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v7 = AwaitBySavingFrame v6, v1
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+  b5():
+    v10 = Undefined
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+}
+# The pair of an entry is the one allocation, and the language asks for it.
+# CHECK-LABEL: function f7 name="awaitInBodyOverMap"
+# CHECK: b1([[table7]]: anything, [[position7]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = MapNext v0, [[table7]], [[position7]]
+# CHECK: b3():
+# CHECK-NEXT: = AwaitBySavingFrame v6, v1
+# CHECK-NEXT: Jump -> next b1([[carriedTable7]], [[carriedPosition7]])
+# CHECK: (v5: boolean, v6: anything, [[carriedTable7]]: anything, [[carriedPosition7]]: int[0, 2147483648]):
+# CHECK: = CollectionTable v0
+# CHECK: = NewArray {{*}} contents=anything
+# ABSENT-LABEL: function f7 name="awaitInBodyOverMap"
+# ABSENT-NOT: NewObject
+# ABSENT-NOT: = Call
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: handler=
+# ABSENT-COUNT-1: = New
+# ABSENT-NOT: = New
+
+function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f8 promiseParameter=2} {
+  b0(v0: function, v1: Array<number, pristine[Names]>, v2: Generator):
+    v3 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b9(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b8():
+    v8 = YieldBySavingFrame v2, v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b7()
+  b4() frequency=Rare handler=b8():
+    Throw v9
+  b5() frequency=Rare:
+    IteratorClose v3
+    Jump -> next b6()
+  b6() frequency=Rare:
+    Return v9
+  b7() handler=b8():
+    Jump -> next b1()
+  b8() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+  b9():
+    v14 = Undefined
+    Return v14
+}
+# CHECK-LABEL: function f8 name="yieldInBody"
+# CHECK: b1([[index8]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length8]]: anything = PropGet v1 key="length"
+# CHECK-NEXT: [[limit8]]: int[0, 9007199254740991] = ToLength [[length8]]
+# CHECK-NEXT: [[inRange8]]: boolean = Less [[index8]], [[limit8]]
+# CHECK-NEXT: Branch [[inRange8]] -> taken [[read8]](| 0), notTaken
+# CHECK: b3():
+# CHECK-NEXT: = YieldBySavingFrame v2, v7
+# CHECK: b7():
+# CHECK-NEXT: Jump -> next b1([[carried8]])
+# CHECK: (v6: boolean, v7: anything, [[carried8]]: int[0, 9007199254740991]):
+# CHECK: [[read8]]([[proven8]]: int[0, 9007199254740990]):
+# CHECK-NEXT: [[element8]]: {{*}} = ElemGet v1, [[proven8]] [keyIsIntegral]
+# CHECK-NEXT: [[one8]]: 1 = Integer integer=1
+# CHECK-NEXT: [[next8]]: int[1, 9007199254740991] = Add [[proven8]], [[one8]]
+# ABSENT-LABEL: function f8 name="yieldInBody"
+# ABSENT-NOT: = New
+# ABSENT-NOT: = Call
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: handler=
+
+function f9 name="yieldInBodyOverMap" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=Map<string, number, pristine[Names]>}, {type=Generator}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{ramp=f4 body=f9 promiseParameter=2} {
+  b0(v0: function, v1: Map<string, number, pristine[Names]>, v2: Generator):
+    v3 = CallBuiltin v1 overload=MapPrototypeKeys/0
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b9(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b8():
+    v9 = YieldBySavingFrame v2, v8
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Switch v11 cases=[1, 2] -> case b4(), case b5(), otherwise b7()
+  b4() frequency=Rare handler=b8():
+    Throw v10
+  b5() frequency=Rare:
+    IteratorClose v4
+    Jump -> next b6()
+  b6() frequency=Rare:
+    Return v10
+  b7() handler=b8():
+    Jump -> next b1()
+  b8() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+  b9():
+    v15 = Undefined
+    Return v15
+}
+# CHECK-LABEL: function f9 name="yieldInBodyOverMap"
+# CHECK: b1([[table9]]: anything, [[position9]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = MapNext v1, [[table9]], [[position9]]
+# CHECK: b3():
+# CHECK-NEXT: = YieldBySavingFrame v2, v8
+# CHECK: b7():
+# CHECK-NEXT: Jump -> next b1([[carriedTable9]], [[carriedPosition9]])
+# CHECK: (v7: boolean, v8: anything, [[carriedTable9]]: anything, [[carriedPosition9]]: int[0, 2147483648]):
+# ABSENT-LABEL: function f9 name="yieldInBodyOverMap"
+# ABSENT-NOT: = New
+# ABSENT-NOT: = Call v
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: key="next"
+# ABSENT-NOT: handler=
+
+function f10 name="awaitInBodyOverObject" role=CoroutineBody flags=[IsAsync] parameters=[{type=object written=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
+  b0(v0: object ? L0, v1: undefined|Promise):
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v7 = AwaitBySavingFrame v6, v1
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+  b5():
+    v10 = Undefined
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+}
+# No class: the protocol calls next at each step and keeps the landing block, with or without a suspension.
+# CHECK-LABEL: function f10 name="awaitInBodyOverObject"
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Call [[next10]], [[iterator10]]
+# CHECK: b3() handler=b4():
+# CHECK-NEXT: = AwaitBySavingFrame v6, v1
+# CHECK: b4() role=CleanupHandler:
+# CHECK: [[next10]]: anything = PropGet [[iterator10]] key="next"
+# ABSENT-LABEL: function f10 name="awaitInBodyOverObject"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

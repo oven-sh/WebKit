@@ -1,0 +1,9 @@
+enum SlotRepresentation {
+    | engine JSValue Cell Cell32 OptionalCell32 Int32 Uint32 Int64 OptionalInt64 OptionalInt32 Double OptionalDouble Int32OrDouble Float Boolean OptionalBoolean Uint8 Int8
+    Uint16 Int16 LiteralString LiteralString32 DeferredClosure
+}
+enum CellTestKind { | engine IsObject IsCallable CellTypeIs ShapeIn InheritsClassInfo IsPristine IsBuiltinCell IsClosureOf IsSymbol SharingModeIs IsNamespaceOf }
+enum PutMode { | engine Strict Sloppy Define }
+enum StubExit { | engine Miss Cannot }
+enum CacheLifetime { | engine StrongRoot WeakByKey ClearedEachCollection }
+enum EvaluationState { | engine SeenTwice PredictedOnce ProvenOnce }

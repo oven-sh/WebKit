@@ -1,0 +1,48 @@
+# A descriptor with a value defines one data property and no accessor. A property that it creates gets false for each attribute it lacks, so the location is redefined like a declared field: it is no plain field of the layout. A descriptor with all three attributes true creates a plain property
+# RUN: flow-solve nodes
+# RUN(ACCESSORS): flow-solve nodes
+# RUN(OBJECTS): flow-solve objects
+# RUN(FIELD): flow-solve locations
+# RUN(CREATED): flow-solve locations
+# RUN(PLAIN): flow-solve locations
+# CHECK: DeclaredPart(L2#{{*}}, 0) = {1|"two"}
+# CHECK: DeclaredPart(L2#{{*}}, 1) = {1}
+# CHECK: Property(L0#{{*}}, "__esModule") = {true}
+# CHECK: Property(L3#{{*}}, "plain") = {true}
+# ACCESSORS-NOT: Getter(L
+# ACCESSORS-NOT: Setter(L
+# OBJECTS: L0#{{*}} mutations=[RedefineProperty, AddProperty
+# OBJECTS: L2#{{*}} mutations=[RedefineProperty, StoreAfterCreation] uses
+# OBJECTS: L3#{{*}} mutations=[AddProperty
+# FIELD: DeclaredPart(L2#{{*}}, 0) events=[{{*}}Redefined
+# FIELD-NOT: DeclaredPart(L2#{{*}}, 1) events=[{{*}}Redefined
+# CREATED: Property(L0#{{*}}, "__esModule") events=[{{*}}Redefined
+# PLAIN-NOT: Property(L3#{{*}}, "plain") events=[{{*}}Redefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Exports"
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Typed" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Plain"
+layout L4 name="PlainDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="writable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = Boolean boolean=true
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="__esModule"
+    v5 = Call v3, -, v0, v4, v2
+    v6 = Integer integer=1
+    v7 = NewObject -, v6, v6 layout=L2 fields=[0, 1]
+    v8 = String string="x"
+    v9 = String string="two"
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = Call v3, -, v7, v8, v10
+    v12 = NewObject layout=L3 fields=[]
+    v13 = NewObject -, v1, v1, v1, v1 layout=L4 fields=[0, 1, 2, 3]
+    v14 = String string="plain"
+    v15 = Call v3, -, v12, v14, v13
+    Return
+}

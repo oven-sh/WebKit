@@ -1,0 +1,33 @@
+# A store and a delete through a receiver nobody knows count for an object in native code key by key: for the object with a field under the key they are a store and a delete of that field, for an object without it a property of that name and no other may be added, and an object that never leaves compiled code keeps every answer
+# RUN: flow
+# CHECK: class [[hasKey]] layout=L0 impossibleMutations=[ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape] addedKeysAreComplete=true
+# CHECK-NOT: cause=
+# CHECK: class [[lacksKey]] layout=L1 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] addedKeys=["x"] addedKeysAreComplete=true
+# CHECK-NOT: cause=
+# CHECK: class [[local]] layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] keys=NeverEnumerated {{*}}addedKeysAreComplete=true
+# CHECK-NOT: cause=
+# CHECK: class
+# CHECK: field L0.0 "x" {{*}}cause=FieldDeleted {{*}}stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L1.0 "y" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L2.0 "x" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HasKey" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="LacksKey" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Local" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v1, v2
+    v7 = PropGet v4 key="take" [isFreeName]
+    v8 = Call v7
+    PropSet v8, v0 key="x" mode=Strict
+    v10 = PropDelete v8 key="x" mode=Strict
+    Return
+}

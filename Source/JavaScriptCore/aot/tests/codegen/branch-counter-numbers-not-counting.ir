@@ -1,0 +1,25 @@
+# Without the option no branch has a counter word
+# FORM: Selected
+# RUN: branch-counters
+# CHECK-NOT: counters
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Null
+    v3 = StrictEq v1, v2 @10
+    Branch v3 -> taken b1(), notTaken b4()
+  b1():
+    v4 = LogicalNot v3 @20
+    Branch v4 -> taken b2(), notTaken b4()
+  b2():
+    v5 = TypeTest v1 testedType=undefined|null @30
+    TestAndBranch v5 -> taken b3(), notTaken b4()
+  b3():
+    Return
+  b4():
+    Return
+}

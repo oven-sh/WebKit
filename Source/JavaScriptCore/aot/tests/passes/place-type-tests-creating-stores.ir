@@ -1,0 +1,52 @@
+# Where unknown JavaScript may run, a store in a constructor is expected to find its slot empty: it creates the field under the tests that the name is nowhere but in the slot. A store in a method that no constructor calls expects a filled slot, which is one test
+# FORM: AsRead
+# OPTIONS: admit=RuntimeCode
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="count" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="reset"
+    v4 = FinishClass v1 layout=L0
+    v5 = Integer integer=1
+    v6 = Construct v4, v4, v5
+    v7 = PropGet v6 key="reset"
+    v8 = Call v7, v6
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="publish" [isFreeName]
+    v11 = Call v10, -, v6, v4
+    Return v8
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="count" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: function f1 name="Counter"
+# CHECK-NOT: IsSlotFilled
+# CHECK: = IsMemberUnchanged layout=L0 key="count"
+# CHECK: PutSlotOrAdd v3, {{*}}, v1 key="count" receivers=[L0] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v1 key="count"
+# CHECK: = IsPrototypeLinkUnchanged layout=L0
+# CHECK: = HasLayoutPrototype v3,
+# CHECK-NOT: IsSlotFilled
+function f2 name="reset" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="count" mode=Strict
+    Return
+}
+# CHECK-LABEL: function f2 name="reset"
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: PutSlot [[object]], {{*}}, v1 key="count" receivers=[L0] level=Predicted
+# CHECK-NOT: IsMemberUnchanged
+# CHECK: = IsSlotFilled [[object]], {{*}} key="count" receivers=[L0] level=Predicted

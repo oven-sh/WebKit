@@ -27,7 +27,6 @@
 #include "BytecodeCacheError.h"
 #include "CodeCache.h"
 #include "Exception.h"
-#include "ExceptionHelpers.h"
 #include "IdentifierInlines.h"
 #include "Interpreter.h"
 #include "JSGlobalObject.h"
@@ -154,15 +153,6 @@ JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue
         thisValue = globalObject;
     JSObject* thisObj = uncheckedDowncast<JSObject>(thisValue.toThis(globalObject, ECMAMode::sloppy()));
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::disallowNonStaticCode() && source.provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
-        {
-            auto throwScope = DECLARE_THROW_SCOPE(vm);
-            throwNonStaticCodeError(thisObj->realm(), throwScope);
-        }
-        returnedException = scope.exception();
-        scope.clearException();
-        return jsUndefined();
-    }
     JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj, precompiled);
 #else
     JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj);

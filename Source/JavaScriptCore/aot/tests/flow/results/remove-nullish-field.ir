@@ -1,0 +1,39 @@
+# A field whose written type allows undefined and null loses both when neither flows in
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: field L0.0 "a" type=number written=undefined|null|number{{*}}initialization=SetAtCreation
+# CHECK: field L1.0 "b" type=undefined|number written=undefined|null|number
+# CHECK: field L2.0 "c" type=null|number written=undefined|null|number
+# CHECK: field L3.0 "d" type=undefined|null|number flags={{*}}cause=StoreOfOtherType witness={function=f0 value=v13}
+# ALL-NOT: field L1.0 {{*}}SetAtCreation
+# ALL-NOT: field L1.0 {{*}}AlwaysFilled
+# ALL-NOT: field L3.0 {{*}}written=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 kind=Variable
+layout L0 name="Always" fields=[{key="a" declared={type=undefined|null|number} flags=[IsRequired]}]
+layout L1 name="Sometimes" fields=[{key="b" declared={type=undefined|null|number}}]
+layout L2 name="Cleared" fields=[{key="c" declared={type=undefined|null|number} flags=[IsRequired]}]
+layout L3 name="Untested" fields=[{key="d" declared={type=undefined|null|number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Claim v1 castType=undefined|null|number site=w0
+    v3 = TypeTest v2 testedType=undefined|null
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return
+  b2(v4):
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewObject -, v4 layout=L1 fields=[0]
+    v7 = NewObject layout=L1 fields=[]
+    v8 = PropGet v7 key="b"
+    v9 = NewObject -, v4 layout=L2 fields=[0]
+    v10 = Null
+    PropSet v9, v10 key="c" mode=Strict
+    v12 = NewObject -, v4 layout=L3 fields=[0]
+    PropSet v12, v1 key="d" mode=Strict
+    Return
+}

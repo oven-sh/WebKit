@@ -44,7 +44,6 @@ class JSModuleEnvironment;
 enum class PropertyAttribute : unsigned {
     // This must be 7 bits. Keep in sync with Structure's definition.
     None              = 0,
-    WouldBeFixed      = 1 << 0,
     ReadOnly          = 1 << 1,  // property can be only read, not written
     DontEnum          = 1 << 2,  // property doesn't appear in (for .. in ..)
     DontDelete        = 1 << 3,  // property can't be deleted

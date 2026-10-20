@@ -1,0 +1,41 @@
+# The table does not say which attributes native code gives a name that it defines: the field that flow appends for the stack of Error.captureStackTrace may be redefined, and so may the objects of the layout. The same name stored by the program is a plain field
+# RUN: flow
+# RUN(DEFINED): flow
+# RUN(STORED): flow
+# CHECK: class {{*}} layout=L1 impossibleMutations=[{{*}}RedefineProperty
+# DEFINED-NOT: class {{*}} layout=L0 impossibleMutations=[{{*}}RedefineProperty
+# DEFINED-NOT: field L0.1 "stack"{{*}}IsNeverRedefined
+# STORED: field L1.1 "stack"{{*}}IsNeverRedefined
+
+layout L0 module=m0 position=16 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L1 module=m0 position=75 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Data data=d0 @16
+    v1 = Predict v0 predicted=L0 @6
+    v2 = Builtin builtin=GlobalThis @26
+    v3 = PropGet v2 key="Error" [isFreeName] @26
+    v4 = Predict v3 predicted=builtin(Error) @26
+    v5 = PropGet v4 key="captureStackTrace" @26
+    v6 = Predict v5 predicted=builtin(ErrorCaptureStackTrace) @26
+    v7 = Call v6, v4, v1 calleeKey="captureStackTrace" calleeName="captureStackTrace" @32
+    v8 = Data data=d1 @75
+    v9 = Predict v8 predicted=L1 @66
+    v10 = String string="text" @100
+    PropSet v9, v10 key="stack" @85
+    v12 = Builtin builtin=GlobalThis @108
+    v13 = PropGet v12 key="print" [isFreeName] @108
+    v14 = PropGet v1 key="stack" @121
+    v15 = TypeOf v14 @114
+    v16 = PropGet v9 key="stack" @143
+    v17 = TypeOf v16 @136
+    v18 = Call v13, -, v15, v17 calleeName="print" @108
+    v19 = Undefined @108
+    Return v19 @108
+}
+data d0 root=Object{layout=L0 members=[{key="k" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="k" value=Number{value=1}}]} module=m0
+entry module=m0

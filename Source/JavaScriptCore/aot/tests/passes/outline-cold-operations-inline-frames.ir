@@ -1,0 +1,272 @@
+# In a stack trace the call of an outlined body stands for every operation of its site, so a site holds operations of one inline frame only
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inlined" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f1 name="runInOneFrame" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = Call v1, -, v2, v2, v2, v2 @9:1
+    v4 = Add v3, v2 form=Generic @9:1
+    Return v4
+  b2() frequency=Rare:
+    v5 = Call v1, -, v2, v2, v2, v2 @9:1
+    v6 = Add v5, v2 form=Generic @9:1
+    Return v6
+  b3() frequency=Rare:
+    v7 = Call v1, -, v2, v2, v2, v2 @9:1
+    v8 = Add v7, v2 form=Generic @9:1
+    Return v8
+  b4() frequency=Rare:
+    v9 = Call v1, -, v2, v2, v2, v2 @9:1
+    v10 = Add v9, v2 form=Generic @9:1
+    Return v10
+  b5() frequency=Rare:
+    v11 = Call v1, -, v2, v2, v2, v2 @9:1
+    v12 = Add v11, v2 form=Generic @9:1
+    Return v12
+  b6() frequency=Rare:
+    v13 = Call v1, -, v2, v2, v2, v2 @9:1
+    v14 = Add v13, v2 form=Generic @9:1
+    Return v14
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="runInOneFrame"
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[whole1]]:{{*}}= CallDirect v1, v2 function=[[wholeRun]] @9:1
+# CHECK-NEXT: Return [[whole1]]
+# CHECK-NOT: = Call v1
+# CHECK-NOT: = Add
+
+function f2 name="runAcrossFrames" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v3 = Call v1, -, v2, v2, v2, v2 @9:1
+    v4 = Add v3, v2 form=Generic @9
+    Return v4
+  b2() frequency=Rare:
+    v5 = Call v1, -, v2, v2, v2, v2 @9:1
+    v6 = Add v5, v2 form=Generic @9
+    Return v6
+  b3() frequency=Rare:
+    v7 = Call v1, -, v2, v2, v2, v2 @9:1
+    v8 = Add v7, v2 form=Generic @9
+    Return v8
+  b4() frequency=Rare:
+    v9 = Call v1, -, v2, v2, v2, v2 @9:1
+    v10 = Add v9, v2 form=Generic @9
+    Return v10
+  b5() frequency=Rare:
+    v11 = Call v1, -, v2, v2, v2, v2 @9:1
+    v12 = Add v11, v2 form=Generic @9
+    Return v12
+  b6() frequency=Rare:
+    v13 = Call v1, -, v2, v2, v2, v2 @9:1
+    v14 = Add v13, v2 form=Generic @9
+    Return v14
+  b7():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="runAcrossFrames"
+# CHECK-NOT: function=[[wholeRun]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[called2]]: anything = {{*}} @9:1
+# CHECK-NEXT: [[sum2]]:{{*}}[[called2]]{{*}} @9
+# CHECK-NEXT: Return [[sum2]]
+# CHECK-NOT: function=[[wholeRun]]
+
+function f3 name="regionInOneFrame0" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="regionInOneFrame0"
+# CHECK-NOT: CallMethod
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result3]]: anything = CallDirect v1, v2 function=[[wholeRegion]] @11
+# CHECK-NOT: CallMethod
+
+function f4 name="regionInOneFrame1" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f4 name="regionInOneFrame1"
+# CHECK-NOT: CallMethod
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result4]]: anything = CallDirect v1, v2 function=[[wholeRegion]] @11
+# CHECK-NOT: CallMethod
+
+function f5 name="regionInOneFrame2" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f5 name="regionInOneFrame2"
+# CHECK-NOT: CallMethod
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result5]]: anything = CallDirect v1, v2 function=[[wholeRegion]] @11
+# CHECK-NOT: CallMethod
+
+function f6 name="regionInOneFrame3" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="regionInOneFrame3"
+# CHECK-NOT: CallMethod
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: [[result6]]: anything = CallDirect v1, v2 function=[[wholeRegion]] @11
+# CHECK-NOT: CallMethod
+
+function f7 name="regionAcrossFrames0" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11:1
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11:1
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f7 name="regionAcrossFrames0"
+# CHECK-NOT: function=[[wholeRegion]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b3() @11
+# CHECK: anything = {{*}} @11:1
+# CHECK: anything = {{*}} @11:1
+# CHECK-NOT: function=[[wholeRegion]]
+
+function f8 name="regionAcrossFrames1" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11:1
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11:1
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f8 name="regionAcrossFrames1"
+# CHECK-NOT: function=[[wholeRegion]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b3() @11
+# CHECK: anything = {{*}} @11:1
+# CHECK: anything = {{*}} @11:1
+# CHECK-NOT: function=[[wholeRegion]]
+
+function f9 name="regionAcrossFrames2" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11:1
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11:1
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f9 name="regionAcrossFrames2"
+# CHECK-NOT: function=[[wholeRegion]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b3() @11
+# CHECK: anything = {{*}} @11:1
+# CHECK: anything = {{*}} @11:1
+# CHECK-NOT: function=[[wholeRegion]]
+
+function f10 name="regionAcrossFrames3" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+  b0(v0: boolean, v1: boolean, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3() @11
+  b2() frequency=Rare:
+    v3 = CallMethod v2, v2 key="wide" @11:1
+    Jump -> next b4(v3) @13
+  b3() frequency=Rare:
+    v4 = CallMethod v2, v2 key="tall" @11:1
+    Jump -> next b4(v4) @15
+  b4(v5):
+    Return v5
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f10 name="regionAcrossFrames3"
+# CHECK-NOT: function=[[wholeRegion]]
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b3() @11
+# CHECK: anything = {{*}} @11:1
+# CHECK: anything = {{*}} @11:1
+# CHECK-NOT: function=[[wholeRegion]]
+

@@ -1,0 +1,57 @@
+# The commands test-placement and type-test-report report an argument they cannot use as an error and print no plan
+# FORM: Prepared
+# RUN(GOOD): test-placement function=f0 site=v1:v3
+# RUN(UNKNOWN): test-placement everything
+# RUN(NOFUNCTION): test-placement site=v1:v3
+# RUN(NOSITE): test-placement function=f0
+# RUN(NOTEST): test-placement function=f0 site=v1:v2
+# RUN(EPOCH): test-placement function=f0 site=v1:v6
+# RUN(RANGE): test-placement function=f0 site=v1:v9
+# RUN(PARAMETER): test-placement function=f0 site=v0:v3
+# RUN(TWICE): test-placement function=f0 site=v1:v3 site=v1:v3
+# RUN(EFFECTS): test-placement function=f0 site=v1:v3 effects=none
+# RUN(REPORT): type-test-report function=f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="only" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="x"
+    v2 = StrictEq v1, v1
+    v3 = ShapeTest v0 layouts=[L0]
+    v4 = GetShapeEpoch
+    v5 = NewObject layout=L0
+    v6 = IsShapeEpochCurrent v4, v5
+    Return v1
+}
+# GOOD: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 0
+# UNKNOWN-NOT: stretch
+# UNKNOWN: error: bad argument everything
+# UNKNOWN-NOT: stretch
+# NOFUNCTION-NOT: stretch
+# NOFUNCTION: error: bad argument site=v1:v3
+# NOFUNCTION-NOT: stretch
+# NOSITE-NOT: stretch
+# NOSITE: error: missing argument
+# NOSITE-NOT: stretch
+# NOTEST-NOT: stretch
+# NOTEST: error: bad argument site=v1:v2
+# NOTEST-NOT: stretch
+# EPOCH-NOT: stretch
+# EPOCH: error: bad argument site=v1:v6
+# EPOCH-NOT: stretch
+# RANGE-NOT: stretch
+# RANGE: error: bad argument site=v1:v9
+# RANGE-NOT: stretch
+# PARAMETER-NOT: stretch
+# PARAMETER: error: bad argument site=v0:v3
+# PARAMETER-NOT: stretch
+# TWICE-NOT: stretch
+# TWICE: error: bad argument site=v1:v3
+# TWICE-NOT: stretch
+# EFFECTS-NOT: stretch
+# EFFECTS: error: bad argument effects=none
+# EFFECTS-NOT: stretch
+# REPORT-NOT: copies=
+# REPORT: error: bad argument function=f0
+# REPORT-NOT: copies=

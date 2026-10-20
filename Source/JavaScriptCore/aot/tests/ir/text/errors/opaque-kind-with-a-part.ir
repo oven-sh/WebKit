@@ -1,0 +1,6 @@
+# An opaque kind stands beside nothing but absent
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=iteratorstate|null} initialization=Undefined

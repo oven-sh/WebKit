@@ -49,13 +49,12 @@
 #include "TagRegistersMode.h"
 #include "TypeofType.h"
 #include "VM.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
-
-class MegamorphicCache;
 
 typedef void (*V_DebugOperation_EPP)(CallFrame*, void*, void*);
 
@@ -191,21 +190,11 @@ public:
     void loadProperty(GPRReg objectGPR, GPRReg offsetGPR, GPRReg resultGPR);
     void storeProperty(GPRReg valueGPR, GPRReg objectGPR, GPRReg offsetGPR, GPRReg scratchGPR);
 
-    struct MegamorphicCacheLocation {
-        MegamorphicCacheLocation(VM&);
-        explicit MegamorphicCacheLocation(GPRReg gpr)
-            : gpr(gpr)
-        {
-        }
-
-        MegamorphicCache* cache { nullptr };
-        GPRReg gpr { InvalidGPRReg };
-    };
-    JumpList loadMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    JumpList loadMegamorphicGetterSetter(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList loadMegamorphicGetterSetter(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     template<uint32_t primaryMask, ptrdiff_t primaryEntriesOffset, uint32_t secondaryMask, ptrdiff_t secondaryEntriesOffset>
-    JumpList findMegamorphicCacheEntry(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
-    std::tuple<JumpList, JumpList> storeMegamorphicProperty(MegamorphicCacheLocation, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    JumpList findMegamorphicCacheEntry(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
+    std::tuple<JumpList, JumpList> storeMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList hasMegamorphicProperty(VM&, GPRReg baseGPR, GPRReg uidGPR, UniquedStringImpl*, GPRReg resultGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR);
     JumpList loadCacheableIdentifierImpl(GPRReg propertyGPR, GPRReg destGPR, bool propertyIsString, bool propertyIsSymbol, bool canBeRope = true);
 
@@ -1551,6 +1540,17 @@ public:
         UndefinedBehavior,
     };
     void emitAllocateWithNonNullAllocator(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
+
+    struct FreeListRefill {
+        Jump isExhausted;
+        Label hasRoom;
+        GPRReg result { InvalidGPRReg };
+        GPRReg allocator { InvalidGPRReg };
+        GPRReg scratch { InvalidGPRReg };
+    };
+    [[nodiscard]] FreeListRefill emitAllocateFromFreeList(GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> constantCellSize = std::nullopt);
+    // atBoundary, if given, is called in front of each instruction between the test of the next interval and the jump back, and behind the last.
+    void emitFreeListRefill(const FreeListRefill&, JumpList& slowPath, const ScopedLambda<void()>* atBoundary = nullptr);
     
     void emitAllocate(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
     

@@ -1,0 +1,60 @@
+# Each Int32OrDouble slot has 8 aligned bytes of the Extension for a double, and a read through a set gets one offset for the slot and one for its double in every member
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow disable=flow:NarrowedTypes
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 1
+# STATISTIC: FieldsOutOfLine = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Counters" fields=[{key="a" declared={type=number predicted=i32} flags=[IsRequired]}, {key="b" declared={type=number predicted=i32} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="First" fields=[{key="own" declared={type=number predicted=i32} flags=[IsRequired]}, {key="shared" declared={type=number predicted=i32} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L2 name="Second" fields=[{key="shared" declared={type=number predicted=i32} flags=[IsRequired]}, {key="other" declared={type=number predicted=i32} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L3 name="NotPredicted" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = NewObject -, v4, v4, v4 layout=L0 fields=[0, 1, 2]
+    v6 = FinishObject v5
+    v7 = NewObject -, v4, v4, v4 layout=L1 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = NewObject -, v4, v4, v4 layout=L2 fields=[0, 1, 2]
+    v10 = FinishObject v9
+    v11 = NewObject -, v4, v4 layout=L3 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = ToBoolean v1
+    Branch v13 -> taken b1(v8), notTaken b1(v10)
+  b1(v14):
+    v15 = PropGet v14 key="shared"
+    PutModuleVariable v15 variable=g0
+    Return
+}
+
+# CHECK: L0 CompiledObject size=32 extension=24
+# CHECK-NEXT: .0 "a" Int32OrDouble @20 double@8
+# CHECK-NEXT: .1 "b" Int32OrDouble @24 double@16
+# CHECK-NEXT: .2 "filler" Int32 @28
+# CHECK-NEXT: extension Cell32 @16
+# "shared" is placed first, in L1 and in L2 alike, and "own" and "other" take what is left.
+# CHECK-NEXT: L1 CompiledObject size=32 extension=24
+# CHECK-NEXT: .0 "own" Int32OrDouble @24 double@16
+# CHECK-NEXT: .1 "shared" Int32OrDouble @20 double@8
+# CHECK-NEXT: .2 "filler" Int32 @28
+# CHECK-NEXT: extension Cell32 @16
+# CHECK-NEXT: L2 CompiledObject size=32 extension=24
+# CHECK-NEXT: .0 "shared" Int32OrDouble @20 double@8
+# CHECK-NEXT: .1 "other" Int32OrDouble @24 double@16
+# CHECK-NEXT: .2 "filler" Int32 @28
+# CHECK-NEXT: extension Cell32 @16
+# A layout without such a slot has no Extension word: its first field follows the header.
+# CHECK-NEXT: L3 CompiledObject size=32 extension=0
+# CHECK-NEXT: .0 "x" Double @16
+# CHECK-NEXT: .1 "y" Double @24
+# CHECK-NOT: double@
+# CHECK: "shared" {L1 L2} read
+# CHECK-NEXT: one location Int32OrDouble @20 double@8

@@ -29,7 +29,7 @@
 #include "config.h"
 #include "InitializeThreading.h"
 
-#include "AOTImage.h"
+#include "AOTFaultHandler.h"
 #include "AssemblyComments.h"
 #include "AssertInvariants.h"
 #include "ExecutableAllocator.h"
@@ -105,8 +105,6 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
             VM::computeCanUseJIT();
             if (!g_jscConfig.vm.canUseJIT) {
                 Options::useJIT() = false;
-                if (!VM::canUseAssembler())
-                    Options::useRegExpJIT() = false;
                 Options::notifyOptionsChanged();
             } else {
 #if CPU(ARM64E) && ENABLE(JIT)
@@ -115,7 +113,7 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
 #endif
             }
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
-            MarkedBlockCage::initialize();
+            static_cast<void>(MarkedBlockCage::initialize());
         }
         Options::finalize();
 
@@ -159,7 +157,7 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
 
 #if ENABLE(AOT)
         if (Options::useAOT())
-            AOT::prepareFaultingAccesses();
+            AOT::installFaultHandler();
 #endif
 
         assertInvariants();

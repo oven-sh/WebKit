@@ -1,0 +1,96 @@
+# Placement knows the order word before and after the fields that a store, or a run of stores, creates: where they come next in an order of the constructor, behind an order that stores continue, which is in the image for this, and last in the order of the declarations
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place key-orders key-order-continuations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Straight" constructor=f1 fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="a" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Branching" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Literal" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=number}}]
+layout L3 kind=Instance name="NeverEnumerated" constructor=f5 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Builtin builtin=ObjectKeys
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Construct v6, -, v2
+    v8 = Call v3, -, v7
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Construct v11, -, v2
+    v13 = Call v3, -, v12
+    v14 = NewObject -, v2 layout=L2 fields=[0]
+    v15 = FinishObject v14
+    v16 = CallDirect v15, v2 function=f4
+    v17 = Call v3, -, v15
+    v18 = NewClosure function=f5
+    v19 = NewClass v18 layout=L3
+    v20 = FinishClass v19 layout=L3
+    v21 = Construct v20, -, v2
+    PutModuleVariable v21 variable=g0
+    Return
+}
+function f1 name="Straight" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = CallDirect v3, v1 function=f2
+    PropSet v3, v1 key="b"
+    Return v3
+}
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropDefine v0, v1 key="a"
+    Return
+}
+function f3 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="y"
+    PropSet v3, v1 key="x"
+    Return v3
+  b2():
+    PropSet v3, v1 key="x"
+    PropSet v3, v1 key="y"
+    Return v3
+}
+function f4 name="addLate" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ? L2, v1: number):
+    PropSet v0, v1 key="late"
+    Return
+}
+function f5 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    PropSet v3, v1 key="x"
+    Return v3
+}
+# The constructor of Straight creates a, then b. The declarations say b, then a.
+# CHECK: L0 orders=2: [0 1] [1 0]
+# Flow names no order for a constructor that branches, so the order of each arm is in the image because the stores of the arm continue the empty order.
+# CHECK-NEXT: L1 orders=2: [0 1] [1 0]
+# CHECK-NEXT: L2 orders=1: [0 1]
+# CHECK-NEXT: L3 orders=0:
+# The place in the order of the constructor comes first, the place in the order of the declarations last.
+# CHECK: L0 creating [0]: order=1 count=1 -> order=1 count=2; order=0 count=0 -> order=0 count=1;
+# CHECK-NEXT: L0 creating [1]: order=0 count=0 -> order=1 count=1; order=0 count=1 -> order=0 count=2;
+# One step for the run of an arm.
+# CHECK-NEXT: L1 creating [0 1]: order=0 count=0 -> order=0 count=2;
+# CHECK-NEXT: L1 creating [1 0]: order=0 count=0 -> order=1 count=2;
+# A store to a finished object continues the order of the allocation.
+# CHECK-NEXT: L2 creating [1]: order=0 count=1 -> order=0 count=2;
+# An object whose keys nobody enumerates records none, and a field that every allocation lists is created by no store.
+# CHECK-NOT: L3 creating
+# CHECK-NOT: L2 creating [0

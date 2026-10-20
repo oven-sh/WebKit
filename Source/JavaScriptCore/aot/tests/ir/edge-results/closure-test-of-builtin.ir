@@ -1,0 +1,80 @@
+# A value that passed IsClosureOf is a closure of that function, whatever its type said before. A built-in is a closure of no function of the application, so it does not pass. One that is written in JavaScript is a closure of the function the program registers for it. An instance of Function may be a closure of any function
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=12 function=f1
+function f0 name="callee" captures=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f1 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+function f2 name="builtinFunction" parameters=[{type=builtin(ArrayPrototypeSort)}] results=[{type=number}] {
+  b0(v0: builtin(ArrayPrototypeSort)):
+    v1 = IsClosureOf v0 function=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Unreachable
+  b2(v3):
+    v4 = Integer integer=0
+    Return v4
+}
+# CHECK-LABEL: name="builtinFunction"
+# CHECK: b1(v2: never):
+# CHECK: b2(v3: builtin(ArrayPrototypeSort)):
+function f3 name="builtinOrCallee" parameters=[{type=builtin(ArrayPrototypeSort)|f0|string}] results=[{type=number}] {
+  b0(v0: builtin(ArrayPrototypeSort)|f0|string):
+    v1 = IsClosureOf v0 function=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = GetCapture v2 function=f0
+    Return v3
+  b2(v4):
+    v5 = Integer integer=0
+    Return v5
+}
+# CHECK-LABEL: name="builtinOrCallee"
+# CHECK: b1(v2: f0):
+# CHECK: b2(v4: string|builtin(ArrayPrototypeSort)):
+function f4 name="builtinAgainstItsOwnFunction" parameters=[{type=builtin(FunctionPrototypeCall)}] results=[{type=undefined}] {
+  b0(v0: builtin(FunctionPrototypeCall)):
+    v1 = IsClosureOf v0 function=f1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="builtinAgainstItsOwnFunction"
+# CHECK: b1(v2: f1):
+# CHECK: b2(v3: builtin(FunctionPrototypeCall)):
+function f5 name="instanceOfFunction" parameters=[{type=Function}] results=[{type=number}] {
+  b0(v0: Function):
+    v1 = IsClosureOf v0 function=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = GetCapture v2 function=f0
+    Return v3
+  b2(v4):
+    v5 = Integer integer=0
+    Return v5
+}
+# CHECK-LABEL: name="instanceOfFunction"
+# CHECK: b1(v2: f0):
+# CHECK: b2(v4: Function):
+function f6 name="neverClosure" parameters=[{type=string|f1}] results=[{type=undefined}] {
+  b0(v0: string|f1):
+    v1 = IsClosureOf v0 function=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Unreachable
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="neverClosure"
+# CHECK: b1(v2: never):
+# CHECK: b2(v3: string|f1):

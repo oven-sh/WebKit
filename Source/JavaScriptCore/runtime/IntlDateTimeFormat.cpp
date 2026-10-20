@@ -30,6 +30,7 @@
 
 #include "ISO8601.h"
 #include "IntlCache.h"
+#include "IntlFormatPatternCompiler.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
 #include "JSBoundFunction.h"
@@ -83,6 +84,13 @@ const ClassInfo IntlDateTimeFormat::s_info = { "Object"_s, &Base::s_info, nullpt
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatImpl);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatTemporalFormatterCache);
+
+IntlDateTimeFormatImpl::IntlDateTimeFormatImpl()
+    : m_numberOfFormatsBeforeCompilingPattern(IntlFormatPattern::numberOfFormatsBeforeCompiling)
+{
+}
+
+IntlDateTimeFormatImpl::~IntlDateTimeFormatImpl() = default;
 
 // Approximate sizes of ICU objects for GC memory pressure reporting, measured empirically with udat_open + udat_format.
 static constexpr size_t estimatedUDateFormatSize = 30000;
@@ -1528,6 +1536,27 @@ static JSValue formatWithEraOverride(JSGlobalObject* globalObject, UDateFormat* 
     return jsString(vm, builder.toString());
 }
 
+String IntlDateTimeFormat::tryFormatWithICU(double value) const
+{
+    Vector<char16_t, 32> result;
+    auto status = callBufferProducingFunction(udat_format, m_impl->m_dateFormat.get(), value, result, nullptr);
+    if (U_FAILURE(status)) [[unlikely]]
+        return { };
+    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
+
+    return String(WTF::move(result));
+}
+
+IntlFormatPattern* IntlDateTimeFormat::formatPattern() const
+{
+    if (!m_impl->m_numberOfFormatsBeforeCompilingPattern)
+        return m_impl->m_formatPattern.get();
+    if (--m_impl->m_numberOfFormatsBeforeCompilingPattern)
+        return nullptr;
+    m_impl->m_formatPattern = IntlFormatPatternCompiler().compile(*this);
+    return m_impl->m_formatPattern.get();
+}
+
 // https://tc39.es/proposal-temporal/#sec-formatdatetime
 JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value) const
 {
@@ -1544,13 +1573,18 @@ JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value) c
     if (eraOverride)
         RELEASE_AND_RETURN(scope, formatWithEraOverride(globalObject, m_impl->m_dateFormat.get(), value, *eraOverride, m_impl->m_year == Year::TwoDigit));
 
-    Vector<char16_t, 32> result;
-    auto status = callBufferProducingFunction(udat_format, m_impl->m_dateFormat.get(), value, result, nullptr);
-    if (U_FAILURE(status)) [[unlikely]]
-        return throwTypeError(globalObject, scope, "failed to format date value"_s);
-    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        if (auto* pattern = formatPattern()) {
+            if (String text = pattern->tryFormatDateTime(value); !text.isNull())
+                return jsString(vm, WTF::move(text));
+        }
+    }
 
-    return jsString(vm, String(WTF::move(result)));
+    String result = tryFormatWithICU(value);
+    if (result.isNull()) [[unlikely]]
+        return throwTypeError(globalObject, scope, "failed to format date value"_s);
+
+    return jsString(vm, WTF::move(result));
 }
 
 static ASCIILiteral partTypeString(UDateFormatField field)

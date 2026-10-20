@@ -1,0 +1,256 @@
+# Until an async function first suspends nobody but its ramp has seen its promise, so its result is stored without a call
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: FreshPromiseFulfillmentGroups = 7
+# RUN: pass Select
+# RUN(OTHER): pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="number-with-or-without-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: undefined|Promise):
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="number-with-or-without-promise"
+# CHECK-NOT: ReturnAsyncResult
+# CHECK: [[isUndefined0]]: boolean = TypeTest v1 testedType=undefined
+# CHECK-NEXT: Branch [[isUndefined0]] -> taken [[without0]]({{*}}), notTaken [[with0]](| 0)
+# CHECK: [[with0]]([[promise0]]: Promise):
+# CHECK-NEXT: FulfillFreshPromise [[promise0]], v2
+# CHECK-NEXT: [[result0]]: Promise = Upcast [[promise0]] castType=anything
+# CHECK-NEXT: Return [[result0]]
+# CHECK-NOT: ReturnAsyncResult
+# OTHER-LABEL: function f0 name="number-with-or-without-promise"
+# OTHER: Branch [[isUndefined0]] -> taken [[without0]]({{*}}), notTaken
+# OTHER: [[without0]]({{*}}):
+# OTHER-NEXT: [[value0]]: 7 = Upcast v2 castType=anything
+# OTHER-NEXT: Return [[value0]]
+function f1 name="number-with-or-without-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}
+function f2 name="number-with-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="number-with-promise"
+# CHECK-NOT: TypeTest
+# CHECK: FulfillFreshPromise v1, v2
+# CHECK-NEXT: [[result2]]: Promise = Upcast v1 castType=anything
+# CHECK-NEXT: Return [[result2]]
+# CHECK-NOT: ReturnAsyncResult
+function f3 name="number-with-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1}
+function f4 name="number-without-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: undefined):
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="number-without-promise"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: [[result4]]: 7 = Upcast v2 castType=anything
+# CHECK-NEXT: Return [[result4]]
+# CHECK-NOT: ReturnAsyncResult
+function f5 name="number-without-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1}
+function f6 name="any-value-with-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f6 name="any-value-with-promise"
+# CHECK: [[notThenable6]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable6]] -> taken [[fast6]](| 0), notTaken [[slow6]]()
+# CHECK: [[fast6]]([[guard6]]: guard):
+# CHECK-NEXT: FulfillFreshPromise v1, v0, [[guard6]]
+# CHECK-NEXT: [[result6]]: Promise = Upcast v1 castType=anything
+# CHECK-NEXT: Return [[result6]]
+# OTHER-LABEL: function f6 name="any-value-with-promise"
+# OTHER: Branch [[notThenable6]] -> taken [[fast6]](| 0), notTaken [[slow6]]()
+# OTHER: [[slow6]]() frequency=Rare:
+# OTHER-NEXT: [[original6]]: anything = ReturnAsyncResult v1, v0
+# OTHER-NEXT: Return [[original6]]
+function f7 name="any-value-with-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=1}
+function f8 name="object-with-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f9 body=f8 promiseType=Promise promiseParameter=1} {
+  b0(v0: object, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f8 name="object-with-promise"
+# CHECK: [[notThenable8]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable8]] -> taken [[fast8]](| 0), notTaken [[slow8]]()
+# CHECK: [[fast8]]([[guard8]]: guard):
+# CHECK-NEXT: FulfillFreshPromise v1, v0, [[guard8]]
+# CHECK-NEXT: [[result8]]: Promise = Upcast v1 castType=anything
+# CHECK-NEXT: Return [[result8]]
+# OTHER-LABEL: function f8 name="object-with-promise"
+# OTHER: Branch [[notThenable8]] -> taken [[fast8]](| 0), notTaken [[slow8]]()
+# OTHER: [[slow8]]() frequency=Rare:
+# OTHER-NEXT: [[original8]]: anything = ReturnAsyncResult v1, v0
+# OTHER-NEXT: Return [[original8]]
+function f9 name="object-with-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f9 body=f8 promiseType=Promise promiseParameter=1}
+function f10 name="object-without-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=undefined}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f10 promiseType=Promise promiseParameter=1} {
+  b0(v0: object, v1: undefined):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f10 name="object-without-promise"
+# CHECK: [[notThenable10]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable10]] -> taken [[fast10]](| 0), notTaken [[slow10]]()
+# CHECK: [[fast10]]([[guard10]]: guard):
+# CHECK-NEXT: [[result10]]: object = Upcast v0 castType=anything
+# CHECK-NEXT: Return [[result10]]
+# CHECK-NOT: FulfillFreshPromise
+# OTHER-LABEL: function f10 name="object-without-promise"
+# OTHER: Branch [[notThenable10]] -> taken [[fast10]](| 0), notTaken [[slow10]]()
+# OTHER: [[slow10]]() frequency=Rare:
+# OTHER-NEXT: [[original10]]: anything = ReturnAsyncResult v1, v0
+# OTHER-NEXT: Return [[original10]]
+function f11 name="object-without-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f10 promiseType=Promise promiseParameter=1}
+function f12 name="after-await" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = AwaitBySavingFrame v0, v1
+    v3 = Integer integer=7
+    v4 = ReturnAsyncResult v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f12 name="after-await"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v1, v3
+# CHECK-NOT: FulfillFreshPromise
+function f13 name="after-await" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1}
+function f14 name="in-block-after-await" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f14 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = AwaitBySavingFrame v0, v1
+    Jump -> next b1()
+  b1():
+    v3 = Integer integer=7
+    v4 = ReturnAsyncResult v1, v3
+    Return v4
+}
+# CHECK-LABEL: function f14 name="in-block-after-await"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v1, v3
+# CHECK-NOT: FulfillFreshPromise
+function f15 name="in-block-after-await" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f14 promiseType=Promise promiseParameter=1}
+function f16 name="after-await-on-one-path" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f17 body=f16 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = AwaitBySavingFrame v0, v1
+    Jump -> next b2()
+  b2():
+    v4 = Integer integer=7
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+# CHECK-LABEL: function f16 name="after-await-on-one-path"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v1, v4
+# CHECK-NOT: FulfillFreshPromise
+function f17 name="after-await-on-one-path" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f17 body=f16 promiseType=Promise promiseParameter=1}
+function f18 name="in-handler-of-await" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f19 body=f18 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise) handler=b2():
+    v2 = AwaitBySavingFrame v0, v1
+    Jump -> next b1()
+  b1():
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Integer integer=7
+    v6 = ReturnAsyncResult v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f18 name="in-handler-of-await"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK-COUNT-2: = ReturnAsyncResult v1,
+# CHECK-NOT: FulfillFreshPromise
+function f19 name="in-handler-of-await" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f19 body=f18 promiseType=Promise promiseParameter=1}
+function f20 name="after-loop-with-await" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f21 body=f20 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = ToBoolean v0
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = AwaitBySavingFrame v0, v1
+    Jump -> next b1()
+  b3():
+    v5 = Integer integer=7
+    v6 = ReturnAsyncResult v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f20 name="after-loop-with-await"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v1, v5
+# CHECK-NOT: FulfillFreshPromise
+function f21 name="after-loop-with-await" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f21 body=f20 promiseType=Promise promiseParameter=1}
+function f22 name="any-value-in-rare-block" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f23 body=f22 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = ReturnAsyncResult v1, v0
+    Return v3
+  b2():
+    v4 = AwaitBySavingFrame v0, v1
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+# CHECK-LABEL: function f22 name="any-value-in-rare-block"
+# CHECK-NOT: IsNotThenable
+# CHECK: b1() frequency=Rare
+# CHECK-NEXT: v3: anything = ReturnAsyncResult v1, v0
+# CHECK-NOT: IsNotThenable
+# CHECK-NOT: FulfillFreshPromise
+function f23 name="any-value-in-rare-block" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f23 body=f22 promiseType=Promise promiseParameter=1}
+function f24 name="promise-through-block-parameter" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f25 body=f24 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Integer integer=7
+    v5 = ReturnAsyncResult v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f24 name="promise-through-block-parameter"
+# CHECK: FulfillFreshPromise v3, v4
+# CHECK-NEXT: [[result24]]: Promise = Upcast v3 castType=anything
+# CHECK-NEXT: Return [[result24]]
+function f25 name="promise-through-block-parameter" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f25 body=f24 promiseType=Promise promiseParameter=1}
+function f26 name="joined-with-other-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f27 body=f26 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: Promise):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = NewPromise
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Integer integer=7
+    v6 = ReturnAsyncResult v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f26 name="joined-with-other-promise"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v4, v5
+# CHECK-NOT: FulfillFreshPromise
+function f27 name="joined-with-other-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f27 body=f26 promiseType=Promise promiseParameter=1}
+function f28 name="ordinary-function" parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] {
+  b0(v0: anything, v1: Promise):
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f28 name="ordinary-function"
+# CHECK-NOT: FulfillFreshPromise
+# CHECK: = ReturnAsyncResult v1, v2
+# CHECK-NOT: FulfillFreshPromise

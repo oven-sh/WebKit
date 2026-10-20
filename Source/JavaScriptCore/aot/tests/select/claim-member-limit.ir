@@ -1,0 +1,19 @@
+# A group may not have more members than the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxSelectionGroupMembers:2
+# LOSS: MaxSelectionGroupMembers x1 f0 v5
+# RUN: claim function=f0 group=v1,v2 group=v3,v4,v5
+# CHECK: group 0: Claimed
+# CHECK-NEXT: group 1: MemberLimit
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="members" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    v3 = PropGet v0 key="c"
+    v4 = PropGet v3 key="d"
+    v5 = PropGet v4 key="e"
+    v6 = StrictEq v2, v5
+    Return v6
+}

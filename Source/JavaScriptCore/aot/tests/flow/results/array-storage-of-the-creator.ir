@@ -1,0 +1,77 @@
+# The code that creates an array is given the elements flow found in the arrays of its site, so it allocates the storage that the readers predict
+# RUN: flow
+# RUN(APPLIED): pipeline ApplyFlowResults
+# RUN(EXPANDED): pipeline ExpandData
+# RUN(PARSED): pipeline ApplyFlowResults
+# CHECK: data-node A3 0 A3 C3 elements=1
+# CHECK: variable g0 type=Array<1, proven{{*}}> predicted=Array<1, proven, Int32
+# CHECK: variable g1 type=Array<1|fractional, proven{{*}}> predicted=Array<1|fractional, proven, Double
+# CHECK: variable g3 type=Array<1, proven{{*}}> predicted=Array<1, proven, Int32
+# One site allocates one storage, whatever each of its arrays holds.
+# CHECK: variable g4 type=Array<1, proven{{*}}> predicted=Array<1, proven, Contiguous
+# CHECK: variable g5 type=Array<"s", proven{{*}}> predicted=Array<"s", proven, Contiguous
+# APPLIED: Array<1> = NewArray contents=1 allocationSite=0
+# APPLIED: Array<1|fractional> = NewArray v0 contents=1|fractional allocationSite=1
+# APPLIED: = Data data=d0
+# APPLIED: function f1 name="make"
+# APPLIED: Array<1|"s"> = NewArray v0 contents=1|"s" allocationSite=6
+# EXPANDED-NOT: = Data
+# EXPANDED: NewArray contents=1 {{*}}allocationSite=3
+# An array in which nothing is stored keeps what its literal says.
+# EXPANDED: NewArray contents=anything {{*}}allocationSite=5
+# JSON.parse gives each array the storage of what it holds: an array of integers is no Contiguous array because another array of the text holds objects.
+# PARSED: = Call v27, -, v2
+# PARSED-NOT: Contiguous
+# PARSED: PutModuleVariable {{*}} variable=g7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="integers" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="fractions" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="escaped" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="fromData" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="madeForIntegers" module=m0 declared={type=anything} initialization=Uninitialized
+variable g5 name="madeForStrings" module=m0 declared={type=anything} initialization=Uninitialized
+variable g6 name="empty" module=m0 declared={type=anything} initialization=Uninitialized
+variable g7 name="parsed" module=m0 declared={type=anything} initialization=Uninitialized
+data d0 root=Array{contents=anything} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Double number=0.5
+    v2 = String string="s"
+    v3 = NewArray contents=anything @10
+    v4 = PropGet v3 key="push"
+    v5 = Call v4, v3, v0 calleeKey="push"
+    PutModuleVariable v3 variable=g0
+    v7 = NewArray v0 contents=anything @20
+    v8 = PropGet v7 key="push"
+    v9 = Call v8, v7, v1 calleeKey="push"
+    PutModuleVariable v7 variable=g1
+    v11 = NewArray v0 contents=anything @30
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="sink" [isFreeName]
+    v14 = Call v13, -, v11
+    PutModuleVariable v11 variable=g2
+    v16 = Data data=d0 @40
+    v17 = PropGet v16 key="push"
+    v18 = Call v17, v16, v0 calleeKey="push"
+    PutModuleVariable v16 variable=g3
+    v20 = NewClosure function=f1
+    v21 = Call v20, -, v0
+    PutModuleVariable v21 variable=g4
+    v23 = Call v20, -, v2
+    PutModuleVariable v23 variable=g5
+    v25 = NewArray contents=anything @60
+    PutModuleVariable v25 variable=g6
+    v27 = Builtin builtin=JSONParse
+    v28 = Call v27, -, v2
+    v29 = Call v13, -, v28
+    PutModuleVariable v28 variable=g7
+    Return
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything @50
+    Return v1
+}

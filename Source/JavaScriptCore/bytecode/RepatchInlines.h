@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "AOTFunction.h"
+#include "AOTInterpreterSlowPaths.h"
 #include "CallLinkInfo.h"
 #include "ErrorInstance.h"
 #include "ErrorInstanceInlines.h"
@@ -82,6 +82,32 @@ inline void* throwNotAConstructorErrorFromCallIC(JSGlobalObject* globalObject, J
     return nullptr;
 }
 
+inline void* linkCompiledCallee(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallLinkInfo& callLinkInfo, JSObject* callee, const CallData& callData)
+{
+    auto entrypoint = CodePtr<JSEntryPtrTag>::fromTaggedPtr(const_cast<void*>(callData.compiled.entrypoint));
+#if ENABLE(AOT)
+    AOT::Interpreter::didLookUpCompiledCallee(vm);
+#endif
+    switch (callLinkInfo.mode()) {
+    case CallLinkInfo::Mode::Init:
+        if (!callLinkInfo.seenOnce())
+            callLinkInfo.setSeen();
+        else
+            linkMonomorphicCall(vm, owner, callLinkInfo, nullptr, callee, entrypoint);
+        break;
+    case CallLinkInfo::Mode::Monomorphic:
+    case CallLinkInfo::Mode::Polymorphic:
+        if (callLinkInfo.specializationKind() == CodeSpecializationKind::CodeForCall)
+            linkPolymorphicCall(vm, owner, calleeFrame, callLinkInfo, CallVariant(callee));
+        else
+            callLinkInfo.setVirtualCall(vm);
+        break;
+    case CallLinkInfo::Mode::Virtual:
+        break;
+    }
+    return entrypoint.taggedPtr();
+}
+
 inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSValue callee, CallLinkInfo* callLinkInfo)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -101,6 +127,9 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
                 return nullptr;
             return LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr();
         }
+
+        if (callData.type == CallData::Type::Compiled)
+            return linkCompiledCallee(vm, owner, calleeFrame, *callLinkInfo, asObject(callee), callData);
 
         auto* globalObject = callLinkInfo->globalObjectForSlowPath(owner);
         calleeFrame->setCallee(globalObject->zombieFrameCallee());
@@ -122,6 +151,9 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
             return nullptr;
         return LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr();
     }
+
+    if (constructData.type == CallData::Type::Compiled)
+        return linkCompiledCallee(vm, owner, calleeFrame, *callLinkInfo, asObject(callee), constructData);
 
     auto* globalObject = callLinkInfo->globalObjectForSlowPath(owner);
     calleeFrame->setCallee(globalObject->zombieFrameCallee());
@@ -165,26 +197,6 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
 
             return codePtr.taggedPtr();
         }
-#if ENABLE(AOT)
-        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
-            auto codePtr = CodePtr<JSEntryPtrTag>::fromTaggedPtr(AOT::taggedSlimClosureEntrypoint());
-            switch (callLinkInfo->mode()) {
-            case CallLinkInfo::Mode::Init:
-                if (!callLinkInfo->seenOnce())
-                    callLinkInfo->setSeen();
-                else
-                    linkMonomorphicCall(vm, owner, *callLinkInfo, nullptr, asObject(calleeAsValue), codePtr);
-                break;
-            case CallLinkInfo::Mode::Monomorphic:
-            case CallLinkInfo::Mode::Polymorphic:
-                callLinkInfo->setVirtualCall(vm);
-                break;
-            case CallLinkInfo::Mode::Virtual:
-                break;
-            }
-            return codePtr.taggedPtr();
-        }
-#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(vm, owner, calleeFrame, calleeAsValue, callLinkInfo));
     }
 
@@ -264,12 +276,6 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
             ASSERT(!!codePtr);
             return codePtr.taggedPtr();
         }
-#if ENABLE(AOT)
-        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
-            calleeAsFunctionCell = calleeAsValue.asCell();
-            return AOT::taggedSlimClosureEntrypoint();
-        }
-#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(vm, owner, calleeFrame, calleeAsValue, callLinkInfo));
     }
 

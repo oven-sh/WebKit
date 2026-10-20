@@ -1,0 +1,100 @@
+# Where the receivers of a slot operation hold the field in several places, the operation becomes a dispatch on shape: the layouts that hold it in one place are one arm, each arm has a copy of the operation over its own layouts under the proof of its case
+# FORM: Prepared
+# OPTIONS: references=narrow
+# RUN: pass Select
+# RUN(PLACE): pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
+# STATISTIC: PlannedSlotsGroups = 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}] flow={members=[L0]}
+layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
+layout L2 name="Label" fields=[{key="value" declared={type=undefined|string}}] flow={members=[L2]}
+
+function f0 name="read" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2):
+    v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L1, L2] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f0 name="read"
+# CHECK-NEXT: b0(v0: L0|L1|L2):
+# CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0, L2], [L1]] -> case [[textsOfRead]](| 0), case [[countsOfRead]](| 0), otherwise [[noneOfRead]]()
+# CHECK-NEXT: [[textsOfRead]]([[isTextOfRead]]: guard):
+# CHECK-NEXT: [[textOfRead]]: undefined|string = GetSlotOrUndefined v0, [[isTextOfRead]] key="value" receivers=[L0, L2] level=Proven
+# CHECK-NEXT: Return [[textOfRead]]
+# CHECK-NEXT: [[countsOfRead]]([[isCountOfRead]]: guard):
+# CHECK-NEXT: [[countOfRead]]: undefined|number = GetSlotOrUndefined v0, [[isCountOfRead]] key="value" receivers=[L1] level=Proven
+# CHECK-NEXT: Return [[countOfRead]]
+# CHECK-NEXT: [[noneOfRead]]() frequency=Rare:
+# CHECK-NEXT: Unreachable
+function f1 name="store" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = Undefined
+    PutSlotOrAdd v0, -, v1 key="value" receivers=[L0, L1] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1 name="store"
+# CHECK: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]] -> case [[textsOfStore]](| 0), case [[countsOfStore]](| 0), otherwise
+# CHECK-NEXT: [[textsOfStore]]([[isTextOfStore]]: guard):
+# CHECK-NEXT: PutSlotOrAdd v0, [[isTextOfStore]], v1 key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: Jump -> next [[afterOfStore]]()
+# CHECK-NEXT: [[countsOfStore]]([[isCountOfStore]]: guard):
+# CHECK-NEXT: PutSlotOrAdd v0, [[isCountOfStore]], v1 key="value" receivers=[L1] level=Proven
+# CHECK-NEXT: Jump -> next [[afterOfStore]]()
+# CHECK-NOT: receivers=[L0, L1]
+
+# A branch passes the proofs of the test it names, so each arm ends in a copy of the branch.
+function f2 name="test" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="value" receivers=[L0, L1] level=Proven
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="test"
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]] -> case [[textsOfTest]](| 0), case [[countsOfTest]](| 0), otherwise
+# CHECK-NEXT: [[textsOfTest]]([[isTextOfTest]]: guard):
+# CHECK-NEXT: [[hasTextOfTest]]: boolean = IsSlotFilled v0, [[isTextOfTest]] key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: TestAndBranch [[hasTextOfTest]] -> taken [[filledOfTest]](| 0), notTaken [[emptyOfTest]]()
+# CHECK-NEXT: [[countsOfTest]]([[isCountOfTest]]: guard):
+# CHECK-NEXT: [[hasCountOfTest]]: boolean = IsSlotFilled v0, [[isCountOfTest]] key="value" receivers=[L1] level=Proven
+# CHECK-NEXT: TestAndBranch [[hasCountOfTest]] -> taken [[filledOfTest]](| 0), notTaken [[emptyOfTest]]()
+# CHECK-NEXT: [[filledOfTest]]([[isFilledOfTest]]: guard):
+# CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]]
+# CHECK: = AllGuards {{*}}, [[isFilledOfTest]]
+# CHECK-NEXT: = GetSlot v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK: = AllGuards {{*}}, [[isFilledOfTest]]
+# CHECK-NEXT: = GetSlot v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK-NOT: receivers=[L0, L1]
+
+function f3 name="test-as-value" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f3 name="test-as-value"
+# CHECK: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]]
+# CHECK: = IsSlotFilled v0, {{*}} key="value" receivers=[L0] level=Proven
+# CHECK: = IsSlotFilled v0, {{*}} key="value" receivers=[L1] level=Proven
+# CHECK-NOT: receivers=[L0, L1]
+
+# Two layouts that hold the field in one place need no dispatch.
+function f4 name="one-location" parameters=[{type=L0|L2}] results=[{type=anything}] {
+  b0(v0: L0|L2):
+    v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L2] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f4 name="one-location"
+# CHECK-NEXT: b0(v0: L0|L2):
+# CHECK-NEXT: v1: undefined|string = GetSlotOrUndefined v0 key="value" receivers=[L0, L2] level=Proven
+# CHECK-NEXT: Return v1
+
+# PLACE: access 0 "value" {L0 L2} read EveryMember
+# PLACE-NEXT: access 1 "value" {L0} read EveryMember
+# PLACE-NEXT: access 2 "value" {L0} store EveryMember
+# PLACE-NEXT: access 3 "value" {L1} read EveryMember
+# PLACE-NEXT: access 4 "value" {L1} store EveryMember
+# PLACE-NOT: access

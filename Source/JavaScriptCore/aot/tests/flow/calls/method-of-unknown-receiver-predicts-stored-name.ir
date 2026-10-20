@@ -1,0 +1,53 @@
+# What the program stored under a name through a receiver nobody knows is what a call of that name through such a receiver is predicted to reach, beside the unknown callee: the call lists the function among its callees
+# and passes it its operands. A store that follows the call counts as well. A name that was stored through no such receiver predicts nothing
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-links calls
+# CHECK: f0 v9 -> i{{*}} f1 Call
+# RUN(LATER): flow-links calls
+# LATER: f0 v13 -> i{{*}} f2 Call
+# RUN(UNKNOWN): flow-links unknown
+# UNKNOWN: unknown-callee {{*}} v9 Call
+# UNKNOWN: unknown-callee {{*}} v11 Call
+# UNKNOWN: unknown-callee {{*}} v13 Call
+# RUN(NOTHING): flow-links calls
+# NOTHING-NOT: f0 v11 ->
+# RUN(OPERANDS): flow-solve nodes
+# OPERANDS: , f1, parameter 0) = {{*}}unknown|L0#
+# RUN(APPLIED): flow-apply
+# APPLIED: calleeKey="json" {{*}}callees=[f1, ..]
+# APPLIED-NOT: calleeKey="text" {{*}}callees=
+# APPLIED: calleeKey="later" {{*}}callees=[f2, ..]
+# RUN(FIXPOINT): flow-solve fixpoint
+# FIXPOINT: nothing changes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="launder" [isFreeName]
+    v3 = Call v2
+    PropSet v3, v0 key="json"
+    v5 = Call v2
+    v6 = PropGet v5 key="json"
+    v7 = Integer integer=1
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    v9 = Call v6, v5, v8 calleeKey="json"
+    v10 = PropGet v5 key="text"
+    v11 = Call v10, v5, v8 calleeKey="text"
+    v12 = PropGet v5 key="later"
+    v13 = Call v12, v5, v8 calleeKey="later"
+    v14 = NewClosure function=f2
+    PropSet v3, v14 key="later"
+    Return
+}
+function f1 name="json" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="later" results=[{type=anything}] {
+  b0():
+    Return
+}

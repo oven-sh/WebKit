@@ -1,0 +1,88 @@
+# A mixin applied to two classes at two call sites gives two classes, the chain of each has its own parent only, and no class reaches unknown code
+# RUN: flow-walk f0 prototypes
+# RUN(BOTH): flow-walk f0 prototypes
+# RUN(SINKS): flow-solve sinks
+# CHECK: f0@i{{*}} v15 Get {"a"}
+# CHECK-NEXT: L2#{{*}}: Value Proven f3.prototype "a"
+# CHECK-NEXT: f0@i{{*}} v16 Get {"b"}
+# CHECK-NEXT: L2#{{*}}: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v17 Get {"b"}
+# CHECK-NEXT: L2#{{*}}: Value Proven f4.prototype "b"
+# CHECK-NEXT: f0@i{{*}} v18 Get {"a"}
+# CHECK-NEXT: L2#{{*}}: Absent Proven
+# CHECK: f2@[[first]] -> f3
+# CHECK: f2@i{{*}}.prototype -> f3.prototype
+# RUN(SECOND): flow-walk f0 prototypes
+# SECOND: f2@[[second]] -> f4
+# SECOND: f2@i{{*}}.prototype -> f4.prototype
+# BOTH-NOT: -> f3, f4
+# BOTH-NOT: -> f3.prototype, f4.prototype
+# BOTH-NOT: f2 ->
+# BOTH-NOT: f2.prototype ->
+# SINKS-NOT: f2
+# SINKS-NOT: , f3
+# SINKS-NOT: , f4
+# SINKS-NOT: L2#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f3
+layout L1 kind=Instance name="B" constructor=f4
+layout L2 kind=Instance name="Mixed" constructor=f2 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f5
+    DefineMethod v1, v2 layout=L0 key="a"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f4
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f6
+    DefineMethod v6, v7 layout=L1 key="b"
+    v9 = FinishClass v6 layout=L1
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v4
+    v12 = Call v10, -, v9
+    v13 = Construct v11
+    v14 = Construct v12
+    v15 = PropGet v13 key="a"
+    v16 = PropGet v13 key="b"
+    v17 = PropGet v14 key="b"
+    v18 = PropGet v14 key="a"
+    Return
+}
+function f1 name="mixin" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L2
+    v4 = FinishClass v3 layout=L2
+    Return v4
+}
+function f2 name="Mixed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f3 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f4 name="B" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f5 name="a" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="b" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

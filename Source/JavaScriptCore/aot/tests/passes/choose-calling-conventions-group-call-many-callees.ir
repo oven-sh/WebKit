@@ -1,0 +1,247 @@
+# The code at a call by value does not grow with the number of its callees: 24 proven callees are one group call in the caller, through the whole build
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# RUN(BUILD): compile GroupCalls GroupEntrypoints
+# LOSS: MaxDispatchCases
+# BUILD: image not empty
+# BUILD: statistic GroupCalls 1
+# BUILD: statistic GroupEntrypoints 24
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f25
+    v3 = NewClosure function=f1
+    v4 = Call v2, -, v3 [isNeverInlined]
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f2
+    v7 = Call v2, -, v6 [isNeverInlined]
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f3
+    v10 = Call v2, -, v9 [isNeverInlined]
+    v11 = Call v1, -, v10
+    v12 = NewClosure function=f4
+    v13 = Call v2, -, v12 [isNeverInlined]
+    v14 = Call v1, -, v13
+    v15 = NewClosure function=f5
+    v16 = Call v2, -, v15 [isNeverInlined]
+    v17 = Call v1, -, v16
+    v18 = NewClosure function=f6
+    v19 = Call v2, -, v18 [isNeverInlined]
+    v20 = Call v1, -, v19
+    v21 = NewClosure function=f7
+    v22 = Call v2, -, v21 [isNeverInlined]
+    v23 = Call v1, -, v22
+    v24 = NewClosure function=f8
+    v25 = Call v2, -, v24 [isNeverInlined]
+    v26 = Call v1, -, v25
+    v27 = NewClosure function=f9
+    v28 = Call v2, -, v27 [isNeverInlined]
+    v29 = Call v1, -, v28
+    v30 = NewClosure function=f10
+    v31 = Call v2, -, v30 [isNeverInlined]
+    v32 = Call v1, -, v31
+    v33 = NewClosure function=f11
+    v34 = Call v2, -, v33 [isNeverInlined]
+    v35 = Call v1, -, v34
+    v36 = NewClosure function=f12
+    v37 = Call v2, -, v36 [isNeverInlined]
+    v38 = Call v1, -, v37
+    v39 = NewClosure function=f13
+    v40 = Call v2, -, v39 [isNeverInlined]
+    v41 = Call v1, -, v40
+    v42 = NewClosure function=f14
+    v43 = Call v2, -, v42 [isNeverInlined]
+    v44 = Call v1, -, v43
+    v45 = NewClosure function=f15
+    v46 = Call v2, -, v45 [isNeverInlined]
+    v47 = Call v1, -, v46
+    v48 = NewClosure function=f16
+    v49 = Call v2, -, v48 [isNeverInlined]
+    v50 = Call v1, -, v49
+    v51 = NewClosure function=f17
+    v52 = Call v2, -, v51 [isNeverInlined]
+    v53 = Call v1, -, v52
+    v54 = NewClosure function=f18
+    v55 = Call v2, -, v54 [isNeverInlined]
+    v56 = Call v1, -, v55
+    v57 = NewClosure function=f19
+    v58 = Call v2, -, v57 [isNeverInlined]
+    v59 = Call v1, -, v58
+    v60 = NewClosure function=f20
+    v61 = Call v2, -, v60 [isNeverInlined]
+    v62 = Call v1, -, v61
+    v63 = NewClosure function=f21
+    v64 = Call v2, -, v63 [isNeverInlined]
+    v65 = Call v1, -, v64
+    v66 = NewClosure function=f22
+    v67 = Call v2, -, v66 [isNeverInlined]
+    v68 = Call v1, -, v67
+    v69 = NewClosure function=f23
+    v70 = Call v2, -, v69 [isNeverInlined]
+    v71 = Call v1, -, v70
+    v72 = NewClosure function=f24
+    v73 = Call v2, -, v72 [isNeverInlined]
+    v74 = Call v1, -, v73
+    Return
+}
+function f1 name="callback1" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="callback2" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=2.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="callback3" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=3.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f4 name="callback4" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=4.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f5 name="callback5" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=5.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f6 name="callback6" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=6.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f7 name="callback7" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=7.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f8 name="callback8" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=8.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f9 name="callback9" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=9.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f10 name="callback10" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=10.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f11 name="callback11" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=11.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f12 name="callback12" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=12.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f13 name="callback13" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=13.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f14 name="callback14" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=14.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f15 name="callback15" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=15.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f16 name="callback16" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=16.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f17 name="callback17" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=17.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f18 name="callback18" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=18.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f19 name="callback19" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=19.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f20 name="callback20" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=20.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f21 name="callback21" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=21.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f22 name="callback22" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=22.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f23 name="callback23" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=23.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f24 name="callback24" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=24.5
+    v2 = Add v0, v1
+    Return v2
+}
+function f25 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f25 name="apply"
+# CHECK-NEXT: b0(v0: f1|f2|{{*}}|f23|f24):
+# CHECK-NEXT: [[argument]]: fractional = Double number=1.5
+# CHECK-NEXT: [[result]]: number = CallGroup v0, [[argument]] function=
+# CHECK-NOT: b1
+# CHECK: Return
+# CHECK-NEXT: }

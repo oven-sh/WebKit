@@ -1,0 +1,75 @@
+# An access by name made from an access by a constant key keeps the access site and the receivers of the access it replaces
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 4
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass FoldConstants FoldConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+layout L1 name="Size" fields=[{key="x" declared={type=number}}]
+
+function f0 name="read" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = String string="x"
+    v2 = ElemGet v0, v1 accessSite=3 receivers=[L0, L1]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="read"
+# CHECK: v2:{{*}}= PropGet v0 key="x" accessSite=3 receivers=[L0, L1]
+# CHECK-NEXT: Return v2
+
+function f1 name="everyAccess" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = String string="x"
+    v3 = ElemGet v0, v2 accessSite=1 receivers=[L0]
+    ElemSet v0, v2, v1 mode=Sloppy accessSite=2 receivers=[L0, ..]
+    v5 = ElemHas v0, v2 accessSite=4 receivers=[L1]
+    v6 = ElemDelete v0, v2 accessSite=5 receivers=[L0, L1]
+    ElemDefine v0, v2, v1 accessSite=6 receivers=[L1, ..]
+    Return v3
+}
+# CHECK-LABEL: function f1 name="everyAccess"
+# CHECK: v3:{{*}}= PropGet v0 key="x" accessSite=1 receivers=[L0]
+# CHECK-NEXT: PropSet v0, v1 key="x" mode=Sloppy accessSite=2 receivers=[L0, ..]
+# CHECK-NEXT: v5:{{*}}= PropHas v0 key="x" accessSite=4 receivers=[L1]
+# CHECK-NEXT: v6:{{*}}= PropDelete v0 key="x" accessSite=5 receivers=[L0, L1]
+# CHECK-NEXT: PropDefine v0, v1 key="x" accessSite=6 receivers=[L1, ..]
+# CHECK-NEXT: Return v3
+
+function f2 name="superAccess" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: object, v2: anything):
+    v3 = String string="x"
+    v4 = SuperGet v0, v1, v3 accessSite=7 receivers=[L0]
+    SuperSet v0, v1, v2, v3 accessSite=8 receivers=[L1]
+    Return v4
+}
+# CHECK-LABEL: function f2 name="superAccess"
+# CHECK: v4:{{*}}= SuperGet v0, v1 key="x" accessSite=7 receivers=[L0]
+# CHECK-NEXT: SuperSet v0, v1, v2 key="x" accessSite=8 receivers=[L1]
+# CHECK-NEXT: Return v4
+
+function f3 name="nothingStamped" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = String string="y"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="nothingStamped"
+# CHECK-NOT: accessSite=
+# CHECK-NOT: receivers=
+# CHECK: v2: anything = PropGet v0 key="y"
+# CHECK-NOT: accessSite=
+# CHECK-NOT: receivers=
+# CHECK: Return v2
+
+function f4 name="keyNotConstant" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
+  b0(v0: object, v1: string):
+    v2 = ElemGet v0, v1 accessSite=10 receivers=[L0, L1]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="keyNotConstant"
+# CHECK: v2:{{*}}= ElemGet v0, v1 accessSite=10 receivers=[L0, L1]
+# CHECK-NEXT: Return v2

@@ -1,0 +1,55 @@
+# With predictions switched off a position has only the prediction that was read, no value gets a Predict, and unproven contents are unknown
+# OPTIONS: disable=flow:Predictions
+# RUN: flow
+# RUN(NOWHERE): flow
+# RUN(APPLY): flow-apply
+# CHECK: variable g0 type=anything flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g1 type=anything predicted=L1 flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g2 type=Array<anything, 
+# CHECK: variable g3 type=L0 written=anything
+# NOWHERE-NOT: predicted={{*}}L0
+# NOWHERE-NOT: function f1 result 0
+# APPLY: = Call v14, -, v1
+# APPLY-NOT: = Predict 
+# APPLY: function f1 name="pointOrArgument" {{*}}results=[{type=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="seenBesideUnknown" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="predictedAsRead" module=m0 declared={type=anything predicted=L1} initialization=Undefined
+variable g2 name="handedOut" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="proven" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v1 variable=g1
+    v7 = NewObject -, v2 layout=L0 fields=[0]
+    v8 = NewArray v7 contents=anything holes=[]
+    PutModuleVariable v8 variable=g2
+    v10 = PropGet v0 key="sink" [isFreeName]
+    v11 = Call v10, -, v8
+    v12 = NewObject -, v2 layout=L0 fields=[0]
+    PutModuleVariable v12 variable=g3
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v1
+    v16 = PropGet v15 key="x"
+    Return
+}
+function f1 name="pointOrArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = Integer integer=2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    Return v3
+}

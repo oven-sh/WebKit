@@ -26,10 +26,6 @@
 #include "config.h"
 #include "SetPrototype.h"
 
-#if ENABLE(AOT)
-#include "AOTTypedCompactTable.h"
-#endif
-
 #include "CachedCallInlines.h"
 #include "InterpreterInlines.h"
 #include "BuiltinNames.h"
@@ -45,10 +41,10 @@ namespace JSC {
 
 const ClassInfo SetPrototype::s_info = { "Set"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SetPrototype) };
 
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncAdd);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncClear);
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncDelete);
-static JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncDelete);
+JSC_DECLARE_HOST_FUNCTION(setProtoFuncHas);
 JSC_DECLARE_HOST_FUNCTION(setProtoFuncValues);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncEntries);
 static JSC_DECLARE_HOST_FUNCTION(setProtoFuncIntersection);
@@ -221,29 +217,6 @@ static uint32_t getSetSizeAsInt(JSGlobalObject* globalObject, JSValue value)
     return static_cast<uint32_t>(intOrInfSize);
 }
 
-#if ENABLE(AOT)
-static ALWAYS_INLINE void forEachInSet(VM& vm, JSGlobalObject* globalObject, JSSet* set, NOESCAPE const auto& callback)
-{
-    if (set->hasCompactTable()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        AOT::Typed::CompactTable::forEachKey(set, [&](JSString* key) {
-            if constexpr (std::same_as<IterationStatus, std::invoke_result_t<decltype(callback), VM&, JSGlobalObject*, JSValue>>) {
-                IterationStatus status = callback(vm, globalObject, key);
-                return scope.exception() ? IterationStatus::Done : status;
-            } else {
-                callback(vm, globalObject, key);
-                return scope.exception() ? IterationStatus::Done : IterationStatus::Continue;
-            }
-        });
-        scope.release();
-        return;
-    }
-    JSCell* storageCell = set->storageOrSentinel(vm);
-    if (storageCell != vm.orderedHashTableSentinel())
-        forEachInSetStorage(vm, globalObject, storageCell, 0, callback);
-}
-#endif
-
 static EncodedJSValue fastSetIntersection(JSGlobalObject* globalObject, JSSet* thisSet, JSSet* otherSet)
 {
     VM& vm = globalObject->vm();
@@ -253,15 +226,11 @@ static EncodedJSValue fastSetIntersection(JSGlobalObject* globalObject, JSSet* t
     JSSet* sourceSet = thisSet->size() <= otherSet->size() ? thisSet : otherSet;
     JSSet* targetSet = thisSet->size() <= otherSet->size() ? otherSet : thisSet;
 
-#if ENABLE(AOT)
-    forEachInSet(vm, globalObject, sourceSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
-#else
     JSCell* sourceStorageCell = sourceSet->storageOrSentinel(vm);
     if (sourceStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(result);
 
     forEachInSetStorage(vm, globalObject, sourceStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool targetHasEntry = targetSet->has(globalObject, entryKey);
@@ -315,11 +284,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIntersection, (JSGlobalObject* globalObject
             return JSValue::encode(result);
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        std::optional<CachedCall> cachedHasCall;
-        if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, asObject(has), 1);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         forEachInSetStorage(vm, globalObject, storageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
@@ -373,17 +339,12 @@ static EncodedJSValue fastSetUnion(JSGlobalObject* globalObject, JSSet* thisSet,
     JSSet* result = thisSet->clone(globalObject, vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, { });
 
-#if ENABLE(AOT)
-    scope.release();
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
-#else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(result);
 
     scope.release();
     forEachInSetStorage(vm, globalObject, otherStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
-#endif
         result->add(globalObject, entryKey);
     });
     return JSValue::encode(result);
@@ -447,17 +408,12 @@ static EncodedJSValue fastSetIsSubsetOf(JSGlobalObject* globalObject, JSSet* thi
     if (thisSet->size() > otherSet->size())
         return JSValue::encode(jsBoolean(false));
 
-#if ENABLE(AOT)
-    bool isSubset = true;
-    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
-#else
     JSCell* thisStorageCell = thisSet->storageOrSentinel(vm);
     if (thisStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
 
     bool isSubset = true;
     forEachInSetStorage(vm, globalObject, thisStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool otherHasEntry = otherSet->has(globalObject, entryKey);
@@ -478,15 +434,11 @@ static EncodedJSValue fastSetDifference(JSGlobalObject* globalObject, JSSet* thi
 
     JSSet* result = JSSet::create(vm, globalObject->setStructure());
 
-#if ENABLE(AOT)
-    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
-#else
     JSCell* thisStorageCell = thisSet->storageOrSentinel(vm);
     if (thisStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(result);
 
     forEachInSetStorage(vm, globalObject, thisStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool otherHasEntry = otherSet->has(globalObject, entryKey);
@@ -541,11 +493,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
             return JSValue::encode(result);
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        std::optional<CachedCall> cachedHasCall;
-        if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, asObject(has), 1);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         forEachInSetStorage(vm, globalObject, resultStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
@@ -584,11 +533,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    std::optional<CachedCall> cachedNextCall;
-    if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     while (true) {
         JSValue nextResult;
@@ -633,17 +579,12 @@ static EncodedJSValue fastSetSymmetricDifference(JSGlobalObject* globalObject, J
     JSSet* result = thisSet->clone(globalObject, vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, { });
 
-#if ENABLE(AOT)
-    scope.release();
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
-#else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(result);
 
     scope.release();
     forEachInSetStorage(vm, globalObject, otherStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool thisHasEntry = thisSet->has(globalObject, entryKey);
@@ -707,11 +648,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSymmetricDifference, (JSGlobalObject* globa
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    std::optional<CachedCall> cachedNextCall;
-    if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     while (true) {
         JSValue nextResult;
@@ -793,11 +731,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSubsetOf, (JSGlobalObject* globalObject, 
     if (thisStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
 
-    std::optional<CachedCall> cachedHasCall;
-    if (hasCallData.type == CallData::Type::JS) [[likely]] {
-        cachedHasCall.emplace(globalObject, asObject(has), 1);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
+    RETURN_IF_EXCEPTION(scope, { });
 
     scope.release();
     bool isSubset = true;
@@ -834,17 +769,12 @@ static EncodedJSValue fastSetIsSupersetOf(JSGlobalObject* globalObject, JSSet* t
     if (thisSet->size() < otherSet->size())
         return JSValue::encode(jsBoolean(false));
 
-#if ENABLE(AOT)
-    bool isSuperset = true;
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
-#else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
 
     bool isSuperset = true;
     forEachInSetStorage(vm, globalObject, otherStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool thisHasEntry = thisSet->has(globalObject, entryKey);
@@ -905,11 +835,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSupersetOf, (JSGlobalObject* globalObject
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    std::optional<CachedCall> cachedNextCall;
-    if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     while (true) {
         JSValue nextResult;
@@ -958,17 +885,12 @@ static EncodedJSValue fastSetIsDisjointFrom(JSGlobalObject* globalObject, JSSet*
         largerSet = otherSet;
     }
 
-#if ENABLE(AOT)
-    bool isDisjoint = true;
-    forEachInSet(vm, globalObject, smallerSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
-#else
     JSCell* smallerStorageCell = smallerSet->storageOrSentinel(vm);
     if (smallerStorageCell == vm.orderedHashTableSentinel())
         return JSValue::encode(jsBoolean(true));
 
     bool isDisjoint = true;
     forEachInSetStorage(vm, globalObject, smallerStorageCell, 0, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
-#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         bool largerHasEntry = largerSet->has(globalObject, entryKey);
@@ -1021,11 +943,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
             return JSValue::encode(jsBoolean(true));
 
         CallData hasCallData = JSC::getCallDataInline(has);
-        std::optional<CachedCall> cachedHasCall;
-        if (hasCallData.type == CallData::Type::JS) [[likely]] {
-            cachedHasCall.emplace(globalObject, asObject(has), 1);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        auto cachedHasCall = CachedCall::tryCreate(globalObject, asObject(has), hasCallData, 1);
+        RETURN_IF_EXCEPTION(scope, { });
 
         scope.release();
         bool isDisjoint = true;
@@ -1066,11 +985,8 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
 
     CallData nextCallData = JSC::getCallDataInline(nextMethod);
 
-    std::optional<CachedCall> cachedNextCall;
-    if (nextCallData.type == CallData::Type::JS) [[likely]] {
-        cachedNextCall.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto cachedNextCall = CachedCall::tryCreate(globalObject, asObject(nextMethod), nextCallData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     while (true) {
         JSValue nextResult;

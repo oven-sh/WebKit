@@ -1,0 +1,50 @@
+# A function that the host or the run time enters, and that no body has to name as a value, gets its generic entrypoint from the pass
+# FORM: Prepared
+# RUN: pass CreateEntrypoints
+# RUN(COUNTED): pass CreateEntrypoints
+# STATISTIC: GenericEntrypoints = 3
+# STATISTIC: GroupEntrypoints = 0
+# STATISTIC: CreateEntrypointsChanges = 3
+# CHECK: outcome: Changed
+# COUNTED-COUNT-3: role=GenericEntrypoint
+# COUNTED-NOT: role=GenericEntrypoint
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="hoisted" module=m0 declared={type=anything} initialization=Function function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    v4 = CallDirect function=f4
+    Return
+}
+function f1 name="registered" role=Library enclosingRuntimeFunction=0 results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f2 name="hoisted" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f3 name="namedByClosure" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="onlyCalledDirectly" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f5 name="calledByCompiledCodeOnly" role=Library enclosingRuntimeFunction=131072 results=[{type=undefined}] {
+  b0():
+    Return
+}
+runtimefunction id=0 function=f1
+runtimefunction id=131072 function=f5
+# CHECK: name="main" module=m0 kind=Module role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
+# CHECK: = CallDirect function=f0
+# CHECK: name="registered"{{*}}role=GenericEntrypoint{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1}
+# CHECK: = CallDirect function=f1
+# CHECK: name="hoisted"{{*}}role=GenericEntrypoint{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f2}
+# CHECK: = CallDirect function=f2

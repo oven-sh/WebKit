@@ -1,0 +1,236 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTPass.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTIRBuilder.h"
+#include "AOTInductionVariables.h"
+#include "AOTTypePropagation.h"
+#include "AOTValueSubstitution.h"
+#include <algorithm>
+#include <optional>
+#include <span>
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+struct CounterCandidate {
+    ValueID parameter;
+    ValueID comparison;
+    uint32_t testedOperandIndex;
+    Edge stayingEdge;
+};
+
+using Uses = Vector<Use, 8>;
+
+} // anonymous namespace
+
+static bool isNonIntegerNumber(const Type& type)
+{
+    return type.isNumber() && !type.isInteger();
+}
+
+static bool hasNumberParameter(const Program& program, const Function& function)
+{
+    for (size_t index = 0; index < function.blocks.size(); ++index) {
+        if (BlockID(index) == entryBlock)
+            continue;
+        for (ValueID parameter : function.blocks[index].parameters) {
+            if (isNonIntegerNumber(program.typeOf(function, parameter)))
+                return true;
+        }
+    }
+    return false;
+}
+
+static std::optional<uint32_t> findTestedOperand(FunctionAnalyses& analyses, const InductionTest& test)
+{
+    const Value& comparison = analyses.function().at(test.comparison);
+    ValueID bound = analyses.identityOf(test.bound);
+    bool isLeftBound = analyses.identityOf(comparison.operand(0)) == bound;
+    bool isRightBound = analyses.identityOf(comparison.operand(1)) == bound;
+    if (isLeftBound == isRightBound)
+        return std::nullopt;
+    return isLeftBound ? 1 : 0;
+}
+
+// FunctionAnalyses::dominates(Edge, BlockID) holds only for the single edge into a block. A staying edge into a shared block is split before it is used.
+static bool dominatesAfterSplit(FunctionAnalyses& analyses, Edge edge, BlockID block)
+{
+    const CFG& cfg = analyses.cfg();
+    if (!cfg.isReachable(edge.from) || !cfg.isReachable(block))
+        return false;
+
+    const Dominators& dominators = analyses.dominators();
+    BlockID target = targetOf(analyses.function(), edge).block;
+    if (!dominators.dominates(target, block))
+        return false;
+    return std::ranges::all_of(cfg.incomingEdges(target), [&](Edge incoming) {
+        return incoming == edge || dominators.dominates(target, incoming.from);
+    });
+}
+
+static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const InductionVariable& variable)
+{
+    const UseLists& useLists = analyses.useLists();
+    return std::ranges::all_of(variable.steppedValues, [&](ValueID stepped) {
+        return dominatesAfterSplit(analyses, edge, useLists.blockOf(stepped));
+    });
+}
+
+static std::optional<uint32_t> findBoundedOperand(FunctionPassContext& context, const InductionVariable& variable, const InductionTest& test)
+{
+    if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
+        return std::nullopt;
+    if (!context.program.typeOf(context.function, test.bound).isInteger())
+        return std::nullopt;
+    if (!dominatesEveryStep(context.analyses, test.stayingEdge, variable))
+        return std::nullopt;
+    return findTestedOperand(context.analyses, test);
+}
+
+static bool hasStepWithinLimit(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
+{
+    if (variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+        return false;
+    if (parametersOverStepLimit.get(variable.parameter.index()))
+        return false;
+
+    int64_t step = variable.step.constant;
+    uint64_t magnitude = step < 0 ? 0 - static_cast<uint64_t>(step) : static_cast<uint64_t>(step);
+    if (!context.exceeds(LimitID::MaxCounterStep, magnitude, variable.parameter))
+        return true;
+    parametersOverStepLimit.set(variable.parameter.index());
+    return false;
+}
+
+static std::optional<CounterCandidate> findCandidate(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
+{
+    const Function& function = context.function;
+    if (!isNonIntegerNumber(context.program.typeOf(function, variable.parameter)))
+        return std::nullopt;
+    if (!variable.start || !context.program.typeOf(function, variable.start).isInteger())
+        return std::nullopt;
+    if (!hasStepWithinLimit(context, variable, parametersOverStepLimit))
+        return std::nullopt;
+
+    for (const InductionTest& test : variable.tests) {
+        std::optional<uint32_t> testedOperandIndex = findBoundedOperand(context, variable, test);
+        if (!testedOperandIndex)
+            continue;
+        if (targetOf(function, test.stayingEdge).proofs.contains(*testedOperandIndex))
+            return std::nullopt;
+        return CounterCandidate { variable.parameter, test.comparison, *testedOperandIndex, test.stayingEdge };
+    }
+    return std::nullopt;
+}
+
+static Vector<CounterCandidate, 4> findCandidates(FunctionPassContext& context, BitVector& parametersOverStepLimit)
+{
+    Vector<CounterCandidate, 4> candidates;
+    for (const LoopInduction& loop : context.analyses.inductionVariables().loops()) {
+        for (const InductionVariable& variable : loop.variables) {
+            if (std::optional<CounterCandidate> candidate = findCandidate(context, variable, parametersOverStepLimit))
+                candidates.append(*candidate);
+        }
+    }
+    return candidates;
+}
+
+static void splitSharedStayingEdges(FunctionPassContext& context, IRBuilder& builder, std::span<const CounterCandidate> candidates)
+{
+    Vector<Edge, 2> sharedEdges;
+    for (const CounterCandidate& candidate : candidates) {
+        bool isShared = !context.analyses.hasSingleIncomingEdge(targetOf(context.function, candidate.stayingEdge).block);
+        if (isShared && !sharedEdges.contains(candidate.stayingEdge))
+            sharedEdges.append(candidate.stayingEdge);
+    }
+    for (Edge edge : sharedEdges)
+        builder.splitEdge(edge);
+}
+
+static Uses findDominatedUses(FunctionPassContext& context, const CounterCandidate& candidate)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    Uses uses;
+    auto collectUsesOf = [&](ValueID value) {
+        for (const Use& use : useLists.usesOf(value)) {
+            if (context.analyses.dominates(candidate.stayingEdge, use.block))
+                uses.append(use);
+        }
+    };
+
+    ValueID tested = function.at(candidate.comparison).operand(candidate.testedOperandIndex);
+    collectUsesOf(tested);
+    if (tested != candidate.parameter && function.at(tested).type == function.at(candidate.parameter).type)
+        collectUsesOf(candidate.parameter);
+    return uses;
+}
+
+static void passCounterOnEdge(FunctionPassContext& context, IRBuilder& builder, const CounterCandidate& candidate, const Uses& dominatedUses)
+{
+    builder.setOrigin(context.function.at(candidate.comparison).origin());
+    ValueID narrowed = builder.addEdgeResult(candidate.stayingEdge, candidate.testedOperandIndex);
+    for (const Use& use : dominatedUses)
+        replaceUse(context.function, use, narrowed);
+}
+
+static void passCountersOnEdges(FunctionPassContext& context, IRBuilder& builder, std::span<const CounterCandidate> candidates)
+{
+    splitSharedStayingEdges(context, builder, candidates);
+
+    Vector<Uses, 4> dominatedUses;
+    for (const CounterCandidate& candidate : candidates)
+        dominatedUses.append(findDominatedUses(context, candidate));
+
+    for (size_t index = 0; index < candidates.size(); ++index)
+        passCounterOnEdge(context, builder, candidates[index], dominatedUses[index]);
+    context.analyses.didChangeValues();
+}
+
+PassOutcome convertCountersToIntegers(FunctionPassContext& context)
+{
+    if (!hasNumberParameter(context.program, context.function))
+        return PassOutcome::Unchanged;
+
+    PassOutcome outcome = PassOutcome::Unchanged;
+    uint64_t numberOfConvertedCounters = 0;
+    BitVector parametersOverStepLimit;
+    IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    for (;;) {
+        Vector<CounterCandidate, 4> candidates = findCandidates(context, parametersOverStepLimit);
+        if (candidates.isEmpty())
+            break;
+        passCountersOnEdges(context, builder, candidates.span());
+        outcome = PassOutcome::Changed;
+
+        TypePropagationOutcome typing = typeValuesFromNever({ context.program, context.id, context.function, context.analyses, context.types, context.build });
+        // Cutting a block renumbers the values, so no id from before names its value any more.
+        if (typing.didChangeControlFlow()) {
+            parametersOverStepLimit.clearAll();
+            continue;
+        }
+        numberOfConvertedCounters += std::ranges::count_if(candidates, [&](const CounterCandidate& candidate) {
+            return context.program.typeOf(context.function, candidate.parameter).isInteger();
+        });
+    }
+
+    if (numberOfConvertedCounters)
+        context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
+    return outcome;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

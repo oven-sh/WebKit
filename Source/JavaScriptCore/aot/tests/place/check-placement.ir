@@ -1,0 +1,69 @@
+# A value that names another row of a table than the one that describes it fails the check, and the check names the rule
+# RUN(ACCESS): check-placement field-access
+# RUN(ALLOCATION): check-placement allocation
+# RUN(GUARD): check-placement guard-bit
+# RUN(REQUEST): check-placement request
+# RUN(CACHE): check-placement site-cache
+# DIAGNOSTIC: PlacementCheckFailed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="first"
+    v4 = NewClosure function=f2
+    DefineMethod v1, v4 layout=L0 index=1 key="second"
+    v6 = FinishClass v1 layout=L0
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="replacement" [isFreeName]
+    v9 = PropGet v6 key="prototype"
+    PropSet v9, v8 key="first"
+    PropSet v9, v8 key="second"
+    v12 = Integer integer=1
+    v13 = Construct v6, -, v12
+    v14 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v15 = PropGet v7 key="publish" [isFreeName]
+    v16 = Call v15, -, v14
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v18 = PropGet v13 key="first"
+    v19 = Call v18, v13
+    v20 = PropGet v13 key="second"
+    v21 = Call v20, v13
+    v22 = PropGet v7 key="more" [isFreeName]
+    v23 = ToBoolean v22
+    Branch v23 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    PropSet v3, v1 key="y"
+    Return v3
+}
+function f2 name="read" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    Return v3
+}
+
+# ACCESS: mutated
+# ACCESS-NEXT: rule SiteRefersElsewhere
+# ALLOCATION: mutated
+# ALLOCATION-NEXT: rule SiteRefersElsewhere
+# GUARD: mutated f0
+# GUARD-NEXT: rule SiteRefersElsewhere
+# REQUEST: mutated f0
+# REQUEST-NEXT: rule RequestWrong
+# CACHE-COUNT-4: mutated
+# CACHE-NEXT: rule SiteCacheOrder

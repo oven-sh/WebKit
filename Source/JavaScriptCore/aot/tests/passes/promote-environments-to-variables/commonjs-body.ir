@@ -1,0 +1,86 @@
+# The captured bindings and parameters of a CommonJS body become variables when nothing can remove the module's cache entry. A body that may be evaluated again keeps its environment and its closures their captures
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+# STATISTIC: CapturesPromotedToVariables = 1
+# CHECK: variable g0 name="count.0" module=m1
+# CHECK: variable g1 module=m1
+# CHECK-NOT: variable g2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="kept.cjs" displayPath="kept.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="removed.cjs" displayPath="removed.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+entry module=m0
+layout L0 kind=Environment name="kept" module=m1 fields=[{key=@"count.0" declared={type=anything}}]
+layout L1 kind=Environment name="removed" module=m2 fields=[{key=@"count.0" declared={type=anything}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1
+    v1 = RequireModule module=m2
+    Return
+}
+
+function f1 name="kept" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=0
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = NewClosure v7, v1 function=f2
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="publish" [isFreeName]
+    v11 = Call v10, -, v8
+    v12 = PropGet v2 key="cache"
+    v13 = String string="removed.cjs"
+    v14 = ElemDelete v12, v13 mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1 name="kept"
+# CHECK: b0(v0:
+# CHECK-NEXT: PutModuleVariable v1 variable=g1
+# CHECK-NOT: NewObject
+# CHECK: PutModuleVariable v6 variable=g0
+# CHECK-NEXT: = NewClosure function=f2
+
+function f2 name="next" module=m1 captures=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L0 field=0
+    PropSet v1, v4 key="last"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="next"
+# CHECK-NOT: captures=
+# CHECK: b0():
+# CHECK-NEXT: [[exports]]:{{*}}= GetModuleVariable variable=g1
+# CHECK-NEXT: = GetModuleVariable variable=g0
+# CHECK: PutModuleVariable [[sum]] variable=g0
+# CHECK-NEXT: PropSet [[exports]], [[sum]] key="last"
+
+function f3 name="removed" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=0
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = NewClosure v7, v1 function=f4
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="publish" [isFreeName]
+    v11 = Call v10, -, v8
+    Return
+}
+# CHECK-LABEL: function f3 name="removed"
+# CHECK: [[scope]]: env L1 = NewObject -, v6 layout=L1 fields=[0]
+# CHECK-NEXT: = NewClosure [[scope]], v1 function=f4
+
+function f4 name="next" module=m2 captures=[{type=env L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Integer integer=1
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L1 field=0
+    PropSet v1, v4 key="last"
+    Return v4
+}
+# CHECK-LABEL: function f4 name="next"{{*}}captures=[{type=env L1}, {type=
+# CHECK: = GetEnvironmentField v0 layout=L1

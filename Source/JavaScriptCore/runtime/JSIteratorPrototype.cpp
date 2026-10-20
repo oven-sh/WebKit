@@ -192,13 +192,13 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncForEach, (JSGlobalObject* globalObject
 
     uint64_t counter = 0;
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(callbackArg), 2);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(callbackArg), callData, 2);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
         forEachInIteratorProtocol(globalObject, thisValue, [&](VM&, JSGlobalObject*, JSValue nextItem) ALWAYS_INLINE_LAMBDA {
-            cachedCall.callWithArguments(globalObject, jsUndefined(), nextItem, jsNumber(counter++));
+            cachedCall->callWithArguments(globalObject, jsUndefined(), nextItem, jsNumber(counter++));
         });
         return JSValue::encode(jsUndefined());
     }
@@ -274,13 +274,8 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncIncludes, (JSGlobalObject* globalObjec
     CallData callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        cachedCall = &cachedCallHolder.value();
-    }
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, nextMethod.getObject(), callData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     JSValue searchElement = callFrame->argument(0);
     uint64_t skipped = 0;
@@ -356,13 +351,8 @@ JSC_DEFINE_HOST_FUNCTION(iteratorProtoFuncJoin, (JSGlobalObject* globalObject, C
     CallData callData = getCallDataInline(nextMethod);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, asObject(nextMethod), 0);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        cachedCall = &cachedCallHolder.value();
-    }
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, nextMethod.getObject(), callData, 0);
+    RETURN_IF_EXCEPTION(scope, { });
 
     bool first = true;
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);

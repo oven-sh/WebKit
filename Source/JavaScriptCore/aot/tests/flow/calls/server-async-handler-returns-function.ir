@@ -1,0 +1,31 @@
+# What the promise of an async handler settles with reaches native code, so a function that the handler returns is entered with unknown arguments. The handler is not.
+# RUN: flow-solve sinks
+# RUN(INSTANCES): flow-solve instances
+# RUN(NODES): flow-solve nodes
+# CHECK-NOT: f1,
+# CHECK: nativeCode {{*}}f2
+# INSTANCES-NOT: f1 Generic
+# INSTANCES: f2 Generic
+# NODES: , f2, parameter 0) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=BunServe
+    v3 = Builtin builtin=Bun
+    v4 = Call v2, v3, v1
+    Return
+}
+function f1 name="fetch" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f2
+    Return v2
+}
+function f2 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

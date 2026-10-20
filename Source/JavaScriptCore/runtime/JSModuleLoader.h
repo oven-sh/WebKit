@@ -86,10 +86,6 @@ public:
     JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
 
     JSScope* moduleScope() const { return m_moduleScope.get(); }
-#if ENABLE(AOT)
-    AOT::Instance* aotInstance() const { return m_aotInstance; }
-    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
-#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
@@ -109,12 +105,14 @@ public:
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
+    JS_EXPORT_PRIVATE JSPromise* requestImportModuleForKey(JSGlobalObject*, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE int64_t asyncEvaluationOrderForKey(const Identifier& key);
 #endif
 
     // Platform dependent hooked APIs.
     JSPromise* importModule(JSGlobalObject*, JSString* moduleName, JSValue parameters, const SourceOrigin& referrer, bool deferred = false);
+    static std::expected<RefPtr<ScriptFetchParameters>, JSPromise*> fetchParametersFromImportOptions(JSGlobalObject*, JSValue options);
     Identifier resolve(JSGlobalObject*, JSValue name, JSValue referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     Identifier resolve(JSGlobalObject*, const Identifier& name, const Identifier& referrer, RefPtr<ScriptFetcher>, bool useImportMap);
     JSPromise* fetch(JSGlobalObject*, JSValue key, const String& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
@@ -181,6 +179,7 @@ public:
     // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
     // and JSC is responsible for turning it into a usable module. Otherwise, the host has already
     // turned it into a module, and JSC should take that as the module's default export value.
+    // An AbstractModuleRecord is the module itself.
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
@@ -242,10 +241,6 @@ public:
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
-#if ENABLE(AOT)
-        if (m_aotInstance)
-            AOT::didClearLoaderOf(m_aotInstance);
-#endif
     }
     JS_EXPORT_PRIVATE JSPromise* loadModuleSync(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
     JS_EXPORT_PRIVATE static void drainSynchronousModuleQueue(JSGlobalObject*);
@@ -314,9 +309,6 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
     WriteBarrier<JSScope> m_moduleScope;
-#if ENABLE(AOT)
-    AOT::Instance* m_aotInstance { nullptr };
-#endif
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
 #endif

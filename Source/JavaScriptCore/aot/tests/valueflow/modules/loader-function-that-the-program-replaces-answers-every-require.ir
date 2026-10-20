@@ -1,0 +1,26 @@
+# A program that assigns Module._resolveFilename answers every require itself, also one with a constant name: modules are loaded by name, and native code calls the replacement
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ModuleCache
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name yes
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Builtin builtin=NodeModule
+    v7 = NewClosure function=f2
+    PropSet v6, v7 key="_resolveFilename" mode=Strict
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f2 name="resolve" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

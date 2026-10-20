@@ -5,7 +5,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include <wtf/Vector.h>
 
@@ -14,10 +14,8 @@ namespace JSC { namespace B3 {
 class BasicBlock;
 class Procedure;
 
-bool rotateLoops(Procedure&, const Vector<BasicBlock*>* allowedHeaders = nullptr);
-
-bool simplifyTerminals(Procedure&);
+JS_EXPORT_PRIVATE bool rotateLoops(Procedure&, const Vector<BasicBlock*>* allowedHeaders = nullptr);
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

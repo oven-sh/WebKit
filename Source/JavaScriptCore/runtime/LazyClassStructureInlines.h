@@ -43,7 +43,6 @@ void LazyClassStructure::initLater(const Callback&)
                 std::bit_cast<char*>(&structureInit.property) - offset);
             Initializer init(structureInit.vm, structureInit.owner, *thisStructure, structureInit);
             callStatelessLambda<void, Callback>(init);
-            init.didInitialize();
         });
 }
 

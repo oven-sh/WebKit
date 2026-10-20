@@ -1,0 +1,38 @@
+# The order is computed from reached functions: a read above the store in a function nothing calls fails no proof, the same read in a function the body calls does
+# RUN: flow-order failed timelines locations
+# RUN(NODES): flow-solve nodes
+# CHECK-NOT: read-before-initialization g0
+# CHECK: read-before-initialization g1
+# CHECK-NEXT: timeline f0: f1 after b0#1, f2 never
+# CHECK-NEXT: timeline f0 by use: f1 after b0#0, f2 never
+# CHECK-NEXT: g0: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g1: Unknown AtMostOnce
+# NODES: Variable(g0) = {1}
+# NODES-NEXT: Variable(g1) = {undefined|1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="b" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="c" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="calledReader" module=m0 declared={type=function} initialization=Function function=f1
+variable g3 name="uncalledReader" module=m0 declared={type=function} initialization=Function function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = Call v0
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    v5 = GetModuleVariable variable=g0
+    Return
+}
+function f1 name="calledReader" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return v0
+}
+function f2 name="uncalledReader" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

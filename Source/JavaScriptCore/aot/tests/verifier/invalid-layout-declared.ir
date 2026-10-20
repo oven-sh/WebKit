@@ -1,0 +1,10 @@
+# the declared position of a field: the prediction overlaps the type, and an int32 promise has an int32 type
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="badPrediction" fields=[{key="x" declared={type=number predicted=string}}]
+layout L1 name="goodPrediction" fields=[{key="x" declared={type=number|string predicted=string}}]
+layout L2 name="badPromise" fields=[{key="x" declared={type=number flags=[IsInt32Promise]}}]
+layout L3 name="goodPromise" fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]}}, {key="y" declared={type=undefined|i32 flags=[IsInt32Promise]}}]

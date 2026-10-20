@@ -48,6 +48,10 @@ JSWebAssemblyArray::JSWebAssemblyArray(VM& vm, WebAssemblyGCStructure* structure
     : Base(vm, structure)
     , m_size(size)
 {
+#if ENABLE(AOT)
+    if (Options::useAOT()) [[unlikely]]
+        zeroShapeWord();
+#endif
     if (elementsAreRefTypes())
         std::ranges::fill(span<uint64_t>(), JSValue::encode(jsNull()));
     else

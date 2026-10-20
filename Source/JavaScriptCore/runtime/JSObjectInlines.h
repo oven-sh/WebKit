@@ -42,6 +42,10 @@
 #include "TypedArrayType.h"
 #include "VM.h"
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -202,7 +206,7 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() || structure->typeInfo().wouldHaveFixedProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
         if (mayInterceptPut || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
@@ -292,11 +296,6 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
         if (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) [[likely]] {
             if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
                 return true;
-#if ENABLE(AOT)
-        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotFromCompiledObject(propertyName, slot) : std::nullopt) {
-            if (*isFound)
-                return true;
-#endif
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -384,7 +383,7 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
     ASSERT(!value.isCustomGetterSetter());
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
-    if (structure->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (structure->isImmutableProperty(propertyName.uid()) && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
     putDirectOffset(vm, offset, value);
@@ -466,21 +465,8 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
-    if (!error.isNull()) {
-#if USE(BUN_JSC_ADDITIONS)
-        if (error.characters() == ImmutableShapeError.characters())
-            RELEASE_AND_RETURN(scope, false);
-#endif
-        JSValue held;
-        bool isRejectedOnlyByLockHere = isLockedBuiltin() && isRejectedOnlyByLock(vm, propertyName.uid(), held);
-        if (isRejectedOnlyByLockHere && held == value)
-            return true;
-        if ((slot.isStrictMode() && isLockedBuiltin()) || (isRejectedOnlyByLockHere && slot.context() != PutPropertySlot::ReflectSet)) {
-            recordLockViolation(vm, propertyName.uid());
-            return typeError(globalObject, scope, true, lockViolationMessage(vm, propertyName.uid(), error));
-        }
+    if (!error.isNull())
         return typeError(globalObject, scope, slot.isStrictMode(), error);
-    }
     return true;
 }
 
@@ -513,6 +499,46 @@ ALWAYS_INLINE bool JSObject::hasOwnProperty(JSGlobalObject* globalObject, unsign
     return const_cast<JSObject*>(this)->methodTable()->getOwnPropertySlotByIndex(const_cast<JSObject*>(this), globalObject, propertyName, slot);
 }
 
+ALWAYS_INLINE void JSObject::growOutOfLineStorageForTransition(VM& vm, Structure* next)
+{
+    StructureID structureID = this->structureID();
+    Structure* structure = structureID.decode();
+    if (structure->outOfLineCapacity() == next->outOfLineCapacity())
+        return;
+    ASSERT(next != structure);
+    nukeStructureAndSetButterfly(vm, structureID, allocateMoreOutOfLineStorage(vm, structure->outOfLineCapacity(), next->outOfLineCapacity()));
+}
+
+ALWAYS_INLINE bool JSObject::tryPutDirectByExistingTransition(VM& vm, Structure* structure, PropertyName propertyName, JSValue value, unsigned attributes, PropertyOffset& offset)
+{
+    Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, attributes, offset);
+    if (!newStructure)
+        return false;
+
+    growOutOfLineStorageForTransition(vm, newStructure);
+
+    validateOffset(offset);
+    ASSERT(newStructure->isValidOffset(offset));
+
+    // This assertion verifies that the concurrent GC won't read garbage if the concurrentGC
+    // is running at the same time we put without transitioning.
+    ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
+    putDirectOffset(vm, offset, value);
+    setStructure(vm, newStructure);
+    if (mayBePrototype()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
+    return true;
+}
+
+ALWAYS_INLINE bool JSObject::tryPutDirectByExistingTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
+{
+    Structure* structure = this->structure();
+    if (structure->isDictionary() || structure->mayHaveImmutableProperties() || structure->isCompiledStructure())
+        return false;
+    PropertyOffset offset;
+    return tryPutDirectByExistingTransition(vm, structure, propertyName, value, attributes, offset);
+}
+
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
 {
@@ -525,7 +551,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
-    if (structure->hasImmutableProperties()) [[unlikely]] {
+    if (structure->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
             return ReadonlyPropertyChangeError;
     }
@@ -534,12 +560,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if constexpr (mode == PutModePut) {
             if (!isStructureExtensible()) [[unlikely]]
                 return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
-            if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
-                return ReadonlyPropertyWriteError;
-        }
-        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
-            becomeDerivedArray(vm);
-            return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -594,26 +614,9 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
     {
         PropertyOffset offset;
-        Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, newAttributes, offset);
-        if (newStructure) {
-            Butterfly* newButterfly = butterfly();
-            if (structure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
-                ASSERT(newStructure != this->structure());
-                newButterfly = allocateMoreOutOfLineStorage(vm, structure->outOfLineCapacity(), newStructure->outOfLineCapacity());
-                nukeStructureAndSetButterfly(vm, structureID, newButterfly);
-            }
-
-            validateOffset(offset);
-            ASSERT(newStructure->isValidOffset(offset));
-
-            // This assertion verifies that the concurrent GC won't read garbage if the concurrentGC
-            // is running at the same time we put without transitioning.
-            ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
-            putDirectOffset(vm, offset, value);
-            setStructure(vm, newStructure);
-            slot.setNewProperty(this, offset);
-            if (mayBePrototype()) [[unlikely]]
-                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
+        if (tryPutDirectByExistingTransition(vm, structure, propertyName, value, newAttributes, offset)) {
+            if (this->structure()->isCacheableTransitionFrom(structure)) [[likely]]
+                slot.setNewProperty(this, offset);
             return { };
         }
     }
@@ -644,32 +647,15 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         return { };
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (structure->hasImmutableShape()) [[unlikely]] {
 #if ENABLE(AOT)
-        if (reifyIfSlimClosure(vm)) {
-            ASCIILiteral error = putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
-            slot.disableCaching();
-            return error;
-        }
-        if constexpr (mode == PutModeDefineOwnProperty)
-            return putDirectToCompiledObject(vm, propertyName, value, newAttributes);
-#endif
-        return throwImmutableShapeError(vm);
-    }
+    if (structure->isCompiledStructure() || type() == SlimClosureType) [[unlikely]]
+        return putDirectToCompiledObject(vm, propertyName, value, newAttributes, mode, slot);
 #endif
 
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
             return NonExtensibleObjectPropertyDefineError;
-        if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
-            return ReadonlyPropertyWriteError;
     }
-    if (type() == ArrayType && (inheritsImmutableProperty(vm, propertyName) || (vm.useImmutableIntrinsics && propertyName == vm.propertyNames->toJSON))) [[unlikely]] {
-        becomeDerivedArray(vm);
-        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
-    }
-
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
@@ -691,7 +677,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
     putDirectOffset(vm, offset, value);
     setStructure(vm, newStructure);
-    slot.setNewProperty(this, offset);
+    if (newStructure->isCacheableTransitionFrom(structure)) [[likely]]
+        slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
     if (mayBePrototype()) [[unlikely]]
@@ -838,25 +825,10 @@ inline bool JSObject::putOwnDataPropertyMayBeIndex(JSGlobalObject* globalObject,
     return putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot).isNull();
 }
 
-#if ENABLE(AOT)
-ALWAYS_INLINE CallData slimClosureCallData(JSCell* cell)
-{
-    CallData callData;
-    callData.type = CallData::Type::JS;
-    callData.js.functionExecutable = nullptr;
-    callData.js.scope = std::bit_cast<JSScope*>(cell->structure()->realm());
-    return callData;
-}
-#endif
-
 ALWAYS_INLINE CallData getCallData(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallData(cell);
-#if ENABLE(AOT)
-    if (isSlimClosureType(cell->type()))
-        return slimClosureCallData(cell);
-#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -873,10 +845,6 @@ ALWAYS_INLINE CallData getCallDataInline(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallDataInline(cell);
-#if ENABLE(AOT)
-    if (isSlimClosureType(cell->type()))
-        return slimClosureCallData(cell);
-#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -953,6 +921,10 @@ ALWAYS_INLINE bool JSObject::getPrivateFieldSlot(JSObject* object, JSGlobalObjec
 {
     ASSERT(propertyName.isPrivateName());
     VM& vm = getVM(globalObject);
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(object)) [[unlikely]]
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, object);
+#endif
     Structure* structure = object->structure();
 
     unsigned attributes;
@@ -982,6 +954,10 @@ inline bool JSObject::hasPrivateField(JSGlobalObject* globalObject, PropertyName
 {
     ASSERT(propertyName.isPrivateName());
     VM& vm = getVM(globalObject);
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, this);
+#endif
     unsigned attributes;
     return structure()->get(vm, propertyName, attributes) != invalidOffset;
 }
@@ -1003,6 +979,12 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]] {
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, this);
+        putSlot.disableCaching();
+    }
+#endif
     PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
     if (!JSObject::getPrivateFieldSlot(this, globalObject, propertyName, slot)) {
         throwException(globalObject, scope, createInvalidPrivateNameError(globalObject));
@@ -1036,6 +1018,13 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
         throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
         return;
     }
+
+#if ENABLE(AOT)
+    if (structure()->isCompiledStructure()) [[unlikely]] {
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, this);
+        putSlot.disableCaching();
+    }
+#endif
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
     if (JSObject::getPrivateFieldSlot(this, globalObject, propertyName, slot)) {
@@ -1077,6 +1066,13 @@ ALWAYS_INLINE void JSObject::getNonReifiedStaticPropertyNames(VM& vm, PropertyNa
 inline bool JSObject::hasPrivateBrand(JSGlobalObject*, JSValue brand)
 {
     ASSERT(brand.isSymbol() && asSymbol(brand)->uid().isPrivate());
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        AOT::PropertyWalk::convertToOrdinaryObject(vm(), this);
+    // The brand of a compiled class is a private field, which the conversion makes a property.
+    if (vm().hasCompiledCode() && isValidOffset(this->structure()->get(vm(), &asSymbol(brand)->uid()))) [[unlikely]]
+        return true;
+#endif
     Structure* structure = this->structure();
     return structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand));
 }
@@ -1086,6 +1082,13 @@ inline void JSObject::checkPrivateBrand(JSGlobalObject* globalObject, JSValue br
     ASSERT(brand.isSymbol() && asSymbol(brand)->uid().isPrivate());
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, this);
+    if (vm.hasCompiledCode() && isValidOffset(this->structure()->get(vm, &asSymbol(brand)->uid()))) [[unlikely]]
+        return;
+#endif
 
     Structure* structure = this->structure();
     if (!structure->isBrandedStructure() || !uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand)))
@@ -1110,14 +1113,10 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (structure->hasImmutableShape()) [[unlikely]] {
 #if ENABLE(AOT)
-        if (reifyIfSlimClosure(vm))
-            RELEASE_AND_RETURN(scope, setPrivateBrand(globalObject, brand));
-#endif
-        throwTypeError(globalObject, scope, withAOTErrorNote(ImmutableShapeError));
-        return;
+    if (structure->isCompiledStructure() || type() == SlimClosureType) [[unlikely]] {
+        AOT::PropertyWalk::convertToOrdinaryObject(vm, this);
+        structure = this->structure();
     }
 #endif
 
@@ -1720,12 +1719,8 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 
 inline void JSObject::ensureWritable(VM& vm)
 {
-    if (isCopyOnWrite(indexingMode())) {
-        if (hasFrozenElementsInPlace()) [[unlikely]]
-            moveFrozenElementsToSparseMap(vm);
-        else
-            convertFromCopyOnWrite(vm);
-    }
+    if (isCopyOnWrite(indexingMode()))
+        convertFromCopyOnWrite(vm);
 }
 
 inline bool JSObject::tryMakeWritable(VM& vm)
@@ -1733,10 +1728,7 @@ inline bool JSObject::tryMakeWritable(VM& vm)
     if (isCopyOnWrite(indexingMode())) {
         if (structure()->hasImmutableProperties()) [[unlikely]]
             return false;
-        if (hasFrozenElementsInPlace()) [[unlikely]]
-            moveFrozenElementsToSparseMap(vm);
-        else
-            convertFromCopyOnWrite(vm);
+        convertFromCopyOnWrite(vm);
     }
     return true;
 }

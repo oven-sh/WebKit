@@ -1,0 +1,32 @@
+# Awaiting an object without a member named then gives the object itself, and nothing unknown
+# RUN: flow-solve nodes
+# CHECK: , f1, v1) = {L0#[[plain]]}
+# CHECK: , f1, v3) = {L0#[[plain]]}
+# CHECK: , f1, v5) = {L1#[[named]]}
+# CHECK: , f1, v7) = {{*}}unknown|L1#[[named]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Named" fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Await v2
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    v7 = Await v6
+    Return
+}
+function f2 name="member" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

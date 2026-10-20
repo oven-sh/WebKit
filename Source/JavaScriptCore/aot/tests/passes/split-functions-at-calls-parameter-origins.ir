@@ -1,0 +1,67 @@
+# Each parameter of a part that is cut off names the parameter of the function whose value it gets, also through a cast and where an edge narrowed it, so that what flow says of the parameter holds for the part. A value the entry part computed has no origin. A function that is derived itself hands on its own origins
+# FORM: Selected
+# RUN: pass SplitFunctionsAtCalls
+# STATISTIC: SplitFunctionsAtCallsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="parametersLiveInPart" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK: name="parametersLiveInPart" module=m0 role=Continuation{{*}}derivation={source=f0 parameterMap=[{original=0}, {original=1}]} creator=Continuation{origin=f0}
+
+function f1 name="oneParameterLiveInPart" parameters=[{type=anything}, {type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: function):
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v4 = Call v2
+    Return v4
+}
+# CHECK: name="oneParameterLiveInPart" module=m0 role=Continuation{{*}}derivation={source=f1 parameterMap=[{original=2}]} creator=Continuation{origin=f1}
+
+function f2 name="computedValueAndCastLiveInPart" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    v3 = TypeTest v0 testedType=string
+    v4 = Upcast v1 castType=anything
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v5 = Call v4, -, v3
+    Return v5
+}
+# CHECK: name="computedValueAndCastLiveInPart" module=m0 role=Continuation{{*}}parameters=[{type=boolean}, {type=function}]{{*}}derivation={source=f2 parameterMap=[{}, {original=1}]} creator=Continuation{origin=f2}
+
+function f3 name="narrowedOnEdgeIntoPart" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v0
+  b2(v3):
+    v4 = Call v1, -, v3
+    Return v4
+}
+# CHECK: name="narrowedOnEdgeIntoPart" module=m0 role=Continuation{{*}}derivation={source=f3 parameterMap=[{original=1}, {original=0}]} creator=Continuation{origin=f3}
+
+function f4 name="derivedItself" parameters=[{type=anything}, {type=function}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{}, {original=2}]} {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK: name="derivedItself" module=m0 role=Continuation{{*}}derivation={source=f1 parameterMap=[{}, {original=2}]} creator=Continuation{origin=f4}

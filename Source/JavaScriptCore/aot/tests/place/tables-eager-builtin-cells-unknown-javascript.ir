@@ -1,0 +1,29 @@
+# Unknown JavaScript may replace what the language defines and the table leaves open: Date.now and the binding Date. The program names both, so their cells are filled at start-up, before any other code runs, and neither is made immutable. Array.prototype.push is always locked, and no code reads the cell of Date.parse, which only flow's list of uses names
+# OPTIONS: admit=RuntimeCode
+# RUN: tables constants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Builtin builtin=Date
+    v3 = PropGet v2 key="now"
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Call v3, v2, v4, v5 calleeKey="now"
+    v7 = Builtin builtin=ArrayPrototypePush
+    v8 = Call v1, -, v6, v7
+    Return
+}
+
+# CHECK: builtinCell [[date]] cell=Date
+# CHECK: builtinCell [[now]] cell=DateNow
+# CHECK: builtinCell [[parse]] cell=DateParse
+# CHECK: builtinCell [[push]] cell=ArrayPrototypePush
+# CHECK-NOT: eagerBuiltinCell
+# CHECK: eagerBuiltinCell [[date]] cell=Date
+# CHECK-NEXT: eagerBuiltinCell [[now]] cell=DateNow
+# CHECK-NOT: eagerBuiltinCell
+# CHECK-NOT: constantBuiltinMember member=Date

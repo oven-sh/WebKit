@@ -1,0 +1,33 @@
+# A test for a name observes the presence of what it finds and reads nothing: no read event, no sink, no property on the global object. A read of the same field of another object is a read of that object alone
+# RUN: flow-solve locations
+# CHECK: DeclaredPart(L0#[[tested]], 0) events=[InitializedAtAllocation, PresenceObserved
+# CHECK-NEXT: DeclaredPart(L0#[[read]], 0) events=[InitializedAtAllocation, ReadAsValue
+# RUN(APART): flow-solve locations
+# APART-NOT: ReadAs{{*}}PresenceObserved
+# RUN(GLOBAL): flow-solve nodes locations
+# GLOBAL-NOT: Property(GlobalThis
+# RUN(SINKS): flow-solve sinks
+# SINKS: nativeCode {}
+# SINKS-NEXT: unknownJavaScript {}
+# RUN(USES): flow-links uses
+# USES: use Fetch [Tested]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropHas v2 key="x"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropHas v4 key="fetch"
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="x"
+    Return
+  b1() role=CatchHandler:
+    v9 = CatchValue
+    Return
+}

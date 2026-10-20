@@ -1,0 +1,27 @@
+# A build that logs type errors logs what the throwing build throws on: no object under an assertion, and none in the position behind it
+# FORM: AsRead
+# OPTIONS: type-errors=log
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Variable
+variable g0 name="kept" module=m0 declared={type=undefined|null|number predicted=number site=w0} initialization=Undefined
+variable g1 name="untouched" module=m0 declared={type=undefined|null|number predicted=number site=w2} initialization=Undefined
+# CHECK: variable g0 name="kept" module=m0 declared={type=anything written=undefined|null|number|object predicted=number site=w0 flags=[AdmitsObjects]}
+# CHECK: variable g1 name="untouched" module=m0 declared={type=anything written=undefined|null|number predicted=number site=w2}
+function f0 name="stores" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number predicted=number site=w0}
+    PutModuleVariable v2 variable=g0
+    v4 = ClaimDeclared v0 declared={type=undefined|null|number predicted=number site=w2}
+    PutModuleVariable v4 variable=g1
+    Return
+}
+# CHECK-LABEL: function f0 name="stores"
+# CHECK: ReportMismatch v0 expectedType=undefined|null|number|object site=w1
+# CHECK-NOT: site=w0
+# CHECK: ReportMismatch v0 expectedType=undefined|null|number site=w2

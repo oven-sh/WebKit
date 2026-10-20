@@ -1,0 +1,68 @@
+# A store by name of an instance of the built-in class a field is read as is inside the type of the field, and a store of another object is outside
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, LoseShape]
+# CHECK: class C1 layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, LoseShape]
+# CHECK: class C2 layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK: class C3 layout=L3 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK: class C4 layout=L4 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK: field L0.0 "held" {{*}}cause=StoreOfOtherType witness={function=f1 value=v2}}{{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: field L1.0 "held" {{*}}cause=StoreOfOtherType witness={function=f2 value=v2}}{{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: field L2.0 "held" type=null|Array<{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L3.0 "held" type=null|WeakRef{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L4.0 "held" type=null|Map<{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="MapGetsFunction" fields=[{key="held" declared={type=undefined|null|Map} flags=[IsRequired]}]
+layout L1 name="IteratorGetsPlainObject" fields=[{key="held" declared={type=undefined|null|Iterator} flags=[IsRequired]}]
+layout L2 name="ArrayGetsArray" fields=[{key="held" declared={type=undefined|null|Array<anything>} flags=[IsRequired]}]
+layout L3 name="WeakRefGetsWeakRef" fields=[{key="held" declared={type=undefined|null|WeakRef} flags=[IsRequired]}]
+layout L4 name="MapGetsMap" fields=[{key="held" declared={type=undefined|null|Map} flags=[IsRequired]}]
+layout L5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    v6 = Builtin builtin=ArrayPrototypePush
+    v7 = NewObject layout=L5 fields=[]
+    v8 = NewArray contents=anything holes=[]
+    v9 = Builtin builtin=WeakRef
+    v10 = Construct v9, -, v7
+    v11 = Builtin builtin=Map
+    v12 = Construct v11
+    v13 = CallDirect v1, v6 function=f1
+    v14 = CallDirect v2, v7 function=f2
+    v15 = CallDirect v3, v8 function=f3
+    v16 = CallDirect v4, v10 function=f4
+    v17 = CallDirect v5, v12 function=f5
+    Return
+}
+function f1 name="storeFunction" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f2 name="storePlainObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f3 name="storeArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f4 name="storeWeakRef" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}
+function f5 name="storeMap" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="held" mode=Strict
+    Return
+}

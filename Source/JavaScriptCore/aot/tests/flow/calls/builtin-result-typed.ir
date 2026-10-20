@@ -1,0 +1,28 @@
+# JSON.parse with an expected result answers objects of the layouts of that type, which are marked as reached by a typed parse, and never the unknown object
+# RUN: flow-solve nodes objects
+# RUN(TRACKED): flow-solve nodes
+# CHECK: DeclaredPart(L0#[[made]], 0) = {1}
+# CHECK: f0, v4) = {{*}}L0#[[parsed]]}
+# CHECK: f0, v7) = {L0#[[made]]}
+# CHECK: DeclaredPart(L0#[[parsed]], 0) = {number}
+# CHECK: L0#[[made]] mutations=[] uses=[] events=
+# CHECK: L0#[[parsed]] mutations={{*}} uses=[ReachesTypedParse] events=
+# TRACKED-NOT: f0, v4) = {{*}}unknown
+# TRACKED-NOT: f0, v5) = {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0]
+layout L0 name="Row" fields=[{key="id" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = ToString v1
+    v3 = Builtin builtin=JSONParse
+    v4 = Call v3, -, v2 expectedResult=x0
+    v5 = Call v3, -, v2
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    Return
+}

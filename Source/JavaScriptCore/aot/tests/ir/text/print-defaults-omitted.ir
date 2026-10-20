@@ -1,0 +1,47 @@
+# A field may be written with its zero value, and the printer leaves it out
+# RUN: round-trip
+# CHECK: typesite w0 module=m0
+# CHECK-NEXT: layout L0
+# CHECK-NEXT: variable g0 module=m0 declared={type=anything}
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: evalscope e0
+# CHECK-NEXT: function f0 name="d" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] capabilities=
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: PropSet v0, v0 key="p"
+# CHECK-NEXT: v2 = Boolean
+# CHECK-NEXT: v3 = Integer
+# CHECK-NEXT: v4 = Double
+# CHECK-NEXT: v5 = NewArray contents=anything
+# CHECK-NEXT: v6 = Call v0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(NONE): print
+# NONE-NOT: =[]
+# NONE-NOT: =0
+# NONE-NOT: =false
+# NONE-NOT: kind=
+# NONE-NOT: role=
+# NONE-NOT: text=
+# NONE-NOT: initialization=
+# NONE-NOT: mode=
+# NONE-NOT: frequency=
+# NONE-NOT: flow=
+
+typesite w0 module=m0 position=0 kind=Unknown
+layout L0 kind=Record position=0 fields=[] staticFields=[] supertypes=[] computedKeyCount=0 flags=[] flow={allocation=Unknown members=[] addedKeysAreComplete=false} classFlow={}
+variable g0 module=m0 declared={type=anything flags=[]} initialization=Uninitialized flags=[] flow={writers=Unknown witness={location={position=0}}}
+module m0 path="main.js" displayPath="main.js" kind=SourceText flags=[] exportRule=None requireResult=Namespace externalKind=UncompiledCode requests=[] exports=[] positions={lineStarts=[]} functionText=""
+evalscope e0 mode=Strict flags=[] bindings=[]
+function f0 name="d" module=m0 position=0 text={start=0 end=0} kind=Plain role=Source flags=[] length=0 captures=[] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] derivation={} creator=None inlineFrames=[] {
+  b0(v0: anything) role=Ordinary frequency=Normal:
+    PropSet v0, v0 key="p" mode=Strict
+    v2 = Boolean boolean=false
+    v3 = Integer integer=0
+    v4 = Double number=0
+    v5 = NewArray contents=anything holes=[]
+    v6 = Call v0, - []
+    Return
+}
+entry module=m0 hostReads=[]

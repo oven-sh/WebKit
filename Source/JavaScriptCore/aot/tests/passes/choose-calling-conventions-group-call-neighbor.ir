@@ -1,0 +1,64 @@
+# A call that passes a string boxes that position in its own group and changes nothing in another group
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 3
+# CHECK-COUNT-5: Direct ({{*}}:Cell, {{*}}:JSValue, {{*}}:Double) -> ({{*}}:Double) closures=
+# CHECK-COUNT-5: Direct ({{*}}:Cell, {{*}}:Double, {{*}}:Double) -> ({{*}}:Double) closures=
+# CHECK-NOT: closures=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesNumbers" parameters=[{type=f3|f4|f5|f6|f7}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7, v1: number, v2: number):
+    v3 = Call v0, -, v1, v2 accessSite=0 callees=[f3, f4, f5, f6, f7]
+    Return v3
+}
+function f1 name="passesString" parameters=[{type=f3|f4|f5|f6|f7}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7, v1: string, v2: number):
+    v3 = Call v0, -, v1, v2 accessSite=1 callees=[f3, f4, f5, f6, f7]
+    Return v3
+}
+function f2 name="passesNumbersToOthers" parameters=[{type=f8|f9|f10|f11|f12}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: f8|f9|f10|f11|f12, v1: number, v2: number):
+    v3 = Call v0, -, v1, v2 accessSite=2 callees=[f8, f9, f10, f11, f12]
+    Return v3
+}
+function f3 name="first" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f4 name="second" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f5 name="third" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f6 name="fourth" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f7 name="fifth" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f8 name="sixth" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Return v1
+}
+function f9 name="seventh" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Return v1
+}
+function f10 name="eighth" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Return v1
+}
+function f11 name="ninth" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Return v1
+}
+function f12 name="tenth" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Return v1
+}

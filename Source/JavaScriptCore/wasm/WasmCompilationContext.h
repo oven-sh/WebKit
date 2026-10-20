@@ -29,6 +29,7 @@
 
 #if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
 
+#include "AOTWasmInterface.h"
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "CCallHelpers.h"
@@ -61,11 +62,6 @@ class CalleeGroup;
 class MemoryInformation;
 class OptimizingJITCallee;
 class TierUpCount;
-
-struct CodeForImage {
-    Vector<uint32_t> callsToThrowStub;
-    String declineReason;
-};
 
 struct CompilationContext {
     std::unique_ptr<CCallHelpers> jsToWasmJIT;

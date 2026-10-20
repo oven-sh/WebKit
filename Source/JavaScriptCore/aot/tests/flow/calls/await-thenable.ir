@@ -1,0 +1,37 @@
+# Awaiting an object with a method named then calls the method with functions of the run time, and the result is unknown
+# RUN: flow-links calls
+# RUN(OTHERS): flow-links calls
+# RUN(NODES): flow-solve instances nodes
+# CHECK: f1 v4 -> [[then]] f2 Protocol Later cycle
+# OTHERS-NOT: f3
+# NODES: [[then]] f2 Generic
+# NODES: , f1, v4) = {{*}}unknown
+# NODES: , f2, parameter 0) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Later" fields=[{key="then" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Await v3
+    Return
+}
+function f2 name="then" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    Return
+}
+function f3 name="other" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

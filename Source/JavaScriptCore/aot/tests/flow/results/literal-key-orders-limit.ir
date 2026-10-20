@@ -1,0 +1,38 @@
+# A literal lists no more orders than a walk over own keys tests, the ones that copy an object first
+# RUN: flow
+# OPTIONS: limit=MaxExpandedKeyOrders:1
+# LOSS: MaxExpandedKeyOrders x1 f1
+# CHECK: layout L1 flow={{*}} constructorOrders=[{fields=[1, 0]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="a" declared={type=anything}}]
+layout L1 name="CopyOfObjectOrNothing" fields=[{key="z" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = CallDirect v2, v4 function=f1
+    Return
+}
+function f1 name="copyOfObjectOrNothing" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    v3 = ToBoolean v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4):
+    v5 = NewObject layout=L1 fields=[]
+    CopyDataProperties v5, v4
+    v7 = Integer integer=7
+    PropDefine v5, v7 key="z"
+    v9 = FinishObject v5
+    Return v9
+}

@@ -1,0 +1,22 @@
+# A store that may fill or empty the slot between a test and its branch ends the proof that the branch passes, and the test would find something else in front of the branch. It stays where it is, and placement refuses a test over two places
+# FORM: Prepared
+# OPTIONS: references=narrow
+# RUN: pass Select NumberAndEncode
+# DIAGNOSTIC: SlotAccessNotPlaced
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}] flow={members=[L0]}
+layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
+
+function f0 name="slot-stored-between-test-and-branch" parameters=[{type=L0|L1}, {type=L0}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: L0):
+    v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    v3 = Undefined
+    PutSlotOrAdd v1, -, v3 key="value" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    Return
+  b2():
+    Return
+}
+# CHECK: outcome

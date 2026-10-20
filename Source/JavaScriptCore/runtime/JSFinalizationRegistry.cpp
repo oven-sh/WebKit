@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSFinalizationRegistry.h"
 
+#include "AOTRemovableFeature.h"
 #include "AbstractSlotVisitor.h"
 #include "DeferredWorkTimer.h"
 #include "GlobalObjectMethodTable.h"
@@ -60,16 +61,12 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
     // Init the DOM wrapper for our document now: reconciliation runs during the GC flip, where no
     // JS objects can be allocated. This only works because we no longer weakly hold DOM wrappers.
     globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
-
-    if (vm.useImmutableIntrinsics) {
-        auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
-        vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket&) { });
-    }
 }
 
 template<typename Visitor>
-void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+ALWAYS_INLINE void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
+    JSC_REMOVABLE_DEFINITION(WeakReferences, static_cast<void (*)(JSCell*, Visitor&)>(&JSFinalizationRegistry::visitChildren));
     Base::visitChildren(cell, visitor);
 
     auto* thisObject = uncheckedDowncast<JSFinalizationRegistry>(cell);
@@ -97,8 +94,9 @@ void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSFinalizationRegistry);
 
-void JSFinalizationRegistry::destroy(JSCell* table)
+NEVER_INLINE void JSFinalizationRegistry::destroy(JSCell* table)
 {
+    JSC_REMOVABLE_DEFINITION(WeakReferences, &JSFinalizationRegistry::destroy);
     static_cast<JSFinalizationRegistry*>(table)->~JSFinalizationRegistry();
 }
 

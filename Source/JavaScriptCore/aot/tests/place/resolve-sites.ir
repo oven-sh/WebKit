@@ -1,0 +1,59 @@
+# An allocation number belongs to layout and listed fields, a field access to key, receivers and direction, and the allocation of a closure to the number of its captures
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="FilledLate" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = PropGet v4 key="x"
+    v12 = GetModuleVariable variable=g0
+    v13 = PropGet v12 key="x"
+    v14 = PropGet v10 key="x"
+    PropSet v10, v2 key="x"
+    v16 = NewObject layout=L2 fields=[]
+    v17 = FinishObject v16
+    PropSet v17, v2 key="x"
+    PropSet v17, v2 key="y"
+    v20 = ForInOpen v17
+    v21 = NewClosure function=f1
+    v22 = NewClosure v2, v2 function=f2
+    v23 = PropGet v0 key="sink" [isFreeName]
+    v24 = Call v23, -, v21, v22
+    Return
+}
+function f1 name="none" flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="two" flags=[HasNewTarget] captures=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v3: L0 = NewObject {{*}} allocation=[[a]]
+# CHECK-NOT: layout=L1 {{*}} allocation=[[a]]
+# CHECK: v9: L0 = NewObject {{*}} allocation=[[a]]
+# CHECK: = GetSlot v4 key="x" receivers=[L0] {{*}} fieldAccess=[[read]]
+# CHECK-NOT: receivers=[L0, L1] {{*}} fieldAccess=[[read]]
+# CHECK: = GetSlot v10 key="x" receivers=[L0] {{*}} fieldAccess=[[read]]
+# CHECK-NOT: PutSlot v10, -, v2 key="x" receivers=[L0] {{*}} fieldAccess=[[read]]
+# CHECK: PutSlots v17, -, v2, v2 placedKeys=[{key="x" fieldAccess=[[storeX]] {{*}}}, {key="y" fieldAccess=[[storeY]] {{*}}}] receivers=[L2]
+# CHECK: = NewClosure function=f1 {{*}} allocation=0
+# CHECK: = NewClosure v2, v2 function=f2 {{*}} allocation=1

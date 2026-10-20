@@ -1,0 +1,72 @@
+# A merge block with more values than the limit is not skipped
+# FORM: Prepared
+# OPTIONS: limit=MaxThreadedBlockValues:2
+# RUN: pass ThreadJumps
+# LOSS: MaxThreadedBlockValues x1 f0
+# STATISTIC: ThreadJumpsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="valuesExceedLimit" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    v5 = ToBoolean v4
+    v6 = LogicalNot v5
+    v7 = LogicalNot v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="valuesExceedLimit"
+# CHECK: b1():
+# CHECK: Jump -> next b3(v3)
+
+function f1 name="valuesReachLimit" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    v5 = ToBoolean v4
+    v6 = LogicalNot v5
+    Branch v6 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="valuesReachLimit"
+# CHECK: b1():
+# CHECK: Jump -> next b4()
+
+function f2 name="callWithEffectsIsNoLoss" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Undefined
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4):
+    v5 = Call v1
+    v6 = ToBoolean v4
+    v7 = LogicalNot v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="callWithEffectsIsNoLoss"
+# CHECK: b1():
+# CHECK: Jump -> next b3(v3)

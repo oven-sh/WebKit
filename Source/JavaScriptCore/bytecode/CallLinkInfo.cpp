@@ -26,9 +26,6 @@
 #include "config.h"
 #include "CallLinkInfo.h"
 
-#include "AOTRuntime.h"
-#include "StackVisitor.h"
-
 #include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallFrameShuffleData.h"
@@ -345,19 +342,6 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
     auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
     if (!codeBlock)
         return { };
-#if ENABLE(AOT)
-    if (codeBlock->jitType() == JITType::AOTJIT) {
-        VM& vm = codeBlock->vm();
-        BytecodeIndex bytecodeIndex(0);
-        StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
-            if (!visitor->aotFunction() || visitor->aotFunction().codeBlockIfExists() != codeBlock)
-                return IterationStatus::Continue;
-            bytecodeIndex = visitor->bytecodeIndex();
-            return IterationStatus::Done;
-        });
-        return std::tuple { codeBlock, bytecodeIndex };
-    }
-#endif
     CodeOrigin codeOrigin = this->codeOrigin();
     if (auto* baselineCodeBlock = codeOrigin.codeOriginOwner())
         return std::tuple { baselineCodeBlock, codeOrigin.bytecodeIndex() };
@@ -403,10 +387,8 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
     auto [codeBlock, bytecodeIndex] = retrieveCaller(owner);
     if (codeBlock)
         return codeBlock->globalObject();
-#if ENABLE(AOT)
     if (auto* globalObject = dynamicDowncast<JSGlobalObject>(owner))
         return globalObject;
-#endif
 #if ENABLE(WEBASSEMBLY)
     auto* module = dynamicDowncast<JSWebAssemblyModule>(owner);
     if (module)

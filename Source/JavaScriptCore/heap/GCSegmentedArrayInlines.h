@@ -194,6 +194,29 @@ inline void GCSegmentedArray<T>::append(T value)
 }
 
 template <typename T>
+ALWAYS_INLINE void GCSegmentedArray<T>::Cursor::load()
+{
+    first = m_array.m_segments.head()->data();
+    next = first + m_array.top();
+    end = first + s_segmentCapacity;
+#if ASSERT_ENABLED
+    // No segment has a top above its capacity, so until store() every call that pushes, pops, expands or refills asserts.
+    m_array.m_segments.head()->m_top = s_segmentCapacity + 1;
+#endif
+}
+
+template <typename T>
+ALWAYS_INLINE void GCSegmentedArray<T>::Cursor::store()
+{
+    ASSERT(first == m_array.m_segments.head()->data());
+    ASSERT(m_array.m_segments.head()->m_top > s_segmentCapacity || m_array.m_top == static_cast<size_t>(next - first));
+    m_array.m_top = next - first;
+#if ASSERT_ENABLED
+    m_array.m_segments.head()->m_top = next - first;
+#endif
+}
+
+template <typename T>
 inline bool GCSegmentedArray<T>::canRemoveLast()
 {
     return !!m_top;

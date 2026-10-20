@@ -1,0 +1,99 @@
+# Every read of a string range generates code: with bounds, with one bound, over the whole string, on a flat string, on a flat string that exists only if a test found a string, and as the condition of a branch
+# FORM: Selected
+# RUN: generate-code
+# CHECK: f0: size=
+# CHECK: f1: size=
+# CHECK: f2: size=
+# CHECK: f3: size=
+# CHECK: f4: size=
+# CHECK: f5: size=
+# CHECK: f6: size=
+# CHECK: f7: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bounded" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: number, v3: number):
+    v4 = StringRange v1, v2, v3 method=Slice
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = StringRangeCodeUnitOrNaN v0, v5, v6, v2
+    v8 = StringRangeCodePointOrUndefined v0, v5, v6, v2
+    v9 = StringRangeCharacterOrEmpty v0, v5, v6, v2
+    v10 = StringRangeCharacterOrUndefined v0, v5, v6, v2
+    v11 = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
+    v12 = StringRangeEqualsLiteral v0, v5, v6 literal=""
+    v13 = StringRangeToNumber v0, v5, v6
+    v14 = StringRangeParseInt v0, v5, v6
+    v15 = StringRangeSubstringOrUndefined v0, v5, v6
+    v16 = StringRangeCodeUnitOrMinusOne v0, v5, v6, v2
+    Return
+}
+function f1 name="wholeString" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: number):
+    v2 = StringRangeCodeUnitOrNaN v0, -, -, v1
+    v3 = StringRangeCodePointOrUndefined v0, -, -, v1
+    v4 = StringRangeCharacterOrEmpty v0, -, -, v1
+    v5 = StringRangeCharacterOrUndefined v0, -, -, v1
+    v6 = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+    Return
+}
+function f2 name="oneBound" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int}] results=[{type=undefined}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: int):
+    v3 = StringRangeCodeUnitOrNaN v0, v1, -, v2
+    v4 = StringRangeCodeUnitOrNaN v0, -, v1, v2
+    Return
+}
+function f3 name="condition" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] results=[{type=undefined}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: int[0, 2147483647]):
+    v3 = StringRangeEqualsLiteral v0, v1, v2 literal="ab"
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f4 name="flatBounded" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: int[0, 2147483647], v3: number):
+    v4 = FlattenString v0
+    v5 = StringRangeCodeUnitOrNaN v4, v1, v2, v3
+    v6 = StringRangeCodePointOrUndefined v4, v1, v2, v3
+    v7 = StringRangeCharacterOrEmpty v4, v1, v2, v3
+    v8 = StringRangeCharacterOrUndefined v4, v1, v2, v3
+    v9 = StringRangeEqualsLiteral v4, v1, v2 literal="ab"
+    v10 = StringRangeToNumber v4, v1, v2
+    v11 = StringRangeParseInt v4, v1, v2
+    v12 = StringRangeSubstringOrUndefined v4, v1, v2
+    Return
+}
+function f5 name="flatWholeString" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: string, v1: number):
+    v2 = FlattenString v0
+    v3 = StringRangeCodeUnitOrNaN v2, -, -, v1
+    v4 = StringRangeCodePointOrUndefined v2, -, -, v1
+    v5 = StringRangeCharacterOrEmpty v2, -, -, v1
+    v6 = StringRangeCharacterOrUndefined v2, -, -, v1
+    v7 = StringRangeCodeUnitOrMinusOne v2, -, -, v1
+    Return
+}
+function f6 name="parseIntWithRadix" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: string, v1: int[0, 2147483647], v2: int[0, 2147483647], v3: i32):
+    v4 = Integer integer=16
+    v5 = StringRangeParseInt v0, v1, v2, v4
+    v6 = StringRangeParseInt v0, v1, v2, v3
+    Return
+}
+function f7 name="flatIfString" parameters=[{type=undefined|string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|string, v1: number):
+    v2 = TypeTest v0 testedType=string
+    TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = FlattenString v3
+    Jump -> next b3(v4)
+  b2(v5) frequency=Unlikely:
+    v6 = Unspecified valueType=flatstring
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = RequireObjectCoercible v0
+    v9 = StringRangeCodeUnitOrNaN v7, -, -, v1
+    Return
+}

@@ -222,6 +222,16 @@ public:
     
     void setConstraint(unsigned index, const ValueRep&);
 
+    void freezeConstraints() { m_areConstraintsFrozen = true; }
+    bool areConstraintsFrozen() const { return m_areConstraintsFrozen; }
+
+    void setRunsWithoutFrame(bool runsWithoutFrame) { m_runsWithoutFrame = runsWithoutFrame; }
+    bool runsWithoutFrame() const { return m_runsWithoutFrame; }
+
+    // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
+    void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
+    bool sharesLatePath() const { return m_sharesLatePath; }
+
     class ConstrainedValueCollection {
     public:
 
@@ -301,9 +311,6 @@ protected:
 private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
-#if USE(BUN_JSC_ADDITIONS)
-    friend class ProcedureFingerprint;
-#endif
     friend class StackmapGenerationParams;
     friend class StackmapSpecial;
     
@@ -312,6 +319,9 @@ private:
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
+    bool m_areConstraintsFrozen { false };
+    bool m_runsWithoutFrame { false };
+    bool m_sharesLatePath { false };
 };
 
 } } // namespace JSC::B3

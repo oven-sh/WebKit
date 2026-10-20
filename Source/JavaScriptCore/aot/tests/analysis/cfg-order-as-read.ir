@@ -1,0 +1,82 @@
+# The reverse postorder puts the first target first and a landing block after the code it covers, which is how the front end numbers blocks
+# FORM: AsRead
+# RUN: analyses control-flow
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="branchesLoopTry" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    LoopHint
+    Branch v1 -> taken b5(), notTaken b8()
+  b5() handler=b6():
+    v3 = Call v0
+    Jump -> next b7()
+  b6() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b7()
+  b7():
+    Jump -> next b4()
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3 b4 b5 b6 b7 b8]
+# CHECK-NEXT: unreachable: []
+function f1 name="catchReturns" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = Call v0
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v0
+    Jump -> next b3()
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3 b4]
+# CHECK-NEXT: unreachable: []
+function f2 name="switchCases" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b2()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3 b4]
+# CHECK-NEXT: unreachable: []
+function f3 name="secondTargetHasTheLowerNumber" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b2(), notTaken b1()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b2 b1 b3]
+# CHECK-NEXT: unreachable: []

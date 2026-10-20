@@ -1,0 +1,60 @@
+# The queued work is done in another order for each seed, and the solution is the same: the late prototype and the late method are found, and running every rule again adds nothing
+# OPTIONS: check=FlowFixpoint flow-order-seed=7
+# RUN: flow-solve fixpoint
+# RUN(NODES): flow-solve nodes
+# CHECK: nothing changes
+# NODES: f1, v1) = {undefined|f4}
+# NODES: f1, v2) = {7}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Receiver" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Parent" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Holder" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="receiver" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="parent" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = CallDirect function=f1
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    v8 = PropGet v7 key="run"
+    v9 = Call v8, v7
+    Return
+}
+function f1 name="callsMethod" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0
+    Return v2
+}
+function f2 name="setsPrototype" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Builtin builtin=ObjectSetPrototypeOf
+    v3 = Call v2, -, v0, v1
+    v4 = NewClosure function=f3
+    v5 = NewObject -, v4 layout=L2 fields=[0]
+    v6 = PropGet v5 key="run"
+    v7 = Call v6, v5
+    Return
+}
+function f3 name="storesMethod" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = NewClosure function=f4
+    PropSet v0, v1 key="m"
+    Return
+}
+function f4 name="m" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

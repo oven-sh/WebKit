@@ -1,0 +1,105 @@
+# value instanceof C, with C the one object of a class that is out of the compiler's sight and the value predicted to be an instance.
+# The answer is true under tests: the value has the layout and the prototype object of its class, C finds the ordinary Symbol.hasInstance, and, for a constructor function,
+# nobody has stored to its prototype property. Below another class the link between the prototype objects is tested too.
+# Under the same tests a value of an unrelated class gives false, and of a value that may be either its layout answers. Where nothing is expected of the value, or the chain above what is
+# expected is not known, the operation stays as it is (the walk up the chain under the tests of C alone waits for a cheap GetClassPrototype), as it does for a constructor that is not known
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L1 kind=Instance name="Below" predictedBase=L0 constructor=f1 flags=[HasHeritage] classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L2 kind=Instance name="Function" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="Assigned" constructor=f8 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce hasAssignedPrototype=true}
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Function" flags=[HasThis] thisType={type=anything predicted=L2} results=[{type=undefined}] {
+  b0(v0: anything ~ L2):
+    Return
+}
+function f3 name="instance-of-a-class" parameters=[{type=object predicted=L0}, {type=f0}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="instance-of-a-class"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: true = Boolean boolean=true
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: = IsMemberUnchanged layout=L0 side=Static key=
+# CHECK: = IsPrototypeLinkUnchanged layout=L0 side=Static
+# CHECK: = HasLayoutPrototype v0
+# CHECK-NOT: key="prototype"
+function f4 name="instance-of-a-class-below" parameters=[{type=object predicted=L1}, {type=f0}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="instance-of-a-class-below"
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK: true = Boolean boolean=true
+# CHECK: = IsPrototypeLinkUnchanged layout=L1
+function f5 name="instance-of-a-constructor-function" parameters=[{type=object predicted=L2}, {type=f2}] results=[{type=anything}] {
+  b0(v0: object ~ L2, v1: f2):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="instance-of-a-constructor-function"
+# CHECK: = ShapeTest v0 layouts=[L2]
+# CHECK: true = Boolean boolean=true
+# CHECK: = IsMemberUnchanged layout=L2 side=Static key="prototype"
+function f6 name="unrelated-class" parameters=[{type=object predicted=L2}, {type=f0}] results=[{type=anything}] {
+  b0(v0: object ~ L2, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="unrelated-class"
+# CHECK: = ShapeTest v0 layouts=[L2]
+# CHECK: false = Boolean
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: = IsPrototypeLinkUnchanged layout=L2
+# CHECK: = HasLayoutPrototype v0
+function f7 name="unknown-constructor" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="unknown-constructor"
+# CHECK-NEXT: b0(v0: object ~ L0, v1: anything):
+# CHECK-NEXT: = InstanceOf v0, v1
+function f8 name="Assigned" flags=[HasThis] thisType={type=anything predicted=L3} results=[{type=undefined}] {
+  b0(v0: anything ~ L3):
+    Return
+}
+function f9 name="either" parameters=[{type=object predicted=L1|L2}, {type=f0}] results=[{type=anything}] {
+  b0(v0: object ~ L1|L2, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="either"
+# CHECK: = ShapeTest v0 layouts=[L1, L2]
+# CHECK: v2: boolean = ShapeTest v0 layouts=[L1]
+# CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+function f10 name="nothing-is-expected" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="nothing-is-expected"
+# CHECK-NEXT: b0(v0: anything, v1: f0):
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK-NOT: HasInPrototypeChain
+function f11 name="prototype-object-may-be-shared" parameters=[{type=object predicted=L3}, {type=f0}] results=[{type=anything}] {
+  b0(v0: object ~ L3, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="prototype-object-may-be-shared"
+# CHECK-NOT: ShapeTest
+# CHECK: = InstanceOf v0, v1
+# CHECK-NOT: ShapeTest

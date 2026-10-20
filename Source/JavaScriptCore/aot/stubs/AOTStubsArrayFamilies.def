@@ -1,0 +1,29 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// AOTStubsArrayLiterals.cpp
+v(ArrayLiteral, CalledByCode, (), CountAxis, 0, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteral)
+v(ArrayLiteralWithDouble, CalledByCode, (), CountAxis, 1, maxArrayElementsInRegisters, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDouble)
+v(ArrayLiteralWithDoubleSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), ArrayLiteralWithDoubleSlow)
+v(NewEmptyArray, CalledByCode, (ContiguousCapacity1, ContiguousCapacity3, DoubleCapacity1, DoubleCapacity3, DoubleDefaultCapacity, Int32DefaultCapacity), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArray)
+
+// AOTStubsArrayHoles.cpp
+v(NewEmptyArrayWithCapacity, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArrayWithCapacity)
+v(NewArrayWithLength, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayWithLength)
+v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewEmptyArrayAtSite)
+
+// AOTStubsArraySlice.cpp
+v(ArraySlice, CalledByCode, (Bounded, Whole), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArraySlice)
+
+// AOTStubsArrayPush.cpp
+v(ArrayPush, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)
+v(ArrayPushOfKnownKind, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPush)
+v(ArrayPushDouble, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ArrayPushDouble)
+
+// AOTStubsArrayStores.cpp
+v(ArrayPutAtIndexFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayPutAtIndexFrontEnd)
+v(ArrayPutNumberAtIndexFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ArrayPutNumberAtIndexFrontEnd)
+AOT_STUB_FRONT_END(ArrayPutAtIndex, ArrayPutAtIndexFrontEnd)
+AOT_STUB_FRONT_END(ArrayPutNumberAtIndex, ArrayPutNumberAtIndexFrontEnd)

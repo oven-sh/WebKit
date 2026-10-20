@@ -28,7 +28,6 @@
 #include "CallFrame.h"
 #include "HeapCellInlines.h"
 #include "JSCalleeInlines.h"
-#include "NativeCallee.h"
 #include "RegisterInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

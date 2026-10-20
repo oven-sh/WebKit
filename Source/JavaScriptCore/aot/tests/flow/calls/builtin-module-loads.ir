@@ -1,0 +1,52 @@
+# Using an entry that loads a runtime module evaluates the module. Native code requires it and reads the names of its line as properties of what that answers: what it reads reaches native code.
+# The object that the require answers and what it holds under other names stay where they are
+# RUN: flow-links modules uses
+# RUN(SINKS): flow-solve nodes sinks
+# RUN(OTHERS): flow-solve nodes sinks
+# CHECK: evaluated m0 m1
+# CHECK-NOT: m2
+# CHECK: use BunSQL [Read] f0:v2
+# SINKS: Variable(g0) = {{*}}L0#[[named]]}
+# SINKS: Variable(g1) = {{*}}L1#[[other]]}
+# SINKS-LABEL: nativeCode {
+# SINKS: L0#[[named]]
+# SINKS-LABEL: unknownJavaScript {
+# SINKS-NOT: L0#
+# OTHERS-LABEL: nativeCode {
+# OTHERS-NOT: L1#
+# OTHERS-NOT: L2#
+# OTHERS-LABEL: unknownJavaScript {
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:sql" displayPath="bun:sql" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSql body=f1 syntheticExports=[{name="SQL" variable=g0}, {name="other" variable=g1}]
+module m2 path="internal:debugger" displayPath="internal:debugger" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=InternalDebugger body=f2
+entry module=m0
+layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Exports" fields=[{key="SQL" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="SQL" module=m1 declared={type=anything}
+variable g1 name="other" module=m1 declared={type=anything}
+variable g2 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="SQL"
+    PutModuleVariable v2 variable=g2
+    Return
+}
+function f1 name="sql" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2, v4 layout=L2 fields=[0, 1]
+    v6 = FinishObject v5
+    Return v6
+}
+function f2 name="debugger" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

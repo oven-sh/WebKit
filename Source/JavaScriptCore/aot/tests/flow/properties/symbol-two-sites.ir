@@ -1,0 +1,53 @@
+# Two calls that create symbols give two keys: what is stored under one is not read under the other. All symbols that one call in a loop creates share one key, which is marked as created in a cycle
+# RUN: flow-walk symbols
+# CHECK: f0@i{{*}} v6 Set {symbol@m0:10}
+# CHECK: f0@i{{*}} v7 Get {symbol@m0:10}
+# CHECK-NEXT: L0#[[record]]: Value own Proven L0#[[record]] symbol@m0:10
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v8 Get {symbol@m0:20}
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v13 Set {symbol@m0:30}
+# RUN(FIRST): flow-walk symbols
+# FIRST: symbol@m0:10 f0 v1
+# RUN(SECOND): flow-walk symbols
+# SECOND: symbol@m0:20 f0 v2
+# RUN(LOOPED): flow-walk symbols
+# LOOPED: symbol@m0:30 f0 v12 cycle
+# LOOPED-NOT: symbol@m0:30
+# RUN(ONCE): flow-walk symbols
+# ONCE-NOT: f0 v1 cycle
+# ONCE-NOT: f0 v2 cycle
+# RUN(NODES): flow-solve nodes
+# NODES: Local(i{{*}}, f0, v7) = {undefined|"first"}
+# NODES-NEXT: Local(i{{*}}, f0, v8) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b3():
+    v0 = Builtin builtin=Symbol
+    v1 = Call v0 @10
+    v2 = Call v0 @20
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = String string="first"
+    ElemSet v4, v1, v5 mode=Strict
+    v7 = ElemGet v4, v1
+    v8 = ElemGet v4, v2
+    v9 = Builtin builtin=MathRandom
+    v10 = String string="looped"
+    Jump -> next b1()
+  b1() handler=b3():
+    LoopHint
+    v12 = Call v0 @30
+    ElemSet v4, v12, v10 mode=Strict
+    v14 = Call v9
+    v15 = ToBoolean v14
+    Branch v15 -> taken b1(), notTaken b2()
+  b2() handler=b3():
+    Return
+  b3() role=CatchHandler:
+    v16 = CatchValue
+    Return
+}

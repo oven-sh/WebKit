@@ -1,0 +1,144 @@
+# A value of a duplicated region that defines a variable of the caller is repaired with its copy and the caller's other definitions as one variable
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b1,b2 redirect=b0.1 variable=v5,v3
+# RUN(OUTSIDE): duplicate function=f0 region=b1,b2 redirect=b0.1 variable=v3,v5
+# RUN(PLAIN): duplicate function=f0 region=b1,b2 redirect=b0.1
+# RUN(LOOP): duplicate function=f1 region=b1,b2,b3 redirect=b0.1 variable=v7,v4
+# RUN(ARMS): duplicate function=f2 region=b1,b2,b3,b4 redirect=b0.1 variable=v5,v6,v4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="usedBeforeDefinitionInRegion" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number, v2: number):
+    v3 = Add v1, v2
+    Branch v0 -> taken b1(), notTaken b1()
+  b1():
+    v4 = Negate v3
+    v5 = Sub v1, v2
+    Jump -> next b2()
+  b2():
+    v6 = Mul v3, v3
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v4
+    Return v7
+}
+# CHECK: check: CanClone
+# CHECK: function f0
+# CHECK: v3: number = Add v1, v2
+# CHECK: Branch v0 -> taken b1(), notTaken [[C1]]()
+# CHECK: b1():
+# CHECK: v4: number = Negate v3
+# CHECK: v5: number = Sub v1, v2
+# CHECK: b2():
+# CHECK: v6: number = Mul v5, v5
+# CHECK: Jump -> next b3(v5, v4)
+# CHECK: b3([[P5]]: number, [[P4]]: number):
+# CHECK: v7: number = Add [[P5]], [[P4]]
+# CHECK: [[C1]]():
+# CHECK: [[X4]]: number = Negate v3
+# CHECK: [[X5]]: number = Sub v1, v2
+# CHECK: Jump -> next [[C2]]()
+# CHECK: [[C2]]():
+# CHECK: number = Mul [[X5]], [[X5]]
+# CHECK: Jump -> next b3([[X5]], [[X4]])
+
+# OUTSIDE: check: CanClone
+# OUTSIDE: v4: number = Negate v3
+# OUTSIDE: v6: number = Mul v5, v5
+# OUTSIDE: Jump -> next b3(v5, v4)
+# OUTSIDE: b3([[P5]]: number, [[P4]]: number):
+# OUTSIDE: v7: number = Add [[P5]], [[P4]]
+# OUTSIDE: [[X4]]: number = Negate v3
+# OUTSIDE: [[X5]]: number = Sub v1, v2
+# OUTSIDE: number = Mul [[X5]], [[X5]]
+# OUTSIDE: Jump -> next b3([[X5]], [[X4]])
+
+# PLAIN: check: CanClone
+# PLAIN: v4: number = Negate v3
+# PLAIN: v6: number = Mul v3, v3
+# PLAIN: Jump -> next b3(v4)
+# PLAIN: b3([[P4]]: number):
+# PLAIN: v7: number = Add v3, [[P4]]
+# PLAIN: [[X4]]: number = Negate v3
+# PLAIN: number = Mul v3, v3
+# PLAIN: Jump -> next b3([[X4]])
+
+function f1 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number, v3: number):
+    v4 = Add v2, v3
+    Branch v0 -> taken b1(), notTaken b1()
+  b1():
+    LoopHint
+    v6 = Negate v4
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Sub v2, v3
+    Jump -> next b3()
+  b3():
+    v8 = Mul v4, v4
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Return v2
+}
+# LOOP: check: CanClone
+# LOOP: function f1
+# LOOP: v4: number = Add v2, v3
+# LOOP: Branch v0 -> taken b1(v4), notTaken [[C1]](v4)
+# LOOP: b1([[H]]: number):
+# LOOP: v6: number = Negate [[H]]
+# LOOP: Branch v1 -> taken b2(), notTaken b3([[H]])
+# LOOP: b2():
+# LOOP: v7: number = Sub v2, v3
+# LOOP: Jump -> next b3(v7)
+# LOOP: b3([[J]]: number):
+# LOOP: v8: number = Mul [[J]], [[J]]
+# LOOP: Branch v0 -> taken b1([[J]]), notTaken b4()
+# LOOP: [[C1]]([[CH]]: number):
+# LOOP: number = Negate [[CH]]
+# LOOP: Branch v1 -> taken [[C2]](), notTaken [[C3]]([[CH]])
+# LOOP: [[C2]]():
+# LOOP: [[X7]]: number = Sub v2, v3
+# LOOP: Jump -> next [[C3]]([[X7]])
+# LOOP: [[C3]]([[CJ]]: number):
+# LOOP: number = Mul [[CJ]], [[CJ]]
+# LOOP: Branch v0 -> taken [[C1]]([[CJ]]), notTaken b4()
+
+function f2 name="definedInBothArms" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number, v3: number):
+    v4 = Add v2, v3
+    Branch v0 -> taken b1(), notTaken b1()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Sub v2, v3
+    Jump -> next b4()
+  b3():
+    v6 = Mul v2, v3
+    Jump -> next b4()
+  b4():
+    v7 = Negate v4
+    Jump -> next b5()
+  b5():
+    Return v7
+}
+# ARMS: check: CanClone
+# ARMS: function f2
+# ARMS: Branch v0 -> taken b1(), notTaken [[C1]]()
+# ARMS: b2():
+# ARMS: v5: number = Sub v2, v3
+# ARMS: Jump -> next b4(v5)
+# ARMS: b3():
+# ARMS: v6: number = Mul v2, v3
+# ARMS: Jump -> next b4(v6)
+# ARMS: b4([[J]]: number):
+# ARMS: v7: number = Negate [[J]]
+# ARMS: Jump -> next b5(v7)
+# ARMS: b5([[R]]: number):
+# ARMS: Return [[R]]
+# ARMS: [[X5]]: number = Sub v2, v3
+# ARMS: Jump -> next [[C4]]([[X5]])
+# ARMS: [[X6]]: number = Mul v2, v3
+# ARMS: Jump -> next [[C4]]([[X6]])
+# ARMS: [[C4]]([[CJ]]: number):
+# ARMS: [[X7]]: number = Negate [[CJ]]
+# ARMS: Jump -> next b5([[X7]])

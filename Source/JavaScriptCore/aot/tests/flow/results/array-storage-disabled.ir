@@ -1,0 +1,41 @@
+# With array storage kinds switched off no prediction names a storage kind, and the contents of the arrays stay proven
+# RUN: flow
+# RUN(NOWHERE): flow
+# OPTIONS: disable=flow:ArrayStorageKinds
+# STATISTIC: FlowProvenContentsSites = 5
+# CHECK: variable g0 type=Array<int[1, 2], proven
+# CHECK: variable g1 type=Array<1|fractional, proven
+# CHECK: variable g2 type=Array<int[1, 4294967296], proven
+# CHECK: variable g3 type=Array<1|"s", proven
+# CHECK: variable g4 type=Array<never, proven
+# NOWHERE-NOT: variable {{*}}Int32
+# NOWHERE-NOT: variable {{*}}Double
+# NOWHERE-NOT: variable {{*}}Contiguous
+# NOWHERE-NOT: variable {{*}}predicted=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="smallIntegers" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="fractions" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="largeIntegers" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="withString" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="empty" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Double number=0.5
+    v3 = Integer integer=4294967296
+    v4 = String string="s"
+    v5 = NewArray v0, v1 contents=anything @10
+    v6 = NewArray v0, v2 contents=anything @20
+    v7 = NewArray v0, v3 contents=anything @30
+    v8 = NewArray v0, v4 contents=anything @40
+    v9 = NewArray contents=anything @50
+    PutModuleVariable v5 variable=g0
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v7 variable=g2
+    PutModuleVariable v8 variable=g3
+    PutModuleVariable v9 variable=g4
+    Return
+}

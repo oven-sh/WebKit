@@ -25,6 +25,10 @@
 
 #include "config.h"
 #include "testb3.h"
+#include "testb3_bun_heaps.h"
+#include "testb3_bun_validate.h"
+#include "testb3_bun_validate_terminal_results.h"
+#include "testb3_bun_values.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -509,6 +513,10 @@ void run(const TestConfig* config)
 
     RUN_UNARY(testClzArg64, int64Operands());
     RUN_UNARY(testClzMem64, int64Operands());
+    RUN_UNARY(testPopCountArg64, int64Operands());
+    RUN_UNARY(testPopCountMem64, int64Operands());
+    RUN_UNARY(testPopCountArg32, int32Operands());
+    RUN_UNARY(testPopCountConstant64, int64Operands());
     RUN_UNARY(testClzArg32, int32Operands());
     RUN_UNARY(testClzMem32, int64Operands());
 
@@ -865,9 +873,11 @@ void run(const TestConfig* config)
 
     addLoadTests(config, tasks);
     addTupleTests(config, tasks);
-#if USE(BUN_JSC_ADDITIONS)
     addBunTests(config, tasks);
-#endif
+    addBunHeapTests(config, tasks);
+    addBunValidateTests(config, tasks);
+    addBunValidateTerminalResultTests(config, tasks);
+    addBunValueTests(config, tasks);
 
     RUN(testSpillGP());
     RUN(testSpillFP());
@@ -1616,9 +1626,6 @@ int main(int argc, char** argv)
     JSC::Config::configureForTesting();
 
     WTF::initializeMainThread();
-#if USE(BUN_JSC_ADDITIONS)
-    JSC::installCompilers();
-#endif
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
     });

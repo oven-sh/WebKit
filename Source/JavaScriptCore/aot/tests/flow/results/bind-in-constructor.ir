@@ -1,0 +1,83 @@
+# A method bound to the object in its constructor: the constructor, the method and the object keep every proof. Unknown code that gets one bound method can call it and reads nothing out of it: the method loses its callers, and its object and class stay in compiled code
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: function f1 callers=AllKnown
+# CHECK: function f2 callers=AllKnown
+# CHECK: function f3 callers=AllKnown
+# CHECK: function f4 cause=ReachesNativeCode
+# CHECK: class {{*}} closureFunction=f2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: class {{*}} closureFunction=f3 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: class {{*}} closureFunction=f4 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: class {{*}} layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty,
+# CHECK: indirect - - -> f4 Host
+# CHECK: function f2 this type=L0 written=anything
+# CHECK: function f2 result 0 type=1 written=anything
+# CHECK: function f3 result 0 type=L1 written=anything
+# CHECK: function f4 this type=L1 written=anything
+# NOWHERE-NOT: function=f1 kind={{*}} loss cause=Unknown
+# NOWHERE-NOT: function=f2 kind={{*}} loss cause=Unknown
+# NOWHERE-NOT: function=f3 kind={{*}} loss cause=UnknownObject
+# NOWHERE-NOT: function=f4 kind={{*}} loss cause=Unknown
+# NOWHERE-NOT: -> f2 Host
+# NOWHERE-NOT: -> f3 Host
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Worker" constructor=f1 fields=[{key="count" declared={type=anything}}]
+layout L1 kind=Instance name="Listener" constructor=f3 fields=[{key="count" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = PropGet v5 key="run"
+    v7 = Call v6, v5 calleeKey="run"
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="handle"
+    v12 = FinishClass v9 layout=L1
+    v13 = Construct v12
+    Return
+}
+function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="count" mode=Strict
+    v5 = PropGet v2 key="run"
+    v6 = PropGet v5 key="bind"
+    v7 = Call v6, v5, v2 calleeKey="bind"
+    PropSet v2, v7 key="run" mode=Strict
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f3 name="Listener" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="count" mode=Strict
+    v5 = PropGet v2 key="handle"
+    v6 = PropGet v5 key="bind"
+    v7 = Call v6, v5, v2 calleeKey="bind"
+    PropSet v2, v7 key="handle" mode=Strict
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="publish" [isFreeName]
+    v11 = Call v10, -, v7
+    Return v2
+}
+function f4 name="handle" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="count"
+    Return v1
+}

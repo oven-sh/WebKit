@@ -1,0 +1,45 @@
+# The check of an access by a symbol has no name: only a key that is text gives one
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass InsertObjectCoercibleChecks
+# STATISTIC: InsertObjectCoercibleChecksChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="readsWellKnownSymbol" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key=@@iterator @7
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK: [[check0]]: L0 = RequireObjectCoercible v0 @7
+# CHECK-NEXT: = PropGet [[check0]] key=@@iterator
+
+function f1 name="readsCreatedSymbol" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key=symbol@m0:120 @7
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK: [[check1]]: L0 = RequireObjectCoercible v0 @7
+# CHECK-NEXT: = PropGet [[check1]] key=symbol@m0:120
+
+function f2 name="storesToWellKnownSymbol" parameters=[{type=undefined|L0}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: undefined|L0, v1: anything):
+    PropSet v0, v1 key=@@toStringTag @7
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: [[check2]]: L0 = RequireObjectCoercible v0 nullishAccess=Write @7
+# CHECK-NEXT: PropSet [[check2]], v1 key=@@toStringTag
+
+function f3 name="readsText" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="iterator" @7
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK: [[check3]]: L0 = RequireObjectCoercible v0 name="iterator" @7
+# CHECK-NEXT: = PropGet [[check3]] key="iterator"

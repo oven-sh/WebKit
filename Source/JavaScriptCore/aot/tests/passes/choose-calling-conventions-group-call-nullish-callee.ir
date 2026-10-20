@@ -1,0 +1,98 @@
+# A group call takes a closure: where the callee may be undefined or null one test comes first, and the call that is left for them throws as it did
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calleeMayBeUndefined" parameters=[{type=undefined|f4|f5|f6|f7|f8}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|f4|f5|f6|f7|f8, v1: number):
+    v2 = Call v0, -, v1 calleeName="callback" accessSite=0 callees=[f4, f5, f6, f7, f8]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="calleeMayBeUndefined"
+# CHECK-NEXT: b0(v0: undefined|f4|f5|f6|f7|f8, v1: number):
+# CHECK-NEXT: [[isNothing]]: boolean = TypeTest v0 testedType=undefined
+# CHECK-NEXT: Branch [[isNothing]] -> taken [[throws]](| 0), notTaken [[calls]](| 0)
+# CHECK: [[throws]]([[nothing]]: undefined) frequency=Rare:
+# CHECK-NEXT: = Call [[nothing]], -, v1 calleeName="callback"
+# CHECK-NEXT: Unreachable
+# CHECK: [[calls]]([[closure]]: f4|f5|f6|f7|f8):
+# CHECK-NEXT: : number = CallGroup [[closure]], v1 function=
+# CHECK-NOT: Jump
+# CHECK: Return
+# CHECK-NEXT: }
+function f1 name="calleeIsClosure" parameters=[{type=f4|f5|f6|f7|f8}, {type=number}] results=[{type=anything}] {
+  b0(v0: f4|f5|f6|f7|f8, v1: number):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f4, f5, f6, f7, f8]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="calleeIsClosure"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: number = CallGroup v0, v1 function=
+# CHECK-NEXT: Return v2
+function f2 name="underHandler" parameters=[{type=null|f4|f5|f6|f7|f8}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|f4|f5|f6|f7|f8, v1: number) handler=b2():
+    v2 = Call v0, -, v1 accessSite=2 callees=[f4, f5, f6, f7, f8]
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f2 name="underHandler"
+# CHECK: = TypeTest v0 testedType=null
+# CHECK: [[handler]]() role=CatchHandler:
+# CHECK: ([[caught]]: null) frequency=Rare handler=[[handler]]():
+# CHECK-NEXT: = Call [[caught]], -, v1
+# CHECK-NEXT: Unreachable
+# CHECK: ([[covered]]: f4|f5|f6|f7|f8) handler=[[handler]]():
+# CHECK-NEXT: = CallGroup [[covered]], v1 function=
+function f3 name="tailCall" parameters=[{type=undefined|f4|f5|f6|f7|f8}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|f4|f5|f6|f7|f8, v1: number):
+    v2 = Call v0, -, v1 accessSite=3 callees=[f4, f5, f6, f7, f8]
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
+}
+# CHECK-LABEL: function f3 name="tailCall"
+# CHECK: = TypeTest v0 testedType=undefined
+# CHECK: ([[absent]]: undefined) frequency=Rare:
+# CHECK-NEXT: = Call [[absent]], -, v1
+# CHECK-NEXT: Unreachable
+# CHECK: ([[target]]: f4|f5|f6|f7|f8):
+# CHECK-NEXT: [[jump]]: number = CallGroup [[target]], v1 function=
+# CHECK-NEXT: ReturnCall [[jump]] {{*}}requirement=Allowed
+function f4 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}
+function f5 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}
+function f6 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}
+function f7 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}
+function f8 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}

@@ -1,0 +1,117 @@
+# The numbers that arithmetic on int32 values gives: a range where every result is an integer, and the reason where one may not be
+# FORM: AsRead
+# RUN: int32-bounds
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+function f0 name="sum" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v3: integers [-4294967296, 4294967294]
+function f1 name="difference" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Sub v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v3: integers [-4294967295, 4294967295]
+function f2 name="product" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mul v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v3: unknown Product
+function f3 name="productWithPositiveConstant" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    v2 = Mul v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v3: integers [-6442450944, 6442450941]
+function f4 name="quotient" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3: reals [-1073741824, 1073741824]
+function f5 name="quotientByUnknownDivisor" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Div v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v3: unknown Quotient
+function f6 name="negative" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Negate v0
+    v2 = ClaimDeclared v1 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v2: unknown NegatedZero
+function f7 name="remainder" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mod v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v3: unknown Remainder
+function f8 name="remainderOfMaskedValue" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Integer integer=1023
+    v2 = BitAnd v0, v1
+    v3 = Integer integer=10
+    v4 = Mod v2, v3
+    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v5
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: v5: integers [0, 9]
+function f9 name="power" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = Pow v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f9
+# CHECK-NEXT: v3: unknown Power
+function f10 name="sumWithNumber" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: undefined|null|number):
+    v2 = Add v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f10
+# CHECK-NEXT: v3: unknown AnyNumber
+function f11 name="sumWithUntypedValue" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=anything}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f11
+# CHECK-NEXT: v3: unknown Untyped
+function f12 name="productWithUntypedValue" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=anything}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Mul v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f12
+# CHECK-NEXT: v3: unknown Product

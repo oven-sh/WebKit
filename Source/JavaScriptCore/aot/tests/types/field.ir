@@ -1,0 +1,93 @@
+# Field lookup by key, with 7 and with 9 fields (the index starts at 8), up a proven and a predicted chain of bases, and in the entries a subclass inherits
+# FORM: Prepared
+# RUN(SMALLFIRST): find-field L0 first
+# RUN(SMALLSHARED): find-field L0 shared
+# RUN(SMALLPRIVATE): find-field L0 #shared@L0
+# RUN(SMALLLAST): find-field L0 last
+# RUN(LARGEFIRST): find-field L1 first
+# RUN(LARGESHARED): find-field L1 shared
+# RUN(LARGEPRIVATE): find-field L1 #shared@L1
+# RUN(LARGELAST): find-field L1 last
+# SMALLFIRST: field: L0.0 declaration: L0.0
+# SMALLSHARED: field: L0.3 declaration: L0.3
+# SMALLPRIVATE: field: L0.2 declaration: L0.2
+# SMALLLAST: field: L0.6 declaration: L0.6
+# LARGEFIRST: field: L1.0 declaration: L1.0
+# LARGESHARED: field: L1.3 declaration: L1.3
+# LARGEPRIVATE: field: L1.2 declaration: L1.2
+# LARGELAST: field: L1.8 declaration: L1.8
+
+# A private name is not the text, and not the private name another class spells the same way. A null key finds nothing, not even a field without a key.
+# RUN(NONE): find-field L0 secret
+# RUN(NONE): find-field L1 secret
+# RUN(NONE): find-field L0 #secret@L1
+# RUN(NONE): find-field L1 #secret@L0
+# RUN(NONE): find-field L0 missing
+# RUN(NONE): find-field L1 missing
+# RUN(NONE): find-field L6 -
+# RUN(NONE): find-field L7 -
+# NONE: field: none
+
+# Up the chain: the base flow has proven is followed by both chains, the base the checker predicts only on request
+# RUN(OWN): find-field L2 own
+# RUN(INBASE): find-field L2 first
+# RUN(INBASE): find-field L2 first predicted
+# RUN(SHADOWED): find-field L2 shared
+# RUN(OWNSECRET): find-field L2 #secret@L2
+# RUN(BASESECRET): find-field L2 #secret@L0
+# RUN(TWOUP): find-field L3 last
+# RUN(NONE): find-field L4 first
+# RUN(NONE): find-field L4 first proven
+# RUN(PREDICTED): find-field L4 first predicted
+# RUN(MIXED): find-field L5 first predicted
+# RUN(NONE): find-field L5 first
+# OWN: field: L2.0 declaration: L2.0
+# INBASE: field: L0.0 declaration: L0.0
+# SHADOWED: field: L2.2 declaration: L2.2
+# OWNSECRET: field: L2.1 declaration: L2.1
+# BASESECRET: field: L0.1 declaration: L0.1
+# TWOUP: field: L0.6 declaration: L0.6
+# PREDICTED: field: L0.0 declaration: L0.0
+# MIXED: field: L0.0 declaration: L0.0
+
+# Inherited entries follow the own ones in the order of the base, without the key the subclass declares again. The ninth entry is found through the index.
+# RUN(APPENDEDFIRST): find-field L2 first append-inherited
+# RUN(APPENDEDFIRST): find-field L2 first proven append-inherited
+# RUN(APPENDEDSECRET): find-field L2 #secret@L0 append-inherited
+# RUN(APPENDEDLAST): find-field L2 last append-inherited
+# RUN(SHADOWED): find-field L2 shared append-inherited
+# RUN(OWNSECRET): find-field L2 #secret@L2 append-inherited
+# RUN(TWICEFIRST): find-field L3 first append-inherited
+# RUN(TWICESHARED): find-field L3 shared append-inherited
+# RUN(TWICEOWN): find-field L3 own append-inherited
+# RUN(PREDICTED): find-field L4 first predicted append-inherited
+# RUN(NONE): find-field L4 first append-inherited
+# APPENDEDFIRST: field: L2.3 declaration: L0.0
+# APPENDEDSECRET: field: L2.4 declaration: L0.1
+# APPENDEDLAST: field: L2.8 declaration: L0.6
+# TWICEFIRST: field: L3.3 declaration: L0.0
+# TWICESHARED: field: L3.2 declaration: L2.2
+# TWICEOWN: field: L3.0 declaration: L2.0
+
+# RUN(RANGE): find-field L1000 first
+# RUN(NOOWNER): find-field L0 #secret
+# RUN(BADOWNER): find-field L0 #secret@L1000
+# RUN(EXTRA): find-field L0 first last
+# RUN(ORDER): find-field L0 first append-inherited proven
+# RUN(MISSING): find-field
+# RUN(MISSING): find-field L0
+# RANGE: error: bad argument L1000
+# NOOWNER: error: bad argument #secret
+# BADOWNER: error: bad argument #secret@L1000
+# EXTRA: error: bad argument last
+# ORDER: error: bad argument proven
+# MISSING: error: missing argument
+
+layout L0 kind=Instance name="Small" fields=[{key="first" declared={type=number}}, {key=#"secret"@L0 declared={type=number} flags=[IsPrivate]}, {key=#"shared"@L0 declared={type=number} flags=[IsPrivate]}, {key="shared" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="last" declared={type=number}}] flow={baseState=None}
+layout L1 kind=Instance name="Large" fields=[{key="first" declared={type=number}}, {key=#"secret"@L1 declared={type=number} flags=[IsPrivate]}, {key=#"shared"@L1 declared={type=number} flags=[IsPrivate]}, {key="shared" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}, {key="f" declared={type=number}}, {key="last" declared={type=number}}] flow={baseState=None}
+layout L2 kind=Instance name="Derived" predictedBase=L0 fields=[{key="own" declared={type=number}}, {key=#"secret"@L2 declared={type=number} flags=[IsPrivate]}, {key="shared" declared={type=string}}] flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L3 kind=Instance name="DerivedTwice" predictedBase=L2 flags=[HasHeritage] flow={baseState=Layout base=L2}
+layout L4 kind=Instance name="PredictedOnly" predictedBase=L0 flags=[HasHeritage]
+layout L5 kind=Instance name="ProvenThenPredicted" predictedBase=L4 flags=[HasHeritage] flow={baseState=Layout base=L4}
+layout L6 kind=CoroutineFrame fields=[{declared={type=anything}}]
+layout L7 kind=CoroutineFrame fields=[{declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}, {declared={type=anything}}]

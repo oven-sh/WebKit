@@ -1,0 +1,99 @@
+# `filter(xs) as U[]`, `xs.slice(0) as U[]`: a call reads as a value of no type. Where the callee is certain before flow (the one closure of an immutable binding, a member of a built-in that start-up locks on a receiver of that class), its declaration says that the object is an array, so the assertion is no source and the place behind it keeps its type and its test.
+# A binding that may be assigned again, a receiver that is only predicted to be an array, and a callee whose own result admits objects leave the assertion, or the call, a source
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Result
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Variable
+typesite w3 module=m0 position=40 kind=Parameter
+variable g0 name="filter" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="replaceable" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="fromCertainCallee" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g3 name="fromReplaceableCallee" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g4 name="fromBuiltin" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g5 name="fromPredictedReceiver" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+variable g6 name="passesOn" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g7 name="fromCalleeThatPassesOn" module=m0 declared={type=undefined|null|Array predicted=Array site=w2} initialization=Undefined
+# CHECK: variable g2 name="fromCertainCallee" {{*}}declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: variable g3 name="fromReplaceableCallee" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+# CHECK: variable g4 name="fromBuiltin" {{*}}declared={type=undefined|null|Array predicted=Array site=w2}
+# CHECK: variable g5 name="fromPredictedReceiver" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+# CHECK: variable g7 name="fromCalleeThatPassesOn" {{*}}declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f1 name="filter" parameters=[{type=undefined|null|Array site=w3}] results=[{type=undefined|null|Array predicted=Array site=w0}] {
+  b0(v0: undefined|null|Array):
+    Return v0
+}
+function f2 name="passesOn" parameters=[{type=anything}] results=[{type=undefined|null|Array predicted=Array site=w0}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v2 = ClaimDeclared v1 declared={type=undefined|null|Array predicted=Array site=w0}
+    Return v2
+}
+# CHECK-LABEL: function f2 name="passesOn" {{*}}results=[{type=undefined|null|object predicted=Array site=w0 flags=[AdmitsObjects]}]
+function f3 name="callsCertainCallee" parameters=[{type=undefined|null|Array site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="filter"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v4 = ClaimDeclared v3 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v5 = ClaimDeclared v4 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v5 variable=g2
+    Return
+}
+# CHECK-LABEL: function f3 name="callsCertainCallee"
+# CHECK: ClaimDeclared v4 declared={type=undefined|null|Array predicted=Array site=w2}
+function f4 name="callsReplaceableCallee" parameters=[{type=undefined|null|Array site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="replaceable"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v4 = ClaimDeclared v3 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v4 variable=g3
+    Return
+}
+# CHECK-LABEL: function f4 name="callsReplaceableCallee"
+# CHECK: ClaimDeclared v3 declared={type=undefined|null|object predicted=Array site=w2 flags=[AdmitsObjects]}
+function f5 name="callsBuiltin" parameters=[{type=undefined|null|Array site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array):
+    v1 = Predict v0 predicted=Array
+    v2 = PropGet v1 key="slice"
+    v3 = Predict v2 predicted=function
+    v4 = Integer
+    v5 = Call v3, v1, v4 calleeKey="slice" calleeName="slice"
+    v6 = ClaimDeclared v5 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v7 = ClaimDeclared v6 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v7 variable=g4
+    Return
+}
+# CHECK-LABEL: function f5 name="callsBuiltin"
+# CHECK: ClaimDeclared v6 declared={type=undefined|null|Array predicted=Array site=w2}
+function f6 name="callsMemberOfPredictedReceiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Predict v0 predicted=Array
+    v2 = PropGet v1 key="slice"
+    v3 = Predict v2 predicted=function
+    v4 = Integer
+    v5 = Call v3, v1, v4 calleeKey="slice" calleeName="slice"
+    v6 = ClaimDeclared v5 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v7 = ClaimDeclared v6 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v7 variable=g5
+    Return
+}
+function f7 name="callsCalleeThatPassesOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g6
+    v2 = Call v1, -, v0 calleeName="passesOn"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|object written=undefined|null|Array predicted=Array site=w1}
+    v4 = ClaimDeclared v3 declared={type=undefined|null|Array predicted=Array site=w2}
+    PutModuleVariable v4 variable=g7
+    Return
+}

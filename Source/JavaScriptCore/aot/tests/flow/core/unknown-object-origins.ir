@@ -1,0 +1,52 @@
+# Every operation that lets the unknown object in is listed with what it reaches, also one whose value comes into a node that holds the object already
+# RUN: flow-solve origins
+# RUN(SITES): flow-solve access-sites
+# RUN(FUNCTION): flow-solve function:f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fromBoth" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="fromSecond" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="tracked" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Tracked" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="first" [isFreeName]
+    v2 = PropGet v0 key="second" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PutModuleVariable v7 variable=g2
+    v9 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="a"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="b"
+    v4 = PropGet v2 key="c"
+    v5 = GetModuleVariable variable=g2
+    v6 = PropGet v5 key="x"
+    Return
+}
+# Three reads go through the unknown object. The read of "a" is reached by both origins and freed by neither alone, the reads of "b" and "c" are the second origin's alone, the read of "x" is nobody's.
+# CHECK: accessesThroughUnknownObject=3 withoutOrigin=0 origins=2
+# CHECK-NEXT: origin f0:v2 alone=2 {{*}} accesses=3 {{*}}| "main" in "main.js" | v2{{*}}= PropGet v0 key="second"
+# CHECK-NEXT: origin f0:v1 alone=0 {{*}} accesses=1 {{*}}| "main" in "main.js" | v1{{*}}= PropGet v0 key="first"
+# The variable is where the two meet: what is read out of it is freed when both are gone.
+# CHECK-NEXT: meeting-point accesses=1 {{*}} origins=2 at {{*}}Variable(g0) | f0:v1 f0:v2
+# CHECK-NOT: meeting-point accesses=1
+# CHECK-NOT: meeting-point accesses=2
+
+# An access is counted once, where it stands in the text. Two reads are of the global object, one is of the tracked object.
+# SITES: application reached=6 throughUnknownObject=3 outsideGeneric=3 others by objects at the receiver: upTo1=3 upTo4=0 upTo16=0 more=0
+
+# FUNCTION: instance i{{*}} Proven
+# FUNCTION: f1, v0) = {{*}}unknown{{*}} unknown from f0:v
+# FUNCTION: f1, v5) = {L0#{{*}}}
+# FUNCTION: object L0#

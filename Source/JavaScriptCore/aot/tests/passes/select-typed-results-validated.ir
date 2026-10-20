@@ -1,0 +1,91 @@
+# A call whose expected result has validation nodes is expanded in every block, and every path that does not end in Parsed asks the general validator with the plan
+# FORM: Prepared optimizing
+# RUN: pass SelectTypedResults SelectTypedResults
+# STATISTIC: TypedResultsSelected = 5
+# STATISTIC: ParsersCreated = 2
+# STATISTIC: ValidatorsCreated = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x2 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number rules=[Integer]}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+
+function f0 name="validated" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="validated"
+# CHECK: = JSONSourceOpen v0
+# CHECK: [[done0]](v2:{{*}}):
+# CHECK: [[generic0]]() frequency=Rare:
+# CHECK-NEXT: [[original0]]:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
+# CHECK-NEXT: [[plan0]]:{{*}}= String string="[{\"shape\":\"Object\",\"members\":[{\"key\":\"id\",\"node\":1,\"isOptional\":false,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Primitive\",\"primitive\":\"number\"}]"
+# CHECK-NEXT: [[general0]]: anything = CallBuiltin -, [[original0]], [[plan0]] overload=CompilerHelpersValidateByPlan/0
+# CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
+# CHECK: JSONSourceAbandon
+# CHECK-NEXT: Jump -> next [[generic0]]()
+# CHECK-NOT: expectedResult
+
+function f1 name="equalListOfAnotherRecord" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="equalListOfAnotherRecord"
+# CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
+
+function f2 name="otherList" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x2
+    Return v2
+}
+# CHECK-LABEL: function f2 name="otherList"
+# CHECK: \"rules\":[{\"rule\":\"Integer\"}]
+# CHECK-NOT: function=[[parserOfFirstList]]
+# CHECK: = CallDirect {{*}} function=[[parserOfOtherList]]
+
+function f3 name="inRareBlock" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: boolean):
+    v2 = Undefined
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Rare:
+    v3 = CallBuiltin -, v0, v2 overload=JSONParse/0 expectedResult=x0
+    Return v3
+}
+# CHECK-LABEL: function f3 name="inRareBlock"
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: = JSONSourceOpen v0
+# CHECK: = CallBuiltin -, {{*}} overload=CompilerHelpersValidateByPlan/0
+# CHECK: = CallDirect {{*}} function=[[parserOfFirstList]]
+# CHECK-NOT: expectedResult
+
+function f4 name="reviver" parameters=[{type=string}, {type=function}] results=[{type=anything}] {
+  b0(v0: string, v1: function):
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/1 expectedResult=x1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="reviver"
+# CHECK: b0(v0: string, v1: function):
+# CHECK-NEXT: [[revived]]: anything = CallBuiltin -, v0, v1 overload=JSONParse/1
+# CHECK-NEXT: [[results4]]:{{*}}= CallDirect [[revived]] function=[[validatorOfFirstList]]
+# CHECK-NEXT: [[outcome4]]: int[0, 2] = ResultAt [[results4]]
+# CHECK-NEXT: [[copy4]]:{{*}}= ResultAt [[results4]] index=1
+# CHECK-NEXT: Switch [[outcome4]] cases=[1] -> case [[accepted4]](), otherwise [[general4]]()
+# CHECK: [[accepted4]]():
+# CHECK-NEXT: Jump -> next [[merge4]]([[copy4]])
+# CHECK: [[general4]]() frequency=Rare:
+# CHECK-NEXT: [[plan4]]:{{*}}= String string="[{\"shape\":\"Object\",
+# CHECK-NEXT: = CallBuiltin -, [[revived]], [[plan4]] overload=CompilerHelpersValidateByPlan/0
+# CHECK-NOT: JSONSourceOpen
+# CHECK: function [[parserOfFirstList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x0}
+# CHECK: function [[parserOfOtherList]] {{*}}role=ValidatingParser {{*}}creator=Parser{type=L0 layout=L0 form=ParsedText expectedResult=x2}
+# CHECK: function [[validatorOfFirstList]] {{*}}role=Validator {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}

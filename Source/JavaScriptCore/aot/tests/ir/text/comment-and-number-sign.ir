@@ -1,0 +1,25 @@
+# Comments, blank lines, CRLF line endings, a comment after tokens, and a number sign before a quote, which starts a private name
+# RUN: round-trip
+# CHECK: layout L0 kind=Instance fields=[{key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="comments" module=m0
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = Undefined
+# CHECK-NEXT: v2 = String string="#"
+# CHECK-NEXT: v3 = Undefined @3
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: round trip: same
+
+module m0 path="main.js" displayPath="main.js" # after tokens
+#
+#no blank
+  	
+layout L0 kind=Instance fields=[{key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]# no blank
+function f0 name="comments" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Undefined # trailing
+    v2 = String string="#"
+    v3 = Undefined @3# no blank
+    Return
+}

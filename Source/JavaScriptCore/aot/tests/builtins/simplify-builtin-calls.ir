@@ -1,0 +1,234 @@
+# SimplifyBuiltinCalls replaces an intrinsic or a resolved call with ordinary operations that say the same
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxArrayLiteralBatch:2
+# RUN: pass SimplifyBuiltinCalls
+# LOSS: MaxArrayLiteralBatch x1 f18 v4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="iteratorResult" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+  b0(v0: anything, v1: boolean):
+    v2 = CreateIteratorResult v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="iteratorResult"
+# CHECK-NOT: NewObject
+# CHECK: v2: {{*}} = CreateIteratorResult v0, v1
+
+function f1 name="pristineArrayTestAsValue" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = IsPristineArray v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="pristineArrayTestAsValue"
+# CHECK-NOT: IsPristineArray
+# CHECK: v1: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+
+function f2 name="pristineArrayTestAsBranchCondition" parameters=[{type=Array}] results=[{type=boolean}] {
+  b0(v0: Array):
+    v1 = IsPristineArray v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v1
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="pristineArrayTestAsBranchCondition"
+# CHECK-NOT: IsPristineArray
+# CHECK: v1: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: guard):
+
+function f3 name="toLengthOfLength" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295]):
+    v1 = ToLength v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="toLengthOfLength"
+# CHECK-NOT: ToLength
+# CHECK: v1: int[0, 4294967295] = Upcast v0 castType=int[0, 4294967295]
+
+function f4 name="toLengthOfNegativeInteger" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = ToLength v0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="toLengthOfNegativeInteger"
+# CHECK: = ToLength v0
+
+function f5 name="toInt32OfInt32" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = ToInt32 v0
+    Return v1
+}
+# CHECK-LABEL: function f5 name="toInt32OfInt32"
+# CHECK-NOT: ToInt32
+# CHECK: v1: i32 = Upcast v0 castType=i32
+
+function f6 name="toInt32OfLargerInteger" parameters=[{type=int[0, 4294967295]}, {type=number}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295], v1: number):
+    v2 = ToInt32 v0
+    v3 = ToInt32 v1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="toInt32OfLargerInteger"
+# CHECK: v2: i32 = ToInt32 v0
+# CHECK-NEXT: v3: i32 = ToInt32 v1
+
+function f7 name="toUint32OfUint32" parameters=[{type=int[0, 4294967295]}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295]):
+    v1 = ToUint32 v0
+    Return v1
+}
+# CHECK-LABEL: function f7 name="toUint32OfUint32"
+# CHECK-NOT: ToUint32
+# CHECK: v1: int[0, 4294967295] = Upcast v0 castType=int[0, 4294967295]
+
+function f8 name="toUint32OfNegativeInteger" parameters=[{type=i32}] results=[{type=number}] {
+  b0(v0: i32):
+    v1 = ToUint32 v0
+    Return v1
+}
+# CHECK-LABEL: function f8 name="toUint32OfNegativeInteger"
+# CHECK: v1: int[0, 4294967295] = ToUint32 v0
+
+function f9 name="toIntegerOrInfinityOfInteger" parameters=[{type=int}] results=[{type=number}] {
+  b0(v0: int):
+    v1 = ToIntegerOrInfinity v0
+    Return v1
+}
+# CHECK-LABEL: function f9 name="toIntegerOrInfinityOfInteger"
+# CHECK-NOT: ToIntegerOrInfinity
+# CHECK: v1: int = Upcast v0 castType=int
+
+function f10 name="toIntegerOrInfinityOfNumber" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = ToIntegerOrInfinity v0
+    Return v1
+}
+# CHECK-LABEL: function f10 name="toIntegerOrInfinityOfNumber"
+# CHECK: = ToIntegerOrInfinity v0
+
+function f11 name="promiseAllOfLiteral" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = CallBuiltin v2, v3 overload=PromiseAll/0
+    Return v4
+}
+# CHECK-LABEL: function f11 name="promiseAllOfLiteral"
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: Promise{{*}} = PromiseAllOfElements v0, v1
+
+function f12 name="literalThroughUpcast" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Upcast v3 castType=anything
+    v5 = CallBuiltin v2, v4 overload=PromiseAll/0
+    Return v5
+}
+# CHECK-LABEL: function f12 name="literalThroughUpcast"
+# CHECK-NOT: CallBuiltin
+# CHECK: v5: Promise{{*}} = PromiseAllOfElements v0, v1
+
+function f13 name="upcastHasSecondUse" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Upcast v3 castType=anything
+    v5 = Call v0, -, v4
+    v6 = CallBuiltin v2, v4 overload=PromiseAll/0
+    Return v6
+}
+# CHECK-LABEL: function f13 name="upcastHasSecondUse"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v4 overload=PromiseAll/0
+
+function f14 name="literalEscapes" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Call v0, -, v3
+    v5 = CallBuiltin v2, v3 overload=PromiseAll/0
+    Return v5
+}
+# CHECK-LABEL: function f14 name="literalEscapes"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v3 overload=PromiseAll/0
+
+function f15 name="literalWithHole" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything holes=[1]
+    v4 = CallBuiltin v2, v3 overload=PromiseAll/0
+    Return v4
+}
+# CHECK-LABEL: function f15 name="literalWithHole"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v3 overload=PromiseAll/0
+
+function f16 name="literalWithCapacity" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = Integer integer=2
+    v4 = NewArray v0, v1 contents=anything capacity=v3
+    v5 = CallBuiltin v2, v4 overload=PromiseAll/0
+    Return v5
+}
+# CHECK-LABEL: function f16 name="literalWithCapacity"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v4 overload=PromiseAll/0
+
+function f17 name="literalFollowedBySpread" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0 contents=anything
+    AppendSpread v3, v1
+    v5 = CallBuiltin v2, v3 overload=PromiseAll/0
+    Return v5
+}
+# CHECK-LABEL: function f17 name="literalFollowedBySpread"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v3 overload=PromiseAll/0
+
+function f18 name="literalAboveBatchLimit" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1, v0 contents=anything
+    v4 = CallBuiltin v2, v3 overload=PromiseAll/0
+    v5 = NewArray v0, v1 contents=anything
+    v6 = CallBuiltin v2, v5 overload=PromiseAll/0
+    Return v6
+}
+# CHECK-LABEL: function f18 name="literalAboveBatchLimit"
+# CHECK: v4: Promise{{*}} = CallBuiltin v2, v3 overload=PromiseAll/0
+# CHECK: v6: Promise{{*}} = PromiseAllOfElements v0, v1
+
+function f19 name="promiseAllOfParameter" parameters=[{type=Array}] results=[{type=Promise}] {
+  b0(v0: Array):
+    v1 = Builtin builtin=Promise
+    v2 = CallBuiltin v1, v0 overload=PromiseAll/0
+    Return v2
+}
+# CHECK-LABEL: function f19 name="promiseAllOfParameter"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v1, v0 overload=PromiseAll/0
+
+function f20 name="promiseAllOnOtherReceiver" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 = CallBuiltin v0, v2 overload=PromiseAll/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f20 name="promiseAllOnOtherReceiver"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v0, v2 overload=PromiseAll/0 builtinCallForm=AnyReceiver
+
+function f21 name="sliceOfString" parameters=[{type=string}, {type=int[0, 10]}, {type=int[0, 10]}] results=[{type=string}] {
+  b0(v0: string, v1: int[0, 10], v2: int[0, 10]):
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
+    Return v3
+}
+# CHECK-LABEL: function f21 name="sliceOfString"
+# CHECK: Substring

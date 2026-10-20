@@ -1,0 +1,58 @@
+# An irreducible cycle is a block cycle but not a natural loop, and its header is the entry that comes first in reverse postorder
+# FORM: Prepared
+# RUN: analyses dominators natural-loops cycles
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="irreducible" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: boolean):
+    Branch v0 -> taken b2(), notTaken b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    LoopHint
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b3()
+  b5():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1 b2]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b3]
+# CHECK-NEXT: b2 idom: b0
+# CHECK-NEXT: b2 children: []
+# CHECK-NEXT: b3 idom: b1
+# CHECK-NEXT: b3 children: [b4 b5]
+# CHECK-NEXT: b4 idom: b3
+# CHECK-NEXT: b4 children: []
+# CHECK-NEXT: b5 idom: b3
+# CHECK-NEXT: b5 children: []
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b3]
+# CHECK-NEXT: b3 loop blocks: [b3 b4]
+# CHECK-NEXT: b3 outer loop header: none
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 1
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: yes
+# CHECK-NEXT: b3 depth: 1
+# CHECK-NEXT: b3 outermost cycle: b3
+# CHECK-NEXT: b4 in cycle: yes
+# CHECK-NEXT: b4 depth: 1
+# CHECK-NEXT: b4 outermost cycle: b3
+# CHECK-NEXT: b5 in cycle: no
+# CHECK-NEXT: b5 depth: 0
+# CHECK-NEXT: b5 outermost cycle: none

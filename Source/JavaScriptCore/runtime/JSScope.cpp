@@ -26,6 +26,9 @@
 #include "config.h"
 #include "JSScope.h"
 
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
 #include "AbstractModuleRecord.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
@@ -34,7 +37,6 @@
 #include "JSModuleRecord.h"
 #include "JSScopeInlines.h"
 #include "JSWithScope.h"
-#include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include "VariableEnvironment.h"
@@ -95,6 +97,12 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             catchScope.releaseAssertNoException();
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
+#if ENABLE(AOT)
+                if (importedRecord->inherits<AOT::ModuleRecord>()) {
+                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+                    return true;
+                }
+#endif
                 JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironment();
                 SymbolTable* symbolTable = importedEnvironment->symbolTable();
                 ConcurrentJSLocker locker(symbolTable->m_lock);
@@ -103,12 +111,6 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
                 RELEASE_ASSERT(sourceTextModuleRecord);
-#if USE(BUN_JSC_ADDITIONS)
-                if (importedRecord->inherits<SyntheticModuleRecord>() && SyntheticModuleRecord::isLiveBinding(importedEnvironment->variableAt(entry.scopeOffset()).get())) [[unlikely]] {
-                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
-                    return true;
-                }
-#endif
                 unsigned moduleImportSlot = JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), importSlot).offset();
                 op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl(), moduleImportSlot);
                 return true;

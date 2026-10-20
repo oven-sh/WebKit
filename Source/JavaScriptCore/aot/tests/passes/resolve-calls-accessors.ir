@@ -1,0 +1,195 @@
+# A read that runs a getter and a store that runs a setter are direct calls, member by member, and the members with a field are left to the rest
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 6
+# STATISTIC: DispatchArms = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Buffer" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}] namedMembers=[{key="size" kind=Getter function=f1 mutability=Fixed}, {key="size" kind=Setter function=f2 mutability=Fixed}, {key="level" kind=Setter function=f3 mutability=Fixed}, {key="age" kind=Getter function=f4 mutability=Fixed}, {key="name" kind=Getter function=f5}, {key="name" kind=Setter function=f6}, {key="owner" kind=Getter function=f7 mutability=Fixed}]}
+layout L1 kind=Instance name="Span" constructor=f8 fields=[{key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Rope" constructor=f9 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="size" kind=Getter function=f10 mutability=Fixed}]}
+function f0 name="Buffer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="size" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=number}] {
+  b0(v0: L0):
+    v1 = Integer integer=1
+    Return v1
+}
+function f2 name="size" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return
+}
+function f3 name="level" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return
+}
+function f4 name="age" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f5 name="name" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    Return
+}
+function f6 name="name" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Return
+}
+function f7 name="owner" kind=Getter flags=[HasThis] captures=[{type=string}] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: string, v1: L0):
+    Return v0
+}
+function f8 name="Span" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="Rope" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f10 name="size" kind=Getter flags=[HasThis] thisType={type=L2} results=[{type=number}] {
+  b0(v0: L2):
+    v1 = Integer integer=2
+    Return v1
+}
+
+function f11 name="getter-and-field" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f11 name="getter-and-field"
+# CHECK-NEXT: b0(v0: L0|L1):
+# CHECK-NEXT: [[isBuffer]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isBuffer]] -> taken [[bufferArm]](| 0), notTaken [[rest]](| 0)
+# CHECK-NEXT: [[join]](v1
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[bufferArm]]([[buffer]]: L0):
+# CHECK-NEXT: [[computed]]: number = CallDirect [[buffer]] function=f1
+# CHECK-NEXT: Jump -> next [[join]]([[computed]])
+# CHECK-NEXT: [[rest]]([[span]]: L1) frequency=Unlikely:
+# CHECK-NEXT: [[stored]]{{*}}= PropGet [[span]] key="size" receivers=[L1]
+# CHECK-NEXT: Jump -> next [[join]]([[stored]])
+# CHECK-NEXT: }
+function f12 name="field-is-expected" parameters=[{type=L0|L1 predicted=L1}] results=[{type=anything}] {
+  b0(v0: L0|L1 ~ L1):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f12 name="field-is-expected"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK: ([[expectedSpan]]: L1{{*}}):
+# CHECK-NEXT: = PropGet [[expectedSpan]] key="size" receivers=[L1]
+function f13 name="two-getters" parameters=[{type=L0|L2}] results=[{type=anything}] {
+  b0(v0: L0|L2):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f13 name="two-getters"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: ([[firstOwner]]: L0):
+# CHECK-NEXT: = CallDirect [[firstOwner]] function=f1
+# CHECK-NOT: TypeTest
+# CHECK: ([[secondOwner]]: L2):
+# CHECK-NEXT: = CallDirect [[secondOwner]] function=f10
+# CHECK-NOT: PropGet
+function f14 name="setter-without-getter" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="level"
+    Return v1
+}
+# CHECK-LABEL: function f14 name="setter-without-getter"
+# CHECK-NOT: PropGet
+# CHECK-NOT: CallDirect
+# CHECK: : undefined = Undefined
+# CHECK-NOT: PropGet
+# CHECK-NOT: CallDirect
+function f15 name="setter" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="size"
+    Return
+}
+# CHECK-LABEL: function f15 name="setter"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NOT: PropSet
+# CHECK: = CallDirect v0, v1 function=f2
+# CHECK-NEXT: Return
+# CHECK-NOT: PropSet
+function f16 name="setter-and-field" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: number):
+    PropSet v0, v1 key="size"
+    Return
+}
+# CHECK-LABEL: function f16 name="setter-and-field"
+# CHECK-NEXT: b0(v0: L0|L1, v1: number):
+# CHECK-NEXT: [[takesSetter]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[takesSetter]] -> taken [[setterArm]](| 0), notTaken [[storeRest]](| 0)
+# CHECK-NEXT: [[afterStore]]():
+# CHECK-NEXT: Return
+# CHECK-NEXT: [[setterArm]]([[written]]: L0):
+# CHECK-NEXT: = CallDirect [[written]], v1 function=f2
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# CHECK-NEXT: [[storeRest]]([[filled]]: L1) frequency=Unlikely:
+# CHECK-NEXT: PropSet [[filled]], v1 key="size" receivers=[L1]
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# CHECK-NEXT: }
+function f17 name="getter-without-setter" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="age"
+    Return
+}
+# CHECK-LABEL: function f17 name="getter-without-setter"
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: PropSet v0, v1 key="age"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f18 name="only-fields" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    v2 = PropGet v0 key="size"
+    PropSet v0, v1 key="size"
+    Return v2
+}
+# CHECK-LABEL: function f18 name="only-fields"
+# CHECK-NEXT: b0(v0: L1, v1: number):
+# CHECK-NEXT: = PropGet v0 key="size"
+# CHECK-NEXT: PropSet v0, v1 key="size"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f19 name="accessors-may-be-replaced" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="name"
+    PropSet v0, v1 key="name"
+    Return v1
+}
+# CHECK-LABEL: function f19 name="accessors-may-be-replaced"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="name"
+# CHECK-NEXT: PropSet v0, v1 key="name"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f20 name="getter-with-capture" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="owner"
+    Return v1
+}
+# CHECK-LABEL: function f20 name="getter-with-capture"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="owner"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f21 name="getter-on-nullable-receiver" parameters=[{type=null|L0}] results=[{type=anything}] {
+  b0(v0: null|L0):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f21 name="getter-on-nullable-receiver"
+# CHECK-NEXT: b0(v0: null|L0):
+# CHECK-NEXT: = PropGet v0 key="size"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f22 name="getter-of-predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f22 name="getter-of-predicted-receiver"
+# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-NEXT: = PropGet v0 key="size"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

@@ -37,8 +37,8 @@ namespace JSC {
 const ClassInfo WeakMapPrototype::s_info = { "WeakMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WeakMapPrototype) };
 
 static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapDelete);
-static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapGet);
-static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapHas);
+JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapGet);
+JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapHas);
 static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapGetOrInsert);
 static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakMapGetOrInsertComputed);
 
@@ -187,11 +187,10 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncWeakMapGetOrInsertComputed, (JSGlobalObject* g
     }
 
     JSValue value;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(valueCallback), 1);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        value = cachedCall.callWithArguments(globalObject, jsUndefined(), key);
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(valueCallback), callData, 1);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
+        value = cachedCall->callWithArguments(globalObject, jsUndefined(), key);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
         auto args = WTF::toArray<EncodedJSValue>({

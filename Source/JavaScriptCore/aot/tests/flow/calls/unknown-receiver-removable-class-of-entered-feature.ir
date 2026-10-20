@@ -1,0 +1,32 @@
+# Native code of the host hands out instances of classes wherever the table says no more than "anything", and an entry names the features of the classes that its native code instantiates. Bun.spawnSync names
+# the feature of Buffer, so native code holds Buffer.prototype once the call is seen, and a lookup through what the call answers finds the members of Buffer: those of the prototype, and those of the
+# constructor behind `constructor`. It does not name all that Subprocess needs, so no Subprocess comes out of it, and the program uses no feature but those of Bun.spawnSync
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: builtin-use ResourceUsagePrototype [Read, Escaped] f0:v5
+# CHECK: builtin-use BufferFrom [Read, Called
+# CHECK: builtin-use BufferPrototype [Read, Escaped] f0:v5
+# CHECK: builtin-use BufferPrototypeToJSON [Read, Called
+# ALL-NOT: builtin-use SubprocessPrototype [
+# ALL-NOT: builtin-use ReadableStreamPrototype [
+# ALL-NOT: {{*}} SubprocessPrototype f0
+# ALL-NOT: {{*}} ReadableStreamPrototype f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="spawnSync"
+    v3 = String string="echo"
+    v4 = NewArray v3 contents=anything
+    v5 = Call v2, v1, v4 calleeKey="spawnSync"
+    v6 = PropGet v5 key="stdout"
+    v7 = PropGet v6 key="toJSON"
+    v8 = Call v7, v6 calleeKey="toJSON"
+    v9 = PropGet v6 key="constructor"
+    v10 = PropGet v9 key="from"
+    v11 = Call v10, v9, v3 calleeKey="from"
+    Return
+}

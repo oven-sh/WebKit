@@ -1,0 +1,35 @@
+# The program changes the prototype of TypeError.prototype, with that object as the receiver. Nothing fixes the link then, unknown JavaScript that holds the object changes it as well, and a name could come in from above: nothing is closed on TypeError.prototype, the run time is not told to fix its link, and what is stored on an object under it goes to the unknown setter
+# RUN: flow-walk
+# CHECK: f0@{{*}} v11 Set {"node"}
+# CHECK: Unknown Predicted TypeErrorPrototype *
+# RUN(OBJECTS): flow-solve objects
+# OBJECTS: L0#[[stored]] mutations=[ReachNativeCode, ReachUnknownJavaScript,
+# RUN(TABLES): tables constants
+# TABLES-NOT: holder=TypeErrorPrototype
+# TABLES: builtinCell
+# TABLES-NOT: holder=TypeErrorPrototype
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Item" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Above" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="UnderError" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=ArrayFrom
+    v1 = Builtin builtin=TypeErrorPrototype
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = Call v0, -, v2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = NewObject -, v4 layout=L1 fields=[0]
+    v7 = Builtin builtin=ObjectSetPrototypeOf
+    v8 = Call v7, -, v1, v6
+    v9 = NewObject v1 layout=L2 fields=[]
+    v10 = Undefined
+    PropSet v9, v5 key="node"
+    Return
+  b1() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}

@@ -1,0 +1,33 @@
+# A class that is called and an arrow function that is constructed throw before they are entered: no stamp lists them, and the test of the stamp admits them
+# OPTIONS: validate
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[arrow]]: f1 = NewClosure function=f1
+# CHECK: ValidateCallee [[arrow]] validatedType=f1
+# CHECK-NEXT: = Call [[arrow]]
+
+function f1 name="arrow" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Construct v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="arrow"
+# CHECK: [[inner]]: f2 = NewClosure function=f2
+# CHECK: ValidateCallee [[inner]] validatedType=f2
+# CHECK-NEXT: = Construct [[inner]], [[inner]] {{*}}callees=[]
+
+function f2 name="neverEntered" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

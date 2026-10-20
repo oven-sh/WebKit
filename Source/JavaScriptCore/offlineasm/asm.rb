@@ -36,6 +36,8 @@ require "settings"
 require "shellwords"
 require "transform"
 
+DEFAULT_SECTION = "trampolines"
+
 class Assembler
     attr_reader :section
 
@@ -60,7 +62,7 @@ class Assembler
 
         @newlineSpacerState = :none
         @lastlabel = ""
-        @section = "trampolines"
+        @section = DEFAULT_SECTION
     end
 
     def enterAsm

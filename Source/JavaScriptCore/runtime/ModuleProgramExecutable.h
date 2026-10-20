@@ -34,14 +34,10 @@
 namespace JSC {
 
 class FunctionExecutable;
-class JSModuleLoader;
 class JSModuleRecord;
 class SymbolTable;
 class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
-namespace AOT {
-struct ProgramModule;
-}
 
 class ModuleProgramExecutable final : public GlobalExecutable {
     friend class LLIntOffsetsExtractor;
@@ -83,9 +79,6 @@ public:
     }
 
     UnlinkedModuleProgramCodeBlock* getUnlinkedCodeBlock(JSGlobalObject*);
-#if ENABLE(AOT)
-    const AOT::ProgramModule* programModule() const { return m_programModule; }
-#endif
 
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock() const
     {
@@ -132,7 +125,6 @@ public:
 #endif
     // A second record has taken this executable: its code now runs against more than one module environment.
     bool isShared() const { return m_isShared; }
-    JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     void didShare() { m_isShared = true; }
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
@@ -164,10 +156,6 @@ private:
 
     ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables);
 
-#if ENABLE(AOT)
-    bool useProgramData(VM&);
-    const AOT::ProgramModule* m_programModule { nullptr };
-#endif
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
     Weak<JSModuleRecord> m_linker;
@@ -176,7 +164,6 @@ private:
     uint32_t m_linkerPrelinkedIndex { PrelinkedModuleGraph::noModule };
 #endif
     std::optional<ImportedBindings> m_linkerImportedBindings;
-    WriteBarrier<JSModuleLoader> m_moduleLoader;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
     unsigned m_recordsYetToFinishEvaluation { 0 };

@@ -1,0 +1,19 @@
+# PrivateGet has the type of the field it records, on a proven layout and a stable field; a public field with the same text does not count
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v4: number
+# CHECK-NEXT: v5: anything ~ number
+# CHECK-NEXT: v6: anything ~ string
+# CHECK-NEXT: v7: i32
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance fields=[{key=#"secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 kind=Instance fields=[{key="x" declared={type=i32} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"x"@L1 declared={type=string} flags=[IsRequired, IsPrivate]}]
+function f0 name="p" parameters=[{type=L0}, {type=object written=L0}, {type=L1}, {type=classtoken}] results=[{type=undefined}] {
+  b0(v0: L0, v1: object ? L0, v2: L1, v3: classtoken):
+    v4 = PrivateGet v0, v3 layout=L0 field=0
+    v5 = PrivateGet v1, v3 layout=L0 field=0
+    v6 = PrivateGet v2, v3 layout=L1 field=1
+    v7 = PropGet v2 key="x"
+    Return
+}

@@ -1,0 +1,88 @@
+# An edge of the heat graph says how often one activation of the caller calls the callee
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=66 function=f1
+
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = CallDirect v0 function=f5
+    Return v1
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=66 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1 callees=[f4]
+    Return v2
+}
+function f2 name="firstCandidate" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f3 name="secondCandidate" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="callback" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f5 name="caller" role=OutlinedBody parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = CallDirect function=f6
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect function=f7
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v4 = CallDirect function=f8
+    Jump -> next b4()
+  b4():
+    v5 = NewClosure function=f2
+    v6 = NewClosure function=f3
+    Branch v0 -> taken b5(v5), notTaken b5(v6)
+  b5(v7):
+    v8 = Call v7 callees=[f2, f3]
+    v9 = NewArray v8 contents=anything
+    v10 = NewClosure function=f4
+    v11 = CallBuiltin v9, v10 overload=ArrayPrototypeMap/0
+    Return v11
+}
+function f6 name="once" role=OutlinedBody results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f7 name="inLoop" role=OutlinedBody results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f8 name="inRareBlock" role=OutlinedBody results=[{type=undefined}] {
+  b0():
+    Return
+}
+# CHECK: f0 size 3 mass 3.000000: f5*1.000000
+# CHECK-NEXT: f1 size 2 mass 2.000000: f4*1.000000
+# CHECK-NEXT: f2 size 1 mass 1.000000:
+# CHECK-NEXT: f3 size 1 mass 1.000000:
+# CHECK-NEXT: f4 size 1 mass 1.000000:
+# CHECK-NEXT: f5 size 16 mass 41.001953: f1*1.000000 f2*0.500000 f3*0.500000 f4*7.000000 f6*1.000000 f7*10.000000 f8*0.000977
+# CHECK-NEXT: f6 size 1 mass 1.000000:
+# CHECK-NEXT: f7 size 1 mass 1.000000:
+# CHECK-NEXT: f8 size 1 mass 1.000000:
+# CHECK-NEXT: host: f0*1.000000 f1*1.000000 f2*1.000000 f3*1.000000 f4*1.000000
+# CHECK-NEXT: unknown: f0*0.200000 f1*0.200000 f2*0.200000 f3*0.200000 f4*0.200000
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 2.000000
+# CHECK-NEXT: f2 1.500000
+# CHECK-NEXT: f3 1.500000
+# CHECK-NEXT: f4 10.000000
+# CHECK-NEXT: f5 1.000000
+# CHECK-NEXT: f6 1.000000
+# CHECK-NEXT: f7 10.000000
+# CHECK-NEXT: f8 0.000977

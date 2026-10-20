@@ -1,0 +1,43 @@
+# A value that is the key of an element access and the operand of an operator is tested once: both ask for the kind of number that is predicted, int32 or any number, and not for the range in the prediction. A value with no prediction is not tested for either
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="predictedInt32" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=anything predicted=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything ~ int[0, 9]):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = ElemGet v0, v4
+    v6 = NewArray v2, v5 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f0 name="predictedInt32"
+# CHECK-COUNT-1: = TypeTest v1 testedType=i32
+# CHECK-NOT: = TypeTest v1
+# CHECK: = GetArrayElement v0, [[key0]]
+# CHECK: = Add [[key0]], v3
+
+function f1 name="predictedNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=anything predicted=number}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything ~ number):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f1 name="predictedNumber"
+# CHECK-COUNT-1: = TypeTest v1 testedType=number
+# CHECK-NOT: = TypeTest v1
+
+function f2 name="noPrediction" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f2 name="noPrediction"
+# CHECK-NOT: TypeTest
+# CHECK: = ElemGet v0, v1

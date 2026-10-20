@@ -1,0 +1,9 @@
+# An attribute of a block written twice
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0() frequency=Unlikely frequency=Unlikely:
+    Return
+}

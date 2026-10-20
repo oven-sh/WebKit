@@ -1,0 +1,51 @@
+# A spread calls an own getter of its source with the source as this and defines the result as a data property under the key. The source reaches no unknown code
+# RUN: flow-solve nodes
+# RUN(THIS): flow-solve nodes
+# RUN(LINKS): flow-links calls
+# RUN(SINKS): flow-solve sinks
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Copy"
+layout L2 name="NotCopied" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    DefineGetter v1, v2 key="g"
+    v4 = FinishObject v1
+    v5 = NewObject layout=L1 fields=[]
+    CopyDataProperties v5, v4
+    v7 = FinishObject v5
+    v8 = Integer integer=2
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    v10 = NewClosure function=f2
+    DefineGetter v9, v10 key="g"
+    v12 = FinishObject v9
+    Return
+}
+function f1 name="g" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="g" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK: , f0, v4) = {L0#[[source]]}
+# CHECK: , f0, v7) = {L1#[[copy]]}
+# CHECK-NOT: Getter(L1#
+# CHECK: Property(L1#[[copy]], "g") = {1}
+# CHECK-NOT: Getter(L1#
+# THIS: , f0, v4) = {L0#[[receiver]]}
+# THIS: , f1, parameter 0) = {L0#[[receiver]]}
+# LINKS-NOT: f2
+# LINKS: f0 v6 -> i{{*}} f1 Accessor Once cycle
+# LINKS-NOT: f2
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: f1

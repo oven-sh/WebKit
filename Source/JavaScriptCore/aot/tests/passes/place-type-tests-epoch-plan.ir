@@ -1,0 +1,177 @@
+# A call makes shape and pristine proofs stale, and one renewal before the next use renews the stale proofs that are still wanted
+# FORM: Prepared
+# RUN(F0): test-placement function=f0 site=v2:v5 site=v4:v5
+# RUN(F1): test-placement function=f1 site=v1:v6 site=v5:v6
+# RUN(F2): test-placement function=f2 site=v2:v7 site=v3:v8 site=v5:v7 site=v6:v8
+# RUN(F3): test-placement function=f3 site=v2:v6 site=v3:v7 site=v5:v6
+# RUN(F4): test-placement function=f4 site=v1:v3
+# RUN(F5): test-placement function=f5 site=v2:v5,v6 site=v4:v5,v6
+# RUN(F6): test-placement function=f6 site=v2:v5 site=v4:v5
+# RUN(F7): test-placement function=f7 site=v2:v5 site=v4:v5
+# RUN(F8): test-placement function=f8 site=v1:v5 site=v3:v6 site=v4:v5
+# RUN(F9): test-placement function=f9 site=v1:v6 site=v3:v6 site=v5:v6
+# RUN(F12): test-placement function=f12 site=v2:v6 site=v4:v6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
+
+function f0 name="acrossOneCall" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = PropGet v0 key="a"
+    v3 = Call v1
+    v4 = PropGet v0 key="b"
+    v5 = ShapeTest v0 layouts=[L0]
+    Return v4
+}
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] before v2; renew 0 before v4; uses v2 v4; cloned 32
+# F0-NOT: stretch
+
+function f1 name="acrossThreeCalls" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f10
+    v3 = CallDirect function=f10
+    v4 = CallDirect function=f10
+    v5 = PropGet v0 key="b"
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
+}
+# F1: stretch 0: test ShapeTest v0 layouts=[L0] before v1; renew 0 before v5; uses v1 v5; cloned 24
+# F1-NOT: stretch
+
+function f2 name="twoReceivers" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: object, v1: object):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v1 key="a"
+    v4 = CallDirect function=f10
+    v5 = PropGet v0 key="b"
+    v6 = PropGet v1 key="b"
+    v7 = ShapeTest v0 layouts=[L0]
+    v8 = ShapeTest v1 layouts=[L0]
+    Return v6
+}
+# F2: stretch 0: test ShapeTest v0 layouts=[L0] before v2; test ShapeTest v1 layouts=[L0] before v3; renew 0 1 before v5; uses v2 v3 v5 v6; cloned 8
+# F2-NOT: stretch
+
+function f3 name="onlyWantedProofsAreRenewed" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: object, v1: object):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v1 key="a"
+    v4 = CallDirect function=f10
+    v5 = PropGet v0 key="b"
+    v6 = ShapeTest v0 layouts=[L0]
+    v7 = ShapeTest v1 layouts=[L0]
+    Return v5
+}
+# F3: stretch 0: test ShapeTest v0 layouts=[L0] before v2; test ShapeTest v1 layouts=[L0] before v3; renew 0 before v5; uses v2 v3 v5; cloned 8
+# F3-NOT: stretch
+
+function f4 name="nothingUsedAfterCall" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f10
+    v3 = ShapeTest v0 layouts=[L0]
+    Return v1
+}
+# F4: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 0
+# F4-NOT: stretch
+
+function f5 name="storageIsNotRenewed" parameters=[{type=Array<anything>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<anything>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = CallDirect function=f10
+    v4 = ElemGet v0, v1
+    v5 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    v6 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v4
+}
+# F5: stretch 0: test IsPristine v0 builtinClass=Array aspects=[Storage] before v2; test HasArrayStorage v0 arrayStorage=Contiguous before v2; renew 0 before v4; test HasArrayStorage v0 arrayStorage=Contiguous before v4; uses v2 v4; cloned 8
+# F5-NOT: stretch
+
+function f6 name="mergeOfFreshAndStale" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect function=f10
+    Jump -> next b2()
+  b2():
+    v4 = PropGet v0 key="b"
+    v5 = ShapeTest v0 layouts=[L0]
+    Return v4
+}
+# F6: stretch 0: test ShapeTest v0 layouts=[L0] before v2; renew 0 before v4; uses v2 v4; cloned 20
+# F6-NOT: stretch
+
+function f7 name="mergeOfFreshAndFresh" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect function=f11
+    Jump -> next b2()
+  b2():
+    v4 = PropGet v0 key="b"
+    v5 = ShapeTest v0 layouts=[L0]
+    Return v4
+}
+# F7: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2 v4; cloned 20
+# F7-NOT: stretch
+
+function f8 name="testBetweenCallAndRenewal" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f10
+    v3 = PropGet v2 key="b"
+    v4 = PropGet v0 key="b"
+    v5 = ShapeTest v0 layouts=[L0]
+    v6 = ShapeTest v2 layouts=[L0]
+    Return v4
+}
+# F8: stretch 0: test ShapeTest v0 layouts=[L0] before v1; test ShapeTest v2 layouts=[L0] before v3; renew 0 before v4; uses v1 v3 v4; cloned 8
+# F8-NOT: stretch
+
+function f9 name="renewedTwice" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f10
+    v3 = PropGet v0 key="b"
+    v4 = CallDirect function=f10
+    v5 = PropGet v0 key="a"
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
+}
+# F9: stretch 0: test ShapeTest v0 layouts=[L0] before v1; renew 0 before v3; renew 0 before v5; uses v1 v3 v5; cloned 16
+# F9-NOT: stretch
+
+function f10 name="unknown" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+function f11 name="harmless" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+
+function f12 name="acrossSuspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1} {
+  b0(v0: object, v1: Promise):
+    v2 = PropGet v0 key="a"
+    v3 = AwaitBySavingFrame v2, v1
+    v4 = PropGet v0 key="b"
+    v5 = ReturnAsyncResult v1, v4
+    v6 = ShapeTest v0 layouts=[L0]
+    Return v5
+}
+# F12: stretch 0: test ShapeTest v0 layouts=[L0] before v2; uses v2; cloned 0
+# F12-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v4; uses v4; cloned 0
+# F12-NOT: stretch
+function f13 name="acrossSuspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1} {
+  b0(v0: object):
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f12
+    Return v1
+}

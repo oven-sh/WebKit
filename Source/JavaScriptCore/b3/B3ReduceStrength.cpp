@@ -29,22 +29,24 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AOTConvention.h"
-#include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BasicBlockUtils.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
+#include "B3ConstantReplacements.h"
+#include "B3DominatingConditions.h"
 #include "B3Dominators.h"
 #include "B3EliminateDeadCode.h"
 #include "B3InsertionSetInlines.h"
+#include "B3IntRange.h"
+#include "B3MemoryNumbering.h"
 #include "B3MemoryValueInlines.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3PhiChildren.h"
-#include <wtf/IndexMap.h>
 #include "B3ProcedureInlines.h"
+#include "B3RangeReductions.h"
 #include "B3SwitchValue.h"
 #include "B3ValueKeyInlines.h"
 #include "B3ValueInlines.h"
@@ -63,6 +65,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Hasher.h>
+#include <wtf/IndexMap.h>
 #include <wtf/LayeredHashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/SetForScope.h>
@@ -235,393 +238,6 @@ static inline std::optional<CanonicalShuffleInfo> canonicalShuffleInfo(Canonical
     return std::nullopt;
 }
 
-// FIXME: This IntRange stuff should be refactored into a general constant propagator. It's weird
-// that it's just sitting here in this file.
-class IntRange {
-
-#define DUMP_INT_RANGE_AND_RETURN(range)                           \
-    do {                                                           \
-        if (B3ReduceStrengthInternal::verbose) [[unlikely]]        \
-            dataLogLn("    IntRange for ", *value, " is ", range); \
-        return range;                                              \
-    } while (false);
-
-public:
-    IntRange()
-    {
-    }
-
-    IntRange(int64_t min, int64_t max)
-        : m_min(min)
-        , m_max(max)
-    {
-        ASSERT(m_min <= m_max);
-    }
-
-    template<typename T>
-    static IntRange LEGACY_NODELETE top()
-    {
-        return IntRange(std::numeric_limits<T>::min(), std::numeric_limits<T>::max());
-    }
-
-    static IntRange LEGACY_NODELETE top(Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return top<int32_t>();
-        case Int64:
-            return top<int64_t>();
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    static IntRange LEGACY_NODELETE rangeForMask(T mask)
-    {
-        if (mask == static_cast<T>(-1))
-            return top<T>();
-        if constexpr (std::is_signed_v<T>) {
-            if (mask < 0)
-                return IntRange(std::numeric_limits<T>::min() & mask, mask & std::numeric_limits<T>::max());
-        }
-        return IntRange(0, mask);
-    }
-
-    static IntRange LEGACY_NODELETE rangeForMask(int64_t mask, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return rangeForMask<int32_t>(static_cast<int32_t>(mask));
-        case Int64:
-            return rangeForMask<int64_t>(mask);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount)
-    {
-        std::make_unsigned_t<T> mask = 0;
-        mask--;
-        mask >>= shiftAmount;
-        return rangeForMask<T>(static_cast<T>(mask));
-    }
-
-    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return rangeForZShr<int32_t>(shiftAmount);
-        case Int64:
-            return rangeForZShr<int64_t>(shiftAmount);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    int64_t LEGACY_NODELETE min() const { return m_min; }
-    int64_t LEGACY_NODELETE max() const { return m_max; }
-
-    void dump(PrintStream& out) const
-    {
-        out.print("[", m_min, ",", m_max, "]");
-    }
-
-    template<typename T>
-    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other)
-    {
-        return sumOverflows<T>(m_min, other.m_min)
-            || sumOverflows<T>(m_min, other.m_max)
-            || sumOverflows<T>(m_max, other.m_min)
-            || sumOverflows<T>(m_max, other.m_max);
-    }
-
-    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return couldOverflowAdd<int32_t>(other);
-        case Int64:
-            return couldOverflowAdd<int64_t>(other);
-        default:
-            return true;
-        }
-    }
-
-    template<typename T>
-    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other)
-    {
-        return differenceOverflows<T>(m_min, other.m_min)
-            || differenceOverflows<T>(m_min, other.m_max)
-            || differenceOverflows<T>(m_max, other.m_min)
-            || differenceOverflows<T>(m_max, other.m_max);
-    }
-
-    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return couldOverflowSub<int32_t>(other);
-        case Int64:
-            return couldOverflowSub<int64_t>(other);
-        default:
-            return true;
-        }
-    }
-
-    template<typename T>
-    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other)
-    {
-        return productOverflows<T>(m_min, other.m_min)
-            || productOverflows<T>(m_min, other.m_max)
-            || productOverflows<T>(m_max, other.m_min)
-            || productOverflows<T>(m_max, other.m_max);
-    }
-
-    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return couldOverflowMul<int32_t>(other);
-        case Int64:
-            return couldOverflowMul<int64_t>(other);
-        default:
-            return true;
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE shl(int32_t shiftAmount)
-    {
-        T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
-        T newMax = static_cast<T>(m_max) << static_cast<T>(shiftAmount);
-
-        if (((newMin >> shiftAmount) != static_cast<T>(m_min))
-            || ((newMax >> shiftAmount) != static_cast<T>(m_max))) {
-            newMin = std::numeric_limits<T>::min();
-            newMax = std::numeric_limits<T>::max();
-        }
-
-        return IntRange(newMin, newMax);
-    }
-
-    IntRange LEGACY_NODELETE shl(int32_t shiftAmount, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return shl<int32_t>(shiftAmount);
-        case Int64:
-            return shl<int64_t>(shiftAmount);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount)
-    {
-        T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
-        T newMax = static_cast<T>(m_max) >> static_cast<T>(shiftAmount);
-
-        return IntRange(newMin, newMax);
-    }
-
-    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return sShr<int32_t>(shiftAmount);
-        case Int64:
-            return sShr<int64_t>(shiftAmount);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount)
-    {
-        // This is an awkward corner case for all of the other logic.
-        if (!shiftAmount)
-            return *this;
-
-        // If the input range may be negative, then all we can say about the output range is that it
-        // will be masked. That's because -1 right shifted just produces that mask.
-        if (m_min < 0)
-            return rangeForZShr<T>(shiftAmount);
-
-        // If the input range is non-negative, then this just brings the range closer to zero.
-        using UnsignedT = std::make_unsigned_t<T>;
-        UnsignedT newMin = static_cast<UnsignedT>(m_min) >> static_cast<UnsignedT>(shiftAmount);
-        UnsignedT newMax = static_cast<UnsignedT>(m_max) >> static_cast<UnsignedT>(shiftAmount);
-        
-        return IntRange(newMin, newMax);
-    }
-
-    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return zShr<int32_t>(shiftAmount);
-        case Int64:
-            return zShr<int64_t>(shiftAmount);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE add(const IntRange& other)
-    {
-        if (couldOverflowAdd<T>(other))
-            return top<T>();
-        return IntRange(m_min + other.m_min, m_max + other.m_max);
-    }
-
-    IntRange LEGACY_NODELETE add(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return add<int32_t>(other);
-        case Int64:
-            return add<int64_t>(other);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE sub(const IntRange& other)
-    {
-        if (couldOverflowSub<T>(other))
-            return top<T>();
-        return IntRange(m_min - other.m_max, m_max - other.m_min);
-    }
-
-    IntRange LEGACY_NODELETE sub(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return sub<int32_t>(other);
-        case Int64:
-            return sub<int64_t>(other);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange mul(const IntRange& other)
-    {
-        if (couldOverflowMul<T>(other))
-            return top<T>();
-        auto [min, max] = std::minmax({
-            m_min * other.m_min,
-            m_min * other.m_max,
-            m_max * other.m_min,
-            m_max * other.m_max
-        });
-        return IntRange(min, max);
-    }
-
-    IntRange mul(const IntRange& other, Type type)
-    {
-        switch (type.kind()) {
-        case Int32:
-            return mul<int32_t>(other);
-        case Int64:
-            return mul<int64_t>(other);
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return IntRange();
-        }
-    }
-
-    template<typename T>
-    IntRange LEGACY_NODELETE sExt()
-    {
-        ASSERT(m_min >= INT32_MIN);
-        ASSERT(m_max <= INT32_MAX);
-        int64_t typeMin = std::numeric_limits<T>::min();
-        int64_t typeMax = std::numeric_limits<T>::max();
-        auto min = m_min;
-        auto max = m_max;
-
-        if (typeMin <= min && min <= typeMax
-            && typeMin <= max && max <= typeMax)
-            return IntRange(min, max);
-
-        // Given type T with N bits, signed extension will turn bit N-1 as
-        // a sign bit. If bits N-1 upwards are identical for both min and max,
-        // then we're guaranteed that even after the sign extension, min and
-        // max will still be in increasing order.
-        //
-        // For example, when T is int8_t, the space of numbers from highest to
-        // lowest are as follows (in binary bits):
-        //
-        //      highest     0 111 1111  ^
-        //                    ...       |
-        //            1     0 000 0001  |   top segment
-        //            0     0 000 0000  v
-        //
-        //           -1     1 111 1111  ^
-        //           -2     1 111 1110  |   bottom segment
-        //                    ...       |
-        //       lowest     1 000 0000  v
-        //
-        // Note that if we exclude the sign bit, the range is made up of 2 segments
-        // of contiguous increasing numbers. If min and max are both in the same
-        // segment before the sign extension, then min and max will continue to be
-        // in a contiguous segment after the sign extension. Only when min and max
-        // spans across more than 1 of these segments, will min and max no longer
-        // be guaranteed to be in a contiguous range after the sign extension.
-        //
-        // Hence, we can check if bits N-1 and up are identical for the range min
-        // and max. If so, then the new min and max can be be computed by simply
-        // applying sign extension to their original values.
-
-        constexpr unsigned numberOfBits = countOfBits<T>;
-        constexpr int64_t segmentMask = (1ll << (numberOfBits - 1)) - 1;
-        constexpr int64_t topBitsMask = ~segmentMask;
-        int64_t minTopBits = topBitsMask & min;
-        int64_t maxTopBits = topBitsMask & max;
-
-        if (minTopBits == maxTopBits)
-            return IntRange(static_cast<int64_t>(static_cast<T>(min)), static_cast<int64_t>(static_cast<T>(max)));
-
-        return top<T>();
-    }
-
-    IntRange LEGACY_NODELETE zExt32()
-    {
-        ASSERT(m_min >= INT32_MIN);
-        ASSERT(m_max <= INT32_MAX);
-        uint64_t min = static_cast<uint64_t>(static_cast<uint32_t>(m_min));
-        uint64_t max = static_cast<uint64_t>(static_cast<uint32_t>(m_max));
-        if (m_max < 0 || m_min >= 0) {
-            // m_min = -2, m_max = -1 then should return [0xFFFF_FFFE, 0xFFFF_FFFF]
-            // m_min =  1, m_max =  2 then should return [1, 2]
-            return IntRange(min, max);
-        }
-        // m_min = a negative integer, m_max >= 0 then should return [0, 0xFFFF_FFFF]
-        return IntRange(0, std::numeric_limits<uint32_t>::max());
-    }
-
-private:
-    int64_t m_min { 0 };
-    int64_t m_max { 0 };
-};
-
 class ReduceStrength {
 public:
     ReduceStrength(Procedure& proc, ReduceStrengthPass pass)
@@ -637,7 +253,7 @@ public:
         m_changed = false;
 
         simplifyCFG();
-        handleChangedCFGIfNecessary(true);
+        handleChangedCFGIfNecessary();
 
         // We definitely want to do DCE before we do CSE so that we don't hoist things. For
         // example:
@@ -650,12 +266,7 @@ public:
         // "hoist" @thing. On the other hand, if we run DCE before CSE, we will kill @dead and
         // keep @thing. That's better, since we usually want things to stay wherever the client
         // put them. We're not actually smart enough to move things around at random.
-#if USE(BUN_JSC_ADDITIONS)
-        m_liveUpsilons.shrink(0);
-        m_changed |= eliminateDeadCodeImpl(m_proc, &m_liveUpsilons);
-#else
         m_changed |= eliminateDeadCodeImpl(m_proc);
-#endif
 
         reduceAllBlocksStrength();
 
@@ -663,23 +274,11 @@ public:
             return false;
 
         simplifyCFG();
-        handleChangedCFGIfNecessary(true);
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_mayHaveUnfoldedPhis && m_proc.positionIndependent()) {
-            m_liveUpsilons.removeAllMatching([&](UpsilonValue* upsilon) {
-                return m_proc.values()[upsilon->index()] != upsilon || upsilon->opcode() != Upsilon;
-            });
-            simplifySSA(&m_liveUpsilons);
-        } else if (m_mayHaveUnfoldedPhis)
-            simplifySSA();
-        if (m_proc.optLevel() >= 2 || (m_numbersMemory && m_changed))
-            eliminateDeadCodeImpl(m_proc);
-#else
+        handleChangedCFGIfNecessary();
         if (m_mayHaveUnfoldedPhis)
             simplifySSA();
-        if (m_proc.optLevel() >= 2)
+        if (m_proc.optLevel() >= 2 || (m_numbering && m_changed))
             eliminateDeadCodeImpl(m_proc);
-#endif
         return m_changed;
     }
 
@@ -712,19 +311,16 @@ public:
 
             m_dominators = &m_proc.dominators(); // Recompute if necessary.
             m_layeredCSE.clear();
-#if USE(BUN_JSC_ADDITIONS)
+            findValuesUsedForLowWord();
             m_valueOwnersAreCurrent = false;
-            m_numbersMemory = m_proc.optLevel() >= 1 && m_proc.positionIndependent();
-            if (m_numbersMemory) {
-                m_heapEpochs.clear();
-                m_factsAboutConditions.fill(0, m_proc.values().size());
-                m_newFactsAboutConditions.shrink(0);
-                m_factLayerStarts.shrink(0);
-                m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
-                recordLoopWrites();
+            if (m_proc.optLevel() >= 1 && m_proc.policy().optimization.redundancyElimination == RedundancyElimination::MemoryNumbering) {
+                m_numbering.emplace(m_proc);
+                m_numbering->beginWalk(*m_dominators);
+                m_conditions.reset(m_proc.values().size());
             }
-#endif
             reduceAllBlocksStrengthInDominatorPreOrder();
+            if (m_numbering)
+                m_numbering->endWalk();
             m_valueForConstant.clear();
 
 #if ASSERT_ENABLED
@@ -759,26 +355,16 @@ public:
     // in any other child order gives the first but not the second.
     void reduceAllBlocksStrengthInDominatorPreOrder()
     {
-#if USE(BUN_JSC_ADDITIONS)
         Vector<BasicBlock*, 64> lastChild;
         Vector<BasicBlock*, 64> childBefore;
         lastChild.fill(nullptr, m_proc.size());
         childBefore.fill(nullptr, m_proc.size());
-#else
-        // Three children is the common case: a diamond head dominates both arms and the join.
-        Vector<Vector<BasicBlock*, 3>> children(m_proc.size());
-#endif
         BasicBlock* root = nullptr;
         for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse) {
             BasicBlock* parent = m_dominators->idom(block);
             ASSERT(parent != block);
-#if USE(BUN_JSC_ADDITIONS)
             if (parent)
                 childBefore[block->index()] = std::exchange(lastChild[parent->index()], block);
-#else
-            if (parent)
-                children[parent->index()].append(block);
-#endif
             else {
                 ASSERT(!root);
                 root = block;
@@ -794,12 +380,10 @@ public:
             // A null entry closes the layer that the block pushing it opened.
             if (!block) {
                 m_layeredCSE.dropLastLayer();
-#if USE(BUN_JSC_ADDITIONS)
-                if (m_numbersMemory) {
-                    m_heapEpochs.dropLastLayer();
-                    popFactLayer();
+                if (m_numbering) {
+                    m_numbering->leaveDominatorSubtree();
+                    m_conditions.popLayer();
                 }
-#endif
                 if (m_trackWasmGCAccesses)
                     m_wasmGCMap.dropLastLayer();
                 continue;
@@ -807,10 +391,8 @@ public:
             stack.append(nullptr);
 
             m_layeredCSE.startLayer();
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_numbersMemory)
-                beginMemoryNumbering(block);
-#endif
+            if (m_numbering)
+                enterBlockForNumbering(block);
 
             m_block = block;
             m_blockState = computeBlockReachability();
@@ -826,24 +408,16 @@ public:
                 removeUpsilonsFromUnreachableBlock();
             else
                 reduceBlockStrength();
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_numbersMemory)
-                m_memoryStateAtTail[block->index()] = m_memoryState;
-#endif
+            if (m_numbering)
+                m_numbering->didFinishBlock(block);
 
             if (m_trackWasmGCAccesses)
                 endWasmGCBlock(block);
 
             finishBlock(block);
 
-#if USE(BUN_JSC_ADDITIONS)
             for (BasicBlock* child = lastChild[block->index()]; child; child = childBefore[child->index()])
                 stack.append(child);
-#else
-            auto& kids = children[block->index()];
-            for (unsigned i = kids.size(); i--;)
-                stack.append(kids[i]);
-#endif
         }
     }
 
@@ -857,12 +431,8 @@ private:
                     deepDump(m_proc, m_block->at(m_index)), "\n");
             }
             m_value = m_block->at(m_index);
-#if USE(BUN_JSC_ADDITIONS)
-            for (Value*& child : m_value->children()) {
-                if (child->opcode() == Identity)
-                    child = child->foldIdentity();
-            }
-            if (m_numbersMemory && !m_trackWasmGCAccesses) {
+            m_value->performSubstitution();
+            if (m_numbering && !m_trackWasmGCAccesses) {
                 switch (m_value->opcode()) {
                 case Phi:
                     reduceValueStrength();
@@ -879,9 +449,6 @@ private:
                     break;
                 }
             }
-#else
-            m_value->performSubstitution();
-#endif
 
             HeapRange writesBeforeReduction;
             if (m_trackWasmGCAccesses)
@@ -891,9 +458,10 @@ private:
             // becomes Add(x, c1 + c2)), and the result may match another rule. Without fixpoint
             // iteration we re-run reductions on the same value until it stops changing or gets
             // replaced (Identity) / erased (Nop).
-#if USE(BUN_JSC_ADDITIONS)
             Opcode opcodeBeforeReduction = m_value->opcode();
-#endif
+            HeapSet writesBeforeNumbering;
+            if (m_numbering)
+                writesBeforeNumbering = MemoryNumbering::writesOf(m_value);
             constexpr unsigned maxReductionAttempts = 8;
             bool reduced = false;
             for (unsigned attempt = 0; attempt < maxReductionAttempts; ++attempt) {
@@ -908,13 +476,12 @@ private:
                 if (opcode == Identity || opcode == Nop)
                     break;
             }
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_numbersMemory)
-                numberValue(opcodeBeforeReduction);
+            if (m_numbering)
+                numberValue(opcodeBeforeReduction, writesBeforeNumbering);
             else
-#endif
             if (m_proc.optLevel() >= 2)
                 replaceIfRedundant();
+            computeLowWordIfSufficient();
 
             // Runs after the reduction rules above, so that a cast the rules strip off the base
             // or a trap bit they drop is already reflected in the access this records.
@@ -926,10 +493,10 @@ private:
 
     void reduceValueStrength()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (avoidsDoubleForIntegers())
+        if (tryReduceWithRanges())
             return;
-#endif
+        if (tryCompareBeforeConstantReplacement())
+            return;
         switch (m_value->opcode()) {
         case Phi: {
             auto upsilons = upsilonsInSnapshot(m_value);
@@ -947,10 +514,8 @@ private:
             // folding can leave a value using itself. An input defined in a block that strictly
             // dominates this one cannot depend on the Phi, so it is safe either way. A value still
             // waiting in an insertion set has no owner yet.
-#if USE(BUN_JSC_ADDITIONS)
             if (m_blockState == BlockState::Unknown && !std::exchange(m_valueOwnersAreCurrent, true))
                 m_proc.resetValueOwners();
-#endif
             if (m_blockState == BlockState::Unknown
                 && !(input->owner && m_dominators->strictlyDominates(input->owner, m_block))) {
                 m_mayHaveUnfoldedPhis = true;
@@ -1762,9 +1327,6 @@ private:
                 break;
             }
 
-            if (narrowsBitwiseOperationOnSignExtendedWords())
-                break;
-
             // Turn this: BitAnd(BitAnd(value, constant1), constant2)
             // Into this: BitAnd(value, constant1 & constant2).
             if (m_value->child(0)->opcode() == BitAnd) {
@@ -1963,9 +1525,6 @@ private:
                 break;
             }
 
-            if (narrowsBitwiseOperationOnSignExtendedWords())
-                break;
-
             // Turn this: BitOr(BitOr(value, constant1), constant2)
             // Into this: BitOr(value, constant1 | constant2).
             if (m_value->child(0)->opcode() == BitOr) {
@@ -2052,9 +1611,6 @@ private:
                 break;
             }
 
-            if (narrowsBitwiseOperationOnSignExtendedWords())
-                break;
-
             // Turn this: BitXor(BitXor(value, constant1), constant2)
             // Into this: BitXor(value, constant1 ^ constant2).
             if (m_value->child(0)->opcode() == BitXor) {
@@ -2129,9 +1685,6 @@ private:
                 replaceWithNewValue(constant);
                 break;
             }
-
-            if (narrowsShiftOfExtendedWord(SExt32))
-                break;
 
             if (m_value->child(1)->hasInt32()
                 && m_value->child(0)->opcode() == Shl
@@ -2228,9 +1781,6 @@ private:
                 break;
             }
 
-            if (narrowsShiftOfExtendedWord(ZExt32))
-                break;
-
             // Turn this: ZShr(Shl(value, amount)), amount)
             // Into this: BitAnd(value, mask)
             // Conditions:
@@ -2313,6 +1863,19 @@ private:
             }
 
             handleShiftAmount();
+            break;
+
+        case PopCount:
+            // Turn this: PopCount(constant)
+            // Into this: the number of bits set in constant
+            if (m_value->child(0)->hasInt32()) {
+                replaceWithNewValue(m_proc.addIntConstant(m_value, std::popcount(static_cast<uint32_t>(m_value->child(0)->asInt32()))));
+                break;
+            }
+            if (m_value->child(0)->hasInt64()) {
+                replaceWithNewValue(m_proc.addIntConstant(m_value, std::popcount(static_cast<uint64_t>(m_value->child(0)->asInt64()))));
+                break;
+            }
             break;
 
         case Abs:
@@ -2652,14 +2215,6 @@ private:
                 replaceWithNew<Value>(SExt16To64, m_value->origin(), m_value->child(0)->child(0));
                 break;
             }
-
-            if (m_value->child(0)->opcode() == Trunc && m_value->child(0)->child(0)->type() == Int64) {
-                IntRange range = rangeFor(m_value->child(0)->child(0));
-                if (range.min() >= std::numeric_limits<int32_t>::min() && range.max() <= std::numeric_limits<int32_t>::max()) {
-                    replaceWithIdentity(m_value->child(0)->child(0));
-                    break;
-                }
-            }
             break;
 
         case ZExt32:
@@ -2694,11 +2249,6 @@ private:
             // Into this: value
             if (m_value->child(0)->opcode() == SExt32 || m_value->child(0)->opcode() == ZExt32) {
                 replaceWithIdentity(m_value->child(0)->child(0));
-                break;
-            }
-
-            if (Value* int32 = int32BoxedBy(m_value->child(0))) {
-                replaceWithIdentity(int32);
                 break;
             }
 
@@ -2778,6 +2328,11 @@ private:
                 }
             }
 
+            if (Value* narrow = m_lowWords.get(m_value->child(0))) {
+                replaceWithIdentity(narrow);
+                break;
+            }
+
             // Turn this: Trunc(Op(value, constant))
             //     where !(constant & 0xffffffff)
             //       and Op is Add, Sub, BitOr, or BitXor
@@ -2806,13 +2361,6 @@ private:
                 replaceWithNewValue(constant);
                 break;
             }
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_value->child(0)->opcode() == SExt32) {
-                m_value->child(0) = m_value->child(0)->child(0);
-                m_changed = true;
-                break;
-            }
-#endif
             break;
 
         case IToF:
@@ -2920,7 +2468,7 @@ private:
                 if (!sumOverflows<intptr_t>(offset, memory->offset())) {
                     offset += memory->offset();
                     Value::OffsetType smallOffset = static_cast<Value::OffsetType>(offset);
-                    if (smallOffset == offset) {
+                    if (smallOffset == offset && !isKnownDereferenceableOnlyThroughAddress(memory, address->child(0), smallOffset)) {
                         address = address->child(0);
                         memory->lastChild() = address;
                         memory->setOffset(smallOffset);
@@ -3123,10 +2671,7 @@ private:
         case Equal:
             handleCommutativity();
 
-            if (narrowsEqualityOfExtendedWords())
-                break;
-
-            if (comparesSignsByExclusiveOr())
+            if (tryFoldSignComparison())
                 break;
 
             // Turn this: Equal(bool, 0)
@@ -3170,10 +2715,7 @@ private:
         case NotEqual:
             handleCommutativity();
 
-            if (narrowsEqualityOfExtendedWords())
-                break;
-
-            if (comparesSignsByExclusiveOr())
+            if (tryFoldSignComparison())
                 break;
 
             if (m_value->child(0)->returnsBool()) {
@@ -3224,14 +2766,6 @@ private:
         case Below:
         case AboveEqual:
         case BelowEqual: {
-            if ((m_value->opcode() == AboveEqual || m_value->opcode() == Below) && isNumberTag(m_value->child(1)) && int32BoxedBy(m_value->child(0))) {
-                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), m_value->opcode() == AboveEqual ? TriState::True : TriState::False));
-                break;
-            }
-            if ((m_value->opcode() == BelowEqual || m_value->opcode() == Above) && isNumberTag(m_value->child(0)) && int32BoxedBy(m_value->child(1))) {
-                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), m_value->opcode() == BelowEqual ? TriState::True : TriState::False));
-                break;
-            }
             CanonicalizedComparison comparison = canonicalizeComparison(m_value);
             TriState result = TriState::Indeterminate;
             switch (comparison.opcode) {
@@ -3444,6 +2978,7 @@ private:
             if (Value* negatedConstant = m_value->child(1)->checkNegConstant(m_proc)) {
                 m_insertionSet.insertValue(m_index, negatedConstant);
                 m_value->as<CheckValue>()->convertToAdd();
+                m_proc.didAddOpcode(CheckAdd);
                 m_value->child(1) = negatedConstant;
                 m_changed = true;
                 break;
@@ -3475,6 +3010,7 @@ private:
                     break;
                 case 2:
                     m_value->as<CheckValue>()->convertToAdd();
+                    m_proc.didAddOpcode(CheckAdd);
                     m_value->child(1) = m_value->child(0);
                     m_changed = true;
                     break;
@@ -3562,11 +3098,7 @@ private:
             if (m_value->child(0)->opcode() == Equal && m_value->child(0)->child(1)->isInt(0)) {
                 m_value->child(0) = m_value->child(0)->child(0);
                 std::swap(m_block->taken(), m_block->notTaken());
-                m_changed = true;
-            }
-
-            if (m_value->child(0)->opcode() == SExt32 || m_value->child(0)->opcode() == ZExt32) {
-                m_value->child(0) = m_value->child(0)->child(0);
+                m_proc.didReorderSuccessors();
                 m_changed = true;
             }
             
@@ -3577,6 +3109,7 @@ private:
                 && m_value->child(0)->child(0)->returnsBool()) {
                 m_value->child(0) = m_value->child(0)->child(0);
                 std::swap(m_block->taken(), m_block->notTaken());
+                m_proc.didReorderSuccessors();
                 m_changed = true;
             }
 
@@ -3610,47 +3143,26 @@ private:
                 // If a check for the same property dominates us, we can kill the branch. This sort
                 // of makes sense here because it's cheap, but hacks like this show that we're going
                 // to need SCCP.
-#if USE(BUN_JSC_ADDITIONS)
-                if (m_numbersMemory ? factsAbout(m_value->child(0)) & IsZero : !!m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
-#else
                 if (m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
-#endif
                     // The Check would have side-exited if child(0) was non-zero. So, it must be
                     // zero here.
                     replaceTerminalWithJump(m_block->notTaken());
                 }
             }
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_numbersMemory && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
-                Value* condition = conditionRepresentative(m_value->child(0), false);
-                unsigned facts = factsAbout(condition);
-                bool isZero = condition != m_value->child(0) && facts & IsZero;
-                if (isZero || facts & IsNotZero) {
-                    (isZero ? m_block->taken() : m_block->notTaken()).block()->removePredecessor(m_block);
-                    m_value->replaceWithJump(m_block, isZero ? m_block->notTaken() : m_block->taken());
-                    m_changedCFG = true;
-                }
+            if (m_numbering && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
+                TriState known = m_conditions.isNonZero(m_numbering->representativeOf(m_value->child(0)));
+                if (known != TriState::Indeterminate)
+                    replaceTerminalWithJump(known == TriState::True ? m_block->taken() : m_block->notTaken());
             }
-#endif
             break;
         }
 
         case Switch: {
-            SwitchValue* switchValue = m_value->as<SwitchValue>();
-            if (m_value->child(0)->opcode() == SExt32) {
-                bool everyCaseFitsWord = true;
-                for (unsigned i = 0; i < switchValue->numCaseValues(); ++i)
-                    everyCaseFitsWord &= switchValue->caseValue(i) == static_cast<int32_t>(switchValue->caseValue(i));
-                if (everyCaseFitsWord) {
-                    m_value->child(0) = m_value->child(0)->child(0);
-                    m_changed = true;
-                }
-            }
-
             // Turn this: Switch(constant, ...)
             // Into this: Jump(the matching case, or the fall-through)
             if (!m_value->child(0)->hasInt())
                 break;
+            SwitchValue* switchValue = m_value->as<SwitchValue>();
             int64_t key = m_value->child(0)->asInt();
             FrequentedBlock target = m_block->fallThrough();
             for (unsigned i = 0; i < switchValue->numCaseValues(); ++i) {
@@ -4726,424 +4238,159 @@ private:
         return { value->opcode(), { value->child(0), value->child(1) } };
     }
 
-    // FIXME: This should really be a forward analysis. Instead, we uses a bounded-search backwards
-    // analysis.
-#if USE(BUN_JSC_ADDITIONS)
-    struct IntegralNumber {
-        IntRange range;
-        bool mayBeNegativeZero { false };
-    };
-
-    static bool isExactInDouble(const IntRange& range)
-    {
-        constexpr int64_t limit = static_cast<int64_t>(1) << 53;
-        return range.min() >= -limit && range.max() <= limit;
-    }
-
-    std::optional<IntegralNumber> integralNumberFor(Value* value, unsigned timeToLive = 4)
-    {
-        if (!timeToLive || value->type() != Double)
-            return std::nullopt;
-        switch (value->opcode()) {
-        case ConstDouble: {
-            double number = value->asDouble();
-            constexpr double limit = 9007199254740992.0;
-            if (!(number >= -limit && number <= limit) || number != std::trunc(number) || (!number && std::signbit(number)))
-                return std::nullopt;
-            int64_t whole = static_cast<int64_t>(number);
-            return IntegralNumber { IntRange(whole, whole), false };
-        }
-        case IToD: {
-            IntRange range = rangeFor(value->child(0));
-            if (!isExactInDouble(range))
-                return std::nullopt;
-            return IntegralNumber { range, false };
-        }
-        case Add:
-        case Sub:
-        case Mul: {
-            auto left = integralNumberFor(value->child(0), timeToLive - 1);
-            if (!left)
-                return std::nullopt;
-            auto right = integralNumberFor(value->child(1), timeToLive - 1);
-            if (!right)
-                return std::nullopt;
-            IntRange range = value->opcode() == Add ? left->range.add(right->range, Int64) : value->opcode() == Sub ? left->range.sub(right->range, Int64) : left->range.mul(right->range, Int64);
-            if (!isExactInDouble(range))
-                return std::nullopt;
-            bool productMayBeNegativeZero = value->opcode() == Mul && range.min() <= 0 && range.max() >= 0 && (left->range.min() < 0 || right->range.min() < 0);
-            return IntegralNumber { range, left->mayBeNegativeZero || right->mayBeNegativeZero || productMayBeNegativeZero };
-        }
-        default:
-            return std::nullopt;
-        }
-    }
-
-    Value* integralNumberAsInteger(Value* value)
-    {
-        switch (value->opcode()) {
-        case ConstDouble:
-            return m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), static_cast<int64_t>(value->asDouble()));
-        case IToD:
-            if (value->child(0)->type() == Int64)
-                return value->child(0);
-            return m_insertionSet.insert<Value>(m_index, SExt32, m_value->origin(), value->child(0));
-        case Add:
-        case Sub:
-        case Mul: {
-            Value* left = integralNumberAsInteger(value->child(0));
-            Value* right = integralNumberAsInteger(value->child(1));
-            return m_insertionSet.insert<Value>(m_index, value->opcode(), m_value->origin(), left, right);
-        }
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-            return nullptr;
-        }
-    }
-
-    static bool mayHaveOwnRange(Value* value)
-    {
-        switch (value->opcode()) {
-        case BitAnd:
-        case SShr:
-        case ZShr:
-        case Shl:
-        case Add:
-        case Sub:
-        case Mul:
-        case SExt8:
-        case SExt8To64:
-        case SExt16:
-        case SExt16To64:
-        case SExt32:
-        case ZExt32:
-        case Load8Z:
-        case Load8S:
-        case Load16Z:
-        case Load16S:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    std::optional<std::pair<uint64_t, uint64_t>> unsignedRangeFor(Value* value)
+    static bool computesLowWordFromLowWords(Value* value)
     {
         if (value->type() != Int64)
-            return std::nullopt;
-        uint64_t moved = 0;
-        if (value->opcode() == Add && value->child(1)->hasInt64()) {
-            moved = static_cast<uint64_t>(value->child(1)->asInt64());
-            value = value->child(0);
-        }
-        if (!mayHaveOwnRange(value))
-            return std::nullopt;
-        IntRange range = rangeFor(value);
-        uint64_t least = static_cast<uint64_t>(range.min()) + moved;
-        uint64_t most = static_cast<uint64_t>(range.max()) + moved;
-        if (least > most)
-            return std::nullopt;
-        return std::pair { least, most };
-    }
-
-    static bool isSameInteger(Value* a, Value* b, unsigned timeToLive = 5)
-    {
-        if (a == b)
-            return true;
-        if (!timeToLive || a->opcode() != b->opcode() || a->type() != b->type())
             return false;
-        switch (a->opcode()) {
-        case Const64:
-            return a->asInt64() == b->asInt64();
-        case SExt32:
-            return a->child(0) == b->child(0);
-        case Add:
-        case Sub:
-        case Mul:
-            return isSameInteger(a->child(0), b->child(0), timeToLive - 1) && isSameInteger(a->child(1), b->child(1), timeToLive - 1);
-        default:
-            return false;
-        }
-    }
-
-    Value* withoutInRangeNarrowing(Value* value)
-    {
-        if (value->opcode() != SExt32 || value->child(0)->opcode() != Trunc || value->child(0)->child(0)->type() != Int64)
-            return value;
-        IntRange range = rangeFor(value->child(0)->child(0));
-        if (range.min() < std::numeric_limits<int32_t>::min() || range.max() > std::numeric_limits<int32_t>::max())
-            return value;
-        return value->child(0)->child(0);
-    }
-
-    bool resultsForSingleInteger(Opcode opcode, Value* left, Value* right)
-    {
-        if (!isSameInteger(withoutInRangeNarrowing(left), withoutInRangeNarrowing(right)))
-            return false;
-        return answer(opcode == Equal || opcode == LessEqual || opcode == GreaterEqual);
-    }
-
-    bool narrowsEqualityOfExtendedWords()
-    {
-        Value* left = m_value->child(0);
-        Value* right = m_value->child(1);
-        if (left->opcode() != SExt32 && left->opcode() != ZExt32)
-            return false;
-        Value* narrowRight;
-        if (right->opcode() == left->opcode())
-            narrowRight = right->child(0);
-        else if (right->hasInt64()) {
-            int64_t constant = right->asInt64();
-            int64_t extended = left->opcode() == SExt32 ? static_cast<int64_t>(static_cast<int32_t>(constant)) : static_cast<int64_t>(static_cast<uint32_t>(constant));
-            if (constant != extended)
-                return answer(m_value->opcode() == NotEqual);
-            narrowRight = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), static_cast<int32_t>(constant));
-        } else
-            return false;
-        replaceWithNew<Value>(m_value->opcode(), m_value->origin(), left->child(0), narrowRight);
-        return true;
-    }
-
-    bool narrowsBitwiseOperationOnSignExtendedWords()
-    {
-        Value* left = m_value->child(0);
-        Value* right = m_value->child(1);
-        if (m_value->type() != Int64 || (left->opcode() != SExt32 && left->opcode() != ZExt32))
-            return false;
-        Value* narrowRight;
-        if (right->opcode() == left->opcode())
-            narrowRight = right->child(0);
-        else if (right->hasInt64() && right->asInt64() == (left->opcode() == SExt32 ? static_cast<int64_t>(static_cast<int32_t>(right->asInt64())) : static_cast<int64_t>(static_cast<uint32_t>(right->asInt64()))))
-            narrowRight = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), static_cast<int32_t>(right->asInt64()));
-        else
-            return false;
-        Value* narrow = m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left->child(0), narrowRight);
-        replaceWithNew<Value>(left->opcode(), m_value->origin(), narrow);
-        return true;
-    }
-
-    bool narrowsShiftOfExtendedWord(Opcode extension)
-    {
-        if (m_value->type() != Int64 || m_value->child(0)->opcode() != extension || !m_value->child(1)->hasInt32())
-            return false;
-        int32_t amount = m_value->child(1)->asInt32();
-        if (amount < 0 || amount >= 32)
-            return false;
-        Value* narrow = m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), m_value->child(0)->child(0), m_value->child(1));
-        replaceWithNew<Value>(extension, m_value->origin(), narrow);
-        return true;
-    }
-
-    bool answer(bool isTrue)
-    {
-        return replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), isTrue ? TriState::True : TriState::False));
-    }
-
-    bool avoidsDoubleForIntegers()
-    {
-        if (!m_proc.positionIndependent())
-            return false;
-        Opcode opcode = m_value->opcode();
-        switch (opcode) {
-        case Patchpoint: {
-            auto* patchpoint = m_value->as<PatchpointValue>();
-            int32_t key = patchpoint->pureFunctionOfChildrenKey;
-            if ((key != toInt64TruncationKey && key != toInt32ConversionKey) || patchpoint->numChildren() != 1 || !integralNumberFor(patchpoint->child(0)))
-                return false;
-            Value* whole = integralNumberAsInteger(patchpoint->child(0));
-            if (key == toInt64TruncationKey)
-                replaceWithIdentity(whole);
-            else
-                replaceWithNew<Value>(Trunc, m_value->origin(), whole);
-            return true;
-        }
-        case EqualOrUnordered:
-        case Equal:
-        case NotEqual:
-        case LessThan:
-        case GreaterThan:
-        case LessEqual:
-        case GreaterEqual: {
-            Value* left = m_value->child(0);
-            Value* right = m_value->child(1);
-            if (left->type() == Double) {
-                if (opcode == GreaterThan && left->opcode() == Abs && right->hasDouble() && !right->asDouble() && integralNumberFor(left->child(0))) {
-                    Value* whole = integralNumberAsInteger(left->child(0));
-                    replaceWithNew<Value>(NotEqual, m_value->origin(), whole, m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), 0));
-                    return true;
-                }
-                if (!integralNumberFor(left) || !integralNumberFor(right))
-                    return false;
-                if (opcode == EqualOrUnordered)
-                    opcode = Equal;
-                Value* integralLeft = integralNumberAsInteger(left);
-                Value* integralRight = integralNumberAsInteger(right);
-                if (resultsForSingleInteger(opcode, integralLeft, integralRight))
-                    return true;
-                replaceWithNew<Value>(opcode, m_value->origin(), integralLeft, integralRight);
-                return true;
-            }
-            if (!left->isInteger())
-                return false;
-            if (left->type() == Int64 && resultsForSingleInteger(opcode, left, right))
-                return true;
-            if ((opcode == Equal || opcode == NotEqual) && left->opcode() == BitwiseCast && right->opcode() == BitwiseCast && left->type() == Int64) {
-                auto first = integralNumberFor(left->child(0));
-                auto second = first ? integralNumberFor(right->child(0)) : std::nullopt;
-                if (!second || first->mayBeNegativeZero || second->mayBeNegativeZero)
-                    return false;
-                Value* integralLeft = integralNumberAsInteger(left->child(0));
-                Value* integralRight = integralNumberAsInteger(right->child(0));
-                if (resultsForSingleInteger(opcode, integralLeft, integralRight))
-                    return true;
-                replaceWithNew<Value>(opcode, m_value->origin(), integralLeft, integralRight);
-                return true;
-            }
-            if (!right->hasInt() || left->hasInt() || !mayHaveOwnRange(left))
-                return false;
-            IntRange range = rangeFor(left);
-            int64_t constant = right->asInt();
-            switch (opcode) {
-            case Equal:
-            case NotEqual:
-                if (constant < range.min() || constant > range.max())
-                    return answer(opcode == NotEqual);
-                return false;
-            case LessThan:
-            case GreaterEqual:
-                if (range.max() < constant)
-                    return answer(opcode == LessThan);
-                if (range.min() >= constant)
-                    return answer(opcode == GreaterEqual);
-                return false;
-            default:
-                if (range.min() > constant)
-                    return answer(opcode == GreaterThan);
-                if (range.max() <= constant)
-                    return answer(opcode == LessEqual);
-                return false;
-            }
-        }
-        case Below:
-        case BelowEqual:
-        case Above:
-        case AboveEqual: {
-            Value* left = m_value->child(0);
-            Value* right = m_value->child(1);
-            if (left->hasInt64() && !right->hasInt64()) {
-                std::swap(left, right);
-                opcode = opcode == Below ? Above : opcode == BelowEqual ? AboveEqual : opcode == Above ? Below : BelowEqual;
-            }
-            if (!right->hasInt64() || left->hasInt64())
-                return false;
-            auto range = unsignedRangeFor(left);
-            if (!range)
-                return false;
-            uint64_t constant = static_cast<uint64_t>(right->asInt64());
-            switch (opcode) {
-            case Below:
-            case AboveEqual:
-                if (range->second < constant)
-                    return answer(opcode == Below);
-                if (range->first >= constant)
-                    return answer(opcode == AboveEqual);
-                return false;
-            default:
-                if (range->first > constant)
-                    return answer(opcode == Above);
-                if (range->second <= constant)
-                    return answer(opcode == BelowEqual);
-                return false;
-            }
-        }
-        default:
-            return false;
-        }
-    }
-#endif
-
-    static int32_t shiftAmountOf(Value* shift)
-    {
-        return shift->child(1)->asInt32() & (shift->type() == Int32 ? 31 : 63);
-    }
-
-    IntRange rangeFor(Value* value, unsigned timeToLive = 5)
-    {
-        if (!timeToLive)
-            DUMP_INT_RANGE_AND_RETURN(IntRange::top(value->type()));
-        
         switch (value->opcode()) {
-        case Const32:
-        case Const64: {
-            int64_t intValue = value->asInt();
-            DUMP_INT_RANGE_AND_RETURN(IntRange(intValue, intValue));
-        }
-
-        case BitAnd:
-            if (value->child(1)->hasInt())
-                DUMP_INT_RANGE_AND_RETURN(IntRange::rangeForMask(value->child(1)->asInt(), value->type()));
-            break;
-
-        case SShr:
-            if (value->child(1)->hasInt32()) {
-                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sShr(
-                    shiftAmountOf(value), value->type()));
-            }
-            break;
-
-        case ZShr:
-            if (value->child(1)->hasInt32()) {
-                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zShr(
-                    shiftAmountOf(value), value->type()));
-            }
-            break;
-
-        case Shl:
-            if (value->child(1)->hasInt32()) {
-                DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).shl(
-                    shiftAmountOf(value), value->type()));
-            }
-            break;
-
         case Add:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).add(
-                rangeFor(value->child(1), timeToLive - 1), value->type()));
-
         case Sub:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sub(
-                rangeFor(value->child(1), timeToLive - 1), value->type()));
-
         case Mul:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).mul(
-                rangeFor(value->child(1), timeToLive - 1), value->type()));
-
-        case SExt8:
-        case SExt8To64:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int8_t>());
-        case SExt16:
-        case SExt16To64:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int16_t>());
-        case SExt32:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sExt<int32_t>());
-
-        case ZExt32:
-            DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zExt32());
-
-        case Load8Z:
-            DUMP_INT_RANGE_AND_RETURN(IntRange(0, std::numeric_limits<uint8_t>::max()));
-        case Load8S:
-            DUMP_INT_RANGE_AND_RETURN(IntRange(std::numeric_limits<int8_t>::min(), std::numeric_limits<int8_t>::max()));
-        case Load16Z:
-            DUMP_INT_RANGE_AND_RETURN(IntRange(0, std::numeric_limits<uint16_t>::max()));
-        case Load16S:
-            DUMP_INT_RANGE_AND_RETURN(IntRange(std::numeric_limits<int16_t>::min(), std::numeric_limits<int16_t>::max()));
-
+        case BitAnd:
+        case BitOr:
+        case BitXor:
+            return true;
         default:
-            break;
+            return false;
+        }
+    }
+
+    // A walk may give one of these values a user that needs the high word, and then the operation is computed in both widths.
+    void findValuesUsedForLowWord()
+    {
+        if (!m_narrowsIntegers)
+            return;
+
+        BitVector needsHighWord(m_proc.values().size());
+        Vector<Value*, 32> worklist;
+        auto needChildren = [&](Value* value) {
+            for (Value* child : value->children()) {
+                if (computesLowWordFromLowWords(child) && needsHighWord.add(child->index()))
+                    worklist.append(child);
+            }
+        };
+        for (Value* value : m_proc.values()) {
+            if (value->opcode() != Trunc && !computesLowWordFromLowWords(value))
+                needChildren(value);
+        }
+        while (!worklist.isEmpty())
+            needChildren(worklist.takeLast());
+
+        m_lowWords.clear();
+        m_isUsedForLowWord.clearAll();
+        m_isUsedForLowWord.ensureSize(m_proc.values().size());
+        for (Value* value : m_proc.values()) {
+            if (computesLowWordFromLowWords(value) && !needsHighWord.quickGet(value->index()))
+                m_isUsedForLowWord.quickSet(value->index());
+        }
+    }
+
+    Value* lowWordOf(Value* wide)
+    {
+        if (wide->opcode() == SExt32 || wide->opcode() == ZExt32)
+            return wide->child(0);
+        if (Value* narrow = m_lowWords.get(wide))
+            return narrow;
+        if (wide->hasInt64())
+            return m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), static_cast<int32_t>(wide->asInt64()));
+        return m_insertionSet.insert<Value>(m_index, Trunc, m_value->origin(), wide);
+    }
+
+    // Beside this: Op(a, b)
+    //     where Op is Add, Sub, Mul, BitAnd, BitOr, or BitXor
+    //       and nothing uses the high word of Op(a, b)
+    // Put this: Op(Trunc(a), Trunc(b))
+    // Each Trunc(Op(a, b)) becomes that value, and nothing is left that uses Op(a, b).
+    void computeLowWordIfSufficient()
+    {
+        if (!m_narrowsIntegers || !m_isUsedForLowWord.get(m_value->index()) || !computesLowWordFromLowWords(m_value))
+            return;
+        Value* left = lowWordOf(m_value->child(0));
+        Value* right = lowWordOf(m_value->child(1));
+        m_lowWords.add(m_value, m_insertionSet.insert<Value>(m_index, m_value->opcode(), m_value->origin(), left, right));
+    }
+
+    bool tryReduceWithRanges()
+    {
+        if (!m_reducesWithRanges)
+            return false;
+        RangeReduction reduction = findRangeReduction(m_proc, m_value);
+        switch (reduction.kind) {
+        case RangeReduction::Kind::None:
+            return false;
+        case RangeReduction::Kind::Constant:
+            replaceWithNewValue(m_proc.addIntConstant(m_value, reduction.constant));
+            return true;
+        case RangeReduction::Kind::Value:
+            replaceWithIdentity(reduction.value);
+            return true;
+        case RangeReduction::Kind::ZeroExtension:
+            replaceWithNew<Value>(ZExt32, m_value->origin(), reduction.value);
+            return true;
+        case RangeReduction::Kind::Comparison:
+            replaceWithNew<Value>(reduction.opcode, m_value->origin(), reduction.value, reduction.right);
+            return true;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Turn this: Compare(Select(Equal(x, a), b, x), c)
+    // Into this: Compare(x, c)
+    //     where Compare(a, c) is Compare(b, c)
+    //
+    // Turn this: Equal(Select(Equal(x, a), b, x), a)
+    // Into this: 0
+    //
+    // NotEqual has the opposite answer. A BitwiseCast between the Select and the comparison changes no bit.
+    bool tryCompareBeforeConstantReplacement()
+    {
+        Opcode opcode = m_value->opcode();
+        if (!m_foldsImpliedComparisons || (!isIntegerComparison(opcode) && opcode != EqualOrUnordered))
+            return false;
+
+        Value* compared = m_value->child(0);
+        bool isCast = compared->opcode() == BitwiseCast;
+        std::optional<uint64_t> constant = bitsOfConstant(m_value->child(1));
+        std::optional<ConstantReplacement> select = findConstantReplacement(isCast ? compared->child(0) : compared);
+        if (!constant || !select)
+            return false;
+
+        Type type = compared->type();
+        std::optional<bool> holdsForReplaced = evaluateComparisonOfBits(opcode, type, select->replaced, *constant);
+        std::optional<bool> holdsForReplacement = evaluateComparisonOfBits(opcode, type, select->replacement, *constant);
+        if (!holdsForReplaced || !holdsForReplacement)
+            return false;
+
+        if (*holdsForReplaced == *holdsForReplacement) {
+            if (select->original->type() == type)
+                m_value->child(0) = select->original;
+            else if (select->testedBits->type() == type)
+                m_value->child(0) = select->testedBits;
+            else
+                m_value->child(0) = m_insertionSet.insert<Value>(m_index, BitwiseCast, m_value->origin(), select->original);
+            m_changed = true;
+            return true;
         }
 
-        DUMP_INT_RANGE_AND_RETURN(IntRange::top(value->type()));
+        bool comparesBits = type.isInt() && (opcode == Equal || opcode == NotEqual);
+        if (!comparesBits || *constant != select->replaced)
+            return false;
+        replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), triState(*holdsForReplacement)));
+        return true;
     }
+
+    // The passes that move a load above a branch all run before the final pass of this phase. A store keeps
+    // its address too, so that it still names a location the way the loads from it do.
+    bool isKnownDereferenceableOnlyThroughAddress(const MemoryValue* memory, const Value* foldedAddress, Value::OffsetType foldedOffset)
+    {
+        return m_pass == ReduceStrengthPass::Initial
+            && m_proc.isKnownDereferenceable(memory)
+            && !m_proc.isKnownDereferenceable(foldedAddress, foldedOffset, memory->accessByteSize());
+    }
+
+    // FIXME: This should really be a forward analysis. Instead, we uses a bounded-search backwards
+    // analysis.
+    IntRange rangeFor(Value* value) { return B3::rangeFor(m_proc, value); }
 
     bool tryReduceSameInputShuffleToDup(uint8_t dupLane)
     {
@@ -5165,10 +4412,8 @@ private:
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
     }
 
-    bool comparesSignsByExclusiveOr()
+    bool tryFoldSignComparison()
     {
-        if (!m_proc.positionIndependent())
-            return false;
         auto isSignTest = [](Value* value) {
             return (value->opcode() == LessThan || value->opcode() == GreaterEqual) && value->child(0)->isInteger() && value->child(1)->isInt(0);
         };
@@ -5176,29 +4421,11 @@ private:
         Value* right = m_value->child(1);
         if (!isSignTest(left) || !isSignTest(right) || left->child(0)->type() != right->child(0)->type())
             return false;
-        bool holdsWhereSignsDiffer = (m_value->opcode() == NotEqual) == (left->opcode() == right->opcode());
+        bool isTrueForDifferentSigns = (m_value->opcode() == NotEqual) == (left->opcode() == right->opcode());
         Value* difference = m_insertionSet.insert<Value>(m_index, BitXor, m_value->origin(), left->child(0), right->child(0));
         Value* zero = m_insertionSet.insertIntConstant(m_index, m_value->origin(), difference->type(), 0);
-        replaceWithNew<Value>(holdsWhereSignsDiffer ? LessThan : GreaterEqual, m_value->origin(), difference, zero);
+        replaceWithNew<Value>(isTrueForDifferentSigns ? LessThan : GreaterEqual, m_value->origin(), difference, zero);
         return true;
-    }
-
-    bool isNumberTag(Value* value)
-    {
-        auto* argument = value->as<ArgumentRegValue>();
-        return argument && m_proc.positionIndependent() && argument->argumentReg() == Reg(AOT::numberTagArgumentGPR);
-    }
-
-    Value* int32BoxedBy(Value* value)
-    {
-        static_assert(!static_cast<uint32_t>(JSValue::NumberTag));
-        if (value->opcode() != Add)
-            return nullptr;
-        for (unsigned i = 0; i < 2; ++i) {
-            if (value->child(i)->opcode() == ZExt32 && isNumberTag(value->child(1 - i)))
-                return value->child(i)->child(0);
-        }
-        return nullptr;
     }
 
     // Fold an unsigned comparison against a small constant into an (in)equality against zero.
@@ -5362,496 +4589,27 @@ private:
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    struct RecordedWrite {
-        unsigned begin { 0 };
-        unsigned end { 0 };
-        unsigned id { 0 };
-
-        bool hasSingleHeap() const { return end - begin == 1; }
-        bool hasSameHeapsAs(const RecordedWrite& other) const { return begin == other.begin && end == other.end; }
-    };
-
-    struct MemoryState {
-        static constexpr unsigned maxRecordedWrites = 8;
-        static constexpr unsigned maxRecordedRanges = 3;
-
-        unsigned epoch { 0 };
-        unsigned id { 0 };
-        unsigned callEpoch { 0 };
-        BasicBlock* owner { nullptr };
-        BasicBlock* epochOwner { nullptr };
-        unsigned recordedWriteCount { 0 };
-        bool hasUnrecordedWrites { false };
-        std::array<RecordedWrite, maxRecordedWrites> recordedWrites { };
-
-        std::span<RecordedWrite> noted() { return std::span { recordedWrites }.first(recordedWriteCount); }
-        std::span<const RecordedWrite> noted() const { return std::span { recordedWrites }.first(recordedWriteCount); }
-
-        void beginEpoch(BasicBlock* block)
-        {
-            epoch = id;
-            epochOwner = block;
-            recordedWriteCount = 0;
-            hasUnrecordedWrites = false;
-        }
-
-        bool note(RecordedWrite write)
-        {
-            unsigned numberOfRanges = 0;
-            for (RecordedWrite& other : noted()) {
-                if (other.hasSameHeapsAs(write)) {
-                    other.id = write.id;
-                    return true;
-                }
-                numberOfRanges += !other.hasSingleHeap();
-            }
-            if (recordedWriteCount == maxRecordedWrites || (!write.hasSingleHeap() && numberOfRanges == maxRecordedRanges))
-                return false;
-            recordedWrites[recordedWriteCount++] = write;
-            return true;
-        }
-    };
-
-    bool hasRecordedOverlay(const RecordedWrite& write)
+    void enterBlockForNumbering(BasicBlock* block)
     {
-        return m_heapEpochs.find(write.begin).value_or(0) == write.id;
+        m_numbering->enterBlock(block);
+        m_conditions.pushLayer();
+        if (std::optional<DominatingCondition> condition = conditionAtHead(block))
+            m_conditions.add(m_numbering->ensureRepresentative(condition->value), condition->isNonZero);
     }
 
-    struct LoopWrites {
-        bool areAllRecorded { true };
-        bool hasCall { false };
-        MemoryState state;
-    };
-
-    void recordLoopWrites()
+    void numberValue(Opcode opcodeBeforeReduction, const HeapSet& writesBeforeReduction)
     {
-        m_loopsForMemoryNumbering = nullptr;
-        m_loopWrites.shrink(0);
-        bool hasBackEdgeInto = false;
-        for (BasicBlock* block : m_proc) {
-            for (BasicBlock* successor : block->successorBlocks())
-                hasBackEdgeInto |= m_dominators->dominates(successor, block);
-        }
-        if (!hasBackEdgeInto)
-            return;
-        auto& loops = m_proc.naturalLoops();
-        if (!loops.numLoops())
-            return;
-        m_loopsForMemoryNumbering = &loops;
-        m_loopWrites.grow(loops.numLoops());
-        for (BasicBlock* block : m_proc) {
-            auto* innerMost = loops.innerMostLoopOf(block);
-            if (!innerMost)
-                continue;
-            for (Value* value : *block) {
-                Effects effects = value->effects();
-                bool isCall = clobbersLikeCall(value);
-                if (!isCall && !effects.fence && !effects.writes)
-                    continue;
-                bool canBeRecorded = !effects.fence && effects.writes.end() <= std::numeric_limits<unsigned>::max();
-                RecordedWrite write { static_cast<unsigned>(effects.writes.begin()), static_cast<unsigned>(effects.writes.end()), 0 };
-                for (auto* loop = innerMost; loop; loop = loops.innerMostOuterLoop(*loop)) {
-                    LoopWrites& writes = m_loopWrites[loop->index()];
-                    writes.hasCall |= isCall;
-                    if (!canBeRecorded || (effects.writes && !writes.state.note(write)))
-                        writes.areAllRecorded = false;
-                }
-            }
-        }
-    }
-
-    bool inheritStateFromBeforeLoop(BasicBlock* header, MemoryState& state, unsigned& callEpoch)
-    {
-        if (!m_loopsForMemoryNumbering)
-            return false;
-        auto* loop = m_loopsForMemoryNumbering->headerOf(header);
-        if (!loop || !m_loopWrites[loop->index()].areAllRecorded)
-            return false;
-        const MemoryState* ahead = nullptr;
-        bool callEpochsDiffer = false;
-        for (BasicBlock* predecessor : header->predecessors()) {
-            if (predecessor->index() >= m_memoryStateAtTail.size())
-                return false;
-            if (m_loopsForMemoryNumbering->belongsTo(predecessor, *loop))
-                continue;
-            const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
-            if (!atTail.id || atTail.hasUnrecordedWrites || (ahead && ahead->id != atTail.id))
-                return false;
-            callEpochsDiffer |= ahead && ahead->callEpoch != atTail.callEpoch;
-            ahead = &atTail;
-        }
-        if (!ahead || !ahead->epochOwner || !m_dominators->dominates(ahead->epochOwner, header))
-            return false;
-        MemoryState taken = *ahead;
-        unsigned id = m_lastMemoryStateID + 1;
-        for (RecordedWrite& write : taken.noted()) {
-            if (write.hasSingleHeap() && !hasRecordedOverlay(write))
-                write.id = id;
-        }
-        const LoopWrites& writes = m_loopWrites[loop->index()];
-        for (RecordedWrite write : writes.state.noted()) {
-            write.id = id;
-            if (!taken.note(write))
-                return false;
-        }
-        m_lastMemoryStateID = id;
-        taken.id = id;
-        taken.owner = header;
-        for (const RecordedWrite& write : taken.noted()) {
-            if (write.id == id && write.hasSingleHeap())
-                m_heapEpochs.overlay(write.begin, id);
-        }
-        callEpoch = writes.hasCall || callEpochsDiffer ? 0 : taken.callEpoch;
-        state = taken;
-        return true;
-    }
-
-    bool mergeSameEpochStates(BasicBlock* block, MemoryState& merged)
-    {
-        if (block->numPredecessors() < 2)
-            return false;
-        unsigned numberOfPredecessors = 0;
-        std::array<unsigned, MemoryState::maxRecordedWrites> agreeingStateCount { };
-        for (BasicBlock* predecessor : block->predecessors()) {
-            if (predecessor->index() >= m_memoryStateAtTail.size())
-                return false;
-            const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
-            if (!atTail.id || atTail.hasUnrecordedWrites)
-                return false;
-            if (!numberOfPredecessors++) {
-                merged = atTail;
-                agreeingStateCount.fill(1);
-                continue;
-            }
-            if (merged.epoch != atTail.epoch)
-                return false;
-            for (const RecordedWrite& write : atTail.noted()) {
-                bool isKnown = false;
-                for (unsigned i = 0; i < merged.recordedWriteCount; ++i) {
-                    if (!merged.recordedWrites[i].hasSameHeapsAs(write))
-                        continue;
-                    isKnown = true;
-                    agreeingStateCount[i] += merged.recordedWrites[i].id == write.id;
-                }
-                if (isKnown)
-                    continue;
-                if (!merged.note(write))
-                    return false;
-                agreeingStateCount[merged.recordedWriteCount - 1] = 0;
-            }
-        }
-        if (!merged.epoch || !merged.epochOwner || !m_dominators->dominates(merged.epochOwner, block))
-            return false;
-        merged.id = ++m_lastMemoryStateID;
-        merged.owner = block;
-        for (unsigned i = 0; i < merged.recordedWriteCount; ++i) {
-            RecordedWrite& write = merged.recordedWrites[i];
-            if (agreeingStateCount[i] == numberOfPredecessors && (!write.hasSingleHeap() || hasRecordedOverlay(write)))
-                continue;
-            write.id = merged.id;
-            if (write.hasSingleHeap())
-                m_heapEpochs.overlay(write.begin, merged.id);
-        }
-        return true;
-    }
-
-    enum FactAboutCondition : uint8_t {
-        IsZero = 1,
-        IsNotZero = 2,
-    };
-
-    unsigned factsAbout(Value* condition) const
-    {
-        unsigned index = condition->index();
-        return index < m_factsAboutConditions.size() ? m_factsAboutConditions[index] : 0;
-    }
-
-    bool addFact(Value* condition, FactAboutCondition fact)
-    {
-        unsigned index = condition->index();
-        if (index >= m_factsAboutConditions.size())
-            m_factsAboutConditions.insertFill(m_factsAboutConditions.size(), 0, index + 1 - m_factsAboutConditions.size());
-        uint8_t& facts = m_factsAboutConditions[index];
-        if (facts & fact)
-            return false;
-        facts |= fact;
-        m_newFactsAboutConditions.append(index << 2 | fact);
-        return true;
-    }
-
-    void popFactLayer()
-    {
-        unsigned start = m_factLayerStarts.takeLast();
-        for (unsigned i = m_newFactsAboutConditions.size(); i-- > start;)
-            m_factsAboutConditions[m_newFactsAboutConditions[i] >> 2] &= ~(m_newFactsAboutConditions[i] & 3);
-        m_newFactsAboutConditions.shrink(start);
-    }
-
-    void beginMemoryNumbering(BasicBlock* block)
-    {
-        m_heapEpochs.startLayer();
-        m_factLayerStarts.append(m_newFactsAboutConditions.size());
-
-        MemoryState& state = m_memoryState;
-        unsigned callEpoch = 0;
-        bool isFirst = true;
-        for (BasicBlock* predecessor : block->predecessors()) {
-            static const MemoryState unvisitedBlockState;
-            const MemoryState& atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : unvisitedBlockState;
-            if (isFirst) {
-                state = atTail;
-                callEpoch = atTail.callEpoch;
-                isFirst = false;
-                continue;
-            }
-            if (state.id != atTail.id)
-                state = { };
-            if (callEpoch != atTail.callEpoch)
-                callEpoch = 0;
-        }
-        if (isFirst)
-            state = { };
-        if ((!state.id || !m_dominators->dominates(state.owner, block)) && !mergeSameEpochStates(block, state) && !inheritStateFromBeforeLoop(block, state, callEpoch)) {
-            state.id = ++m_lastMemoryStateID;
-            state.owner = block;
-            state.beginEpoch(block);
-        }
-        state.callEpoch = callEpoch ? callEpoch : ++m_lastMemoryStateID;
-
-        if (block->numPredecessors() != 1)
-            return;
-        BasicBlock* predecessor = block->predecessor(0);
-        Value* branch = predecessor->last();
-        if (branch->opcode() != Branch || predecessor->taken().block() == predecessor->notTaken().block())
-            return;
-        addFact(conditionRepresentative(branch->child(0), true), predecessor->taken().block() == block ? IsNotZero : IsZero);
-    }
-
-    static ALWAYS_INLINE ValueKey keyOf(Value* value)
-    {
-        switch (value->opcode()) {
-        case Add:
-        case Sub:
-        case Mul:
-        case BitAnd:
-        case BitOr:
-        case BitXor:
-        case Shl:
-        case SShr:
-        case ZShr:
-        case Equal:
-        case NotEqual:
-        case LessThan:
-        case LessEqual:
-        case GreaterThan:
-        case GreaterEqual:
-        case Above:
-        case Below:
-        case AboveEqual:
-        case BelowEqual:
-            return ValueKey(value->kind(), value->type(), value->child(0), value->child(1));
-        case Opaque:
-        case SExt32:
-        case ZExt32:
-        case Trunc:
-        case IToD:
-        case BitwiseCast:
-            return ValueKey(value->kind(), value->type(), value->child(0));
-        case Load:
-        case Load8Z:
-        case Load16Z:
-        case Load8S:
-        case Load16S:
-        case Store:
-        case Store8:
-        case Store16:
-        case Branch:
-            return ValueKey();
-        default:
-            return value->key();
-        }
-    }
-
-    Value* conditionRepresentative(Value* condition, bool mayAdd)
-    {
-        ValueKey key = keyOf(condition);
-        if (!key || condition->isConstant())
-            return condition;
-        return (mayAdd ? m_layeredCSE.findOrAdd(key, condition) : m_layeredCSE.find(key)).value_or(condition);
-    }
-
-    static bool isCheapToRecompute(Value* value)
-    {
-        switch (value->opcode()) {
-        case Add:
-        case Sub:
-        case Mul:
-        case Neg:
-        case BitAnd:
-        case BitOr:
-        case BitXor:
-        case Shl:
-        case SShr:
-        case ZShr:
-        case SExt8:
-        case SExt16:
-        case SExt32:
-        case ZExt32:
-        case Trunc:
-        case BitwiseCast:
-        case IToD:
-        case Equal:
-        case NotEqual:
-        case LessThan:
-        case GreaterThan:
-        case LessEqual:
-        case GreaterEqual:
-        case Above:
-        case Below:
-        case AboveEqual:
-        case BelowEqual:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    static bool clobbersLikeCall(Value* value)
-    {
-        if (value->opcode() == CCall)
-            return true;
-        if (value->opcode() != Patchpoint)
-            return false;
-        const RegisterSet& clobbered = value->as<PatchpointValue>()->lateClobbered();
-        return clobbered.contains(GPRInfo::argumentGPR0, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR1, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR2, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR3, IgnoreVectors);
-    }
-
-    void didWriteMemory(HeapRange writes)
-    {
-        m_memoryState.id = ++m_lastMemoryStateID;
-        m_memoryState.owner = m_block;
-        RecordedWrite write { static_cast<unsigned>(writes.begin()), static_cast<unsigned>(writes.end()), m_memoryState.id };
-        if (writes.distance() == 1) {
-            m_heapEpochs.overlay(writes.begin(), m_memoryState.id);
-            if (!m_memoryState.note(write))
-                m_memoryState.hasUnrecordedWrites = true;
-        } else if (writes.end() > std::numeric_limits<unsigned>::max() || !m_memoryState.note(write))
-            m_memoryState.beginEpoch(m_block);
-    }
-
-    unsigned heapEpoch(unsigned heap)
-    {
-        unsigned epoch = std::max(m_memoryState.epoch, m_heapEpochs.find(heap).value_or(0));
-        for (const RecordedWrite& write : m_memoryState.noted()) {
-            if (!write.hasSingleHeap() && write.begin <= heap && heap < write.end)
-                epoch = std::max(epoch, write.id);
-        }
-        return epoch;
-    }
-
-    ValueKey keyForLoad(Kind kind, Type type, MemoryValue* memory)
-    {
-        v128_t bits;
-        bits.u32x4[0] = memory->lastChild()->index();
-        bits.u32x4[1] = static_cast<uint32_t>(memory->offset());
-        if (memory->isLoad() && memory->readsMutability() == Mutability::Immutable)
-            bits.u32x4[2] = 0;
-        else if (memory->range().distance() == 1)
-            bits.u32x4[2] = heapEpoch(memory->range().begin());
-        else
-            bits.u32x4[2] = m_memoryState.id;
-        bits.u32x4[3] = m_memoryState.callEpoch;
-        return ValueKey(kind, type, bits);
-    }
-
-    void numberValue(Opcode opcodeBeforeReduction)
-    {
-        if (m_value->opcode() != opcodeBeforeReduction && (m_value->opcode() == Nop || m_value->opcode() == Identity)) {
-            switch (opcodeBeforeReduction) {
-            case Store8:
-            case Store16:
-            case Store:
-            case AtomicWeakCAS:
-            case AtomicStrongCAS:
-            case AtomicXchgAdd:
-            case AtomicXchgAnd:
-            case AtomicXchgOr:
-            case AtomicXchgSub:
-            case AtomicXchgXor:
-            case AtomicXchg:
-            case MemoryCopy:
-            case MemoryFill:
-            case Fence:
-            case CCall:
-            case Patchpoint:
-                didWriteMemory(HeapRange::top());
-                break;
-            default:
-                break;
-            }
-        }
-        replaceIfRedundantInMemoryState();
-        if (clobbersLikeCall(m_value))
-            m_memoryState.callEpoch = ++m_lastMemoryStateID;
-    }
-
-    void replaceIfRedundantInMemoryState()
-    {
-        Value* value = m_value->opcode() == Identity ? m_value->child(0) : m_value;
-        if (value->opcode() == Identity || value->isConstant())
-            return;
-
-        if (value->kind() == Kind(Check)) {
-            if (!addFact(value->child(0), IsZero)) {
+        if (m_value->kind() == Kind(Check)) {
+            if (!m_conditions.add(m_numbering->ensureRepresentative(m_value->child(0)), false)) {
                 m_value->replaceWithNop();
                 m_changed = true;
             }
             return;
         }
 
-        ValueKey key = keyOf(value);
-        if (!key) {
-            if (value != m_value)
-                return;
-            MemoryValue* memory = m_value->as<MemoryValue>();
-            if (!memory || memory->isExotic()) {
-                Effects effects = m_value->effects();
-                if (effects.fence)
-                    didWriteMemory(HeapRange::top());
-                else if (effects.writes)
-                    didWriteMemory(effects.writes);
-                return;
-            }
-            if (memory->isStore()) {
-                didWriteMemory(memory->range());
-                if (memory->opcode() == Store)
-                    m_layeredCSE.add(keyForLoad(Load, memory->child(0)->type(), memory), memory->child(0));
-                return;
-            }
-            key = keyForLoad(memory->kind(), memory->type(), memory);
-        } else if (isCheapToRecompute(value)) {
-            v128_t bits;
-            for (unsigned i = 0; i < 3; ++i)
-                bits.u32x4[i] = key.childIndex(i);
-            bits.u32x4[3] = m_memoryState.callEpoch;
-            key = ValueKey(key.kind(), key.type(), bits);
-        }
-
-        std::optional<Value*> match = m_layeredCSE.findOrAdd(key, value);
-        if (!match && m_value->opcode() == Patchpoint) {
-            if (HeapRange writes = m_value->as<PatchpointValue>()->effects.writes)
-                didWriteMemory(writes);
-        }
-        if (!match || *match == value)
-            return;
-        if (value == m_value)
-            m_value->replaceWithIdentity(*match);
-        else
-            m_value->child(0) = *match;
-        m_changed = true;
+        if (m_numbering->numberValue(m_value, opcodeBeforeReduction, writesBeforeReduction) == MemoryNumbering::Result::Replaced)
+            m_changed = true;
     }
-#endif
 
     // Each slot has an epoch in m_wasmGCEpochs, and a write bumps the epochs of the slots it may touch.
     // Slot 0 is the struct catch-all, 1..8 one per array element type, 9 the array catch-all, and
@@ -6178,7 +4936,7 @@ private:
         // Thousands of written fields across thousands of blocks would make the per-block epoch
         // snapshots the largest thing in the compile. Past that every field uses the struct catch-all
         // slot, so a store to any field bumps the one epoch every struct key carries.
-        if (static_cast<uint64_t>(m_proc.size()) * (numberOfWasmGCSharedSlots + width) > Options::maxB3WasmGCEpochSnapshotEntries()) {
+        if (static_cast<uint64_t>(m_proc.size()) * (numberOfWasmGCSharedSlots + width) > m_proc.policy().upstream.maxWasmGCEpochSnapshotEntries) {
             width = 0;
 
             auto collapseWasmGCFieldWrites = [](BitVector& writes) {
@@ -6250,8 +5008,7 @@ private:
         m_wasmGCArraySpan = HeapRange(begin, end);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool hasSomethingForSimplifyCFG()
+    bool canSimplifyCFG()
     {
         for (BasicBlock* block : m_proc) {
             unsigned numSuccessors = block->numSuccessors();
@@ -6272,7 +5029,6 @@ private:
         }
         return false;
     }
-#endif
 
     void simplifyCFG()
     {
@@ -6300,11 +5056,9 @@ private:
         // predecessors during strength reduction since that minimizes the total number of fixpoint
         // iterations needed to kill a lot of code.
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (!hasSomethingForSimplifyCFG())
+        if (!canSimplifyCFG())
             return;
         LargePredecessorLists<BasicBlock> lists;
-#endif
         for (BasicBlock* block : m_proc.blocksInPostOrder()) {
             if (B3ReduceStrengthInternal::verbose)
                 dataLog("Considering block ", *block, ":\n");
@@ -6354,18 +5108,10 @@ private:
                     for (BasicBlock* current = successor; current != newSuccessor;) {
                         BasicBlock* next = current->successorBlock(0);
                         current->successorBlock(0) = newSuccessor;
-#if USE(BUN_JSC_ADDITIONS)
                         lists.add(newSuccessor, current);
-#else
-                        newSuccessor->addPredecessor(current);
-#endif
                         current = next;
                     }
-#if USE(BUN_JSC_ADDITIONS)
                     lists.add(newSuccessor, block);
-#else
-                    newSuccessor->addPredecessor(block);
-#endif
                     successor = newSuccessor;
                     m_changedCFG = true;
                 }
@@ -6390,16 +5136,12 @@ private:
                         dataLogLnIf(B3ReduceStrengthInternal::verbose, "Changing ", pointerDump(block), "'s terminal to a Jump.");
                         block->last()->replaceWithJump(block, FrequentedBlock(firstSuccessor));
                         m_changedCFG = true;
-#if USE(BUN_JSC_ADDITIONS)
-                        m_madeBlockJumpOnly |= block->size() == 1;
-#endif
                     }
                 }
             }
 
         }
 
-        // Bun: merging is a loop of its own, in pre-order, in which the head of a chain of blocks absorbs all of it. In the post-order loop
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
             // Finally handle jumps to a block with one predecessor.
             while (block->numSuccessors() == 1 && block->last()->opcode() == Jump) {
@@ -6430,11 +5172,7 @@ private:
 
                     // Ensure that predecessors of block's new successors know what's up.
                     for (BasicBlock* newSuccessor : block->successorBlocks()) {
-#if USE(BUN_JSC_ADDITIONS)
                         lists.replace(newSuccessor, successor, block);
-#else
-                        newSuccessor->replacePredecessor(successor, block);
-#endif
                     }
 
                     dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
@@ -6449,22 +5187,12 @@ private:
         }
     }
 
-    void handleChangedCFGIfNecessary(bool isAfterSimplifyCFG = false)
+    void handleChangedCFGIfNecessary()
     {
-        UNUSED_PARAM(isAfterSimplifyCFG);
         if (m_changedCFG) {
             m_changedCFG = false;
-#if USE(BUN_JSC_ADDITIONS)
-            if (isAfterSimplifyCFG && m_proc.positionIndependent() && !std::exchange(m_madeBlockJumpOnly, false))
-                m_proc.resetReachabilityAfterContractions();
-            else {
-                m_proc.resetReachability();
-                m_proc.invalidateCFG();
-            }
-#else
             m_proc.resetReachability();
             m_proc.invalidateCFG();
-#endif
             // Dominators and natural loops are not valid anymore, and we don't need them yet.
             m_dominators = nullptr;
             m_naturalLoops = nullptr;
@@ -6474,13 +5202,8 @@ private:
 
     void checkPredecessorValidity()
     {
-#if USE(BUN_JSC_ADDITIONS)
         if (!m_validatesIRAtEachPhase) [[likely]]
             return;
-#else
-        if (!shouldValidateIRAtEachPhase())
-            return;
-#endif
 
         for (BasicBlock* block : m_proc) {
             for (BasicBlock* successor : block->successorBlocks())
@@ -6488,11 +5211,7 @@ private:
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    void simplifySSA(const Vector<UpsilonValue*>* allUpsilons = nullptr)
-#else
     void simplifySSA()
-#endif
     {
         // This runs Aycock and Horspool's algorithm on our Phi functions [1]. For most CFG patterns,
         // this can take a suboptimal arrangement of Phi functions and make it optimal, as if you had
@@ -6517,30 +5236,23 @@ private:
         // walk. One round here catches the rest: Phis the walk skipped, and those whose inputs only
         // became equal after the walk visited them.
 
-#if USE(BUN_JSC_ADDITIONS)
         IndexMap<Value*, Value*> onlyChild(m_proc.values().size(), nullptr);
         Vector<Value*, 32> phis;
-        auto look = [&](UpsilonValue* upsilon) ALWAYS_INLINE_LAMBDA {
+        for (Value* value : m_proc.values()) {
+            UpsilonValue* upsilon = value->as<UpsilonValue>();
+            if (!upsilon)
+                continue;
             Value* phi = upsilon->phi();
             Value* child = upsilon->child(0)->foldIdentity();
             Value*& only = onlyChild[phi];
             if (child == phi || child == only || only == phi)
-                return;
+                continue;
             if (only) {
                 only = phi;
-                return;
+                continue;
             }
             only = child;
             phis.append(phi);
-        };
-        if (allUpsilons) {
-            for (UpsilonValue* upsilon : *allUpsilons)
-                look(upsilon);
-        } else {
-            for (Value* value : m_proc.values()) {
-                if (UpsilonValue* upsilon = value->as<UpsilonValue>())
-                    look(upsilon);
-            }
         }
         bool found = false;
         for (Value* phi : phis)
@@ -6548,29 +5260,19 @@ private:
         if (!found)
             return;
         m_changed = true;
-        auto drop = [&](UpsilonValue* upsilon) ALWAYS_INLINE_LAMBDA {
+        for (Value* value : m_proc.values()) {
+            UpsilonValue* upsilon = value->as<UpsilonValue>();
+            if (!upsilon)
+                continue;
             Value* only = onlyChild[upsilon->phi()];
             if (only && only != upsilon->phi())
                 upsilon->replaceWithNop();
-        };
-        if (allUpsilons) {
-            for (UpsilonValue* upsilon : *allUpsilons)
-                drop(upsilon);
-        } else {
-            for (Value* value : m_proc.values()) {
-                if (UpsilonValue* upsilon = value->as<UpsilonValue>())
-                    drop(upsilon);
-            }
         }
         for (Value* phi : phis) {
-            if (onlyChild[phi] != phi)
-                phi->replaceWithIdentity(onlyChild[phi]);
+            Value* only = onlyChild[phi]->foldIdentity();
+            if (only != phi)
+                phi->replaceWithIdentity(only);
         }
-#else
-        PhiChildren phiChildren(m_proc);
-        for (Value* phi : phiChildren.phis())
-            simplifyPhi(phi, phiChildren[phi]);
-#endif
     }
 
     void simplifyPhi(Value* phi, PhiChildren::UpsilonCollection upsilons)
@@ -6630,45 +5332,22 @@ private:
     unsigned m_index { 0 };
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
-#if USE(BUN_JSC_ADDITIONS)
     bool m_valueOwnersAreCurrent { false };
-#endif
     PhiChildren* m_phiChildren { nullptr };
     unsigned m_phiChildrenValueCount { 0 };
     IndexMap<BasicBlock*, BlockState> m_blockStates;
     BlockState m_blockState { BlockState::Unvisited };
     BitVector m_enteredFromReachableBlock;
     bool m_mayHaveUnfoldedPhis { false };
-#if USE(BUN_JSC_ADDITIONS)
-    struct MixingValueKeyHash {
-        static unsigned hash(const ValueKey& key)
-        {
-            uint64_t low = key.childIndex(0) | static_cast<uint64_t>(key.childIndex(1)) << 32;
-            uint64_t high = key.childIndex(2) | static_cast<uint64_t>(key.childIndex(3)) << 32;
-            uint64_t mixed = (low + (static_cast<uint64_t>(key.kind().hash()) << 32 | key.type().hash())) * 0x9e3779b97f4a7c15ull;
-            mixed = ((mixed ^ mixed >> 32) + high) * 0xbf58476d1ce4e5b9ull;
-            return static_cast<unsigned>(mixed >> 32);
-        }
-        static bool equal(const ValueKey& a, const ValueKey& b) { return a == b; }
-    };
-    LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_layeredCSE;
-#else
     LayeredHashMap<ValueKey, Value*> m_layeredCSE;
-#endif
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_numbersMemory { false };
-    MemoryState m_memoryState;
-    unsigned m_lastMemoryStateID { 0 };
-    Vector<MemoryState> m_memoryStateAtTail;
-    const NaturalLoops* m_loopsForMemoryNumbering { nullptr };
-    Vector<LoopWrites> m_loopWrites;
-    LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
-    const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase() };
-    Vector<UpsilonValue*> m_liveUpsilons;
-    Vector<uint8_t, 1024> m_factsAboutConditions;
-    Vector<unsigned, 64> m_newFactsAboutConditions;
-    Vector<unsigned, 64> m_factLayerStarts;
-#endif
+    const bool m_reducesWithRanges { m_proc.policy().optimization.reducesWithRanges };
+    const bool m_foldsImpliedComparisons { m_proc.policy().optimization.foldsImpliedComparisons };
+    const bool m_narrowsIntegers { m_proc.policy().optimization.narrowsIntegers };
+    BitVector m_isUsedForLowWord;
+    UncheckedKeyHashMap<Value*, Value*> m_lowWords;
+    std::optional<MemoryNumbering> m_numbering;
+    DominatingConditionStack m_conditions;
+    const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };
 
     bool m_trackWasmGCAccesses { false };
     LayeredHashMap<WasmGCAccessKey, WasmGCAvailableValue, DefaultHash<WasmGCAccessKey>, WasmGCAccessKeyTraits> m_wasmGCMap;
@@ -6683,9 +5362,6 @@ private:
     Vector<BitVector> m_wasmGCBlockWrites; // Slots each block inside a loop writes.
     bool m_changed { false };
     bool m_changedCFG { false };
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_madeBlockJumpOnly { false };
-#endif
 };
 
 } // anonymous namespace

@@ -1,0 +1,15 @@
+# A code address points into the image, so a call between its production and its use ends nothing
+# FORM: Selected
+# RUN: raw-words
+# CHECK: function f0
+# CHECK-NEXT: v2 CodeAddress:
+# CHECK-NEXT: valid
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="code-address-across-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ResolveCallTarget v0 argumentCount=1
+    v3 = Call v1
+    v4 = CallResolved v0, v2, -, v3
+    Return v4
+}

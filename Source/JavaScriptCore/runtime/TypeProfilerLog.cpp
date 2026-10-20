@@ -29,6 +29,7 @@
 #include "config.h"
 #include "TypeProfilerLog.h"
 
+#include "AOTRemovableFeature.h"
 #include "FrameTracers.h"
 #include "JSCJSValueInlines.h"
 #include "TypeLocation.h"
@@ -44,7 +45,7 @@ static constexpr bool verbose = false;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TypeProfilerLog);
 
-NEVER_INLINE TypeProfilerLog::TypeProfilerLog(VM& vm)
+TypeProfilerLog::TypeProfilerLog(VM& vm)
     : m_vm(vm)
     , m_logSize(50000)
     , m_logStartPtr(new LogEntry[m_logSize])
@@ -132,8 +133,9 @@ void TypeProfilerLog::processLogEntries(VM& vm, const String& reason)
 
 // We don't need a SlotVisitor version of this because TypeProfilerLog is only used by
 // dev tools, and is therefore not on the critical path for performance.
-NEVER_INLINE void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
+void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     for (LogEntry* entry = m_logStartPtr; entry != m_currentLogEntryPtr; ++entry) {
         visitor.appendUnbarriered(entry->value);
         if (StructureID id = entry->structureID) {
@@ -141,6 +143,7 @@ NEVER_INLINE void TypeProfilerLog::visit(AbstractSlotVisitor& visitor)
             visitor.appendUnbarriered(structure);
         }
     }
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 } // namespace JSC

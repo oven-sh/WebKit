@@ -1,0 +1,18 @@
+# The test of a storage kind has no code for a kind without a storage form
+# FORM: Placed
+# RUN: generate-code
+# DIAGNOSTIC: OpcodeWithoutCode 1
+# CHECK: f0: no code
+# CHECK-NEXT: f1: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unknownKind" parameters=[{type=Array}] results=[{type=boolean}] {
+  b0(v0: Array):
+    v1 = HasArrayStorage v0
+    Return v1
+}
+function f1 name="knownKind" parameters=[{type=Array}] results=[{type=boolean}] {
+  b0(v0: Array):
+    v1 = HasArrayStorage v0 arrayStorage=Contiguous
+    Return v1
+}

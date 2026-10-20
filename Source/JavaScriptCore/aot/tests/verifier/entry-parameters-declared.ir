@@ -1,0 +1,13 @@
+# a position of a function line: the prediction overlaps the type, and an int32 promise has an int32 type
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: EntryParametersMismatch 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badCapture" captures=[{type=number predicted=string}] results=[{type=undefined}]
+function f1 name="badThis" flags=[HasThis] thisType={type=number predicted=string} results=[{type=undefined}]
+function f2 name="badParameter" parameters=[{type=number predicted=string}] results=[{type=undefined}]
+function f3 name="badResult" results=[{type=number predicted=string}]
+function f4 name="badPromise" parameters=[{type=number flags=[IsInt32Promise]}] results=[{type=undefined}]
+function f5 name="goodPrediction" flags=[HasThis] captures=[{type=anything predicted=string}] thisType={type=anything predicted=string} parameters=[{type=number|string predicted=string}] results=[{type=anything predicted=string}]
+function f6 name="goodPromise" parameters=[{type=i32 flags=[IsInt32Promise]}] results=[{type=undefined}]

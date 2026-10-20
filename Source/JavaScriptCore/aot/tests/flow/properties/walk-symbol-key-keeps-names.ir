@@ -1,0 +1,47 @@
+# A store under an unknown symbol goes to the symbol part alone: a string name of the same object stays proven. The same store under an unknown string lowers it
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v10 Get {"m"}
+# CHECK-NEXT: L0#[[bySymbol]]: Value own Proven L0#[[bySymbol]] "m"
+# CHECK-NEXT: f0@i{{*}} v15 Get {"m"}
+# CHECK-NEXT: L0#[[byString]]: Value own Predicted L0#[[byString]] "m"
+# CHECK: f0@i{{*}} v11 Get {symbol*}
+# CHECK-NEXT: L0#[[bySymbol]]: Value own Predicted L0#[[bySymbol]] *
+# CHECK-NEXT: L0#[[bySymbol]]: Absent Predicted
+# RUN(NODES): flow-solve nodes
+# NODES: DeclaredPart(L0#[[bySymbol]], 0) = {1}
+# NODES: DeclaredPart(L0#[[byString]], 0) = {1|"stored"}
+# NODES: Local(i{{*}}, f0, v11) = {undefined|"stored"}
+# NODES-NOT: StringProperties(L0#[[bySymbol]])
+# NODES: SymbolProperties(L0#[[bySymbol]]) = {"stored"}
+# NODES-NOT: StringProperties(L0#[[bySymbol]])
+# RUN(OTHER): flow-solve nodes
+# OTHER-NOT: SymbolProperties(L0#[[byString]])
+# OTHER: StringProperties(L0#[[byString]]) = {"stored"}
+# OTHER-NOT: SymbolProperties(L0#[[byString]])
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ToString v4
+    v6 = Builtin builtin=SymbolFor
+    v7 = Call v6, -, v5
+    v8 = String string="stored"
+    ElemSet v2, v7, v8 mode=Strict
+    v10 = PropGet v2 key="m"
+    v11 = ElemGet v2, v7
+    v12 = NewObject -, v0 layout=L0 fields=[0]
+    v13 = FinishObject v12
+    ElemSet v13, v5, v8 mode=Strict
+    v15 = PropGet v13 key="m"
+    Return
+  b1() role=CatchHandler:
+    v16 = CatchValue
+    Return
+}

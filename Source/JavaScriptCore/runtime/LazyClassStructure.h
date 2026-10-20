@@ -52,8 +52,6 @@ public:
         // Call this last. It's expected that the constructor is initialized to point to the
         // prototype already. This will automatically set prototype.constructor=constructor.
         void setConstructor(JSObject* constructor);
-
-        void didInitialize();
         
         VM& vm;
         JSGlobalObject* global;

@@ -26,16 +26,13 @@
 #include "config.h"
 #include "B3AbstractHeapRepository.h"
 
-#include "AOTRuntime.h"
-#include "AOTTypedCompactTable.h"
-#include "AOTTypedObject.h"
-#include "CodeBlock.h"
 #if ENABLE(B3_JIT)
 
 #include "B3CCallValue.h"
 #include "B3FenceValue.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
+#include "B3Procedure.h"
 #include "B3ValueInlines.h"
 #include "B3WasmArrayGetValue.h"
 #include "B3WasmArrayLengthValue.h"
@@ -51,7 +48,6 @@
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
 #include "JSGlobalObject.h"
-#include "NativeExecutable.h"
 #include "JSGlobalProxy.h"
 #include "JSMap.h"
 #include "JSPromise.h"
@@ -133,7 +129,6 @@ AbstractHeapRepository::AbstractHeapRepository()
 
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
 
-#if USE(BUN_JSC_ADDITIONS)
 #define RETAIN_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.retainCurrentHeaps();
     FOR_EACH_INDEXED_ABSTRACT_HEAP(RETAIN_INDEXED_ABSTRACT_HEAPS)
 #undef RETAIN_INDEXED_ABSTRACT_HEAPS
@@ -141,73 +136,20 @@ AbstractHeapRepository::AbstractHeapRepository()
     FOR_EACH_NUMBERED_ABSTRACT_HEAP(RETAIN_NUMBERED_ABSTRACT_HEAPS)
 #undef RETAIN_NUMBERED_ABSTRACT_HEAPS
     absolute.retainCurrentHeaps();
-#endif
 }
-
-#if ENABLE(AOT)
-void AbstractHeapRepository::reparentHeapsForAOT()
-{
-    // Last, and in this order: what a call writes, by AOT::Typed::Writes and whether it writes shape words, is then one range.
-    AOTTyped_slots.atAnyNumber().changeParent(&AOTTyped_fields);
-    AOTTyped_variables.atAnyNumber().changeParent(&AOTTyped_fields);
-    AOTTypedObject_orderWord.changeParent(&AOTTypedObject_words);
-    // Between the two: what writes shape words may make a plain object one of the program where it is: another header, other slots. What writes the heap and no shape word ends here.
-    JSCellHeaderAndNamedProperties.changeParent(&AOTTypedObject_words);
-    AOTTypedObject_shapeWord.changeParent(&AOTTypedObject_words);
-    AOTTyped_fields.changeParent(&root);
-    TypedArrayProperties.changeParent(&root);
-    AOTTyped_collectorState.changeParent(&root);
-    indexedContiguousProperties.atAnyIndex().changeParent(&root);
-    AOTTyped_runtimeState.changeParent(&root);
-    AOTTypedObject_extension.changeParent(&root);
-    AOTTypedObject_words.changeParent(&root);
-    // What compiled code reads in place of the state of the run time. A load from the rest of it is taken to be from any of these.
-    JSRopeString_fiber0.changeParent(&AOTTyped_runtimeState);
-    JSRopeString_fiber1.changeParent(&AOTTyped_runtimeState);
-    JSRopeString_fiber2.changeParent(&AOTTyped_runtimeState);
-    StringImpl_hashAndFlags.changeParent(&AOTTyped_runtimeState);
-    JSMap_storage.changeParent(&AOTTyped_runtimeState);
-    JSMap_compactTable.changeParent(&AOTTyped_runtimeState);
-    JSSet_compactTable.changeParent(&AOTTyped_runtimeState);
-    AOTTypedCompactTable_used.changeParent(&AOTTyped_runtimeState);
-    AOTTypedCompactTable_alive.changeParent(&AOTTyped_runtimeState);
-    JSSet_storage.changeParent(&AOTTyped_runtimeState);
-    OrderedHashTableData.changeParent(&AOTTyped_runtimeState);
-    JSPromise_packed.changeParent(&AOTTyped_runtimeState);
-    JSPromise_slot.changeParent(&AOTTyped_runtimeState);
-}
-#endif
 
 AbstractHeapRepository::~AbstractHeapRepository() = default;
 
-#if USE(BUN_JSC_ADDITIONS)
-static std::unique_ptr<AbstractHeapRepository>& threadLocalRepository()
+void AbstractHeapRepository::attachProcedure(Procedure& procedure)
 {
-    static thread_local std::unique_ptr<AbstractHeapRepository> repository;
-    return repository;
-}
-
-std::unique_ptr<AbstractHeapRepository> AbstractHeapRepository::takeFromThread()
-{
-    if (auto repository = std::exchange(threadLocalRepository(), nullptr))
-        return repository;
-    auto repository = makeUnique<AbstractHeapRepository>();
-#if ENABLE(AOT)
-    repository->reparentHeapsForAOT();
-#endif
-    return repository;
-}
-
-void AbstractHeapRepository::giveBackToThread(std::unique_ptr<AbstractHeapRepository>&& repository)
-{
-    if (threadLocalRepository())
-        return;
-    repository->detachProcedure();
-    threadLocalRepository() = WTF::move(repository);
+    RELEASE_ASSERT(!m_procedure);
+    m_procedure = &procedure;
 }
 
 void AbstractHeapRepository::detachProcedure()
 {
+    m_procedure = nullptr;
+    removeTemporaryClientHeaps();
 #define REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) name.removeTemporaryHeaps();
     FOR_EACH_INDEXED_ABSTRACT_HEAP(REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
 #undef REMOVE_TEMPORARY_INDEXED_ABSTRACT_HEAPS
@@ -215,53 +157,70 @@ void AbstractHeapRepository::detachProcedure()
     FOR_EACH_NUMBERED_ABSTRACT_HEAP(REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS)
 #undef REMOVE_TEMPORARY_NUMBERED_ABSTRACT_HEAPS
     absolute.removeTemporaryHeaps();
-    m_heapForMemory.shrink(0);
-    m_heapForCCallRead.shrink(0);
-    m_heapForCCallWrite.shrink(0);
-    m_heapForPatchpointRead.shrink(0);
-    m_heapForPatchpointWrite.shrink(0);
-    m_heapsForPatchpointWrite.shrink(0);
-    m_heapForFenceRead.shrink(0);
-    m_heapForFenceWrite.shrink(0);
-    m_heapForFencedAccess.shrink(0);
-    m_heapForWasmStructGet.shrink(0);
-    m_heapForWasmStructSet.shrink(0);
-    m_heapForWasmStructNew.shrink(0);
-    m_heapForWasmArrayGet.shrink(0);
-    m_heapForWasmArraySet.shrink(0);
-    m_heapForWasmArrayNew.shrink(0);
-    m_heapForWasmArrayLength.shrink(0);
+#define CLEAR_DECORATION_VECTOR(elementType, name) name.shrink(0);
+    FOR_EACH_DECORATION_VECTOR(CLEAR_DECORATION_VECTOR)
+#undef CLEAR_DECORATION_VECTOR
 }
-#endif
 
 void AbstractHeapRepository::decorateMemory(const AbstractHeap* heap, Value* value)
 {
     m_heapForMemory.append(HeapForValue(heap, value));
 }
 
+static std::span<const AbstractHeap* const> asHeapList(const AbstractHeap* const& heap LIFETIME_BOUND)
+{
+    if (!heap)
+        return { };
+    return singleElementSpan(heap);
+}
+
 void AbstractHeapRepository::decorateCCallRead(const AbstractHeap* heap, Value* value)
 {
-    m_heapForCCallRead.append(HeapForValue(heap, value));
+    decorateCCallRead(asHeapList(heap), value);
 }
 
 void AbstractHeapRepository::decorateCCallWrite(const AbstractHeap* heap, Value* value)
 {
-    m_heapForCCallWrite.append(HeapForValue(heap, value));
+    decorateCCallWrite(asHeapList(heap), value);
 }
 
 void AbstractHeapRepository::decoratePatchpointRead(const AbstractHeap* heap, Value* value)
 {
-    m_heapForPatchpointRead.append(HeapForValue(heap, value));
+    decoratePatchpointRead(asHeapList(heap), value);
 }
 
 void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* heap, Value* value)
 {
-    m_heapForPatchpointWrite.append(HeapForValue(heap, value));
+    decoratePatchpointWrite(asHeapList(heap), value);
 }
 
-void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* first, const AbstractHeap* last, Value* value)
+auto AbstractHeapRepository::createHeapList(std::span<const AbstractHeap* const> heaps, Value* value) -> HeapListForValue
 {
-    m_heapsForPatchpointWrite.append({ first, HeapForValue(last, value) });
+    ASSERT(std::ranges::all_of(heaps, [](const AbstractHeap* heap) { return !!heap; }));
+    unsigned begin = m_listedHeaps.size();
+    m_listedHeaps.append(heaps);
+    unsigned end = m_listedHeaps.size();
+    return { begin, end, value };
+}
+
+void AbstractHeapRepository::decorateCCallRead(std::span<const AbstractHeap* const> heaps, Value* value)
+{
+    m_heapListForCCallRead.append(createHeapList(heaps, value));
+}
+
+void AbstractHeapRepository::decorateCCallWrite(std::span<const AbstractHeap* const> heaps, Value* value)
+{
+    m_heapListForCCallWrite.append(createHeapList(heaps, value));
+}
+
+void AbstractHeapRepository::decoratePatchpointRead(std::span<const AbstractHeap* const> heaps, Value* value)
+{
+    m_heapListForPatchpointRead.append(createHeapList(heaps, value));
+}
+
+void AbstractHeapRepository::decoratePatchpointWrite(std::span<const AbstractHeap* const> heaps, Value* value)
+{
+    m_heapListForPatchpointWrite.append(createHeapList(heaps, value));
 }
 
 void AbstractHeapRepository::decorateFenceRead(const AbstractHeap* heap, Value* value)
@@ -316,8 +275,7 @@ void AbstractHeapRepository::decorateWasmArrayLength(const AbstractHeap* heap, V
 
 void AbstractHeapRepository::computeRangesAndDecorateInstructions()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    bool hasTemporaryHeaps = absolute.hasTemporaryHeaps();
+    bool hasTemporaryHeaps = absolute.hasTemporaryHeaps() || hasTemporaryClientHeaps();
 #define CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS(name, offset, size) hasTemporaryHeaps |= name.hasTemporaryHeaps();
     FOR_EACH_INDEXED_ABSTRACT_HEAP(CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS)
 #undef CHECK_FOR_TEMPORARY_INDEXED_ABSTRACT_HEAPS
@@ -327,9 +285,6 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
     if (hasTemporaryHeaps || !m_rangesExcludeTemporaryHeaps)
         root.compute();
     m_rangesExcludeTemporaryHeaps = !hasTemporaryHeaps;
-#else
-    root.compute();
-#endif
 
     if (Options::verboseCompilation() || Options::verboseFTLCompilation()) [[unlikely]] {
         WTF::dataFile().atomically([&](auto&) {
@@ -350,18 +305,37 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         if (memoryValue->isLoad() && entry.heap->mutability() == B3::Mutability::Immutable)
             memoryValue->setReadsMutability(B3::Mutability::Immutable);
     }
-    for (HeapForValue entry : m_heapForCCallRead)
-        entry.value->as<CCallValue>()->effects.reads = rangeFor(entry.heap);
-    for (HeapForValue entry : m_heapForCCallWrite)
-        entry.value->as<CCallValue>()->effects.writes = rangeFor(entry.heap);
-    for (HeapForValue entry : m_heapForPatchpointRead)
-        entry.value->as<PatchpointValue>()->effects.reads = rangeFor(entry.heap);
-    for (HeapForValue entry : m_heapForPatchpointWrite)
-        entry.value->as<PatchpointValue>()->effects.writes = rangeFor(entry.heap);
-    for (auto& [first, entry] : m_heapsForPatchpointWrite) {
-        if (auto* patchpoint = entry.value->as<PatchpointValue>())
-            patchpoint->effects.writes = HeapRange(first->range().begin(), entry.heap->range().end());
-    }
+    auto effectsOf = [](Value* value) -> Effects* {
+        if (auto* patchpoint = value->as<PatchpointValue>())
+            return &patchpoint->effects;
+        if (auto* call = value->as<CCallValue>())
+            return &call->effects;
+        return nullptr;
+    };
+    auto decorateWithSets = [&](const Vector<HeapListForValue>& heapLists, HeapSet Effects::* set) {
+        if (heapLists.isEmpty())
+            return;
+        RELEASE_ASSERT(m_procedure);
+        HeapSetTable& heapSets = m_procedure->heapSets();
+        for (const HeapListForValue& entry : heapLists) {
+            if (Effects* effects = effectsOf(entry.value))
+                effects->*set = HeapSet();
+        }
+        Vector<HeapRange, 8> ranges;
+        for (const HeapListForValue& entry : heapLists) {
+            Effects* effects = effectsOf(entry.value);
+            if (!effects)
+                continue;
+            ranges.shrink(0);
+            for (const AbstractHeap* heap : m_listedHeaps.subspan(entry.begin, entry.end - entry.begin))
+                ranges.append(heap->range());
+            effects->*set = heapSets.unite(effects->*set, heapSets.create(ranges.span()));
+        }
+    };
+    decorateWithSets(m_heapListForCCallRead, &Effects::reads);
+    decorateWithSets(m_heapListForCCallWrite, &Effects::writes);
+    decorateWithSets(m_heapListForPatchpointRead, &Effects::reads);
+    decorateWithSets(m_heapListForPatchpointWrite, &Effects::writes);
     for (HeapForValue entry : m_heapForFenceRead)
         entry.value->as<FenceValue>()->read = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForFenceWrite)

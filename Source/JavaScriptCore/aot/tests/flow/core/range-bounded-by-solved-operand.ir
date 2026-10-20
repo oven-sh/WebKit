@@ -1,0 +1,122 @@
+# A comparison bounds its operand by the range that the solver found for the other operand, which the text may not show: a parameter, a field. A bound that may hold a fraction bounds nothing
+# RUN: flow-solve nodes
+# RUN(CHECK2): flow-solve nodes
+# RUN(CHECK3): flow-solve nodes
+# RUN(CHECK4): flow-solve nodes
+# RUN(CHECK5): flow-solve nodes
+# RUN(CHECK6): flow-solve nodes
+# RUN(CHECK7): flow-solve nodes
+# RUN(CHECK8): flow-solve nodes
+# RUN(CHECK9): flow-solve nodes
+# RUN(CHECK10): flow-solve nodes
+# LOSS: MaxFlowRangeGrowth
+# CHECK: Local({{*}}f1, v2) = {int[0, 2147483647]}
+# CHECK2: Local({{*}}f1, v5) = {int[0, 2147483646]}
+# CHECK2-NEXT: Local({{*}}f1, v6) = {int[1, 2147483647]}
+# CHECK3: Local({{*}}f1, v8) = {int[1, 2147483647]}
+# CHECK3-NEXT: Local({{*}}f1, v9) = {int[0, 2147483647]}
+# CHECK3-NEXT: Local({{*}}f1, v10) = {i32}
+# CHECK4: Local({{*}}f3, v5) = {int|whole}
+# CHECK5: Local({{*}}f5, v7) = {int[0, 100]}
+# CHECK6: Local({{*}}f7, v5) = {int[-2147483647, 1000]}
+# CHECK7: Local({{*}}f2, parameter 0) = {int[0, 2147483646]}
+# CHECK8: Local({{*}}f4, parameter 0) = {int|whole}
+# CHECK9: Local({{*}}f6, parameter 0) = {int[0, 100]}
+# CHECK10: Local({{*}}f8, parameter 0) = {int[-2147483647, 1000]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Limits" fields=[{key="limit" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = CallDirect v4 function=f1
+    v6 = CallDirect v2 function=f3
+    v7 = Integer integer=100
+    v8 = NewObject -, v7 layout=L0 fields=[0]
+    v9 = CallDirect v8 function=f5
+    v10 = CallDirect v4 function=f7
+    Return
+}
+function f1 name="countsToParameter" parameters=[{type=undefined|null|number}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v5, v6):
+    v7 = CallDirect v5 function=f2
+    v8 = Increment v5
+    Jump -> next b1(v8)
+  b3(v9, v10):
+    Return v9
+}
+function f2 name="takesCounter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="countsToFraction" parameters=[{type=undefined|null|number}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = CallDirect v5 function=f4
+    v7 = Increment v5
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+function f4 name="takesUnboundedCounter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="countsToField" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = PropGet v0 key="limit"
+    v5 = ToNumber v4
+    v6 = LessEq v2, v5
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallDirect v7 function=f6
+    v9 = Increment v7
+    Jump -> next b1(v9)
+  b3():
+    Return
+}
+function f6 name="takesCounterUnderField" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="countsDownToParameter" parameters=[{type=undefined|null|number}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=1000
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v0, v2
+    Branch v4 -> taken b2(| 1), notTaken b3()
+  b2(v5):
+    v6 = CallDirect v5 function=f8
+    v7 = Decrement v5
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+function f8 name="takesCounterAboveParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

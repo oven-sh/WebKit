@@ -1,0 +1,46 @@
+# The assumed type of a caught value, what the covered code throws or an error of the run time, stands behind the caught values at the head of the handler; a handler that also catches what nativeCode throws gets none
+# RUN: flow-apply
+# CHECK-LABEL: function f0 name="main"
+# CHECK: b2() role=CatchHandler:
+# CHECK-NEXT: v3: exception = CatchException
+# CHECK-NEXT: v4: anything = CatchValue
+# CHECK-NEXT: [[caught]]: L0|Error = AssumeType v4 castType=L0|Error
+# CHECK-NEXT: = PropGet [[caught]] key="x"
+# CHECK-LABEL: function f1 name="catchesNativeCode"
+# CHECK: b2() role=CatchHandler:
+# CHECK-NEXT: v4: exception = CatchException
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NOT: AssumeType
+# CHECK: = PropGet {{*}} key="x"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Failure" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    Jump -> next b1()
+  b1() handler=b2():
+    Throw v1
+  b2() role=CatchHandler:
+    v3 = CatchException
+    v4 = CatchValue
+    v5 = PropGet v4 key="x"
+    Return v5
+}
+function f1 name="catchesNativeCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="external" [isFreeName]
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Call v2
+    Throw v0
+  b2() role=CatchHandler:
+    v4 = CatchException
+    v5 = CatchValue
+    v6 = PropGet v5 key="x"
+    Return v6
+}

@@ -1,0 +1,39 @@
+# Beside the unknown object the value of a callee lists whatever has escaped. Only a function that flow linked at the call is expected there, so only that one is tested for.
+# Without a stamp the first predicted function is tested for, and where the stamp lists none of them the functions of the stamp are
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="escaped" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f1 name="linked" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="stamp-lists-one" parameters=[{type=anything predicted=f0|f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1, v1: anything):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f1, ..]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="stamp-lists-one"
+# CHECK-NOT: IsClosureOf v0 function=f0
+# CHECK: = IsClosureOf v0 function=f1
+# CHECK-NOT: IsClosureOf v0 function=f0
+function f3 name="no-stamp" parameters=[{type=anything predicted=f0|f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0|f1, v1: anything):
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="no-stamp"
+# CHECK: = IsClosureOf v0 function=f0
+function f4 name="stamp-lists-another" parameters=[{type=anything predicted=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0, v1: anything):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f1, ..]
+    Return v2
+}
+# CHECK-LABEL: function f4 name="stamp-lists-another"
+# CHECK-NOT: function=f0
+# CHECK: = IsClosureOf v0 function=f1

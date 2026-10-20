@@ -58,6 +58,21 @@ ALWAYS_INLINE bool isPoisonedForConservativeScan(const void* word)
 #endif
 }
 
+// A narrow reference needs four bytes, and an instrumented frame puts a redzone right behind a 32-bit local or an odd number of them.
+// This is a poisoned word with zero in place of each half that is not addressable.
+SUPPRESS_ASAN ALWAYS_INLINE uint64_t addressableHalvesForConservativeScan(const void* word)
+{
+    uint64_t bits = *static_cast<const uint64_t*>(word);
+#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
+    char* bytes = static_cast<char*>(const_cast<void*>(word));
+    if (__asan_region_is_poisoned(bytes, sizeof(uint32_t)))
+        bits &= ~static_cast<uint64_t>(std::numeric_limits<uint32_t>::max());
+    if (__asan_region_is_poisoned(bytes + sizeof(uint32_t), sizeof(uint32_t)))
+        bits &= std::numeric_limits<uint32_t>::max();
+#endif
+    return bits;
+}
+
 class ConservativeRoots {
 public:
     ConservativeRoots(Heap&);
@@ -77,6 +92,8 @@ private:
 
     template<typename MarkHook>
     void genericAddSpan(void* begin, void* end, MarkHook&);
+    template<typename MarkHook>
+    void genericAddSpanOfCompiledProcess(void* begin, void* end, MarkHook&);
     
     void grow();
 

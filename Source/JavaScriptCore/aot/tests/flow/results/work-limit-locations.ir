@@ -1,0 +1,113 @@
+# What a function past the work limit reads counts as read and what reaches it may be read and stored by anybody: no field of such an object is never read or has only known writers. The same function below the limit leaves both answers
+# OPTIONS: limit=MaxFlowWorkPerFunction:120
+# LOSS: MaxFlowWorkPerFunction f1
+# RUN: flow
+# CHECK: field L0.0 "x" type=anything flags=[IsRequired] flow={location={initialization=SetAtCreation mayKeepObservedObjectAlive=true cause=UnknownWriter witness={function=f1
+# CHECK: field L0.1 "unread" type=anything flags=[IsRequired] flow={location={initialization=SetAtCreation mayKeepObservedObjectAlive=true cause=UnknownWriter witness={function=f1
+# CHECK: field L1.0 "x" type=1 written=anything flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce
+# CHECK-NOT: reads=
+# CHECK: field L1.1 "unread" type=2 written=anything flags=[IsRequired] flow={location={writers=AllKnown stores=AtMostOnce {{*}}reads=NeverRead
+# CHECK: variable g0 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g1 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g2 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=NeverRead}
+# CHECK: variable g3 type=anything flow={writers=AllKnown
+# CHECK: variable g4 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="BusyBox" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="IdleBox" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="readByBusy" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="readByIdle" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="readByNobody" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="storedByBusy" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="storedByIdle" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g2
+    v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v6 = CallDirect v5 function=f1
+    v7 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    v8 = CallDirect v7 function=f2
+    v9 = GetModuleVariable variable=g3
+    v10 = GetModuleVariable variable=g4
+    Return
+}
+function f1 name="busy" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v0 key="x"
+    v5 = PropGet v0 key="x"
+    v6 = PropGet v0 key="x"
+    v7 = PropGet v0 key="x"
+    v8 = PropGet v0 key="x"
+    v9 = PropGet v0 key="x"
+    v10 = PropGet v0 key="x"
+    v11 = PropGet v0 key="x"
+    v12 = PropGet v0 key="x"
+    v13 = PropGet v0 key="x"
+    v14 = PropGet v0 key="x"
+    v15 = PropGet v0 key="x"
+    v16 = PropGet v0 key="x"
+    v17 = PropGet v0 key="x"
+    v18 = PropGet v0 key="x"
+    v19 = PropGet v0 key="x"
+    v20 = PropGet v0 key="x"
+    v21 = PropGet v0 key="x"
+    v22 = PropGet v0 key="x"
+    v23 = PropGet v0 key="x"
+    v24 = PropGet v0 key="x"
+    v25 = PropGet v0 key="x"
+    v26 = PropGet v0 key="x"
+    v27 = PropGet v0 key="x"
+    v28 = PropGet v0 key="x"
+    v29 = PropGet v0 key="x"
+    v30 = PropGet v0 key="x"
+    v31 = PropGet v0 key="x"
+    v32 = PropGet v0 key="x"
+    v33 = PropGet v0 key="x"
+    v34 = PropGet v0 key="x"
+    v35 = PropGet v0 key="x"
+    v36 = PropGet v0 key="x"
+    v37 = PropGet v0 key="x"
+    v38 = PropGet v0 key="x"
+    v39 = PropGet v0 key="x"
+    v40 = PropGet v0 key="x"
+    v41 = PropGet v0 key="x"
+    v42 = PropGet v0 key="x"
+    v43 = PropGet v0 key="x"
+    v44 = PropGet v0 key="x"
+    v45 = PropGet v0 key="x"
+    v46 = PropGet v0 key="x"
+    v47 = PropGet v0 key="x"
+    v48 = PropGet v0 key="x"
+    v49 = PropGet v0 key="x"
+    v50 = PropGet v0 key="x"
+    v51 = PropGet v0 key="x"
+    v52 = PropGet v0 key="x"
+    v53 = PropGet v0 key="x"
+    v54 = PropGet v0 key="x"
+    v55 = PropGet v0 key="x"
+    v56 = PropGet v0 key="x"
+    v57 = PropGet v0 key="x"
+    v58 = PropGet v0 key="x"
+    v59 = PropGet v0 key="x"
+    v60 = PropGet v0 key="x"
+    v61 = GetModuleVariable variable=g0
+    v62 = PropGet v0 key="x"
+    PutModuleVariable v62 variable=g3
+    Return
+}
+function f2 name="idle" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v0 key="x"
+    PutModuleVariable v2 variable=g4
+    Return
+}

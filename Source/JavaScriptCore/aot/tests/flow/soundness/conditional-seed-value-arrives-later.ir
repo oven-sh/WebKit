@@ -1,0 +1,92 @@
+# A string arrives at a conversion to an object after an object: the wrapper is seeded
+# RUN: flow-solve nodes
+# CHECK: , f6, result 0) = {{*}}String@f6
+
+layout L0 module=m0 position=8 fields=[{key="v" declared={type=anything predicted=number} flags=[IsRequired]}]
+variable g0 name="h1" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="h2" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="h3" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="x" module=m0 declared={type=anything|absent predicted=L0}
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f5 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f6 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = Data data=d0 @8
+    v7 = Predict v6 predicted=L0 @4
+    PutModuleVariable v7 variable=g3 @4
+    v9 = Predict v5 predicted=function @220
+    v10 = Call v9 calleeName="use" @220
+    v11 = Predict v1 predicted=function @227
+    v12 = Predict v3 predicted=function @230
+    v13 = Call v11, -, v12 calleeName="h0" @227
+    v14 = Call v9 calleeName="use" @240
+    v15 = Undefined @240
+    Return v15 @240
+}
+function f1 name="h1" module=m0 position=51 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @51
+  b1():
+    v1 = GetModuleVariable variable=g1 @75
+    v2 = Predict v1 predicted=function @75
+    v3 = Call v2, -, v0 calleeName="h2" @75
+    ReturnCall v3 @75
+}
+function f2 name="h2" module=m0 position=84 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @84
+  b1():
+    v1 = GetModuleVariable variable=g2 @108
+    v2 = Predict v1 predicted=function @108
+    v3 = Call v2, -, v0 calleeName="h3" @108
+    ReturnCall v3 @108
+}
+function f3 name="h3" module=m0 position=117 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @117
+  b1():
+    v1 = Call v0 calleeName="f" @141
+    ReturnCall v1 @141
+}
+function f4 name="h0" module=m0 position=18 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @18
+  b1():
+    v1 = GetModuleVariable variable=g0 @42
+    v2 = Predict v1 predicted=function @42
+    v3 = Call v2, -, v0 calleeName="h1" @42
+    ReturnCall v3 @42
+}
+function f5 name="install" module=m0 position=148 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @148
+  b1():
+    v0 = GetModuleVariable variable=g3 @169
+    v1 = CheckInitialized v0 name="x" @169
+    v2 = String string="late" @173
+    v3 = ClaimDeclared v2 declared={type=anything predicted=L0} @169
+    PutModuleVariable v3 variable=g3 @169
+    v5 = Undefined @169
+    Return v5 @169
+}
+function f6 name="use" module=m0 position=183 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @183
+  b1():
+    v0 = Builtin builtin=GlobalThis @207
+    v1 = PropGet v0 key="Object" [isFreeName] @207
+    v2 = Predict v1 predicted=builtin(Object) @207
+    v3 = GetModuleVariable variable=g3 @214
+    v4 = CheckInitialized v3 name="x" @214
+    v5 = Call v2, -, v4 calleeName="Object" @207
+    ReturnCall v5 @207
+}
+data d0 root=Object{layout=L0 members=[{key="v" value=Number{value=1}}]} module=m0
+entry module=m0

@@ -74,7 +74,6 @@ namespace JSC {
     macro(BuiltinLog) \
     macro(BuiltinDescribe) \
     macro(homeObject) \
-    macro(hostClassPrototype) \
     macro(resolvePromise) \
     macro(rejectPromise) \
     macro(fulfillPromise) \
@@ -209,7 +208,6 @@ namespace JSC {
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
     macro(arrayFromFastWithoutMapFn) \
-    macro(arrayProtoValues) \
     macro(jsonParse) \
     macro(jsonStringify) \
     macro(String) \

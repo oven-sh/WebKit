@@ -1,0 +1,26 @@
+# A built-in is linked where an overload is selected, which waits for the operands. A call with an operand nothing flows into has no link, and its set names the built-in all the same: the passes find the callee by its type
+# FORM: AsRead
+# RUN: flow-apply
+# RUN(BUILDS): pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="4"
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f1 name="show" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Builtin builtin=String
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="show"
+# CHECK: = Call v1, -, v0 accessSite={{*}} callees=[builtin(String)]
+# BUILDS-LABEL: function f0 name="main"
+# BUILDS: never = Claim {{*}} castType=undefined|null|number site=w0
+# BUILDS-NEXT: Unreachable

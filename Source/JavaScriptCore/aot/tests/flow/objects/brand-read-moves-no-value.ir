@@ -1,0 +1,66 @@
+# A brand holds a class token, which flow does not follow: neither its definition nor its read moves a value, on an instance or on the unknown object, so the read has no node that could be taken for empty. The private field beside it holds what was defined, and the unknown value on the unknown object
+# RUN: flow-solve nodes
+# RUN(CHECK2): flow-solve nodes
+# RUN(CHECK3): flow-solve nodes
+# RUN(CHECK4): flow-solve nodes
+# RUN(CHECK5): flow-solve nodes
+# CHECK: Variable(g1) = {1}
+# CHECK2: Variable(g2) = {{*}}unknown}
+# CHECK3: DeclaredPart(L0#[[instance]], 1) = {1}
+# CHECK4: f2, v3) = {1}
+# CHECK5: f3, v3) = {{*}}unknown}
+# RUN(ALL): flow-solve nodes
+# RUN(ALL2): flow-solve nodes
+# RUN(ALL3): flow-solve nodes
+# RUN(ALL4): flow-solve nodes
+# ALL-NOT: DeclaredPart(L0#{{*}}, 0) =
+# ALL2-NOT: f2, v2) =
+# ALL3-NOT: f3, v2) =
+# ALL4-NOT: Property(unknown, #"#"@L0) =
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="C" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"x"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}]
+variable g0 name="token" module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 name="readOnInstance" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="readOnUnknown" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = CallDirect v5 function=f2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = CallDirect v8 function=f3
+    Return
+}
+function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = GetModuleVariable variable=g0
+    PrivateDefine v2, v3, v3 layout=L0
+    v5 = Integer integer=1
+    PrivateDefine v2, v3, v5 layout=L0 field=1
+    Return v2
+}
+function f2 name="onInstance" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = PrivateGet v0, v1 layout=L0 field=1
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f3 name="onUnknown" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = PrivateGet v0, v1 layout=L0 field=1
+    PutModuleVariable v3 variable=g2
+    Return
+}

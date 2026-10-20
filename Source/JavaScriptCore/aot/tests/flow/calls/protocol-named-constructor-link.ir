@@ -1,0 +1,21 @@
+# A built-in that reads the member named constructor of an operand to compare it does not follow the engine's own link from a prototype back to its constructor: RegExp called with an object of the program reaches neither Object nor Function, so no text is evaluated
+# RUN: flow-links unseen
+# RUN(BUILTINS): flow-links builtins
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+# BUILTINS: v3 RegExp/
+# RUN(NOWHERE): flow-links builtins
+# NOWHERE-NOT: Function/
+# NOWHERE-NOT: v3 Object/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pattern" fields=[{key="source" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = String string="a"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Call v0, -, v2
+    Return
+}

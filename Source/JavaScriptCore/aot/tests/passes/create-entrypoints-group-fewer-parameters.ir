@@ -1,0 +1,39 @@
+# A member with fewer parameters than its group gets the arguments it has parameters for
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints
+# STATISTIC: GroupEntrypoints = 5
+# STATISTIC: GenericEntrypoints = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=f1|f2|f3|f4|f5}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1|f2|f3|f4|f5, v1: number):
+    v2 = Call v0, -, v1, v1, v1 accessSite=0 callees=[f1, f2, f3, f4, f5]
+    Return v2
+}
+function f1 name="takesOne" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="second" kind=Arrow parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    Return v0
+}
+function f3 name="third" kind=Arrow parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    Return v0
+}
+function f4 name="fourth" kind=Arrow parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    Return v0
+}
+function f5 name="fifth" kind=Arrow parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    Return v0
+}
+# CHECK: name="takesOne"{{*}}role=GroupEntrypoint{{*}}parameters=[{type=number}, {type=number}, {type=number}]
+# CHECK-NEXT: b0([[closure]]: f1|f2|f3|f4|f5, [[a]]: number, [[b]]: number, [[c]]: number):
+# CHECK: = CallDirect [[a]] function=f1
+# CHECK: name="takesOne"{{*}}role=GenericEntrypoint{{*}}parameters=[{type=anything}] results
+# CHECK: name="second"{{*}}role=GroupEntrypoint{{*}}parameters=[{type=number}, {type=number}, {type=number}]
+# CHECK-NEXT: b0([[secondClosure]]: f1|f2|f3|f4|f5, [[d]]: number, [[e]]: number, [[f]]: number):
+# CHECK: = CallDirect [[d]], [[e]], [[f]] function=f2

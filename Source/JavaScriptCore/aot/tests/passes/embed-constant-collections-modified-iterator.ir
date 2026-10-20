@@ -1,0 +1,88 @@
+# A literal whose iteration the program may have changed stays an array for the constructor to iterate
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 0
+# CHECK-NOT: table
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ownIteratorStored" parameters=[{type=anything}] results=[{type=Set<string>}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = String string="b"
+    v3 = NewArray v1, v2 contents=string
+    PropSet v3, v0 key=@@iterator
+    v5 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v5
+}
+# CHECK-LABEL: function f0 name="ownIteratorStored"
+# CHECK-NOT: FromData
+# CHECK: [[list0]]:{{*}}= NewArray v1, v2 contents=string
+# CHECK-NEXT: PropSet [[list0]], v0 key=@@iterator
+# CHECK-NEXT: = CallBuiltin -, [[list0]] overload=Set/2
+
+function f1 name="ownIteratorDefined" parameters=[{type=anything}] results=[{type=Set<string>}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = String string="b"
+    v3 = NewArray v1, v2 contents=string
+    PropDefine v3, v0 key=@@iterator
+    v5 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v5
+}
+# CHECK-LABEL: function f1 name="ownIteratorDefined"
+# CHECK-NOT: FromData
+# CHECK: [[list1]]:{{*}}= NewArray v1, v2 contents=string
+# CHECK-NEXT: PropDefine [[list1]], v0 key=@@iterator
+# CHECK-NEXT: = CallBuiltin -, [[list1]] overload=Set/2
+
+function f2 name="iteratorStoredByComputedKey" parameters=[{type=anything}, {type=anything}] results=[{type=Set<string>}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="a"
+    v3 = NewArray v2 contents=string
+    ElemSet v3, v1, v0
+    v5 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v5
+}
+# CHECK-LABEL: function f2 name="iteratorStoredByComputedKey"
+# CHECK-NOT: FromData
+# CHECK: [[list2]]:{{*}}= NewArray v2 contents=string
+# CHECK: = CallBuiltin -, [[list2]] overload=Set/2
+
+function f3 name="prototypeReplaced" parameters=[{type=object}] results=[{type=Set<string>}] {
+  b0(v0: object):
+    v1 = String string="a"
+    v2 = NewArray v1 contents=string
+    v3 = CallBuiltin -, v2, v0 overload=ObjectSetPrototypeOf/0 builtinCallForm=Whole
+    v4 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f3 name="prototypeReplaced"
+# CHECK-NOT: FromData
+# CHECK: [[list3]]:{{*}}= NewArray v1 contents=string
+# CHECK: = CallBuiltin -, [[list3]] overload=Set/2
+
+function f4 name="listOfPairsWithOwnIterator" parameters=[{type=anything}] results=[{type=Map<string, anything>}] {
+  b0(v0: anything):
+    v1 = String string="k"
+    v2 = Integer integer=1
+    v3 = NewArray v1, v2 contents=anything
+    v4 = NewArray v3 contents=Array
+    PropSet v4, v0 key=@@iterator
+    v6 = CallBuiltin -, v4 overload=Map/2 builtinCallForm=Whole
+    Return v6
+}
+# CHECK-LABEL: function f4 name="listOfPairsWithOwnIterator"
+# CHECK-NOT: FromData
+# CHECK: [[list4]]:{{*}}= NewArray v3 contents=Array
+# CHECK-NEXT: PropSet [[list4]], v0 key=@@iterator
+# CHECK-NEXT: = CallBuiltin -, [[list4]] overload=Map/2
+
+function f5 name="arrayMadeElsewhere" parameters=[{type=Array<string>}] results=[{type=Set<string>}] {
+  b0(v0: Array<string>):
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f5 name="arrayMadeElsewhere"
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin -, v0 overload=Set/2

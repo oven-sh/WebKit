@@ -1,0 +1,22 @@
+# A function that the table does not mark for the stub convention stays a library function
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# CHECK: function f2 name="fastPath"{{*}}role=Library
+# CHECK-NOT: role=StubBody
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0, v0, v0 function=f2
+    Return v1
+}
+function f1 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0, v0, v0 function=f2
+    Return v1
+}
+function f2 name="fastPath" role=Library enclosingRuntimeFunction=131086 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+runtimefunction id=131086 function=f2

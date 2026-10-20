@@ -1,0 +1,34 @@
+# An object passed to an undeclared overload is in both sinks and has every mutation, that object alone: it is no event of the program, an object native code holds for another reason stays out of unknownJavaScript, and an object passed to nothing keeps everything
+# RUN: flow-solve sinks objects
+# CHECK-LABEL: nativeCode {
+# CHECK: L0#[[handed]], L2#[[kept]]
+# CHECK-LABEL: unknownJavaScript {
+# CHECK: L0#[[handed]]
+# CHECK-NOT: L2#
+# CHECK: L0#[[handed]] mutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] uses=
+# CHECK-NEXT: L1#[[local]] mutations=[] uses=[]
+# CHECK-NEXT: L2#[[kept]] mutations=[ReachNativeCode] uses=
+# RUN(LOCAL): flow-solve sinks
+# LOCAL-NOT: L1#
+# RUN(UNSEEN): flow-links unseen
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Local" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="KeptByNativeCode" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = Builtin builtin=ArrayFrom
+    v5 = Call v4, -, v1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="keep" [isFreeName]
+    v8 = Call v7, -, v3
+    Return
+}

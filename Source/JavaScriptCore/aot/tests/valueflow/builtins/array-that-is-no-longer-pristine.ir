@@ -1,0 +1,32 @@
+# An array that has been given another prototype may fail the test for a pristine array. The overload for any object is then applied too: the elements escape and the result may be an object that nobody knows.
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> ObjectSetPrototypeOf
+# CHECK-NEXT: f0 v7 -> ArrayPrototypeMap
+# CHECK-NEXT: f0 v8 -> unknown object
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ObjectPrototype
+    v3 = Builtin builtin=ObjectSetPrototypeOf
+    v4 = Call v3, -, v1, v2
+    v5 = Builtin builtin=ArrayPrototypeMap
+    v6 = NewClosure function=f2
+    v7 = Call v5, v1, v6
+    v8 = Call v7
+    Return
+}
+function f1 name="element" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="mapper" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

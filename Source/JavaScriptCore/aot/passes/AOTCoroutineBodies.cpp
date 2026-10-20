@@ -1,0 +1,393 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTCoroutinePlan.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTEffectsCheck.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTResolveCallsDirectCall.h"
+#include "AOTResultRules.h"
+#include "AOTUseLists.h"
+#include "AOTValueIdentity.h"
+#include <initializer_list>
+#include <optional>
+#include <utility>
+#include <wtf/BitVector.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/Vector.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+struct AwaitedYield {
+    BlockID block;
+    uint32_t awaitIndex { 0 };
+    uint32_t yieldIndex { 0 };
+};
+
+class BodyBuilder {
+    WTF_MAKE_NONCOPYABLE(BodyBuilder);
+public:
+    BodyBuilder(const AnalysisContext&, TypeArena&, const CreatorRecord::Coroutine&, Function&& unsplit);
+
+    Function run(TypeID driverType);
+
+private:
+    void prepareHeader(TypeID driverType);
+    void markRareModeArms();
+    void mergeAwaitsIntoYields();
+    void replaceYields();
+    void replaceAwaits();
+    void expandTypedAwait(ProgramPoint);
+    void expandInitialYield();
+    void replaceReturns();
+
+    void rewriteInPlace(BlockID, ValueID, Opcode, std::initializer_list<ValueID> operands);
+    void rewriteInPlace(BlockID, ValueID, Opcode, std::initializer_list<ValueID> operands, const ReplacedEffects&);
+    ReplacedEffects replacedEffectsOf(std::initializer_list<ValueID>) const;
+    void checkSuccessor(BlockID, ValueID, const ReplacedEffects&);
+    bool canKeepType(const Value& successor, TypeID storedType);
+
+    const AnalysisContext& m_context;
+    TypeArena& m_types;
+    const CreatorRecord::Coroutine& m_record;
+    Function m_body;
+    FunctionAnalyses m_analyses;
+    IRBuilder m_builder;
+    ValueID m_driver;
+};
+
+} // anonymous namespace
+
+static std::optional<ProgramPoint> findInitialYield(const Function& function)
+{
+    for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+        auto& values = function.at(BlockID(block)).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (function.at(values[index]).opcode == Opcode::InitialYield)
+                return ProgramPoint { BlockID(block), index };
+        }
+    }
+    return std::nullopt;
+}
+
+static ValueID appendResultAt(IRBuilder& builder, ValueID producer, YieldResult result)
+{
+    Value read = IRBuilder::make(Opcode::ResultAt, { producer });
+    read.setIndex(static_cast<uint32_t>(result));
+    return builder.append(WTF::move(read));
+}
+
+static void markModeArmsRare(Function& function, const UseLists& useLists, ValueID yield)
+{
+    for (const Use& read : useLists.usesOf(yield)) {
+        if (read.kind != Use::Kind::Operand)
+            continue;
+        const Value& value = function.at(read.user);
+        if (value.opcode != Opcode::ResultAt || value.index() != static_cast<uint32_t>(YieldResult::Mode))
+            continue;
+        for (const Use& use : useLists.usesOf(read.user)) {
+            const Terminator& terminator = function.at(use.block).terminator;
+            if (use.kind != Use::Kind::TerminatorOperand || terminator.kind != TerminatorKind::Switch)
+                continue;
+            BlockID otherwise = terminator.otherwise().block;
+            for (const Target& target : terminator.caseTargets()) {
+                if (target.block != otherwise)
+                    function.at(target.block).frequency = BlockFrequency::Rare;
+            }
+        }
+    }
+}
+
+static std::optional<uint32_t> findYieldToMerge(const Function& function, const UseLists& useLists, ProgramPoint point)
+{
+    const BlockValues& values = function.at(point.block).values;
+    if (function.at(values[point.index]).opcode != Opcode::Await)
+        return std::nullopt;
+
+    for (uint32_t index = point.index; index + 1 < values.size(); ++index) {
+        std::optional<Use> use = useLists.singleUse(values[index]);
+        if (!use || use->kind != Use::Kind::Operand || use->user != values[index + 1])
+            return std::nullopt;
+        Opcode user = function.at(use->user).opcode;
+        if (user == Opcode::Yield && use->operandIndex == OperandIndex::Yield::value)
+            return index + 1;
+        if (!isCastWithoutTest(user))
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+static Vector<AwaitedYield> findYieldsToMerge(const Function& function, const UseLists& useLists)
+{
+    Vector<AwaitedYield> merges;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            std::optional<uint32_t> yieldIndex = findYieldToMerge(function, useLists, ProgramPoint { block, index });
+            if (!yieldIndex)
+                continue;
+            merges.append(AwaitedYield { block, index, *yieldIndex });
+            index = *yieldIndex;
+        }
+    }
+    return merges;
+}
+
+BodyBuilder::BodyBuilder(const AnalysisContext& context, TypeArena& types, const CreatorRecord::Coroutine& record, Function&& unsplit)
+    : m_context(context)
+    , m_types(types)
+    , m_record(record)
+    , m_body(WTF::move(unsplit))
+    , m_analyses(context, m_body)
+    , m_builder(context, m_body, types, &m_analyses)
+{
+}
+
+Function BodyBuilder::run(TypeID driverType)
+{
+    prepareHeader(driverType);
+    m_builder.setOrigin(Origin { m_body.position, 0 });
+    m_driver = m_builder.addParameter(entryBlock, driverType);
+
+    switch (m_record.kind) {
+    case CoroutineKind::Generator:
+        markRareModeArms();
+        replaceYields();
+        expandInitialYield();
+        break;
+    case CoroutineKind::AsyncGenerator:
+        markRareModeArms();
+        mergeAwaitsIntoYields();
+        replaceYields();
+        replaceAwaits();
+        expandInitialYield();
+        break;
+    case CoroutineKind::AsyncFunction:
+        replaceAwaits();
+        break;
+    }
+
+    replaceReturns();
+    m_builder.setHandler(std::nullopt);
+    return WTF::move(m_body);
+}
+
+void BodyBuilder::prepareHeader(TypeID driverType)
+{
+    unsigned sourceParameters = m_body.numberOfEntryParameters();
+
+    m_body.role = FunctionRole::CoroutineBody;
+    m_body.creator = m_record;
+    m_body.text = { };
+
+    // The driver has to be the last entry parameter, so a hidden rest in front of it becomes an ordinary parameter.
+    if (std::optional<unsigned> hiddenRest = m_body.hiddenRestParameterIndex()) {
+        TypingContext typing { m_context.program, m_body, m_types };
+        TypeID restType = declaredEntryTypeOf(typing, m_body, *hiddenRest);
+        m_body.flags.remove(FunctionFlags::HasHiddenRest);
+        m_body.parameters.append(DeclaredType { .type = restType });
+    }
+    m_body.flags.remove(FunctionFlags::HasRestParameter);
+    m_body.parameters.append(DeclaredType { .type = driverType });
+    RELEASE_ASSERT(m_record.promiseParameter == sourceParameters && m_body.numberOfEntryParameters() == sourceParameters + 1);
+
+    m_body.results = Vector<DeclaredType> { DeclaredType { .type = TypeTable::anything } };
+
+    Vector<ParameterOrigin> parameterMap;
+    parameterMap.reserveInitialCapacity(sourceParameters + 1);
+    for (uint32_t parameter = 0; parameter < sourceParameters; ++parameter)
+        parameterMap.append(ParameterOrigin { parameter });
+    parameterMap.append(ParameterOrigin { std::nullopt });
+    m_body.derivation = Derivation { .source = m_record.ramp, .parameterMap = WTF::move(parameterMap) };
+
+    m_body.capabilities = initialCapabilitiesOf(m_body);
+}
+
+ReplacedEffects BodyBuilder::replacedEffectsOf(std::initializer_list<ValueID> replacedValues) const
+{
+    ReplacedEffects replaced;
+    for (ValueID id : replacedValues)
+        replaced.add(m_analyses.effectContext(), m_body, m_body.at(id));
+    return replaced;
+}
+
+void BodyBuilder::checkSuccessor(BlockID block, ValueID id, const ReplacedEffects& replaced)
+{
+    checkReplacement(m_analyses.effectContext(), m_body, { m_record.body, block, id }, m_body.at(id), replaced, m_context.build.diagnostics());
+}
+
+bool BodyBuilder::canKeepType(const Value& successor, TypeID storedType)
+{
+    const Type& successorType = m_types.at(resultTypeOf(m_context.program, m_body, successor, m_types));
+    return successorType.isSubsetOf(m_types.at(storedType), m_context.program);
+}
+
+void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands)
+{
+    rewriteInPlace(block, id, opcode, operands, replacedEffectsOf({ id }));
+}
+
+void BodyBuilder::rewriteInPlace(BlockID block, ValueID id, Opcode opcode, std::initializer_list<ValueID> operands, const ReplacedEffects& replaced)
+{
+    Value& value = m_body.at(id);
+    value.become(opcode);
+    uint32_t operandIndex = 0;
+    for (ValueID operand : operands)
+        value.setOperand(operandIndex++, operand);
+    m_analyses.didChangeValues();
+    checkSuccessor(block, id, replaced);
+}
+
+void BodyBuilder::markRareModeArms()
+{
+    const UseLists& useLists = m_analyses.useLists();
+    for (const Block& block : m_body.blocks) {
+        for (ValueID id : block.values) {
+            if (m_body.at(id).opcode == Opcode::Yield)
+                markModeArmsRare(m_body, useLists, id);
+        }
+    }
+    m_analyses.invalidate(FunctionAnalysis::Frequencies);
+}
+
+void BodyBuilder::mergeAwaitsIntoYields()
+{
+    Vector<AwaitedYield> merges = findYieldsToMerge(m_body, m_analyses.useLists());
+    for (size_t next = 0; next < merges.size();) {
+        BlockID block = merges[next].block;
+        const BlockValues& values = m_body.at(block).values;
+        BitVector mergedIndexes(values.size());
+        for (; next < merges.size() && merges[next].block == block; ++next) {
+            const AwaitedYield& merge = merges[next];
+            ValueID await = values[merge.awaitIndex];
+            ValueID yield = values[merge.yieldIndex];
+            rewriteInPlace(block, yield, Opcode::AsyncGeneratorYield, { m_driver, m_body.at(await).valueOperand() }, replacedEffectsOf({ await, yield }));
+            for (uint32_t index = merge.awaitIndex; index < merge.yieldIndex; ++index)
+                mergedIndexes.quickSet(index);
+        }
+        m_builder.eraseValues(block, mergedIndexes);
+    }
+}
+
+void BodyBuilder::replaceYields()
+{
+    for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        for (ValueID id : m_body.at(block).values) {
+            const Value& value = m_body.at(id);
+            if (value.opcode == Opcode::Yield)
+                rewriteInPlace(block, id, Opcode::YieldBySavingFrame, { m_driver, value.valueOperand() });
+        }
+    }
+}
+
+void BodyBuilder::replaceAwaits()
+{
+    Vector<ProgramPoint> typedAwaits;
+    for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        const BlockValues& values = m_body.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = m_body.at(values[index]);
+            if (value.opcode != Opcode::Await)
+                continue;
+            ValueID awaited = value.valueOperand();
+            if (canKeepType(IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver }), value.type))
+                rewriteInPlace(block, values[index], Opcode::AwaitBySavingFrame, { awaited, m_driver });
+            else
+                typedAwaits.append(ProgramPoint { block, index });
+        }
+    }
+
+    while (!typedAwaits.isEmpty())
+        expandTypedAwait(typedAwaits.takeLast());
+}
+
+void BodyBuilder::expandTypedAwait(ProgramPoint point)
+{
+    ValueID id = m_body.at(point.block).values[point.index];
+    ValueID awaited = m_body.at(id).valueOperand();
+    TypeID type = m_body.at(id).type;
+    TypeID prediction = m_body.at(id).prediction();
+    ReplacedEffects replaced = replacedEffectsOf({ id });
+
+    IRBuilder::Expansion expansion = m_builder.beginExpansion(point);
+    Value successor = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, m_driver });
+    successor.setPrediction(prediction);
+    ValueID result = m_builder.append(WTF::move(successor));
+    checkSuccessor(point.block, result, replaced);
+    m_builder.endExpansion(expansion, convertTo(m_builder, result, DeclaredType { .type = type }));
+}
+
+void BodyBuilder::expandInitialYield()
+{
+    std::optional<ProgramPoint> point = findInitialYield(m_body);
+    if (!point)
+        return;
+
+    ReplacedEffects replaced = replacedEffectsOf({ m_body.at(point->block).values[point->index] });
+
+    IRBuilder::Expansion expansion = m_builder.beginExpansion(*point);
+    RELEASE_ASSERT(expansion.results.isEmpty());
+    ValueID yield = m_builder.append(Opcode::YieldBySavingFrame, { m_driver, m_builder.appendUndefined() });
+    checkSuccessor(point->block, yield, replaced);
+    ValueID sent = appendResultAt(m_builder, yield, YieldResult::Sent);
+    ValueID mode = appendResultAt(m_builder, yield, YieldResult::Mode);
+
+    BlockID throwArm = m_builder.addBlock(BlockFrequency::Rare);
+    BlockID returnArm = m_builder.addBlock(BlockFrequency::Rare);
+    Vector<std::pair<int64_t, Target>> cases;
+    cases.append(std::pair<int64_t, Target> { static_cast<int64_t>(ResumeMode::Throw), Target { throwArm, { }, { } } });
+    cases.append(std::pair<int64_t, Target> { static_cast<int64_t>(ResumeMode::Return), Target { returnArm, { }, { } } });
+    m_builder.emitSwitch(mode, WTF::move(cases), Target { expansion.continuation, { }, { } });
+
+    m_builder.moveToEndOf(throwArm);
+    m_builder.emitThrow(sent);
+
+    m_builder.moveToEndOf(returnArm);
+    m_builder.emitReturn(sent);
+}
+
+void BodyBuilder::replaceReturns()
+{
+    bool isAsyncFunction = m_record.kind == CoroutineKind::AsyncFunction;
+    for (uint32_t blockIndex = 0; blockIndex < m_body.blocks.size(); ++blockIndex) {
+        BlockID block(blockIndex);
+        Terminator& terminator = m_body.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Return)
+            continue;
+
+        ValueID value = terminator.valueOperand();
+        if (value && !isAsyncFunction)
+            continue;
+
+        m_builder.setOrigin(terminator.origin());
+        terminator = Terminator();
+        m_builder.moveToEndOf(block);
+        if (!value)
+            value = m_builder.appendUndefined();
+        if (isAsyncFunction)
+            value = m_builder.append(Opcode::ReturnAsyncResult, { m_driver, value });
+        m_builder.emitReturn(value);
+    }
+    m_analyses.didChangeValues();
+}
+
+Function buildCoroutineBody(const AnalysisContext& context, TypeArena& types, const CoroutineTypes& coroutineTypes, Function&& unsplit, const CoroutinePlan& plan)
+{
+    BodyBuilder builder(context, types, plan.record, WTF::move(unsplit));
+    return builder.run(coroutineTypes.driverParameterOf(plan.record.kind));
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

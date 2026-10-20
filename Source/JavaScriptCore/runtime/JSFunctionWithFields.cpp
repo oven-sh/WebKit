@@ -54,7 +54,7 @@ void JSFunctionWithFields::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSFunctionWithFields* thisObject = uncheckedDowncast<JSFunctionWithFields>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSFunctionWithFields);

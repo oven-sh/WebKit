@@ -1,0 +1,70 @@
+# The tables of a program whose only module does nothing, in the order of the list: a table about something the program does not have is empty but for a reserved first or a closing entry
+# LIBRARY: own
+# RUN: tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK: magic ok
+# CHECK-NEXT: instances one
+# CHECK-NEXT: types
+# CHECK-NEXT: typeSites 0 0
+# CHECK-NEXT: layouts 2 8
+# CHECK-NEXT: classes 2 8
+# CHECK-NEXT: layoutSets 0 0
+# CHECK-NEXT: allocations 1 16
+# CHECK-NEXT: shapeSetBits
+# CHECK-NEXT: propertyRuns 1 4
+# CHECK-NEXT: fieldTable 
+# CHECK-NEXT: fieldRecordIndices 
+# CHECK-NEXT: removedFields 0 0
+# CHECK-NEXT: addedNames 0 0
+# CHECK-NEXT: classPrototypeNames 0 0
+# CHECK-NEXT: functionNames 2 8
+# CHECK-NEXT: functionKinds 2 4
+# CHECK-NEXT: functionTraces 2 4
+# CHECK-NEXT: functionSources 1 4
+# CHECK-NEXT: implementedBuiltins 0 0
+# CHECK-NEXT: functionLengths 1 2
+# CHECK-NEXT: closureCaptureCounts 1 2
+# CHECK-NEXT: functionTexts 0 0
+# CHECK-NEXT: constructors 0 0
+# CHECK-NEXT: boundFunctions 0 0
+# CHECK-NEXT: constructEntrypoints 0 0
+# CHECK-NEXT: staticsLayout 1 8
+# CHECK-NEXT: staticsRuns 0 0
+# CHECK-NEXT: staticsRoots 1 8
+# CHECK-NEXT: staticsClearedEachCollection 0 0
+# CHECK-NEXT: functionVariables 0 0
+# CHECK-NEXT: identifiersByHash
+# CHECK-NEXT: identifiersOfEngineSymbols
+# CHECK-NEXT: literalStrings
+# CHECK-NEXT: literalStringTable
+# CHECK-NEXT: literalStringLimits
+# CHECK-NEXT: bigIntConstants 0 0
+# CHECK-NEXT: data 1 8
+# CHECK-NEXT: requests 1 4
+# CHECK-NEXT: builtinCells 0 0
+# CHECK-NEXT: eagerBuiltinCells 0 0
+# CHECK-NEXT: constantBuiltinMembers 0 0
+# CHECK-NEXT: holdersOfClosedAbsentNames 0 0
+# CHECK-NEXT: closedAbsentNames 0 0
+# CHECK-NEXT: entryPoints 1 4
+# CHECK-NEXT: modules 2 96
+# CHECK-NEXT: moduleRequests 0 0
+# CHECK-NEXT: moduleExports 0 0
+# CHECK-NEXT: indirectExports 0 0
+# CHECK-NEXT: syntheticExports 0 0
+# CHECK-NEXT: requiredNames 0 0
+# CHECK-NEXT: requireEdges 0 0
+# CHECK-NEXT: moduleResetSlots 0 0
+# CHECK-NEXT: moduleFailures 0 0
+# CHECK-NEXT: modulesByPath 1 4
+# CHECK-NEXT: compiledRuntimeModules 0 0
+# CHECK-NEXT: compiledRuntimeFunctions 0 0
+# CHECK-NEXT: namedStrings
+# CHECK-NEXT: total

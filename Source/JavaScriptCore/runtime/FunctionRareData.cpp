@@ -64,6 +64,10 @@ void FunctionRareData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     rareData->m_internalFunctionAllocationProfile.visitAggregate(visitor);
     visitor.append(rareData->m_boundFunctionStructureID);
     visitor.append(rareData->m_executable);
+#if ENABLE(AOT)
+    visitor.append(rareData->m_compiledAllocationStructureID);
+    visitor.append(rareData->m_compiledAllocationConstructor);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(FunctionRareData);
@@ -80,7 +84,6 @@ FunctionRareData::FunctionRareData(VM& vm, ExecutableBase* executable)
     , m_hasReifiedName(false)
     , m_hasModifiedLengthForBoundOrNonHostFunction(false)
     , m_hasModifiedNameForBoundOrNonHostFunction(false)
-    , m_allocatesGuardedObjects(false)
 {
 }
 
@@ -135,8 +138,22 @@ void FunctionRareData::clear(const char* reason)
 {
     m_objectAllocationProfile.clear();
     m_internalFunctionAllocationProfile.clear();
+#if ENABLE(AOT)
+    m_compiledAllocationStructureID.clear();
+    m_compiledAllocationOrderWord = 0;
+    m_compiledAllocationConstructor.clear();
+#endif
     m_allocationProfileWatchpointSet.fireAll(vm(), reason);
 }
+
+#if ENABLE(AOT)
+void FunctionRareData::setCompiledAllocation(VM& vm, Structure* structure, uint32_t orderWord, JSObject* constructor)
+{
+    m_compiledAllocationStructureID.set(vm, this, structure);
+    m_compiledAllocationOrderWord = orderWord;
+    m_compiledAllocationConstructor.set(vm, this, constructor);
+}
+#endif
 
 void FunctionRareData::AllocationProfileClearingWatchpoint::fireInternal(VM&, const FireDetail&)
 {

@@ -2152,6 +2152,9 @@ private:
                     return std::nullopt;
                 }
 
+                if constexpr (requires { m_delegate.willLookUpUnicodeProperty(); })
+                    m_delegate.willLookUpUnicodeProperty();
+
                 if (foundEquals) {
                     auto result = unicodeMatchPropertyValue(unicodePropertyName, expressionBuilder.toString());
                     if (!result)

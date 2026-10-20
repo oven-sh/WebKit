@@ -1,0 +1,66 @@
+# A closure passed at the position of a rest parameter is stored into the rest array and lives as long as that array
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: function f4 parameter 0 uses=[{{*}}Retains
+# CHECK: class {{*}} closureFunction=f8 {{*}}locality=FrameLocal
+# CHECK: class {{*}} closureFunction=f9 {{*}}locality=FrameLocal
+# NOWHERE-NOT: function f5 parameter 0 uses={{*}}Retains
+# NOWHERE-NOT: function f6 parameter 0 uses={{*}}Retains
+# NOWHERE-NOT: closureFunction=f7 {{*}}locality=FrameLocal
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+function f1 name="collectedAndKept" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    v1 = NewClosure function=f4
+    v2 = Call v1, -, v0
+    Return
+}
+function f2 name="collected" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = NewClosure function=f5
+    v2 = Call v1, -, v0
+    Return
+}
+function f3 name="control" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f9
+    v1 = NewClosure function=f6
+    v2 = Call v1, -, v0
+    Return
+}
+function f4 name="keepsRest" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f5 name="dropsRest" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    Return
+}
+function f6 name="positional" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="inKeptArray" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="inDroppedArray" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="inParameter" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

@@ -1,0 +1,35 @@
+# Selection has used up every prediction and every written type
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: PredictionAfterSelection 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badPrediction" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 ~ number = Call v0
+    Return
+}
+function f1 name="badPredictionOnParameter" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Jump -> next b1(v0)
+  b1(v1 ~ number):
+    Return
+}
+function f2 name="badWrittenType" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 ? number = Call v0
+    Return
+}
+function f3 name="badWrittenTypeOnParameter" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Jump -> next b1(v0)
+  b1(v1 ? number):
+    Return
+}
+function f4 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Jump -> next b1(v0)
+  b1(v2):
+    Return
+}

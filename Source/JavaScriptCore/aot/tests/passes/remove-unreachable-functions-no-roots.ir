@@ -1,0 +1,14 @@
+# A call graph without roots knows nothing, so every body stays
+# FORM: Selected
+# RUN: pass RemoveUnreachableFunctions
+# STATISTIC: UnreachableFunctionsRemoved = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="uncalled" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b0(

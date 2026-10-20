@@ -1,0 +1,38 @@
+# async function called() { return { then() { one() } } }  async function direct() { return { then() { two() } } }  called(); direct()
+# The promise of an async function is resolved with what the body returns, so `then` of a returned thenable is entered though nobody awaits the promise, however the function is called.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Thenable" fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = CallDirect function=f2
+    Return
+}
+function f1 name="called" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="direct" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f3 name="thenOfCalled" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="thenOfDirect" results=[{type=anything}] {
+  b0():
+    Return
+}

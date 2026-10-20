@@ -30,6 +30,7 @@
 #include "PutPropertySlot.h"
 #include "Structure.h"
 #include "VM.h"
+#include <JavaScriptCore/AOTRemovableFeature.h>
 
 namespace JSC {
 
@@ -56,9 +57,11 @@ public:
 
     CustomGetterSetter::CustomGetter getter() const { return m_getter; }
     CustomGetterSetter::CustomSetter setter() const { return m_setter; }
-    uint32_t lazyClosureRequest() const { return m_lazyClosureRequest; }
-    void setLazyClosureRequest(uint32_t request) { m_lazyClosureRequest = request; }
-    static constexpr ptrdiff_t offsetOfLazyClosureRequest() { return OBJECT_OFFSETOF(CustomGetterSetter, m_lazyClosureRequest); }
+
+    JS_EXPORT_PRIVATE static JSC_DECLARE_CUSTOM_GETTER(getRemovedProperty);
+    JS_EXPORT_PRIVATE static JSC_DECLARE_CUSTOM_SETTER(setRemovedProperty);
+    std::optional<RemovableFeature> removedGetterFeature() const { return m_getter == CustomGetter(getRemovedProperty) ? std::optional(m_removedGetterFeature) : std::nullopt; }
+    std::optional<RemovableFeature> removedSetterFeature() const { return m_setter == CustomSetter(setRemovedProperty) ? std::optional(m_removedSetterFeature) : std::nullopt; }
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
         
@@ -77,12 +80,18 @@ protected:
         , m_getter(getter)
         , m_setter(setter)
     {
+        if (Bun__removableFeatureState.isTrimmed) [[unlikely]]
+            replaceRemovedFunctions();
     }
 
 private:
+    JS_EXPORT_PRIVATE void replaceRemovedFunctions();
+
     CustomGetter m_getter;
     CustomSetter m_setter;
-    uint32_t m_lazyClosureRequest { 0 };
+    // Each is set only where replaceRemovedFunctions() replaced the function.
+    RemovableFeature m_removedGetterFeature;
+    RemovableFeature m_removedSetterFeature;
 };
 
 } // namespace JSC

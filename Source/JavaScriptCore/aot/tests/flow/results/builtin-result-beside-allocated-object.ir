@@ -1,0 +1,86 @@
+# What flow knows about the fields of a record that a built-in makes holds for reads by name: an optional field of a property descriptor may be undefined, the promise of a capability is a Promise. A position that holds such a record beside one that compiled code allocates is unproven, and only the allocated one is predicted
+# RUN: flow
+# CHECK: layout L(IteratorResult) flow={baseState=None members=[L(IteratorResult)] allocationClasses=[2] 
+# CHECK: layout L(PromiseCapability) flow={allocation=NeverAllocated
+# CHECK: layout L(PropertyDescriptor) flow={allocation=NeverAllocated
+# CHECK: variable g0 type=undefined|object written=anything {{*}}cause=NonLayoutObject witness={function=f0 value=v5}}
+# CHECK-NEXT: variable g1 type=object written=anything {{*}}cause=NonLayoutObject witness={function=f0 value=v9}}
+# CHECK-NEXT: variable g2 type=Promise<anything, proven, pristine[Storage, Names]> written=anything
+# CHECK-NEXT: variable g3 type=object predicted=L(IteratorResult) written=anything {{*}}cause=NonLayoutObject witness={function=f0 value=v18}}
+# CHECK-NEXT: variable g4 type=boolean written=anything
+# CHECK-NEXT: variable g5 type=undefined|boolean written=anything
+# CHECK-NEXT: variable g6 type=boolean written=anything
+# RUN(APPLY): flow-apply
+# APPLY-LABEL: function f2 name="read"
+# APPLY: v0: undefined|object = GetModuleVariable variable=g0
+# APPLY-NOT: receivers=
+# APPLY: v6: object ~ L(IteratorResult) = GetModuleVariable variable=g3
+# APPLY-NEXT: = PropGet v6 key="done" {{*}}receivers=[L(IteratorResult), ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=70 function=f1
+layout L0 name="Point" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="descriptor" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="capability" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="promise" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="eitherStep" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="enumerable" module=m0 declared={type=anything} initialization=Uninitialized
+variable g5 name="writable" module=m0 declared={type=anything} initialization=Uninitialized
+variable g6 name="done" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=5
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Object
+    v3 = PropGet v2 key="getOwnPropertyDescriptor"
+    v4 = String string="a"
+    v5 = Call v3, v2, v1, v4 calleeKey="getOwnPropertyDescriptor"
+    PutModuleVariable v5 variable=g0
+    v7 = Builtin builtin=Promise
+    v8 = PropGet v7 key="withResolvers"
+    v9 = Call v8, v7 calleeKey="withResolvers"
+    PutModuleVariable v9 variable=g1
+    v11 = PropGet v9 key="promise"
+    PutModuleVariable v11 variable=g2
+    v13 = Builtin builtin=Map
+    v14 = Construct v13
+    v15 = PropGet v14 key="keys"
+    v16 = Call v15, v14 calleeKey="keys"
+    v17 = PropGet v16 key="next"
+    v18 = Call v17, v16 calleeKey="next"
+    PutModuleVariable v18 variable=g3
+    v20 = NewArray v0 contents=anything
+    v21 = PropGet v20 key="values"
+    v22 = Call v21, v20 calleeKey="values"
+    v23 = PropGet v22 key="next"
+    v24 = Call v23, v22 calleeKey="next"
+    PutModuleVariable v24 variable=g3
+    v26 = CallDirect function=f2
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = CreateIteratorResult v1, v2
+    Return v3
+}
+function f2 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = PropGet v0 key="enumerable"
+    PutModuleVariable v2 variable=g4
+    v4 = PropGet v0 key="writable"
+    PutModuleVariable v4 variable=g5
+    Jump -> next b2()
+  b2():
+    v6 = GetModuleVariable variable=g3
+    v7 = PropGet v6 key="done"
+    PutModuleVariable v7 variable=g6
+    Return
+}

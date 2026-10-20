@@ -1,0 +1,99 @@
+# An object whose constructor has not finished is held by the constructor of its class, by the constructors above it, and by every function one of them hands it to. Every other function sees finished objects only
+# RUN: flow-construction functions
+# RUN(OTHERS): flow-construction functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f5 fields=[{key="d" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="Point" constructor=f6 fields=[{key="x" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="Derived" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f7
+    DefineMethod v1, v2 layout=L0 key="bump"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f5
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    PutModuleVariable v8 variable=g0
+    v10 = Construct v4
+    v11 = Construct v8
+    v12 = NewClosure function=f6
+    v13 = Construct v12
+    v14 = PropGet v10 key="bump"
+    v15 = Call v14, v10 calleeKey="bump"
+    v16 = CallDirect v11 function=f8
+    v17 = NewClosure function=f9
+    v18 = Call v17, v13
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f2
+    v4 = CallDirect v2 function=f3
+    Return v2
+}
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="a"
+    Return
+}
+function f3 name="helper" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="b"
+    v3 = CallDirect v0 function=f4
+    Return
+}
+function f4 name="helperOfHelper" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="c"
+    Return
+}
+function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L1
+    v4 = Integer integer=4
+    PropSet v3, v4 key="d"
+    Return v3
+}
+function f6 name="Point" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    v1 = Integer integer=5
+    PropSet v0, v1 key="x"
+    Return
+}
+function f7 name="bump" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=6
+    PropSet v0, v1 key="a"
+    Return
+}
+function f8 name="later" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = Integer integer=7
+    PropSet v0, v1 key="d"
+    Return
+}
+# It could be called with new, but no layout has it as its constructor: what it would construct has no slots.
+function f9 name="constructsNoLayout" flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=8
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK: functions that may hold an unfinished object: f1 f2 f3 f4 f5 f6
+# OTHERS-NOT: f0
+# OTHERS-NOT: f7
+# OTHERS-NOT: f8
+# OTHERS-NOT: f9

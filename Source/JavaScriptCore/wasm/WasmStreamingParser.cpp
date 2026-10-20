@@ -291,10 +291,10 @@ auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& o
     return result;
 }
 
-static bool mayHaveCodeInImage()
+static bool needsSourceDigest()
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    return CodeInImage::isInProcess();
+    return CodeInImage::needsSourceDigests();
 #else
     return false;
 #endif
@@ -321,7 +321,7 @@ auto StreamingParser::addBytes(std::span<const uint8_t> bytes, IsEndOfStream isE
         return m_state;
     }
 
-    if (Options::useEagerWasmModuleHashing() || mayHaveCodeInImage()) [[unlikely]]
+    if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]]
         m_hasher.addBytes(bytes);
 
     size_t offsetInBytes = 0;
@@ -463,7 +463,7 @@ auto StreamingParser::finalize() -> State
         }
 
         if (m_remaining.isEmpty()) {
-            if (Options::useEagerWasmModuleHashing() || mayHaveCodeInImage()) [[unlikely]] {
+            if (Options::useEagerWasmModuleHashing() || needsSourceDigest()) [[unlikely]] {
                 m_hasher.computeHash(m_info->sourceDigest);
                 m_info->sourceSize = m_totalSize.value();
                 m_info->hasSourceDigest = true;

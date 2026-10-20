@@ -74,31 +74,31 @@ public:
     {
         switch (ViewClass::TypedArrayStorageType) {
         case TypeInt8:
-            return callInt8Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callInt8Array);
         case TypeInt16:
-            return callInt16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callInt16Array);
         case TypeInt32:
-            return callInt32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callInt32Array);
         case TypeUint8:
-            return callUint8Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callUint8Array);
         case TypeUint8Clamped:
-            return callUint8ClampedArray;
+            return JSC_REGISTERED_HOST_FUNCTION(callUint8ClampedArray);
         case TypeUint16:
-            return callUint16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callUint16Array);
         case TypeUint32:
-            return callUint32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callUint32Array);
         case TypeFloat16:
-            return callFloat16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callFloat16Array);
         case TypeFloat32:
-            return callFloat32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callFloat32Array);
         case TypeFloat64:
-            return callFloat64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callFloat64Array);
         case TypeBigInt64:
-            return callBigInt64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callBigInt64Array);
         case TypeBigUint64:
-            return callBigUint64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(callBigUint64Array);
         case TypeDataView:
-            return callDataView;
+            return JSC_REGISTERED_HOST_FUNCTION(callDataView);
         default:
             CRASH_UNDER_CONSTEXPR_CONTEXT();
             return nullptr;
@@ -109,31 +109,31 @@ public:
     {
         switch (ViewClass::TypedArrayStorageType) {
         case TypeInt8:
-            return constructInt8Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructInt8Array);
         case TypeInt16:
-            return constructInt16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructInt16Array);
         case TypeInt32:
-            return constructInt32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructInt32Array);
         case TypeUint8:
-            return constructUint8Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructUint8Array);
         case TypeUint8Clamped:
-            return constructUint8ClampedArray;
+            return JSC_REGISTERED_HOST_FUNCTION(constructUint8ClampedArray);
         case TypeUint16:
-            return constructUint16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructUint16Array);
         case TypeUint32:
-            return constructUint32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructUint32Array);
         case TypeFloat16:
-            return constructFloat16Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructFloat16Array);
         case TypeFloat32:
-            return constructFloat32Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructFloat32Array);
         case TypeFloat64:
-            return constructFloat64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructFloat64Array);
         case TypeBigInt64:
-            return constructBigInt64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructBigInt64Array);
         case TypeBigUint64:
-            return constructBigUint64Array;
+            return JSC_REGISTERED_HOST_FUNCTION(constructBigUint64Array);
         case TypeDataView:
-            return constructDataView;
+            return JSC_REGISTERED_HOST_FUNCTION(constructDataView);
         default:
             CRASH_UNDER_CONSTEXPR_CONTEXT();
             return nullptr;

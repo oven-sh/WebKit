@@ -1,0 +1,60 @@
+# A cycle takes the order away from its own members only: the module below it and the module above it stay ordered and keep the proofs of their exports
+# RUN: flow-order modules locations failed before m2 m0 before m2 m1 before m0 m1 before m1 m0 before m0 m3 before m1 m3 before m2 m3
+# CHECK: m0: component [[cycle]] cycle after {[[below]]}
+# CHECK-NEXT: m1: component [[cycle]] cycle after {[[below]]}
+# CHECK-NEXT: m2: component [[below]] after {}
+# CHECK-NEXT: m3: component [[above]] after {[[below]], [[cycle]]}
+# CHECK-NEXT: g0: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g1: SetAtCreation AtMostOnce
+# CHECK-NEXT: g2: Unknown AtMostOnce
+# CHECK-NEXT: g3: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: read-before-initialization g2
+# CHECK-NEXT: before m2 m0 Unknown
+# CHECK-NEXT: before m2 m1 Unknown
+# CHECK-NEXT: before m0 m1 Unknown
+# CHECK-NEXT: before m1 m0 Unknown
+# CHECK-NEXT: before m0 m3 CompletesBefore
+# CHECK-NEXT: before m1 m3 CompletesBefore
+# CHECK-NEXT: before m2 m3 CompletesBefore
+
+module m0 path="a.js" displayPath="a.js" body=f0 requests=[{target=m1}, {target=m2}] exports=[{name="readLate" variable=g1}, {name="value" variable=g0}]
+module m1 path="b.js" displayPath="b.js" body=f1 requests=[{target=m0}, {target=m2}]
+module m2 path="below.js" displayPath="below.js" body=f2 exports=[{name="value" variable=g0}]
+module m3 path="main.js" displayPath="main.js" body=f3 requests=[{target=m0}]
+entry module=m3
+variable g0 name="value" module=m2 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="readLate" module=m0 declared={type=function} initialization=Function function=f4
+variable g2 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g3 name="own" module=m0 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="a" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g3
+    v2 = GetModuleVariable variable=g3
+    v3 = Integer integer=1
+    PutModuleVariable v3 variable=g2
+    Return
+}
+function f1 name="b" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    Return
+}
+function f2 name="below" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="main" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return
+}
+function f4 name="readLate" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="late"
+    Return v1
+}

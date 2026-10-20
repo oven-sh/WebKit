@@ -1,0 +1,184 @@
+# A store of an array element whose storage kind nobody proved has code for each type of the stored value, in strict and sloppy code, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-4: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+# RUN(R): pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="strictStoresInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
+    PutArrayElement v0, v1, v2 level=Proven
+    PutArrayElement v0, v1, v3 level=Proven
+    PutArrayElement v0, v1, v4 level=Proven
+    PutArrayElement v0, v1, v5 level=Proven
+    PutArrayElement v0, v1, v6 level=Proven
+    PutArrayElement v0, v1, v7 level=Proven
+    PutArrayElement v0, v1, v8 level=Proven
+    PutArrayElement v0, v1, v9 level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 level=Proven
+    PutArrayElement v0, v1, v3 level=Proven
+    PutArrayElement v0, v1, v4 level=Proven
+    PutArrayElement v0, v1, v5 level=Proven
+    PutArrayElement v0, v1, v6 level=Proven
+    PutArrayElement v0, v1, v7 level=Proven
+    PutArrayElement v0, v1, v8 level=Proven
+    PutArrayElement v0, v1, v9 level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 level=Proven
+    PutArrayElement v0, v1, v3 level=Proven
+    PutArrayElement v0, v1, v4 level=Proven
+    PutArrayElement v0, v1, v5 level=Proven
+    PutArrayElement v0, v1, v6 level=Proven
+    PutArrayElement v0, v1, v7 level=Proven
+    PutArrayElement v0, v1, v8 level=Proven
+    PutArrayElement v0, v1, v9 level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+# R-LABEL: function f0 name="strictStoresInOtherStorage"
+# R: [[strictOther0]]: i32 @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther0]] level=Proven
+# R: [[strictOther1]]: int @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther1]] level=Proven
+# R: [[strictOther2]]: fractional @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther2]] level=Proven
+# R: [[strictOther3]]: number @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther3]] level=Proven
+# R: [[strictOther4]]: undefined|number @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther4]] level=Proven
+# R: [[strictOther5]]: string @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther5]] level=Proven
+# R: [[strictOther6]]: object @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[strictOther6]] level=Proven
+# R: PutArrayElement v0, v1, v9 level=Proven
+function f1 name="sloppyStoresInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
+    PutArrayElement v0, v1, v2 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v2 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 mode=Sloppy level=Proven
+    Branch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v10 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v2 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v3 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v4 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v6 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v7 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v8 mode=Sloppy level=Proven
+    PutArrayElement v0, v1, v9 mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+# R-LABEL: function f1 name="sloppyStoresInOtherStorage"
+# R: [[sloppyOther0]]: i32 @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther0]] mode=Sloppy
+# R: [[sloppyOther1]]: int @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther1]] mode=Sloppy
+# R: [[sloppyOther2]]: fractional @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther2]] mode=Sloppy
+# R: [[sloppyOther3]]: number @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther3]] mode=Sloppy
+# R: [[sloppyOther4]]: undefined|number @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther4]] mode=Sloppy
+# R: [[sloppyOther5]]: string @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther5]] mode=Sloppy
+# R: [[sloppyOther6]]: object @JSValue =
+# R-NEXT: PutArrayElement v0, v1, [[sloppyOther6]] mode=Sloppy
+# R: PutArrayElement v0, v1, v9 mode=Sloppy
+function f2 name="strictStoresAtPositionsInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
+    PutArrayElement v0, v1, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 level=Proven
+    PutArrayElement v0, v3, v5 level=Proven
+    PutArrayElement v0, v4, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 level=Proven
+    PutArrayElement v0, v3, v5 level=Proven
+    PutArrayElement v0, v4, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 level=Proven
+    PutArrayElement v0, v3, v5 level=Proven
+    PutArrayElement v0, v4, v5 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="sloppyStoresAtPositionsInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 mode=Sloppy level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 mode=Sloppy level=Proven
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Branch v7 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    PutArrayElement v0, v1, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v3, v5 mode=Sloppy level=Proven
+    PutArrayElement v0, v4, v5 mode=Sloppy level=Proven [keyIsIntegral]
+    PutArrayElement v0, v3, v6 mode=Sloppy level=Proven
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact

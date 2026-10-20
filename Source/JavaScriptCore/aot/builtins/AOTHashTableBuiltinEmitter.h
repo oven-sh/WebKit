@@ -1,0 +1,44 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTBuiltinFamilyEmitter.h"
+#include "AOTStubsCollections.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+enum class HashTableOwner : uint8_t { Map, Set };
+
+class HashTableBuiltinEmitter final : public BuiltinFamilyEmitter {
+public:
+    explicit HashTableBuiltinEmitter(CodeGenerator&);
+
+    void generateNewMap(const InlineCall&);
+    void generateMapGet(const InlineCall&);
+    void generateMapHas(const InlineCall&);
+    void generateSetHas(const InlineCall&);
+    void generateMapSet(const InlineCall&);
+    void generateSetAdd(const InlineCall&);
+    void generateMapSize(const InlineCall&);
+    void generateSetSize(const InlineCall&);
+
+    void remove(const InlineCall&, HashTableOwner);
+    Boxed normalizedKey(const OperationContext&, ValueID);
+    Word32 hashOfBits(Boxed normalizedKey);
+    Integer sizeOf(CellPointer table, HashTableOwner);
+
+private:
+    Boxed normalizedNumber(const OperationContext&, Number);
+    void lookUp(const InlineCall&, HashTableOwner, bool returnsValue);
+    void insert(const InlineCall&, HashTableOwner);
+    void generateSize(const InlineCall&, HashTableOwner);
+};
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

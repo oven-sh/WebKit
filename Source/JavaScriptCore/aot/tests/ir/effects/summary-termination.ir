@@ -1,0 +1,59 @@
+# Only a loop can be terminated: a function with a loop hint and its callers say so on both exits, straight-line code and recursion without a loop do not
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="straightLine" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK: f0 return: none throw: none
+function f1 name="loops" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-NEXT: f1 return: reads(RuntimeState) writes(RuntimeState) collects terminates throw: none
+function f2 name="callsLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = CallDirect v0 function=f1
+    Return
+}
+# CHECK-NEXT: f2 return: reads(RuntimeState) writes(RuntimeState) collects terminates throw: none
+function f3 name="loopsAndThrows" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Throw v1
+  b4():
+    Return
+}
+# CHECK-NEXT: f3 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: reads(RuntimeState) writes(RuntimeState) throws collects terminates
+function f4 name="callsThrowingLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    v1 = CallDirect v0, v0 function=f3
+    Return
+}
+# CHECK-NEXT: f4 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: reads(RuntimeState) writes(RuntimeState) throws collects terminates
+function f5 name="recursionWithoutLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect v0 function=f5
+    Return
+  b2():
+    Return
+}
+# CHECK-NEXT: f5 return: throws throw: throws
+# CHECK-NOT: terminates
+# CHECK-LABEL: function f0

@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CommonSlowPaths.h"
 #include "JIT.h"
 #include "JITCode.h"
@@ -48,7 +49,7 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JITThunks);
 
-NEVER_INLINE JITThunks::JITThunks() = default;
+JITThunks::JITThunks() = default;
 
 JITThunks::~JITThunks() = default;
 
@@ -81,8 +82,9 @@ JSC_FOR_EACH_VM_DEPENDENT_LAZY_COMMON_THUNK(JSC_CASE_COMMON_JIT_THUNK)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JITThunks::initialize(VM& vm)
+NEVER_INLINE void JITThunks::initialize(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::initialize);
     ASSERT(!isCompilationThread());
     sharedCommonThunks();
 #define JSC_DEFINE_COMMON_JIT_THUNK(name, func) \
@@ -176,12 +178,14 @@ CodePtr<JITThunkPtrTag> JITThunks::ctiNativeTailCallWithoutSavedTags(VM& vm)
 
 NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionCall(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::ctiInternalFunctionCall);
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionCall).code();
 }
 
 NEVER_INLINE CodePtr<JITThunkPtrTag> JITThunks::ctiInternalFunctionConstruct(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::ctiInternalFunctionConstruct);
     ASSERT(Options::useJIT());
     return ctiStub(vm, CommonJITThunkID::InternalFunctionConstruct).code();
 }
@@ -223,6 +227,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStubImpl(ThunkGenerator key,
 
 NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, ThunkGenerator generator)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, static_cast<MacroAssemblerCodeRef<JITThunkPtrTag> (JITThunks::*)(VM&, ThunkGenerator)>(&JITThunks::ctiStub));
     return ctiStubImpl(generator, [&] {
         return generator(vm);
     });
@@ -230,6 +235,7 @@ NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, Th
 
 NEVER_INLINE MacroAssemblerCodeRef<JITThunkPtrTag> JITThunks::ctiStub(VM& vm, CommonJITThunkID thunkID)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, static_cast<MacroAssemblerCodeRef<JITThunkPtrTag> (JITThunks::*)(VM&, CommonJITThunkID)>(&JITThunks::ctiStub));
     unsigned index = static_cast<unsigned>(thunkID);
     if (index < numberOfVMIndependentCommonThunkIDs)
         return sharedCommonThunks()[index];

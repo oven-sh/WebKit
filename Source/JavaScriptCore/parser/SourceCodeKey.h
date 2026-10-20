@@ -59,8 +59,7 @@ public:
 
     friend bool operator==(const SourceCodeFlags&, const SourceCodeFlags&) = default;
 
-    unsigned bits() const { return m_flags; }
-    unsigned bitsWithoutCodeGenerationMode() const { return m_flags & ((1u << 6) - 1); }
+    unsigned bits() { return m_flags; }
 
 private:
     unsigned m_flags { 0 };
@@ -109,9 +108,6 @@ public:
     StringView host() const { return m_sourceCode.provider().sourceOrigin().url().host(); }
 
     int functionConstructorParametersEndPosition() const { return m_functionConstructorParametersEndPosition; }
-    unsigned flagsBits() const { return m_flags.bits(); }
-    unsigned flagsBitsWithoutCodeGenerationMode() const { return m_flags.bitsWithoutCodeGenerationMode(); }
-    const String& name() const LIFETIME_BOUND { return m_name; }
 
     bool operator==(const SourceCodeKey& other) const
     {

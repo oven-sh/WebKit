@@ -868,8 +868,8 @@ public:
     // The IC cache + lock live on the RTT itself.
     CodePtr<JSEntryPtrTag> jsToWasmICEntrypoint() const;
     struct ICEntrypointImagePointers {
-        unsigned callee;
-        unsigned generalEntry;
+        uint32_t callee;
+        uint32_t genericEntrypoint;
     };
     bool mayHaveICEntrypointInImage() const;
     RegisterAtOffsetList icEntrypointSavedRegisters() const;

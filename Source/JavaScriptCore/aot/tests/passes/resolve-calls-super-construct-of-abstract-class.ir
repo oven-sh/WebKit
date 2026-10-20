@@ -1,0 +1,81 @@
+# A super call into a constructor function allocates in the caller where new.target is proven to be a class: the allocation is handed the prototype object of new.target alone, and only the prototype object of a class names a layout. The class that holds the call is allocated where it has instances of its own. A class that nobody constructs itself has no placement: its one subclass with instances is allocated, and with two or none the call is left to the run time
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Legacy" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Abstract" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Only" predictedBase=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Forked" predictedBase=L0 constructor=f3 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L4 kind=Instance name="Left" predictedBase=L3 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Right" predictedBase=L3 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="Unused" predictedBase=L0 constructor=f6 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L7 kind=Instance name="Concrete" predictedBase=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L8 kind=Instance name="BelowConcrete" predictedBase=L7 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L7} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
+  b0(v0: object):
+    Return
+}
+function f1 name="Abstract" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Only" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Forked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Left" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Right" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="Unused" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="Concrete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="BelowConcrete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f9 name="one-subclass-has-instances" parameters=[{type=f0}, {type=f2}] results=[{type=anything}] {
+  b0(v0: f0, v1: f2):
+    v2 = SuperConstruct v0, v1 layout=L1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="one-subclass-has-instances"
+# CHECK: [[prototype]]: object = GetConstructPrototype v1 layout=L2
+# CHECK-NEXT: NewObject [[prototype]] layout=L2
+# CHECK-NOT: layout=L1
+# CHECK-NOT: SuperConstruct
+function f10 name="two-subclasses-have-instances" parameters=[{type=f0}, {type=f4|f5}] results=[{type=anything}] {
+  b0(v0: f0, v1: f4|f5):
+    v2 = SuperConstruct v0, v1 layout=L3
+    Return v2
+}
+# CHECK-LABEL: function f10 name="two-subclasses-have-instances"
+# CHECK-NOT: NewObject
+# CHECK: SuperConstruct v0, v1 layout=L3
+function f11 name="no-class-has-instances" parameters=[{type=f0}, {type=f6}] results=[{type=anything}] {
+  b0(v0: f0, v1: f6):
+    v2 = SuperConstruct v0, v1 layout=L6
+    Return v2
+}
+# CHECK-LABEL: function f11 name="no-class-has-instances"
+# CHECK-NOT: NewObject
+# CHECK: SuperConstruct v0, v1 layout=L6
+function f12 name="the-class-has-instances-of-its-own" parameters=[{type=f0}, {type=f7|f8}] results=[{type=anything}] {
+  b0(v0: f0, v1: f7|f8):
+    v2 = SuperConstruct v0, v1 layout=L7
+    Return v2
+}
+# CHECK-LABEL: function f12 name="the-class-has-instances-of-its-own"
+# CHECK: [[prototype]]: object = GetConstructPrototype v1 layout=L7
+# CHECK-NEXT: NewObject [[prototype]] layout=L7
+# CHECK-NOT: layout=L8
+# CHECK-NOT: SuperConstruct
+function f13 name="new-target-is-not-proven" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = SuperConstruct v0, v1 layout=L7
+    Return v2
+}
+# CHECK-LABEL: function f13 name="new-target-is-not-proven"
+# CHECK-NOT: NewObject
+# CHECK: SuperConstruct v0, v1 layout=L7
+function f14 name="new-target-may-be-a-function" parameters=[{type=f0}, {type=f0|f7}] results=[{type=anything}] {
+  b0(v0: f0, v1: f0|f7):
+    v2 = SuperConstruct v0, v1 layout=L7
+    Return v2
+}
+# CHECK-LABEL: function f14 name="new-target-may-be-a-function"
+# CHECK-NOT: NewObject
+# CHECK: SuperConstruct v0, v1 layout=L7

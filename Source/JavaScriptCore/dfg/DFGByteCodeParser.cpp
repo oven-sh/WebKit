@@ -3090,7 +3090,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 break;
             case F16RoundIntrinsic:
                 nodeType = ArithF16Round;
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return CallOptimizationResult::DidNothing;
                 break;
             case SqrtIntrinsic:
@@ -5190,7 +5190,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
-            if (!MacroAssembler::supportsFloatingPointRounding())
+            if (!MacroAssembler::supportsFloatingPointRounding(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -5266,7 +5266,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -5372,7 +5372,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();

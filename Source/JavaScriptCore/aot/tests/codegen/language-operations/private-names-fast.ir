@@ -1,0 +1,58 @@
+# The token of a class evaluation, the definition of the brand and of a private field, and reads, stores and tests of the field pass the back-end checks in fast code
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f6 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="evaluate" results=[{type=anything}] {
+  b0():
+    v0 = NewClassToken layout=L0
+    v1 = NewClosure v0 function=f2
+    v2 = NewClosure v0 function=f3
+    v3 = NewClosure v0 function=f4
+    v4 = NewClosure v0 function=f5
+    v5 = NewArray v1, v2, v3, v4 contents=anything
+    Return v5
+}
+function f2 name="define" captures=[{type=classtoken}] parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: object, v2: anything):
+    PrivateDefine v1, v0, v0 layout=L0
+    PrivateDefine v1, v0, v2 layout=L0 field=1
+    Return
+}
+function f3 name="get" captures=[{type=classtoken}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything):
+    v2 = PrivateGet v1, v0 layout=L0 field=1
+    Return v2
+}
+function f4 name="set" captures=[{type=classtoken}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything, v2: anything):
+    PrivateSet v1, v0, v2 layout=L0 field=1
+    Return
+}
+function f5 name="has" captures=[{type=classtoken}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything):
+    v2 = PrivateHas v1, v0 layout=L0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PrivateHas v1, v0 layout=L0 field=1
+    Return v3
+  b2():
+    Return v2
+}
+function f6 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

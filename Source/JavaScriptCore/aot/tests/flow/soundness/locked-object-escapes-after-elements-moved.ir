@@ -1,0 +1,28 @@
+# A store to the length of the unknown object moves the elements of every escaped list. A locked object has no elements that move, whether it escapes before the store or after it
+# OPTIONS: check=FlowFixpoint flow-order-seed=1
+# RUN: flow-solve objects
+# CHECK: unknown mutations={{*}} events=[ElementsMoved, ContentsStored, HoleMade]
+# CHECK: PromisePrototype mutations=[ReachNativeCode] uses=[ReadByName, ReadByUnknownKey, Enumerated] events=[]
+# CHECK: opaque(Error){{*}} events=[Allocated, ElementsMoved]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1
+    v3 = Integer integer=0
+    PropSet v2, v3 key="length"
+    v5 = PropGet v0 key="Promise" [isFreeName]
+    v6 = PropGet v5 key="prototype"
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v6
+    v9 = Call v7, -, v8
+    v10 = Call v1, -, v9
+    Return v10
+}
+function f1 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

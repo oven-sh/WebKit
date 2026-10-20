@@ -1,0 +1,65 @@
+# An entrypoint takes the body of its function in where nothing else enters that body. Beside a body that a call keeps, it calls the body
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = CallDirect v2 function=f1
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f2
+    v6 = PropGet v0 key="publish" [isFreeName]
+    v7 = Call v6, -, v4, v5, v3
+    Return
+}
+# The budget of code that runs once leaves the call.
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = CallDirect v2 function=f1
+
+function f1 name="alsoCalledByName" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+
+function f2 name="enteredThroughClosuresAlone" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+# CHECK-LABEL: name="alsoCalledByName" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-LABEL: name="enteredThroughClosuresAlone" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = CallDirect
+# CHECK-COUNT-13: = Mul

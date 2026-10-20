@@ -1,0 +1,193 @@
+# Flow cannot bound a receiver, but every object it saw arrive as the callee of `receiver.name(..)` is a method of built-in classes: the receiver is predicted to be an instance of those where it is defined, so one test serves all its uses
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(TWICE): pass ResolveBuiltins ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Text" fields=[{key="depth" declared={type=number}}]
+
+function f0 name="methodOfStrings" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Predict v2 predicted=undefined|null|boolean|number|string|symbol|bigint|builtin(StringPrototypeCharCodeAt)
+    v4 = Call v3, v0, v1 calleeKey="charCodeAt" callees=[builtin(StringPrototypeCharCodeAt), ..]
+    Return v4
+}
+# CHECK-LABEL: function f0 name="methodOfStrings"{{*}}parameters=[{type=anything predicted=string}, {type=i32}]
+# CHECK-NEXT: b0(v0: anything ~ string, v1: i32):
+# CHECK-NOT: TypeTest
+# PLACED-LABEL: function f0 name="methodOfStrings"
+# PLACED: = TypeTest v0 testedType=string
+# PLACED: number = CallBuiltin {{*}}, v1 overload=StringPrototypeCharCodeAt/0
+
+function f1 name="methodsOfTwoClasses" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeSlice)|builtin(ArrayPrototypeSlice)
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+}
+# CHECK-LABEL: function f1 name="methodsOfTwoClasses"{{*}}parameters=[{type=anything predicted=string|Array}, {type=i32}]
+
+function f2 name="anotherObjectWasSeen" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeSlice)|L0
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="anotherObjectWasSeen"{{*}}parameters=[{type=anything}, {type=i32}]
+
+function f3 name="nothingWasSeen" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Call v2, v0, v1 calleeKey="charCodeAt"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="nothingWasSeen"{{*}}parameters=[{type=anything}, {type=i32}]
+
+function f4 name="onlyPrimitivesWereSeen" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Predict v2 predicted=undefined|number
+    v4 = Call v3, v0, v1 calleeKey="charCodeAt"
+    Return v4
+}
+# CHECK-LABEL: function f4 name="onlyPrimitivesWereSeen"{{*}}parameters=[{type=anything}, {type=i32}]
+
+function f5 name="methodUnderAnotherName" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="at"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeCharCodeAt)
+    v4 = Call v3, v0, v1 calleeKey="at"
+    Return v4
+}
+# CHECK-LABEL: function f5 name="methodUnderAnotherName"{{*}}parameters=[{type=anything}, {type=i32}]
+
+function f6 name="parameterWithWrittenType" parameters=[{type=anything written=L0}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ? L0, v1: i32):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeCharCodeAt)
+    v4 = Call v3, v0, v1 calleeKey="charCodeAt"
+    Return v4
+}
+# CHECK-LABEL: function f6 name="parameterWithWrittenType"{{*}}parameters=[{type=anything written=L0}, {type=i32}]
+
+function f7 name="parameterThatFlowNarrowed" parameters=[{type=undefined|boolean|number|string|symbol|bigint|object written=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: undefined|boolean|number|string|symbol|bigint|object, v1: i32):
+    v2 = PropGet v0 key="charCodeAt"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeCharCodeAt)
+    v4 = Call v3, v0, v1 calleeKey="charCodeAt"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="parameterThatFlowNarrowed"{{*}}parameters=[{type=undefined|boolean|number|string|symbol|bigint|object written=anything predicted=string}, {type=i32}]
+
+function f8 name="receiverIsAResult" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="text"
+    v3 = PropGet v2 key="length"
+    v4 = PropGet v2 key="charCodeAt"
+    v5 = Predict v4 predicted=undefined|builtin(StringPrototypeCharCodeAt)
+    v6 = Call v5, v2, v1 calleeKey="charCodeAt"
+    v7 = Add v3, v6
+    Return v7
+}
+# CHECK-LABEL: function f8 name="receiverIsAResult"{{*}}parameters=[{type=anything}, {type=i32}]
+# CHECK: v2: anything = PropGet v0 key="text"
+# CHECK-NEXT: [[text]]: anything ~ string = Predict v2 predicted=string
+# CHECK-NEXT: = PropGet [[text]] key="length"
+# CHECK-NEXT: = PropGet [[text]] key="charCodeAt"
+# CHECK: = Call v5, [[text]], v1 calleeKey="charCodeAt"
+# CHECK-NOT: TypeTest
+# PLACED-LABEL: function f8 name="receiverIsAResult"
+# PLACED: = TypeTest {{*}} testedType=string
+# PLACED-NOT: testedType=string
+# PLACED: = CallBuiltin {{*}} overload=StringPrototypeLength/0
+# PLACED-NOT: testedType=string
+# PLACED: number = CallBuiltin {{*}}, v1 overload=StringPrototypeCharCodeAt/0
+
+function f9 name="receiverIsAJoin" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(v0), notTaken b1(v1)
+  b1(v3):
+    v4 = PropGet v3 key="trim"
+    v5 = Predict v4 predicted=undefined|builtin(StringPrototypeTrim)
+    v6 = Call v5, v3 calleeKey="trim"
+    Return v6
+}
+# CHECK-LABEL: function f9 name="receiverIsAJoin"
+# CHECK: b1(v3: anything):
+# CHECK-NEXT: [[joined]]: anything ~ string = Predict v3 predicted=string
+# CHECK-NEXT: = PropGet [[joined]] key="trim"
+# CHECK: = Call v5, [[joined]] calleeKey="trim"
+
+function f10 name="severalReceivers" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="first"
+    v3 = PropGet v0 key="second"
+    v4 = PropGet v0 key="third"
+    v5 = PropGet v2 key="charCodeAt"
+    v6 = Predict v5 predicted=undefined|builtin(StringPrototypeCharCodeAt)
+    v7 = Call v6, v2, v1 calleeKey="charCodeAt"
+    v8 = PropGet v3 key="trim"
+    v9 = Predict v8 predicted=undefined|builtin(StringPrototypeTrim)
+    v10 = Call v9, v3 calleeKey="trim"
+    v11 = PropGet v4 key="push"
+    v12 = Predict v11 predicted=undefined|builtin(ArrayPrototypePush)
+    v13 = Call v12, v4, v7, v10 calleeKey="push"
+    v14 = PropGet v2 key="length"
+    v15 = Add v13, v14
+    Return v15
+}
+# CHECK-LABEL: function f10 name="severalReceivers"
+# CHECK: v2: anything = PropGet v0 key="first"
+# CHECK-NEXT: [[first]]: anything ~ string = Predict v2 predicted=string
+# CHECK-NEXT: v3: anything = PropGet v0 key="second"
+# CHECK-NEXT: [[second]]: anything ~ string = Predict v3 predicted=string
+# CHECK-NEXT: v4: anything = PropGet v0 key="third"
+# CHECK-NEXT: [[third]]: anything ~ Array = Predict v4 predicted=Array
+# CHECK: = Call v6, [[first]], v1 calleeKey="charCodeAt"
+# CHECK: = Call v9, [[second]] calleeKey="trim"
+# CHECK: = Call v12, [[third]], v7, v10 calleeKey="push"
+# CHECK: = PropGet [[first]] key="length"
+
+function f11 name="chainOfCalls" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=builtin(StringPrototypeSlice)
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    v5 = PropGet v4 key="slice"
+    v6 = Predict v5 predicted=builtin(StringPrototypeSlice)
+    v7 = Call v6, v4, v1 calleeKey="slice"
+    Return v7
+}
+# The read of the method and the call ask for one test of the receiver, `string`, not for `string` and for "no undefined or null"
+# PLACED-LABEL: function f11 name="chainOfCalls"
+# PLACED-NOT: testedType=boolean|number|string
+# PLACED: = TypeTest v0 testedType=string
+# PLACED-NOT: testedType=boolean|number|string
+# PLACED: string = CallBuiltin {{*}}, v1 overload=StringPrototypeSlice/0
+# PLACED-NOT: testedType=boolean|number|string
+# PLACED: string = CallBuiltin {{*}}, v1 overload=StringPrototypeSlice/0
+# PLACED-NOT: testedType=boolean|number|string
+
+function f12 name="methodsOfHostClassesBesideOneWithCode" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=builtin(TypedArrayPrototypeSlice)|builtin(ArrayBufferPrototypeSlice)|builtin(SharedArrayBufferPrototypeSlice)|builtin(StringPrototypeSlice)
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+}
+# CHECK-LABEL: function f12 name="methodsOfHostClassesBesideOneWithCode"{{*}}parameters=[{type=anything predicted=string}, {type=i32}]
+
+function f13 name="onlyMethodsInNativeCode" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=builtin(ArrayBufferPrototypeSlice)|builtin(SharedArrayBufferPrototypeSlice)
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+}
+# CHECK-LABEL: function f13 name="onlyMethodsInNativeCode"{{*}}parameters=[{type=anything predicted=ArrayBuffer|SharedArrayBuffer}, {type=i32}]

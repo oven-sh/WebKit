@@ -1,0 +1,197 @@
+# Unused values without effects, unused block parameters and write-only objects are removed
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 8
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes}}] flow={impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+layout L2 kind=Instance name="Box" constructor=f12 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None} classFlow={members=[{key="y" kind=Setter function=f13}] namedMembers=[{key="y" kind=Setter function=f13}]}
+variable g0 name="shared" module=m0 declared={type=anything}
+
+function f0 name="unusedValueChain" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    v3 = Mul v2, v2
+    v4 = Less v3, v0
+    Return v0
+}
+# CHECK-LABEL: function f0 name="unusedValueChain"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f1 name="unusedAllocations" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v2 = NewClosure function=f0
+    Return v0
+}
+# CHECK-LABEL: function f1 name="unusedAllocations"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f2 name="unusedParameterCycle" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    Jump -> next b1(v0, v0)
+  b1(v2, v3):
+    LoopHint
+    Branch v1 -> taken b1(v3, v2), notTaken b2()
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="unusedParameterCycle"
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+
+function f3 name="writeOnlyObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    PutSlot v1, -, v0 key="x" receivers=[L1] level=Proven
+    Return v0
+}
+# CHECK-LABEL: function f3 name="writeOnlyObject"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f4 name="writeOnlyEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    Return v0
+}
+# CHECK-LABEL: function f4 name="writeOnlyEnvironment"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f5 name="writeOnlyObjectCycle" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    PutSlot v1, -, v2 key="x" receivers=[L1] level=Proven
+    PutSlot v2, -, v1 key="x" receivers=[L1] level=Proven
+    Return v0
+}
+# CHECK-LABEL: function f5 name="writeOnlyObjectCycle"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f6 name="deadStoreOperand" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    PutSlot v2, -, v1 key="x" receivers=[L1] level=Proven
+    Return v0
+}
+# CHECK-LABEL: function f6 name="deadStoreOperand"
+# CHECK: b0(
+# CHECK-NEXT: Return v0
+
+function f7 name="setterOnClassPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v1, v0 key="y" mode=Strict receivers=[L2]
+    Return v0
+}
+# CHECK-LABEL: function f7 name="setterOnClassPrototype"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: PropSet v1, v0
+
+function f8 name="storeThroughMergedReceiver" parameters=[{type=L1}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything, v2: boolean):
+    v3 = NewObject -, v1 layout=L1 fields=[0] [keepsShape]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4: L1):
+    PutSlot v4, -, v1 key="x" receivers=[L1] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f8 name="storeThroughMergedReceiver"
+# CHECK: v3:{{*}}= NewObject
+# CHECK: b3(v4:
+# CHECK-NEXT: PutSlot v4, -, v1
+
+function f9 name="objectWithRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    PutSlot v1, -, v0 key="x" receivers=[L1] level=Proven
+    v3 = GetSlot v1 key="x" receivers=[L1] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f9 name="objectWithRead"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: PutSlot v1, -, v0
+
+function f10 name="valuesWithEffects" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=number
+    v2 = Call v0
+    v3 = Add v0, v0
+    Return v0
+}
+# CHECK-LABEL: function f10 name="valuesWithEffects"
+# CHECK: v1:{{*}}= Claim v0 castType={{*}}
+# CHECK-NEXT: v2:{{*}}= Call v0
+# CHECK-NEXT: v3:{{*}}= Add v0, v0
+
+function f11 name="valuesUnderHandlerAndUsedEdgeResult" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    Jump -> next b1()
+  b1() handler=b5():
+    v2 = Add v1, v1
+    v3 = Add v0, v0
+    Jump -> next b2()
+  b2():
+    v4 = TypeTest v0 testedType=number
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v5):
+    Return v5
+  b4():
+    Return v0
+  b5() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+}
+# CHECK-LABEL: function f11 name="valuesUnderHandlerAndUsedEdgeResult"
+# CHECK: b1() handler=b5():
+# CHECK-NEXT: = Add v0, v0
+# CHECK-NEXT: Jump -> next b2()
+# CHECK: [[test]]: boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[test]] -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3([[narrowed]]: number):
+# CHECK-NEXT: Return [[narrowed]]
+
+function f12 name="Box" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2, v1 layout=L2 fields=[0]
+    Return v3
+}
+# CHECK-LABEL: function f12 name="Box"
+
+function f13 name="y" kind=Setter flags=[HasThis] thisType={type=object written=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: object ? L2, v1: anything):
+    Return
+}
+# CHECK-LABEL: function f13 name="y"
+
+function f14 name="calleeWritesOtherLocation" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v2 = CallDirect v1, v0 function=f15
+    Return v0
+}
+# CHECK-LABEL: function f14 name="calleeWritesOtherLocation"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: v2:{{*}}= CallDirect v1, v0
+
+function f15 name="storesIntoParameterAndVariable" parameters=[{type=L1}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L1, v1: anything):
+    PutSlot v0, -, v1 key="x" receivers=[L1] level=Proven
+    PutModuleVariable v1 variable=g0
+    Return
+}
+# CHECK-LABEL: function f15 name="storesIntoParameterAndVariable"

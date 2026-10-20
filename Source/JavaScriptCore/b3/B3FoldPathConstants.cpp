@@ -30,10 +30,10 @@
 
 #include "B3BasicBlockInlines.h"
 #include "B3CaseCollectionInlines.h"
+#include "B3DominatingConditions.h"
 #include "B3Dominators.h"
 #include "B3InsertionSet.h"
-#include "B3MemoryValue.h"
-#include "B3PatchpointValue.h"
+#include "B3IntRange.h"
 #include "B3PhaseScope.h"
 #include "B3SwitchValue.h"
 #include "B3ValueInlines.h"
@@ -52,469 +52,29 @@ public:
     FoldPathConstants(Procedure& proc)
         : m_proc(proc)
         , m_insertionSet(proc)
+        , m_foldsImpliedComparisons(proc.policy().optimization.foldsImpliedComparisons)
     {
-    }
-
-#if USE(BUN_JSC_ADDITIONS)
-    struct SignedRange {
-        int64_t minimum { std::numeric_limits<int64_t>::min() };
-        int64_t maximum { std::numeric_limits<int64_t>::max() };
-    };
-
-    static bool isComparisonWithConstant(Value* value)
-    {
-        switch (value->opcode()) {
-        case Equal:
-        case NotEqual:
-        case LessThan:
-        case GreaterThan:
-        case LessEqual:
-        case GreaterEqual:
-            return value->child(1)->hasInt() && !value->child(0)->hasInt();
-        default:
-            return false;
-        }
-    }
-
-    static std::optional<SignedRange> rangeWhere(Value* comparison, bool holds)
-    {
-        int64_t constant = comparison->child(1)->asInt();
-        constexpr int64_t least = std::numeric_limits<int64_t>::min();
-        constexpr int64_t most = std::numeric_limits<int64_t>::max();
-        Opcode opcode = comparison->opcode();
-        if (!holds) {
-            switch (opcode) {
-            case Equal:
-                opcode = NotEqual;
-                break;
-            case NotEqual:
-                opcode = Equal;
-                break;
-            case LessThan:
-                opcode = GreaterEqual;
-                break;
-            case GreaterThan:
-                opcode = LessEqual;
-                break;
-            case LessEqual:
-                opcode = GreaterThan;
-                break;
-            default:
-                opcode = LessThan;
-                break;
-            }
-        }
-        switch (opcode) {
-        case Equal:
-            return SignedRange { constant, constant };
-        case LessThan:
-            if (constant == least)
-                return std::nullopt;
-            return SignedRange { least, constant - 1 };
-        case LessEqual:
-            return SignedRange { least, constant };
-        case GreaterThan:
-            if (constant == most)
-                return std::nullopt;
-            return SignedRange { constant + 1, most };
-        case GreaterEqual:
-            return SignedRange { constant, most };
-        default:
-            return std::nullopt;
-        }
-    }
-
-    static std::optional<bool> evaluateWithin(Value* comparison, SignedRange range)
-    {
-        int64_t constant = comparison->child(1)->asInt();
-        auto decide = [](bool alwaysHolds, bool neverHolds) -> std::optional<bool> {
-            if (alwaysHolds)
-                return true;
-            if (neverHolds)
-                return false;
-            return std::nullopt;
-        };
-        bool isOutside = constant < range.minimum || constant > range.maximum;
-        bool isOnlyValue = range.minimum == constant && range.maximum == constant;
-        switch (comparison->opcode()) {
-        case Equal:
-            return decide(isOnlyValue, isOutside);
-        case NotEqual:
-            return decide(isOutside, isOnlyValue);
-        case LessThan:
-            return decide(range.maximum < constant, range.minimum >= constant);
-        case LessEqual:
-            return decide(range.maximum <= constant, range.minimum > constant);
-        case GreaterThan:
-            return decide(range.minimum > constant, range.maximum <= constant);
-        case GreaterEqual:
-            return decide(range.minimum >= constant, range.maximum < constant);
-        default:
-            return std::nullopt;
-        }
     }
 
     void run()
     {
-        bool changed = false;
-
         if (B3FoldPathConstantsInternal::verbose)
             dataLog("B3 before folding path constants: \n", m_proc, "\n");
 
-        Vector<std::pair<Value*, Override>, 32> overrides;
-
-        auto addOverride = [&] (BasicBlock*, Value* value, const Override& override) {
-            if (override.block->numPredecessors() != 1)
-                return;
-            overrides.append({ value, override });
-        };
-
-        UncheckedKeyHashMap<Value*, Vector<Value*, 2>> comparisonsWithConstants;
-        if (m_proc.positionIndependent()) {
-            for (BasicBlock* block : m_proc) {
-                Value* branch = block->last();
-                if (branch->opcode() == Branch && isComparisonWithConstant(branch->child(0)))
-                    comparisonsWithConstants.add(branch->child(0)->child(0), Vector<Value*, 2>());
-            }
-            if (!comparisonsWithConstants.isEmpty()) {
-                for (Value* value : m_proc.values()) {
-                    if (!isComparisonWithConstant(value))
-                        continue;
-                    if (auto found = comparisonsWithConstants.find(value->child(0)); found != comparisonsWithConstants.end())
-                        found->value.append(value);
-                }
-            }
-        }
-        auto addImpliedComparisons = [&](BasicBlock* block, Value* condition) {
-            if (!m_proc.positionIndependent() || !isComparisonWithConstant(condition))
-                return;
-            auto& others = comparisonsWithConstants.find(condition->child(0))->value;
-            if (others.size() < 2)
-                return;
-            for (bool holds : { true, false }) {
-                auto range = rangeWhere(condition, holds);
-                if (!range)
-                    continue;
-                for (Value* other : others) {
-                    if (other == condition)
-                        continue;
-                    if (auto outcome = evaluateWithin(other, *range))
-                        addOverride(block, other, Override::constant(block->successorBlock(holds ? 0 : 1), *outcome));
-                }
-            }
-        };
-
-        for (BasicBlock* block : m_proc) {
-            Value* branch = block->last();
-            switch (branch->opcode()) {
-            case Branch:
-                if (block->successorBlock(0) == block->successorBlock(1))
-                    continue;
-                addOverride(block, branch->child(0), Override::nonZero(block->successorBlock(0)));
-                addOverride(block, branch->child(0), Override::constant(block->successorBlock(1), 0));
-                addImpliedComparisons(block, branch->child(0));
-                break;
-            case Switch: {
-                SwitchValue* switchValue = branch->as<SwitchValue>();
-
-                UncheckedKeyHashMap<BasicBlock*, unsigned> targetUses;
-                for (SwitchCase switchCase : switchValue->cases(block))
-                    targetUses.add(switchCase.targetBlock(), 0).iterator->value++;
-                targetUses.add(switchValue->fallThrough(block), 0).iterator->value++;
-
-                for (SwitchCase switchCase : switchValue->cases(block)) {
-                    if (targetUses.find(switchCase.targetBlock())->value != 1)
-                        continue;
-                    addOverride(block, branch->child(0), Override::constant(switchCase.targetBlock(), switchCase.caseValue()));
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-
-        if (overrides.isEmpty())
+        collectOverrides();
+        if (m_overrides.isEmpty())
             return;
 
-        Dominators& dominators = m_proc.dominators();
+        m_dominators = &m_proc.dominators();
+        sortOverrides();
 
-        std::stable_sort(overrides.begin(), overrides.end(), [] (const auto& a, const auto& b) {
-            return a.first->index() < b.first->index();
-        });
-        Vector<uint32_t, 512> firstOverridePlusOne;
-        firstOverridePlusOne.fill(0, m_proc.values().size());
-        for (unsigned i = overrides.size(); i--;)
-            firstOverridePlusOne[overrides[i].first->index()] = i + 1;
-
-        Vector<Override*, 16> overridesWithNewConstants;
-        auto findOverride = [&] (BasicBlock* block, Value* value) -> Override* {
-            unsigned index = value->index();
-            if (index >= firstOverridePlusOne.size() || !firstOverridePlusOne[index])
-                return nullptr;
-            Override* result = nullptr;
-            for (unsigned i = firstOverridePlusOne[index] - 1; i < overrides.size() && overrides[i].first == value; ++i) {
-                Override& override = overrides[i].second;
-                if (dominators.dominates(override.block, block) && override.isBetterThan(result ? *result : Override()))
-                    result = &override;
-            }
-            return result;
-        };
-        auto getOverride = [&] (BasicBlock* block, Value* value) -> Override {
-            Override* result = findOverride(block, value);
-            return result ? *result : Override();
-        };
-
-        IndexSet<Value*> dependsOnOverride;
-
-        for (BasicBlock* block : m_proc) {
-            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-                Value* value = block->at(valueIndex);
-
-                switch (value->opcode()) {
-                case Branch: {
-                    if (getOverride(block, value->child(0)).isNonZero) {
-                        value->replaceWithJump(block, block->taken());
-                        changed = true;
-                    }
-                    break;
-                }
-
-                case Equal: {
-                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
-                        value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 0));
-                    break;
-                }
-
-                case NotEqual: {
-                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
-                        value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 1));
-                    break;
-                }
-
-                case Select: {
-                    if (m_proc.positionIndependent() && getOverride(block, value->child(0)).isNonZero)
-                        value->replaceWithIdentity(value->child(1));
-                    break;
-                }
-
-                default:
-                    break;
-                }
-
-                for (Value*& child : value->children()) {
-                    if (m_proc.positionIndependent() && child->opcode() == Select) {
-                        Override decided = getOverride(block, child->child(0));
-                        if (decided.isNonZero || decided.hasValue) {
-                            child = child->child(decided.isNonZero ? 1 : 2);
-                            dependsOnOverride.add(value);
-                        }
-                    }
-                    Override* override = findOverride(block, child);
-                    if (!override || !override->hasValue)
-                        continue;
-                    if (!override->valueNode) {
-                        override->valueNode = m_proc.addIntConstant(child->origin(), child->type(), override->value);
-                        overridesWithNewConstants.append(override);
-                    }
-                    child = override->valueNode;
-                    dependsOnOverride.add(value);
-                }
-            }
-            m_insertionSet.execute(block);
-        }
-        for (Override* override : overridesWithNewConstants) {
-            m_insertionSet.insertValue(0, override->valueNode);
-            m_insertionSet.execute(override->block);
-        }
-
-        if (!dependsOnOverride.isEmpty())
-            makeAccessesControlDependent(dependsOnOverride);
+        bool changed = applyOverrides();
 
         if (changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
         }
     }
-
-    void makeAccessesControlDependent(IndexSet<Value*>& dependsOnOverride)
-    {
-        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
-            for (Value* value : *block) {
-                bool depends = dependsOnOverride.contains(value);
-                for (Value* child : value->children())
-                    depends |= dependsOnOverride.contains(child);
-                if (!depends)
-                    continue;
-                if (auto* memory = value->as<MemoryValue>())
-                    memory->setControlDependent(true);
-                else if (auto* patchpoint = value->as<PatchpointValue>())
-                    patchpoint->effects.controlDependent = true;
-                Effects effects = value->effects();
-                if (value->opcode() == Phi || effects.mustExecute() || effects.controlDependent)
-                    dependsOnOverride.remove(value);
-                else
-                    dependsOnOverride.add(value);
-            }
-        }
-    }
-#else
-    void run()
-    {
-        bool changed = false;
-
-        if (B3FoldPathConstantsInternal::verbose)
-            dataLog("B3 before folding path constants: \n", m_proc, "\n");
-        
-        // Find all of the values that are the subject of a branch or switch. For any successor
-        // that we dominate, install a value override at that block.
-
-        UncheckedKeyHashMap<Value*, Vector<Override>> overrides;
-
-        Dominators& dominators = m_proc.dominators();
-        
-        auto addOverride = [&] (
-            BasicBlock* from, Value* value, const Override& override) {
-
-            if (override.block->numPredecessors() != 1)
-                return;
-            ASSERT(override.block->predecessor(0) == from);
-
-            Vector<Override>& forValue =
-                overrides.add(value, Vector<Override>()).iterator->value;
-
-            if (ASSERT_ENABLED) {
-                for (const Override& otherOverride : forValue)
-                    ASSERT_UNUSED(otherOverride, otherOverride.block != override.block);
-            }
-
-            if (B3FoldPathConstantsInternal::verbose)
-                dataLog("Overriding ", *value, " from ", *from, ": ", override, "\n");
-            
-            forValue.append(override);
-        };
-        
-        for (BasicBlock* block : m_proc) {
-            Value* branch = block->last();
-            switch (branch->opcode()) {
-            case Branch:
-                if (block->successorBlock(0) == block->successorBlock(1))
-                    continue;
-                addOverride(
-                    block, branch->child(0),
-                    Override::nonZero(block->successorBlock(0)));
-                addOverride(
-                    block, branch->child(0),
-                    Override::constant(block->successorBlock(1), 0));
-                break;
-            case Switch: {
-                SwitchValue* switchValue = branch->as<SwitchValue>();
-
-                UncheckedKeyHashMap<BasicBlock*, unsigned> targetUses;
-                for (SwitchCase switchCase : switchValue->cases(block))
-                    targetUses.add(switchCase.targetBlock(), 0).iterator->value++;
-                targetUses.add(switchValue->fallThrough(block), 0).iterator->value++;
-
-                for (SwitchCase switchCase : switchValue->cases(block)) {
-                    if (targetUses.find(switchCase.targetBlock())->value != 1)
-                        continue;
-
-                    addOverride(
-                        block, branch->child(0),
-                        Override::constant(switchCase.targetBlock(), switchCase.caseValue()));
-                }
-                break;
-            }
-            default:
-                break;
-            }
-        }
-
-        // Install the constants in the override blocks. We use one-shot insertion sets because
-        // each block will get at most one thing inserted into it anyway.
-        Vector<Value*> overridden = copyToVector(overrides.keys());
-        std::ranges::sort(overridden, { }, &Value::index);
-        for (Value* value : overridden) {
-            for (Override& override : overrides.find(value)->value) {
-                if (!override.hasValue)
-                    continue;
-                override.valueNode =
-                    m_insertionSet.insertIntConstant(0, value, override.value);
-                m_insertionSet.execute(override.block);
-            }
-        }
-
-        // Replace all uses of a value that has an override with that override, if appropriate.
-        // Certain instructions get special treatment.
-        auto getOverride = [&] (BasicBlock* block, Value* value) -> Override {
-            auto iter = overrides.find(value);
-            if (iter == overrides.end())
-                return Override();
-
-            Vector<Override>& forValue = iter->value;
-            Override result;
-            for (Override& override : forValue) {
-                if (dominators.dominates(override.block, block)
-                    && override.isBetterThan(result))
-                    result = override;
-            }
-
-            if (B3FoldPathConstantsInternal::verbose)
-                dataLog("In block ", *block, " getting override for ", *value, ": ", result, "\n");
-
-            return result;
-        };
-        
-        for (BasicBlock* block : m_proc) {
-            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-                Value* value = block->at(valueIndex);
-
-                switch (value->opcode()) {
-                case Branch: {
-                    if (getOverride(block, value->child(0)).isNonZero) {
-                        value->replaceWithJump(block, block->taken());
-                        changed = true;
-                    }
-                    break;
-                }
-
-                case Equal: {
-                    if (value->child(1)->isInt(0)
-                        && getOverride(block, value->child(0)).isNonZero) {
-                        value->replaceWithIdentity(
-                            m_insertionSet.insertIntConstant(valueIndex, value, 0));
-                    }
-                    break;
-                }
-
-                case NotEqual: {
-                    if (value->child(1)->isInt(0)
-                        && getOverride(block, value->child(0)).isNonZero) {
-                        value->replaceWithIdentity(
-                            m_insertionSet.insertIntConstant(valueIndex, value, 1));
-                    }
-                    break;
-                }
-
-                default:
-                    break;
-                }
-
-                for (Value*& child : value->children()) {
-                    Override override = getOverride(block, child);
-                    if (override.valueNode)
-                        child = override.valueNode;
-                }
-            }
-            m_insertionSet.execute(block);
-        }
-
-        if (changed) {
-            m_proc.resetReachability();
-            m_proc.invalidateCFG();
-        }
-    }
-#endif
     
 private:
     struct Override {
@@ -570,8 +130,194 @@ private:
         Value* valueNode { nullptr };
     };
 
+    struct DecidedComparison {
+        Value* comparison { nullptr };
+        IntRange operandRange;
+        Override falseOverride;
+        Override trueOverride;
+    };
+
+    static bool canHoldOverrides(BasicBlock* block)
+    {
+        return block->numPredecessors() == 1;
+    }
+
+    void addOverride(Value* value, const Override& override)
+    {
+        if (value->isConstant() || !canHoldOverrides(override.block))
+            return;
+        m_overrides.append({ value, override });
+    }
+
+    void addDecidedComparison(BasicBlock* block, Value* condition)
+    {
+        if (!m_foldsImpliedComparisons || !isComparisonWithConstant(condition))
+            return;
+        for (bool holds : { true, false }) {
+            BasicBlock* successor = block->successorBlock(holds ? 0 : 1);
+            if (!canHoldOverrides(successor))
+                continue;
+            auto& decidedComparisons = m_decidedComparisons.add(condition->child(0), Vector<DecidedComparison>()).iterator->value;
+            decidedComparisons.append(DecidedComparison { condition, rangeImpliedBy(condition, holds), Override::constant(successor, 0), Override::constant(successor, 1) });
+        }
+    }
+
+    void collectOverrides()
+    {
+        for (BasicBlock* block : m_proc) {
+            Value* branch = block->last();
+            switch (branch->opcode()) {
+            case Branch:
+                if (block->successorBlock(0) == block->successorBlock(1))
+                    continue;
+                addOverride(branch->child(0), Override::nonZero(block->successorBlock(0)));
+                addOverride(branch->child(0), Override::constant(block->successorBlock(1), 0));
+                addDecidedComparison(block, branch->child(0));
+                break;
+            case Switch: {
+                SwitchValue* switchValue = branch->as<SwitchValue>();
+
+                UncheckedKeyHashMap<BasicBlock*, unsigned> targetUses;
+                for (SwitchCase switchCase : switchValue->cases(block))
+                    targetUses.add(switchCase.targetBlock(), 0).iterator->value++;
+                targetUses.add(switchValue->fallThrough(block), 0).iterator->value++;
+
+                for (SwitchCase switchCase : switchValue->cases(block)) {
+                    if (targetUses.find(switchCase.targetBlock())->value != 1)
+                        continue;
+                    addOverride(branch->child(0), Override::constant(switchCase.targetBlock(), switchCase.caseValue()));
+                }
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
+
+    void sortOverrides()
+    {
+        std::stable_sort(m_overrides.begin(), m_overrides.end(), [] (const auto& a, const auto& b) {
+            return a.first->index() < b.first->index();
+        });
+        m_firstOverride.fill(std::nullopt, m_proc.values().size());
+        for (unsigned i = m_overrides.size(); i--;)
+            m_firstOverride[m_overrides[i].first->index()] = i;
+    }
+
+    Override* findOverride(BasicBlock* block, Value* value)
+    {
+        Override* result = nullptr;
+        unsigned index = value->index();
+        if (index < m_firstOverride.size() && m_firstOverride[index]) {
+            for (unsigned i = *m_firstOverride[index]; i < m_overrides.size() && m_overrides[i].first == value; ++i) {
+                Override& override = m_overrides[i].second;
+                if (m_dominators->dominates(override.block, block) && override.isBetterThan(result ? *result : Override()))
+                    result = &override;
+            }
+        }
+        if (m_decidedComparisons.isEmpty() || !isComparisonWithConstant(value))
+            return result;
+        auto found = m_decidedComparisons.find(value->child(0));
+        if (found == m_decidedComparisons.end())
+            return result;
+        for (DecidedComparison& decided : found->value) {
+            if (decided.comparison == value || !m_dominators->dominates(decided.trueOverride.block, block))
+                continue;
+            TriState outcome = evaluateComparison(value->opcode(), decided.operandRange, value->child(1)->asInt());
+            if (outcome == TriState::Indeterminate)
+                continue;
+            Override& override = outcome == TriState::True ? decided.trueOverride : decided.falseOverride;
+            if (override.isBetterThan(result ? *result : Override()))
+                result = &override;
+        }
+        return result;
+    }
+
+    Override getOverride(BasicBlock* block, Value* value)
+    {
+        Override* result = findOverride(block, value);
+        return result ? *result : Override();
+    }
+
+    bool applyOverrides()
+    {
+        bool changed = false;
+        Vector<Override*, 16> overridesWithNewConstants;
+
+        for (BasicBlock* block : m_proc) {
+            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                Value* value = block->at(valueIndex);
+
+                switch (value->opcode()) {
+                case Branch: {
+                    if (getOverride(block, value->child(0)).isNonZero) {
+                        value->replaceWithJump(block, block->taken());
+                        changed = true;
+                    }
+                    break;
+                }
+
+                case Equal: {
+                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
+                        value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 0));
+                    break;
+                }
+
+                case NotEqual: {
+                    if (value->child(1)->isInt(0) && getOverride(block, value->child(0)).isNonZero)
+                        value->replaceWithIdentity(m_insertionSet.insertIntConstant(valueIndex, value, 1));
+                    break;
+                }
+
+                case Select: {
+                    if (m_foldsImpliedComparisons && getOverride(block, value->child(0)).isNonZero)
+                        value->replaceWithIdentity(value->child(1));
+                    break;
+                }
+
+                default:
+                    break;
+                }
+
+                for (Value*& child : value->children()) {
+                    if (m_foldsImpliedComparisons) {
+                        bool isCast = child->opcode() == BitwiseCast;
+                        Value* select = isCast ? child->child(0) : child;
+                        if (select->opcode() == Select) {
+                            Override decided = getOverride(block, select->child(0));
+                            if (decided.isNonZero || decided.hasValue) {
+                                Value* chosen = select->child(decided.isNonZero ? 1 : 2);
+                                child = isCast ? m_insertionSet.insert<Value>(valueIndex, BitwiseCast, child->origin(), chosen) : chosen;
+                            }
+                        }
+                    }
+                    Override* override = findOverride(block, child);
+                    if (!override || !override->hasValue)
+                        continue;
+                    if (!override->valueNode) {
+                        override->valueNode = m_proc.addIntConstant(child->origin(), child->type(), override->value);
+                        overridesWithNewConstants.append(override);
+                    }
+                    child = override->valueNode;
+                }
+            }
+            m_insertionSet.execute(block);
+        }
+        for (Override* override : overridesWithNewConstants) {
+            m_insertionSet.insertValue(0, override->valueNode);
+            m_insertionSet.execute(override->block);
+        }
+        return changed;
+    }
+
     Procedure& m_proc;
     InsertionSet m_insertionSet;
+    const bool m_foldsImpliedComparisons;
+    Dominators* m_dominators { nullptr };
+    Vector<std::pair<Value*, Override>, 32> m_overrides;
+    UncheckedKeyHashMap<Value*, Vector<DecidedComparison>> m_decidedComparisons;
+    Vector<std::optional<unsigned>, 512> m_firstOverride;
 };
 
 } // anonymous namespace

@@ -1,0 +1,22 @@
+# The sites of one cell have the same pattern and flags: a shared literal cannot name the cell of a literal with other flags
+# RUN: check-placement regexp-cell
+# DIAGNOSTIC: PlacementCheckFailed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v2 key="split"
+    v4 = NewRegExp pattern="a+" regExpFlags=[Global] @10
+    v5 = Call v3, v2, v4
+    v6 = NewRegExp pattern="a+" regExpFlags=[Sticky] @20
+    v7 = PropGet v0 key="publish" [isFreeName]
+    v8 = Call v7, -, v5, v6
+    Return
+}
+
+# CHECK: mutated f0
+# CHECK-NEXT: rule SiteRefersElsewhere

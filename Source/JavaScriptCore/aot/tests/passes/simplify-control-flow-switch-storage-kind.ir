@@ -1,0 +1,107 @@
+# A switch over the storage kind of an array that holds no numbers loses its case for doubles, like the comparison it was inferred from
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# RUN(INFERRED): pass InferSwitches SimplifyControlFlow
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=0 function=f0
+runtimefunction id=1 function=f1
+runtimefunction id=2 function=f2
+runtimefunction id=3 function=f3
+runtimefunction id=4 function=f4
+
+function f0 name="provenStrings" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
+  b0(v0: Array<string, proven>):
+    v1 = ArrayStorageKind v0
+    Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+  b1():
+    v2 = Integer integer=10
+    Return v2
+  b2():
+    v3 = Integer integer=20
+    Return v3
+  b3():
+    v4 = Integer integer=30
+    Return v4
+}
+# CHECK-LABEL: function f0 name="provenStrings"
+# CHECK: Switch v1 cases=[3, 1] -> case b2(), case b2(), otherwise b3()
+# CHECK-NOT: integer=10
+
+function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=1 parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
+  b0(v0: Array<number, proven>):
+    v1 = ArrayStorageKind v0
+    Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+  b1():
+    v2 = Integer integer=10
+    Return v2
+  b2():
+    v3 = Integer integer=20
+    Return v3
+  b3():
+    v4 = Integer integer=30
+    Return v4
+}
+# CHECK-LABEL: function f1 name="provenNumbers"
+# CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+
+function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=2 parameters=[{type=Array<string>}] results=[{type=anything}] {
+  b0(v0: Array<string>):
+    v1 = ArrayStorageKind v0
+    Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+  b1():
+    v2 = Integer integer=10
+    Return v2
+  b2():
+    v3 = Integer integer=20
+    Return v3
+  b3():
+    v4 = Integer integer=30
+    Return v4
+}
+# CHECK-LABEL: function f2 name="stringsWithoutProof"
+# CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+
+function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunction=3 parameters=[{type=Array<string, proven>}, {type=int[0, 3]}] results=[{type=anything}] {
+  b0(v0: Array<string, proven>, v1: int[0, 3]):
+    Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+  b1():
+    v2 = Integer integer=10
+    Return v2
+  b2():
+    v3 = Integer integer=20
+    Return v3
+  b3():
+    v4 = Integer integer=30
+    Return v4
+}
+# CHECK-LABEL: function f3 name="otherIntegerOfTheSameRange"
+# CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+
+function f4 name="comparisons" role=Library enclosingRuntimeFunction=4 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
+  b0(v0: Array<string, proven>):
+    v1 = ArrayStorageKind v0
+    v2 = Integer integer=2
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=10
+    Return v4
+  b2():
+    v5 = Integer integer=3
+    v6 = StrictEq v1, v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Integer integer=20
+    Return v7
+  b4():
+    v8 = Integer integer=1
+    v9 = StrictEq v1, v8
+    Branch v9 -> taken b3(), notTaken b5()
+  b5():
+    v10 = Integer integer=30
+    Return v10
+}
+# INFERRED-LABEL: function f4 name="comparisons"
+# INFERRED: Switch v1 cases=[3, 1] -> case b3(), case b3(), otherwise b5()
+# INFERRED-NOT: integer=10

@@ -34,6 +34,9 @@
 #include "WebAssemblyFunction.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/MakeString.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompiledCallee.h>
+#endif
 
 namespace JSC {
 
@@ -157,13 +160,6 @@ inline bool JSFunction::hasReifiedName() const
     return false;
 }
 
-#if ENABLE(AOT)
-namespace AOT {
-JS_EXPORT_PRIVATE String typedClosureName(const JSFunction*);
-JS_EXPORT_PRIVATE unsigned typedClosureLength(const JSFunction*);
-}
-#endif
-
 inline double JSFunction::originalLength(VM& vm)
 {
     if (inherits<JSBoundFunction>())
@@ -172,8 +168,8 @@ inline double JSFunction::originalLength(VM& vm)
         return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
     if (isHostFunction()) {
 #if ENABLE(AOT)
-        if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures())
-            return AOT::typedClosureLength(this);
+        if (isCompiledClosure())
+            return AOT::CompiledCallee::length(this);
 #endif
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
@@ -212,16 +208,14 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
     }
 
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return jsString(vm, AOT::CompiledCallee::name(this));
+#endif
         // Mirror the JS path below: build a fresh JSString from the original name stored on
         // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
         // always returns the original (creation-time) value even after the JSFunction's "name"
         // property has been reified or mutated.
-#if ENABLE(AOT)
-        if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures()) {
-            String name = AOT::typedClosureName(this);
-            return name.isEmpty() ? jsEmptyString(vm) : jsString(vm, WTF::move(name));
-        }
-#endif
         return uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
     }
 
@@ -311,29 +305,16 @@ inline JSString* JSFunction::asStringConcurrently() const
     return jsExecutable()->asStringConcurrently();
 }
 
-#if ENABLE(AOT)
-namespace AOT { namespace Typed {
-JS_EXPORT_PRIVATE JSC_DECLARE_HOST_FUNCTION(callClosure);
-} }
-#endif
-
 inline CallData JSFunction::getCallDataInline(JSCell* cell)
 {
     // Keep this function OK for invocation from concurrent compilers.
     CallData callData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
-#if ENABLE(AOT)
-        if (callData.native.function == AOT::Typed::callClosure) {
-            callData.type = CallData::Type::JS;
-            callData.js.functionExecutable = nullptr;
-            callData.js.scope = thisObject->scope();
-            return callData;
-        }
-#endif
         callData.native.isBoundFunction = thisObject->inherits<JSBoundFunction>();
         callData.native.isWasm = false;
 #if ENABLE(WEBASSEMBLY)
@@ -354,6 +335,7 @@ inline CallData JSFunction::getConstructDataInline(JSCell* cell)
     CallData constructData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         if (thisObject->inherits<JSBoundFunction>()) {
             if (uncheckedDowncast<JSBoundFunction>(thisObject)->canConstruct()) {

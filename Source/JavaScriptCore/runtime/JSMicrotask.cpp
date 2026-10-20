@@ -26,9 +26,12 @@
 #include "config.h"
 #include "JSMicrotask.h"
 
-#include "AOTTypedObject.h"
-#include "AOTFunction.h"
-#include "AOTRuntime.h"
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "AOTCompiledCall.h"
+#include "AOTModuleMicrotasks.h"
+#include "AOTModuleRecord.h"
+#endif
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "Debugger.h"
@@ -90,29 +93,6 @@ static ALWAYS_INLINE JSCell* LEGACY_NODELETE dynamicCastToCell(JSValue value)
     return nullptr;
 }
 
-#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-template<typename... Args>
-static ALWAYS_INLINE JSValue callStaticCode(void* entry, VM& vm, JSObject* function, JSValue thisValue, JSCell* context, Args... args)
-{
-    if constexpr (!sizeof...(args))
-        return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, nullptr, function, thisValue, context));
-    else if constexpr (sizeof...(args) == 1)
-        return JSValue::decode(vmEntryToJavaScriptWith1Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    else if constexpr (sizeof...(args) == 2)
-        return JSValue::decode(vmEntryToJavaScriptWith2Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    else if constexpr (sizeof...(args) == 3)
-        return JSValue::decode(vmEntryToJavaScriptWith3Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    else if constexpr (sizeof...(args) == 4)
-        return JSValue::decode(vmEntryToJavaScriptWith4Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    else if constexpr (sizeof...(args) == 5)
-        return JSValue::decode(vmEntryToJavaScriptWith5Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    else {
-        static_assert(sizeof...(args) == 6);
-        return JSValue::decode(vmEntryToJavaScriptWith6Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
-    }
-}
-#endif
-
 template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
 static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
 {
@@ -121,27 +101,6 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
-
-#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-    if (vm.useImmutableIntrinsics) {
-        if (functionObject.isCell() && functionObject.asCell()->type() == JSFunctionType) {
-            if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
-                if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-                    return throwStackOverflowError(globalObject, scope);
-                scope.release();
-                return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
-            }
-        }
-        if (functionObject.isCell() && isSlimClosureType(functionObject.asCell()->type())) {
-            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-                return throwStackOverflowError(globalObject, scope);
-            scope.release();
-            return callStaticCode(AOT::slimClosureEntrypoint().taggedPtr(), vm, asObject(functionObject.asCell()), thisValue, context, args...);
-        }
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::countJobCall(vm);
-    }
-#endif
 
     if (microtaskCallCache) [[likely]] {
         if (auto* microtaskCall = microtaskCallCache->find(functionObject)) [[likely]] {
@@ -160,12 +119,21 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     if (callData.type == CallData::Type::None)
         return throwTypeError(globalObject, scope, message);
 
-    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native, "Expected object to be callable but received %d", static_cast<int>(callData.type));
+    ASSERT_WITH_MESSAGE(callData.type == CallData::Type::JS || callData.type == CallData::Type::Native || callData.type == CallData::Type::Compiled, "Expected object to be callable but received %d", static_cast<int>(callData.type));
     ASSERT_WITH_MESSAGE(!thisValue.isEmpty(), "Expected thisValue to be non-empty. Use jsUndefined() if you meant to use undefined.");
 
     scope.assertNoException();
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
+
+#if ENABLE(AOT)
+    if (callData.type == CallData::Type::Compiled) {
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+            return throwStackOverflowError(callData.compiled.realm, scope);
+        scope.release();
+        return AOT::enterCompiledCode(vm, callData, asObject(functionObject), thisValue, context, args...);
+    }
+#endif
 
     bool isJSCall = callData.type == CallData::Type::JS;
     JSScope* functionScope = nullptr;
@@ -372,6 +340,10 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
 #define BUN_ASYNC_CONTEXT
 #endif
     if (realm->promiseThenWatchpointSet().isStillValid()) [[likely]] {
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && AOT::tryFinishStepInProgress(target, value, done))
+            return;
+#endif
         JSObject* iteratorResult;
         JSValue cached = producer->cachedDriverResult();
 
@@ -672,6 +644,10 @@ static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerato
     JSValue generatorFunction = generator->next();
     JSValue generatorThis = generator->thisValue();
     JSValue generatorFrame = generator->frame();
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+#endif
 
     JSValue value;
     JSValue error;
@@ -845,27 +821,21 @@ static void asyncGeneratorDispatchSuspend(JSGlobalObject* globalObject, JSAsyncG
     int32_t state = generator->state();
     switch (static_cast<JSAsyncGenerator::AsyncGeneratorSuspendReason>(state & JSAsyncGenerator::reasonMask)) {
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::Await: {
-#if ENABLE(AOT)
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-await:synchronous" : "async-generator-await:job", value);
-#endif
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncGeneratorBodyCallNormal, generator);
         return;
     }
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::Yield: {
-        generator->setState((state & ~JSAsyncGenerator::reasonMask) | static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorSuspendReason::Await));
 #if ENABLE(AOT)
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-yield:synchronous" : "async-generator-yield:job", value);
+        if (JSValue awaited = vm.hasCompiledCode() ? AOT::tryAwaitForStepInProgress(globalObject, generator->resumePromise(), value) : JSValue()) {
+            asyncGeneratorYield(globalObject, generator, awaited, microtaskCallCache);
+            return;
+        }
 #endif
+        generator->setState((state & ~JSAsyncGenerator::reasonMask) | static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorSuspendReason::Await));
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncGeneratorYieldAwaited, generator);
         return;
     }
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::YieldNoAwait: {
-#if ENABLE(AOT)
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-yield-without-await:synchronous" : "async-generator-yield-without-await:job", value);
-#endif
         asyncGeneratorYield(globalObject, generator, value, microtaskCallCache);
         return;
     }
@@ -1023,7 +993,7 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     promiseResolveThenableJob(globalObject, resolutionObject, then, resolve, reject, microtaskCallCache);
 }
 
-static void asyncModuleExecutionDone(JSGlobalObject* globalObject, JSModuleRecord* module, JSValue value, JSPromise::Status status)
+static void asyncModuleExecutionDone(JSGlobalObject* globalObject, CyclicModuleRecord* module, JSValue value, JSPromise::Status status)
 {
     if (status == JSPromise::Status::Fulfilled) {
         module->asyncExecutionFulfilled(globalObject);
@@ -1241,7 +1211,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 
 #if USE(BUN_JSC_ADDITIONS)
         // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
+#if ENABLE(AOT)
+        // No entry holds the record that the fetch hook answers with for a compiled module, and without one it would be fetched again.
+        if (!moduleData.inherits<AbstractModuleRecord>() || moduleData.inherits<AOT::ModuleRecord>()) {
+#else
         if (!moduleData.inherits<AbstractModuleRecord>()) {
+#endif
 #endif
         context->loader()->provideFetch(globalObject, specifier, type, moduleData);
         if (scope.exception()) {
@@ -1454,19 +1429,6 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 resultPromise->rejectWithCaughtException(vm, scope);
                 return;
             }
-#if ENABLE(AOT)
-            if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::compiledEntryPointImport(record) : nullptr) {
-                MarkedArgumentBuffer onlyWaits;
-                onlyWaits.append(jsNull());
-                JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), onlyWaits);
-                if (scope.exception()) [[unlikely]] {
-                    resultPromise->rejectWithCaughtException(vm, scope);
-                    return;
-                }
-                if (auto* importPromise = dynamicDowncast<JSPromise>(imported))
-                    evaluatePromise = importPromise;
-            }
-#endif
             // Chain: when evaluation completes, resolve resultPromise with record
             evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadReturnRecord, resultPromise, record);
         } else
@@ -1525,7 +1487,7 @@ static void resolveDeferredImportNamespace(JSGlobalObject* globalObject, VM& vm,
     // ContinueDynamicImport, fulfilledClosure with phase = defer
     // https://tc39.es/proposal-defer-import-eval/#sec-ContinueDynamicImport
     // Let namespace be GetModuleNamespace(module, phase).
-    JSModuleNamespaceObject* moduleNamespace = module->getModuleNamespace(globalObject, AbstractModuleRecord::ModulePhase::Defer);
+    JSObject* moduleNamespace = module->moduleNamespaceObject(globalObject, AbstractModuleRecord::ModulePhase::Defer);
     if (scope.exception()) [[unlikely]] {
         capabilityPromise->rejectWithCaughtException(vm, scope);
         return;
@@ -1593,6 +1555,10 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, Throw
     OrderedHashSet<AbstractModuleRecord*> evaluationList;
     UncheckedKeyHashSet<AbstractModuleRecord*> seen;
     module->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
+    if (scope.exception()) [[unlikely]] {
+        capabilityPromise->rejectWithCaughtException(vm, scope);
+        return;
+    }
 
     // If evaluationList is empty, perform fulfilledClosure() and return.
     if (evaluationList.isEmpty()) {
@@ -1669,19 +1635,8 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
     auto* module = uncheckedDowncast<AbstractModuleRecord>(arguments[2]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
-#if ENABLE(AOT)
-        if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::compiledEntryPointImport(module) : nullptr) {
-            JSValue promise = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
-            if (scope.exception()) [[unlikely]] {
-                capabilityPromise->rejectWithCaughtException(vm, scope);
-                return;
-            }
-            capabilityPromise->resolve(globalObject, vm, promise);
-            return;
-        }
-#endif
         // 6.d.i. Let namespace be GetModuleNamespace(module).
-        JSModuleNamespaceObject* moduleNamespace = module->getModuleNamespace(globalObject);
+        JSObject* moduleNamespace = module->moduleNamespaceObject(globalObject);
         if (scope.exception()) [[unlikely]] {
             capabilityPromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1718,7 +1673,7 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
         // ContinueDynamicImport https://tc39.es/ecma262/#sec-ContinueDynamicImport
         // Step 6.d.ii: Call(promiseCapability.[[Resolve]], undefined, « namespace »).
         // A module namespace that exports "then" is a thenable per spec.
-        resultPromise->resolve(globalObject, vm, arguments[1]);
+        resultPromise->resolve(globalObject, vm, asObject(arguments[1]));
     } else
         resultPromise->reject(vm, arguments[1]);
     return;
@@ -1796,16 +1751,10 @@ static void webAssemblyInstantiateStreaming(JSGlobalObject* globalObject, VM& vm
 }
 #endif
 
-static void asyncFunctionArrangeAwaitResume(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value, bool isResumed)
+static void asyncFunctionArrangeAwaitResume(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value)
 {
     if (value == vm.fastAsyncGeneratorSentinel())
         return;
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::countAwait(vm, isResumed ? "await:resumed" : "await:first-segment", value);
-#else
-    UNUSED_PARAM(isResumed);
-#endif
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncFunctionResume, generator);
 }
 
@@ -1851,7 +1800,7 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
     // is already arranged by enqueuing this driver on the producer, so skip the normal
     // await-Promise attachment below.
     scope.release();
-    asyncFunctionArrangeAwaitResume(generatorGlobalObject, vm, generator, value, true);
+    asyncFunctionArrangeAwaitResume(generatorGlobalObject, vm, generator, value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1859,7 +1808,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, Call
     VM& vm = globalObject->vm();
     JSValue resolution = callFrame->uncheckedArgument(0);
     auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(callFrame->uncheckedArgument(1));
-    asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution, false);
+    asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution);
     return encodedJSUndefined();
 }
 
@@ -1884,18 +1833,19 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
         return;
     }
 
-#if ENABLE(AOT)
-    if (context.inherits<AOT::Typed::Closure>() || context.inherits<AOT::Typed::AsyncGenerator>() || context.inherits<AOT::Typed::SavedFrame>()) {
-        AOT::Typed::resumeDriver(vm, asObject(context), resolution, status == JSPromise::Status::Rejected, !!microtaskCallCache);
+    // The only remaining for-await driver kind is a top-level-await module. Any other context is a
+    // driver of compiled code.
+    if (auto* module = dynamicDowncast<JSModuleRecord>(context)) {
+        asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
         return;
     }
-#endif
 
-    // The only remaining for-await driver kind is a top-level-await module. Any other context type
-    // reaching here means a new driver was wired up without a branch above.
-    auto* module = dynamicDowncast<JSModuleRecord>(context);
-    RELEASE_ASSERT(module);
-    asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
+#if ENABLE(AOT)
+    RELEASE_ASSERT(vm.hasCompiledCode() && context.isObject());
+    AOT::resumeDriver(vm, asObject(context), resolution, status == JSPromise::Status::Rejected, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+#else
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -2150,21 +2100,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
 #if ENABLE(AOT)
-    case InternalMicrotask::AOTAsyncFunctionResume: {
+    case InternalMicrotask::CompiledAsyncFunctionResume: {
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
-        return;
-    }
-
-    case InternalMicrotask::AOTAsyncGeneratorResume: {
-#if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
-#endif
-        scope.release();
-        AOT::Typed::resumeAsyncGenerator(globalObject, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
+        AOT::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
         return;
     }
 #endif
@@ -2338,9 +2279,24 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
-        auto* module = uncheckedDowncast<JSModuleRecord>(argument2);
-        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, argument1, static_cast<JSPromise::Status>(payload)));
+        auto* module = uncheckedDowncast<CyclicModuleRecord>(argument2);
+        JSGlobalObject* realm = nullptr;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module))
+            realm = compiled->instanceRealm();
+#endif
+        if (!realm)
+            realm = module->realm();
+        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(realm, module, argument1, static_cast<JSPromise::Status>(payload)));
     }
+
+#if ENABLE(AOT)
+    case InternalMicrotask::CompiledModuleImport:
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2));
+
+    case InternalMicrotask::CompiledModuleImportSettled:
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
+#endif
 
     case InternalMicrotask::AsyncModuleExecutionResume: {
         // resolveWithInternalMicrotaskForAsyncAwait wraps the module together

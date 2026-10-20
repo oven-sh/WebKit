@@ -45,6 +45,8 @@ class SourceCode;
 class UnlinkedFunctionExecutable;
 class VM;
 
+// Every field is a function of the source characters alone, which is what lets the builtins generator
+// compute these at build time.
 struct BuiltinSourceMetadata {
     unsigned sourceLength { 0 };
     unsigned parametersStart { 0 };

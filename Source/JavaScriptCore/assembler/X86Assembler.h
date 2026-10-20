@@ -34,9 +34,7 @@
 #include "JITCompilationEffort.h"
 #include "RegisterInfo.h"
 #include "SIMDInfo.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include <algorithm>
-#endif
+#include "X86JumpShortening.h"
 #include <limits.h>
 #include <stdint.h>
 #include <wtf/Assertions.h>
@@ -68,162 +66,6 @@ enum XMMRegisterID : int8_t {
 
 } // namespace X86Registers
 
-#if USE(BUN_JSC_ADDITIONS)
-struct X86LinkedJump {
-    uint32_t from;
-    uint32_t to;
-};
-
-struct X86JumpShift {
-    uint32_t from;
-    uint32_t shift;
-};
-
-template<typename Shifts>
-inline uint32_t shortenedJumpShiftAt(const Shifts& shifts, uint32_t offset)
-{
-    auto* begin = shifts.begin();
-    auto* found = std::upper_bound(begin, shifts.end(), offset, [](uint32_t offset, const X86JumpShift& entry) {
-        return offset < entry.from;
-    });
-    return found == begin ? 0 : found[-1].shift;
-}
-
-template<typename Jumps, typename Shifts, typename Numbers, typename Bytes>
-inline size_t shortenX86Jumps(uint8_t* code, size_t size, Jumps& jumps, Shifts& shifts, Numbers& numberOfJumpsUpToTarget, Numbers& shiftBefore, Numbers& undecided, Numbers& firstShiftAfter, Bytes& saving, Bytes& isShort)
-{
-    constexpr uint8_t conditionalJumpSavings = 4;
-    constexpr uint8_t jumpSavings = 3;
-    constexpr uint32_t maxDistanceThatMayBecomeShort = 384;
-    constexpr unsigned stretchShift = 6;
-    auto savingsOf = [&](uint32_t from) -> uint8_t {
-        if (from >= 6 && code[from - 6] == 0x0f && (code[from - 5] & 0xf0) == 0x80)
-            return conditionalJumpSavings;
-        if (from >= 5 && code[from - 5] == 0xe9)
-            return jumpSavings;
-        return 0;
-    };
-    uint32_t all = jumps.size();
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < all; ++i) {
-        X86LinkedJump jump = jumps[i];
-        uint32_t distance = jump.to > jump.from ? jump.to - jump.from : jump.from - jump.to;
-        if (distance > maxDistanceThatMayBecomeShort || !savingsOf(jump.from))
-            continue;
-        jumps[i] = jumps[count];
-        jumps[count++] = jump;
-    }
-    std::sort(jumps.begin(), jumps.begin() + count, [](const X86LinkedJump& a, const X86LinkedJump& b) {
-        return a.from < b.from;
-    });
-    for (uint32_t i = 0; i < count; ++i) {
-        saving[i] = savingsOf(jumps[i].from);
-        isShort[i] = 1;
-        uint32_t to = jumps[i].to;
-        uint32_t upTo = i + 1;
-        if (to >= jumps[i].from) {
-            while (upTo < count && jumps[upTo].from <= to)
-                ++upTo;
-        } else {
-            while (upTo && jumps[upTo - 1].from > to)
-                --upTo;
-        }
-        numberOfJumpsUpToTarget[i] = upTo;
-    }
-    auto sumUp = [&] {
-        uint32_t sum = 0;
-        for (uint32_t i = 0; i < count; ++i) {
-            shiftBefore[i] = sum;
-            if (isShort[i])
-                sum += saving[i];
-        }
-        shiftBefore[count] = sum;
-    };
-    auto displacement = [&](uint32_t i, bool asShort) {
-        uint32_t own = asShort ? saving[i] : 0;
-        int64_t from = static_cast<int64_t>(jumps[i].from) - shiftBefore[i] - own;
-        uint32_t upTo = numberOfJumpsUpToTarget[i];
-        int64_t to = static_cast<int64_t>(jumps[i].to) - shiftBefore[upTo] - (upTo > i && !isShort[i] ? own : 0);
-        return to - from;
-    };
-    sumUp();
-    uint32_t undecidedCount = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        int64_t nearest = displacement(i, true);
-        if (nearest >= -128 && nearest <= 127)
-            undecided[undecidedCount++] = i;
-    }
-    for (uint32_t i = 0; i < count; ++i)
-        isShort[i] = 0;
-    for (bool changed = undecidedCount; changed;) {
-        changed = false;
-        sumUp();
-        uint32_t left = 0;
-        for (uint32_t k = 0; k < undecidedCount; ++k) {
-            uint32_t i = undecided[k];
-            int64_t distance = displacement(i, true);
-            if (distance < -128 || distance > 127) {
-                undecided[left++] = i;
-                continue;
-            }
-            isShort[i] = 1;
-            changed = true;
-        }
-        undecidedCount = left;
-    }
-    sumUp();
-    if (!shiftBefore[count])
-        return size;
-    for (uint32_t i = 0; i < count; ++i) {
-        if (isShort[i])
-            shifts.append(X86JumpShift { jumps[i].from, shiftBefore[i + 1] });
-    }
-    uint32_t numberOfShifts = shifts.size();
-    uint32_t numberOfStretches = (size >> stretchShift) + 2;
-    for (uint32_t stretch = 0, next = 0; stretch < numberOfStretches; ++stretch) {
-        while (next < numberOfShifts && shifts[next].from < stretch << stretchShift)
-            ++next;
-        firstShiftAfter[stretch] = next;
-    }
-    auto shiftAt = [&](uint32_t offset) -> uint32_t {
-        uint32_t next = firstShiftAfter[offset >> stretchShift];
-        while (next < numberOfShifts && shifts[next].from <= offset)
-            ++next;
-        return next ? shifts[next - 1].shift : 0;
-    };
-    auto setDisplacement = [&](uint32_t from, int64_t distance) {
-        int32_t narrow = static_cast<int32_t>(distance);
-        memcpy(code + from - 4, &narrow, 4);
-    };
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!isShort[i])
-            setDisplacement(jumps[i].from, displacement(i, false));
-    }
-    for (uint32_t i = count; i < all; ++i) {
-        X86LinkedJump jump = jumps[i];
-        setDisplacement(jump.from, (static_cast<int64_t>(jump.to) - shiftAt(jump.to)) - (static_cast<int64_t>(jump.from) - shiftAt(jump.from)));
-    }
-    size_t in = 0;
-    size_t out = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!isShort[i])
-            continue;
-        uint32_t from = jumps[i].from;
-        size_t start = from - (saving[i] == conditionalJumpSavings ? 6 : 5);
-        if (out != in)
-            memmove(code + out, code + in, start - in);
-        out += start - in;
-        int64_t distance = displacement(i, true);
-        code[out] = saving[i] == conditionalJumpSavings ? 0x70 | (code[from - 5] & 0x0f) : 0xeb;
-        code[out + 1] = static_cast<uint8_t>(static_cast<int8_t>(distance));
-        out += 2;
-        in = from;
-    }
-    memmove(code + out, code + in, size - in);
-    return out + size - in;
-}
-
-#endif
 class X86Assembler {
 public:
     typedef X86Registers::RegisterID RegisterID;
@@ -381,11 +223,13 @@ private:
         OP_MOVS_YvXv                    = 0xA5,
         OP_TEST_ALIb                    = 0xA8,
         OP_TEST_EAXIv                   = 0xA9,
+        OP_STOS_YvEAX                   = 0xAB,
         OP_MOV_EAXIv                    = 0xB8,
         OP_GROUP2_EvIb                  = 0xC1,
         OP_RET                          = 0xC3,
         OP_GROUP11_EvIb                 = 0xC6,
         OP_GROUP11_EvIz                 = 0xC7,
+        OP_LEAVE                        = 0xC9,
         OP_INT3                         = 0xCC,
         OP_GROUP2_Ev1                   = 0xD1,
         OP_GROUP2_EvCL                  = 0xD3,
@@ -401,6 +245,8 @@ private:
         OP_GROUP3_EbIb                  = 0xF6,
         OP_GROUP3_Ev                    = 0xF7,
         OP_GROUP3_EvIz                  = 0xF7, // OP_GROUP3_Ev has an immediate, when instruction is a test. 
+        OP_CLC                          = 0xF8,
+        OP_STC                          = 0xF9,
         OP_GROUP5_Ev                    = 0xFF,
     } OneByteOpcodeID;
 
@@ -470,6 +316,7 @@ private:
         OP2_MOVD_VdEd                   = 0x6E,
         OP2_MOVQ_PqQq                   = 0x6E,
         OP2_MOVDQA_VdqWdq               = 0x6F,
+        OP2_MOVDQU_VdqWdq               = 0x6F,
         OP2_PSHUFD_VdqWdqIb             = 0x70,
         OP2_PSHUFLW_VdqWdqIb            = 0x70,
         OP2_PSHUFHW_VdqWdqIb            = 0x70,
@@ -481,6 +328,7 @@ private:
         OP2_PSRAD_UdqIb                 = 0x72,
         OP2_PSLLQ_UdqIb                 = 0x73,
         OP2_PSRLQ_UdqIb                 = 0x73,
+        OP2_PSLLDQ_UdqIb                = 0x73,
         OP2_VZEROUPPER                  = 0x77,
         OP2_MOVD_EdVd                   = 0x7E,
         OP2_MOVQ_QqPq                   = 0x7E,
@@ -512,6 +360,7 @@ private:
         OP2_BSWAP                       = 0xC8,
         OP2_PSUBUSB_VdqWdq              = 0xD8,
         OP2_PSUBUSW_VdqWdq              = 0xD9,
+        OP2_PAND_VdqWdq                 = 0xDB,
         OP2_VPAND_VxHxWx                = 0xDB,
         OP2_PADDUSB_VdqWdq              = 0xDC,
         OP2_PADDUSW_VdqWdq              = 0xDD,
@@ -702,6 +551,8 @@ private:
         GROUP14_OP_PSLLQ = 6,
         GROUP14_OP_PSRAQ = 4,
         GROUP14_OP_PSRLQ = 2,
+        GROUP14_OP_PSRLW = 2,
+        GROUP14_OP_PSLLDQ = 7,
 
         ESCAPE_D9_FSTP_singleReal = 3,
         ESCAPE_DD_FSTP_doubleReal = 3,
@@ -746,6 +597,11 @@ public:
     void pop_m(int offset, RegisterID base)
     {
         m_formatter.oneByteOp(OP_GROUP1A_Ev, GROUP1A_OP_POP, base, offset);
+    }
+
+    void leave()
+    {
+        m_formatter.oneByteOp(OP_LEAVE);
     }
 
     // Arithmetic operations:
@@ -2094,13 +1950,11 @@ public:
         m_formatter.immediate32(value);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     void imulq_i32r(RegisterID src, int32_t value, RegisterID dst)
     {
         m_formatter.oneByteOp64(OP_IMUL_GvEvIz, dst, src);
         m_formatter.immediate32(value);
     }
-#endif
 
     void divl_r(RegisterID dst)
     {
@@ -2507,6 +2361,12 @@ public:
     {
         m_formatter.prefix(PRE_SSE_F3);
         m_formatter.oneByteOp64(OP_MOVS_YvXv);
+    }
+
+    void rep_stosq()
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.oneByteOp64(OP_STOS_YvEAX);
     }
 
     void fstps(int offset, RegisterID base)
@@ -3601,6 +3461,21 @@ public:
         m_formatter.oneByteOp64(OP_LEA, dst, base, index, scale, offset);
     }
 
+    void leaq_mr_disp32(int offset, RegisterID base, RegisterID dst)
+    {
+        m_formatter.oneByteOp64_disp32(OP_LEA, dst, base, offset);
+    }
+
+    void leaq_rip(RegisterID dst)
+    {
+        m_formatter.oneByteOp64RIPRelative(OP_LEA, dst);
+    }
+
+    void movq_rip(RegisterID dst)
+    {
+        m_formatter.oneByteOp64RIPRelative(OP_MOV_GvEv, dst);
+    }
+
     // Flow control:
 
     AssemblerLabel call()
@@ -3623,7 +3498,7 @@ public:
     AssemblerLabel jmp()
     {
         m_formatter.oneByteOp(OP_JMP_rel32);
-        return m_formatter.immediateRel32();
+        return didEmitJump(m_formatter.immediateRel32(), X86JumpKind::Unconditional, 0);
     }
     
     // Return a AssemblerLabel so we have a label to the jump, so we can use this
@@ -3647,8 +3522,7 @@ public:
     
     AssemblerLabel jne()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionNE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionNE);
     }
     
     AssemblerLabel jnz()
@@ -3658,8 +3532,7 @@ public:
 
     AssemblerLabel je()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionE);
     }
     
     AssemblerLabel jz()
@@ -3669,80 +3542,68 @@ public:
 
     AssemblerLabel jl()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionL));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionL);
     }
     
     AssemblerLabel jb()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionB));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionB);
     }
     
     AssemblerLabel jle()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionLE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionLE);
     }
     
     AssemblerLabel jbe()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionBE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionBE);
     }
     
     AssemblerLabel jge()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionGE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionGE);
     }
 
     AssemblerLabel jg()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionG));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionG);
     }
 
     AssemblerLabel ja()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionA));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionA);
     }
     
     AssemblerLabel jae()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionAE));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionAE);
     }
     
     AssemblerLabel jo()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionO));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionO);
     }
 
     AssemblerLabel jnp()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionNP));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionNP);
     }
 
     AssemblerLabel jp()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionP));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionP);
     }
     
     AssemblerLabel js()
     {
-        m_formatter.twoByteOp(jccRel32(ConditionS));
-        return m_formatter.immediateRel32();
+        return jCC(ConditionS);
     }
 
     AssemblerLabel jCC(Condition cond)
     {
         m_formatter.twoByteOp(jccRel32(cond));
-        return m_formatter.immediateRel32();
+        return didEmitJump(m_formatter.immediateRel32(), X86JumpKind::Conditional, static_cast<uint8_t>(cond));
     }
 
     // SSE operations:
@@ -3905,6 +3766,12 @@ public:
         m_formatter.twoByteOp64(OP2_MOVMSKPD_VdEd, dst, (RegisterID)src);
     }
 
+    void pmovmskb_rr(XMMRegisterID src, RegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PMOVMSKB_GdqpUdq, dst, (RegisterID)src);
+    }
+
     void movq_rr(XMMRegisterID src, RegisterID dst)
     {
         m_formatter.prefix(PRE_SSE_66);
@@ -3946,6 +3813,18 @@ public:
     void movups_rm(XMMRegisterID src, int offset, RegisterID base, RegisterID index, int scale)
     {
         m_formatter.twoByteOp(OP2_MOVUPS_WsdVsd, (RegisterID)src, base, index, scale, offset);
+    }
+
+    void movdqu_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_MOVDQU_VdqWdq, (RegisterID)dst, base, offset);
+    }
+
+    void movdqu_mr(int offset, RegisterID base, RegisterID index, int scale, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_MOVDQU_VdqWdq, (RegisterID)dst, base, index, scale, offset);
     }
 
     void movhlps_rr(XMMRegisterID src, XMMRegisterID dst)
@@ -4081,6 +3960,20 @@ public:
         m_formatter.immediate8(imm);
     }
 
+    void pslldq_i8r(uint8_t bytes, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSLLDQ_UdqIb, GROUP14_OP_PSLLDQ, (RegisterID)dst);
+        m_formatter.immediate8(bytes);
+    }
+
+    void psrlw_i8r(uint8_t shift, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSRLW_UdqIb, GROUP14_OP_PSRLW, (RegisterID)dst);
+        m_formatter.immediate8(shift);
+    }
+
     void psrld_i8r(uint8_t imm8, XMMRegisterID dst)
     {
         // https://www.felixcloutier.com/x86/psrlw:psrld:psrlq
@@ -4101,6 +3994,18 @@ public:
     {
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_POR_VdqWdq, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void pand_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PAND_VdqWdq, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void pcmpeqb_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PCMPEQB_VdqWdq, (RegisterID)dst, (RegisterID)src);
     }
 
     void subsd_rr(XMMRegisterID src, XMMRegisterID dst)
@@ -4295,6 +4200,16 @@ public:
     void ret()
     {
         m_formatter.oneByteOp(OP_RET);
+    }
+
+    void stc()
+    {
+        m_formatter.oneByteOp(OP_STC);
+    }
+
+    void clc()
+    {
+        m_formatter.oneByteOp(OP_CLC);
     }
 
     void predictNotTaken()
@@ -6583,41 +6498,35 @@ public:
         char* code = static_cast<char*>(m_formatter.data());
         ASSERT(!WTF::unalignedLoad<int32_t>(std::bit_cast<int32_t*>(code + from.offset()) - 1));
         setRel32(code + from.offset(), code + to.offset());
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_recordsLinkedJumps) [[unlikely]]
+        if (m_recordsJumps) [[unlikely]]
             m_linkedJumps.append(X86LinkedJump { from.offset(), to.offset() });
-#endif
     }
-#if USE(BUN_JSC_ADDITIONS)
 
-    void recordLinkedJumps() { m_recordsLinkedJumps = true; }
-    const Vector<X86LinkedJump>& linkedJumps() const LIFETIME_BOUND { return m_linkedJumps; }
-
-    void shortenLinkedJumps()
+    void setRecordsJumps(bool recordsJumps)
     {
-        unsigned count = m_linkedJumps.size();
-        if (!count)
-            return;
-        Vector<uint32_t> numberOfJumpsUpToTarget;
-        numberOfJumpsUpToTarget.fill(0, count);
-        Vector<uint32_t> shiftBefore;
-        shiftBefore.fill(0, count + 1);
-        Vector<uint32_t> undecided;
-        undecided.fill(0, count);
-        Vector<uint32_t> firstShiftAfter;
-        firstShiftAfter.fill(0, (codeSize() >> 6) + 2);
-        Vector<uint8_t> saving;
-        saving.fill(0, count);
-        Vector<uint8_t> isShort;
-        isShort.fill(0, count);
-        size_t size = shortenX86Jumps(static_cast<uint8_t*>(m_formatter.data()), codeSize(), m_linkedJumps, m_shortenedJumpShifts, numberOfJumpsUpToTarget, shiftBefore, undecided, firstShiftAfter, saving, isShort);
-        m_formatter.m_buffer.setCodeSize(size);
-        m_linkedJumps.clear();
-        m_recordsLinkedJumps = false;
+        RELEASE_ASSERT(!codeSize());
+        m_recordsJumps = recordsJumps;
     }
 
-    Vector<X86JumpShift> takeShortenedJumpShifts() { return std::exchange(m_shortenedJumpShifts, { }); }
-#endif
+    void assignJumpKinds()
+    {
+        RELEASE_ASSERT(m_recordsJumps);
+        assignX86JumpKinds(m_linkedJumps, m_emittedJumps.span());
+    }
+
+    Vector<X86JumpShift> shortenJumps()
+    {
+        RELEASE_ASSERT(m_recordsJumps);
+        Vector<X86JumpShift> shifts;
+        size_t size = shortenX86Jumps({ static_cast<uint8_t*>(m_formatter.data()), codeSize() }, m_linkedJumps, shifts);
+        m_formatter.m_buffer.setCodeSize(size);
+        m_indexOfLastWatchpoint = INT_MIN;
+        m_indexOfTailOfLastWatchpoint = INT_MIN;
+        return shifts;
+    }
+
+    Vector<X86LinkedJump> takeLinkedJumps() { return std::exchange(m_linkedJumps, { }); }
+    Vector<X86EmittedJump> takeEmittedJumps() { return std::exchange(m_emittedJumps, { }); }
     
     static void linkJump(void* code, AssemblerLabel from, void* to)
     {
@@ -6899,6 +6808,13 @@ public:
     ALWAYS_INLINE static void cacheFlush(void*, size_t) { }
 
 private:
+
+    AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
+    {
+        if (m_recordsJumps) [[unlikely]]
+            m_emittedJumps.append(X86EmittedJump { end.offset(), kind, condition });
+        return end;
+    }
 
     static void setPointer(void* where, void* value)
     {
@@ -7539,6 +7455,15 @@ private:
             writer.memoryModRMAddr(reg, address);
         }
 
+        void oneByteOp64RIPRelative(OneByteOpcodeID opcode, int reg)
+        {
+            SingleInstructionBufferWriter writer(m_buffer);
+            writer.emitRexW(reg, 0, 0);
+            writer.putByteUnchecked(opcode);
+            writer.putModRm(ModRmMemoryNoDisp, reg, SingleInstructionBufferWriter::noBase);
+            writer.putIntUnchecked(0);
+        }
+
         void twoByteOp64(TwoByteOpcodeID opcode, int reg)
         {
             SingleInstructionBufferWriter writer(m_buffer);
@@ -7722,11 +7647,9 @@ private:
     } m_formatter;
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_recordsLinkedJumps { false };
+    bool m_recordsJumps { false };
+    Vector<X86EmittedJump> m_emittedJumps;
     Vector<X86LinkedJump> m_linkedJumps;
-    Vector<X86JumpShift> m_shortenedJumpShifts;
-#endif
 };
 
 } // namespace JSC

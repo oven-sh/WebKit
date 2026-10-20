@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "AOTFunction.h"
 #include "ArrayProfile.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
@@ -565,11 +564,6 @@ inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)
 {
     if (m_owner)
         return m_owner;
-
-#if ENABLE(AOT)
-    if (JSCell* owner = AOT::callerOwnerCell(calleeFrame))
-        return owner;
-#endif
 
     // Right now, IC (Getter, Setter, Proxy IC etc.) / WasmToJS sets nullptr intentionally since we would like to share IC / WasmToJS thunk eventually.
     // However, in that case, each IC's data side will have CallLinkInfo.

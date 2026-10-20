@@ -29,7 +29,6 @@
 #include "Debugger.h"
 #include "ExecutableBaseInlines.h"
 #include "JSCInlines.h"
-#include "ObjectConstructor.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -68,42 +67,6 @@ void NativeExecutable::finishCreation(VM& vm, Ref<JSC::JITCode>&& callThunk, Ref
     m_jitCodeForConstructWithArityCheck = m_jitCodeForConstruct->addressForCall(ArityCheckMode::MustCheckArity);
     m_name = name;
     m_length = length;
-#if ENABLE(AOT)
-    m_stubBuiltin = static_cast<uint8_t>([&] {
-        switch (intrinsic()) {
-        case JSMapGetIntrinsic:
-            return StubBuiltin::MapGet;
-        case JSMapHasIntrinsic:
-            return StubBuiltin::MapHas;
-        case JSMapSetIntrinsic:
-            return StubBuiltin::MapSet;
-        case JSSetHasIntrinsic:
-            return StubBuiltin::SetHas;
-        case JSSetAddIntrinsic:
-            return StubBuiltin::SetAdd;
-        case JSWeakMapGetIntrinsic:
-            return StubBuiltin::WeakMapGet;
-        case JSWeakMapHasIntrinsic:
-            return StubBuiltin::WeakMapHas;
-        case JSWeakMapSetIntrinsic:
-            return StubBuiltin::WeakMapSet;
-        case JSWeakSetHasIntrinsic:
-            return StubBuiltin::WeakSetHas;
-        case StringPrototypeStartsWithIntrinsic:
-            return StubBuiltin::StringStartsWith;
-        case StringPrototypeIndexOfIntrinsic:
-            return StubBuiltin::StringIndexOf;
-        case ArrayIsArrayIntrinsic:
-            return StubBuiltin::ArrayIsArray;
-        case ArrayPushIntrinsic:
-            return StubBuiltin::ArrayPush;
-        case ArraySliceIntrinsic:
-            return StubBuiltin::ArraySlice;
-        default:
-            return m_function == TaggedNativeFunction(objectConstructorSetPrototypeOf) ? StubBuiltin::ObjectSetPrototypeOf : StubBuiltin::None;
-        }
-    }());
-#endif
 
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForCall->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());
     assertIsTaggedWith<JSEntryPtrTag>(m_jitCodeForConstruct->addressForCall(ArityCheckMode::ArityCheckNotRequired).taggedPtr());

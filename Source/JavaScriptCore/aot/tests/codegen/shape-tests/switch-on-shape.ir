@@ -1,0 +1,65 @@
+# A switch on the shape of an object generates code as one switch where every case is one shape, and as a chain of tests where a case is a set; a case passes a guard that a slot read names
+# FORM: Selected
+# RUN: generate-code
+# RUN(SHAPES): pass PlanSlots NumberAndEncode
+# OPTIONS: check=validate-back-end validate
+# SHAPES: set {L0} one
+# SHAPES: set {L1} one
+# SHAPES: set {L2} one
+# SHAPES: set {L1 L2} range
+# CHECK: f1: size=
+# CHECK: f2: size=
+# CHECK: f3: size=
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L2 name="C" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L3 name="D" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v3 = NewObject -, v0 layout=L2 fields=[0] [keepsShape]
+    v4 = NewObject -, v0 layout=L3 fields=[0] [keepsShape]
+    Return
+}
+function f1 name="oneShapeInEachCase" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1], [L2]] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v1):
+    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Predicted
+    Return v2
+  b2(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L1] level=Predicted
+    Return v4
+  b3(v5):
+    v6 = GetSlot v0, v5 key="x" receivers=[L2] level=Predicted
+    Return v6
+  b4():
+    Return
+}
+function f2 name="setInOneCase" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1, L2]] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v1):
+    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Predicted
+    Return v2
+  b2(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L1, L2] level=Predicted
+    Return v4
+  b3():
+    Return
+}
+function f3 name="knownLayouts" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2|L3):
+    SwitchOnShape v0 layoutSets=[[L0], [L3]] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=2
+    Return v2
+  b3():
+    Return
+}

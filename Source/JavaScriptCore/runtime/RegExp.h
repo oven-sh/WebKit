@@ -40,12 +40,14 @@
 
 namespace JSC {
 
-namespace Yarr {
-struct YarrPattern;
-}
-
 namespace AOT {
 struct ImageRegExp;
+}
+
+namespace Yarr {
+class CharacterSetView;
+struct CharacterSetWithRanges;
+struct YarrPattern;
 }
 
 struct RegExpRepresentation;
@@ -71,10 +73,9 @@ public:
     static GCClient::IsoSubspace* subspaceFor(VM&); // Defined in RegExpInlines.h
 
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    static RegExp* tryCreateFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>);
-    static RegExp* createWithSourceInPieces(VM&, const AOT::ImageRegExp&, OptionSet<Yarr::Flags>);
-    void setIsCompiledProgramLiteral() { m_isCompiledProgramLiteral = true; }
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE static RegExp* createFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>, const AOT::ImageRegExp&);
+    const AOT::ImageRegExp* imageRecord() const { return m_imageRecord; }
 #endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
@@ -90,8 +91,8 @@ public:
     static constexpr uint8_t stateWithJITCode() { return JITCode; }
     static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
     static constexpr ptrdiff_t offsetOfNumSubpatterns() { return OBJECT_OFFSETOF(RegExp, m_numSubpatterns); }
-    static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
     static constexpr ptrdiff_t offsetOfAtom() { return OBJECT_OFFSETOF(RegExp, m_atom); }
+    static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(RegExp, m_rareData); }
 #if ENABLE(YARR_JIT)
     static constexpr ptrdiff_t offsetOfRegExpJITCode() { return OBJECT_OFFSETOF(RegExp, m_regExpJITCode); }
 #endif
@@ -105,12 +106,7 @@ public:
     bool globalOrSticky() const { return global() || sticky(); }
     bool eitherUnicode() const { return unicode() || unicodeSets(); }
 
-    const String& pattern() const LIFETIME_BOUND
-    {
-        ensurePattern();
-        return m_patternString;
-    }
-    bool hasSourceInPieces() const { return m_patternString.isNull(); }
+    const String& pattern() const LIFETIME_BOUND { return m_patternString; }
 
     bool isValid() const { return !Yarr::hasError(m_constructionErrorCode); }
     ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
@@ -212,10 +208,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     DECLARE_INFO;
 
-    RegExpKey key() { return RegExpKey(m_flags, pattern()); }
+    RegExpKey key() { return RegExpKey(m_flags, m_patternString); }
 
     String escapedPattern() const;
-    static bool sourceIsPattern(const String& pattern);
+    JS_EXPORT_PRIVATE static String escapedPattern(const String& pattern);
 
     String toSourceString() const;
 
@@ -237,6 +233,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     bool hasValidAtom() const { return !m_atom.isNull(); }
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
+    std::optional<Yarr::CharacterSetView> specificCharacterClass() const;
 
     const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
 
@@ -258,9 +255,10 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
+#if ENABLE(AOT)
+    void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
-    void crashIfCompiledProgramLiteralIsInterpreted() const;
+    void crashIfLiteralIsInterpreted() const;
 #endif
 
     enum RegExpState : uint8_t {
@@ -271,8 +269,6 @@ private:
     };
 
     void byteCodeCompileIfNecessary(VM*);
-    std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM*, Yarr::YarrPattern&, Yarr::ErrorCode&, bool alwaysWithBytecode = false);
-    static unsigned handOverFromFlatProgram(void* owner, StringView, unsigned startOffset, unsigned* offsetVector);
 
     void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
@@ -289,6 +285,7 @@ private:
 
 #if ENABLE(YARR_JIT)
     Yarr::YarrCodeBlock& ensureRegExpJITCode();
+    void compileWithJIT(VM*, const Yarr::YarrPattern&, Yarr::CharSize, std::optional<StringView> sampleString, Yarr::ExecutionMode);
 #endif
 
     struct RareData {
@@ -301,34 +298,16 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
-        const AOT::ImageRegExp* m_recordWithSourceInPieces { nullptr };
+        std::unique_ptr<const Yarr::CharacterSetWithRanges> m_specificCharacterClass;
     };
 
-    void ensurePattern() const
-    {
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-        if (hasSourceInPieces()) [[unlikely]]
-            materializePatternFromPieces();
-#endif
-    }
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    JS_EXPORT_PRIVATE void materializePatternFromPieces() const;
-#endif
-
-    mutable String m_patternString;
+    String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    Yarr::SpecificPattern m_specificPattern : 6 { Yarr::SpecificPattern::None };
-    bool m_sourceIsPattern : 1 { false };
-    bool m_isCompiledProgramLiteral : 1 { false };
-#else
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
-#endif
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
-    bool m_codeWasFoundInImage { false };
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
@@ -336,6 +315,9 @@ private:
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 #endif
     std::unique_ptr<RareData> m_rareData;
+#if ENABLE(AOT)
+    const AOT::ImageRegExp* m_imageRecord { nullptr };
+#endif
     FixedVector<int> m_ovector;
     mutable ThreadSafeLazyUniquePtr<const WTF::BitSet<256>> m_firstCharacterBitmap;
 #if ENABLE(REGEXP_TRACING)

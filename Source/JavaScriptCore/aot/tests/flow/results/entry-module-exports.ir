@@ -1,0 +1,50 @@
+# The host reads the exports of an entry module that the entry record names and calls what they hold. An export it does not name and an export of an imported module are read by nobody
+# RUN: flow
+# CHECK: function f3 cause=ReachesNativeCode
+# CHECK: module m1 namespaceUse=NeverCreated
+# CHECK: class [[server]] layout=L0 impossibleMutations=[ReachUnknownJavaScript,
+# CHECK: field L0.0 "fetch" type=f3 {{*}}location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation deferral=
+# CHECK: variable g0 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g1 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=NeverRead}
+# CHECK: variable g2 type=L0 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g3 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g4 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead reads=NeverRead}
+# RUN(NOTHING): flow
+# NOTHING-NOT: module m2 namespaceUse
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}] exports=[{name="a" variable=g0}, {name="default" variable=g2}, {name="ns" kind=Namespace module=m2}, {name="unnamed" variable=g4}]
+module m1 path="imported.js" displayPath="imported.js" body=f1 exports=[{name="a" variable=g1}]
+module m2 path="reexported.js" displayPath="reexported.js" body=f2 exports=[{name="a" variable=g3}]
+entry module=m0 hostReads=[{exportName="a"}, {exportName="default"}, {exportName="ns"}]
+layout L0 name="Server" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="a" module=m0 declared={type=anything}
+variable g1 name="a" module=m1 declared={type=anything}
+variable g2 name="default" module=m0 declared={type=anything}
+variable g3 name="a" module=m2 declared={type=anything}
+variable g4 name="unnamed" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v0 variable=g4
+    Return
+}
+function f1 name="imported" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="reexported" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f3 name="fetch" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

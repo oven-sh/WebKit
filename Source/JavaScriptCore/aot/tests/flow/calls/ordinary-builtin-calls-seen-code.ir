@@ -1,0 +1,779 @@
+# Ordinary calls of built-ins with objects, arrays, closures and promises of the program run only code the build has seen: none of them raises an unseen-code event, so the program stays closed
+# RUN: flow-links unseen
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Inner" fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Outer" fields=[{key="outer" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="console" [isFreeName]
+    v2 = PropGet v1 key="log"
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Call v2, v1, v5 calleeKey="log"
+    v7 = PropGet v0 key="fetch" [isFreeName]
+    v8 = String string="text"
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L0 fields=[0]
+    v11 = NewObject -, v10 layout=L1 fields=[0]
+    v12 = Call v7, -, v8, v11
+    v13 = PropGet v0 key="JSON" [isFreeName]
+    v14 = PropGet v13 key="stringify"
+    v15 = Integer integer=1
+    v16 = NewObject -, v15 layout=L0 fields=[0]
+    v17 = NewObject -, v16 layout=L1 fields=[0]
+    v18 = Call v14, v13, v17 calleeKey="stringify"
+    v19 = PropGet v0 key="structuredClone" [isFreeName]
+    v20 = Integer integer=1
+    v21 = NewObject -, v20 layout=L0 fields=[0]
+    v22 = NewObject -, v21 layout=L1 fields=[0]
+    v23 = Call v19, -, v22
+    v24 = PropGet v0 key="Buffer" [isFreeName]
+    v25 = PropGet v24 key="from"
+    v26 = Integer integer=1
+    v27 = NewObject -, v26 layout=L0 fields=[0]
+    v28 = NewObject -, v27 layout=L1 fields=[0]
+    v29 = Call v25, v24, v28 calleeKey="from"
+    v30 = PropGet v0 key="Buffer" [isFreeName]
+    v31 = PropGet v30 key="from"
+    v32 = Integer integer=1
+    v33 = NewObject -, v32 layout=L0 fields=[0]
+    v34 = NewObject -, v33 layout=L1 fields=[0]
+    v35 = NewArray v34 contents=anything
+    v36 = Call v31, v30, v35 calleeKey="from"
+    v37 = PropGet v0 key="Array" [isFreeName]
+    v38 = PropGet v37 key="from"
+    v39 = Integer integer=1
+    v40 = NewObject -, v39 layout=L0 fields=[0]
+    v41 = NewObject -, v40 layout=L1 fields=[0]
+    v42 = NewArray v41 contents=anything
+    v43 = Call v38, v37, v42 calleeKey="from"
+    v44 = PropGet v0 key="Object" [isFreeName]
+    v45 = PropGet v44 key="assign"
+    v46 = Integer integer=1
+    v47 = NewObject -, v46 layout=L0 fields=[0]
+    v48 = NewObject -, v47 layout=L1 fields=[0]
+    v49 = Integer integer=1
+    v50 = NewObject -, v49 layout=L0 fields=[0]
+    v51 = NewObject -, v50 layout=L1 fields=[0]
+    v52 = Call v45, v44, v48, v51 calleeKey="assign"
+    v53 = PropGet v0 key="Object" [isFreeName]
+    v54 = PropGet v53 key="keys"
+    v55 = Integer integer=1
+    v56 = NewObject -, v55 layout=L0 fields=[0]
+    v57 = NewObject -, v56 layout=L1 fields=[0]
+    v58 = Call v54, v53, v57 calleeKey="keys"
+    v59 = PropGet v0 key="Object" [isFreeName]
+    v60 = PropGet v59 key="values"
+    v61 = Integer integer=1
+    v62 = NewObject -, v61 layout=L0 fields=[0]
+    v63 = NewObject -, v62 layout=L1 fields=[0]
+    v64 = Call v60, v59, v63 calleeKey="values"
+    v65 = PropGet v0 key="Object" [isFreeName]
+    v66 = PropGet v65 key="freeze"
+    v67 = Integer integer=1
+    v68 = NewObject -, v67 layout=L0 fields=[0]
+    v69 = NewObject -, v68 layout=L1 fields=[0]
+    v70 = Call v66, v65, v69 calleeKey="freeze"
+    v71 = PropGet v0 key="Object" [isFreeName]
+    v72 = PropGet v71 key="defineProperty"
+    v73 = Integer integer=1
+    v74 = NewObject -, v73 layout=L0 fields=[0]
+    v75 = NewObject -, v74 layout=L1 fields=[0]
+    v76 = String string="text"
+    v77 = Integer integer=1
+    v78 = NewObject -, v77 layout=L0 fields=[0]
+    v79 = NewObject -, v78 layout=L1 fields=[0]
+    v80 = Call v72, v71, v75, v76, v79 calleeKey="defineProperty"
+    v81 = PropGet v0 key="Object" [isFreeName]
+    v82 = PropGet v81 key="create"
+    v83 = Integer integer=1
+    v84 = NewObject -, v83 layout=L0 fields=[0]
+    v85 = NewObject -, v84 layout=L1 fields=[0]
+    v86 = Call v82, v81, v85 calleeKey="create"
+    v87 = PropGet v0 key="Promise" [isFreeName]
+    v88 = PropGet v87 key="all"
+    v89 = Integer integer=1
+    v90 = NewObject -, v89 layout=L0 fields=[0]
+    v91 = NewObject -, v90 layout=L1 fields=[0]
+    v92 = NewArray v91 contents=anything
+    v93 = Call v88, v87, v92 calleeKey="all"
+    v94 = PropGet v0 key="Promise" [isFreeName]
+    v95 = PropGet v94 key="allSettled"
+    v96 = Integer integer=1
+    v97 = NewObject -, v96 layout=L0 fields=[0]
+    v98 = NewObject -, v97 layout=L1 fields=[0]
+    v99 = NewArray v98 contents=anything
+    v100 = Call v95, v94, v99 calleeKey="allSettled"
+    v101 = PropGet v0 key="Promise" [isFreeName]
+    v102 = PropGet v101 key="any"
+    v103 = Integer integer=1
+    v104 = NewObject -, v103 layout=L0 fields=[0]
+    v105 = NewObject -, v104 layout=L1 fields=[0]
+    v106 = NewArray v105 contents=anything
+    v107 = Call v102, v101, v106 calleeKey="any"
+    v108 = PropGet v0 key="Promise" [isFreeName]
+    v109 = PropGet v108 key="race"
+    v110 = Integer integer=1
+    v111 = NewObject -, v110 layout=L0 fields=[0]
+    v112 = NewObject -, v111 layout=L1 fields=[0]
+    v113 = NewArray v112 contents=anything
+    v114 = Call v109, v108, v113 calleeKey="race"
+    v115 = PropGet v0 key="Promise" [isFreeName]
+    v116 = PropGet v115 key="resolve"
+    v117 = Integer integer=1
+    v118 = NewObject -, v117 layout=L0 fields=[0]
+    v119 = NewObject -, v118 layout=L1 fields=[0]
+    v120 = Call v116, v115, v119 calleeKey="resolve"
+    v121 = PropGet v0 key="Promise" [isFreeName]
+    v122 = PropGet v121 key="resolve"
+    v123 = NewClosure function=f2
+    v124 = Call v123
+    v125 = Call v122, v121, v124 calleeKey="resolve"
+    v126 = PropGet v0 key="Promise" [isFreeName]
+    v127 = PropGet v126 key="reject"
+    v128 = Integer integer=1
+    v129 = NewObject -, v128 layout=L0 fields=[0]
+    v130 = NewObject -, v129 layout=L1 fields=[0]
+    v131 = Call v127, v126, v130 calleeKey="reject"
+    v132 = PropGet v0 key="setTimeout" [isFreeName]
+    v133 = NewClosure function=f1
+    v134 = Integer integer=3
+    v135 = Call v132, -, v133, v134
+    v136 = PropGet v0 key="queueMicrotask" [isFreeName]
+    v137 = NewClosure function=f1
+    v138 = Call v136, -, v137
+    v139 = PropGet v0 key="Reflect" [isFreeName]
+    v140 = PropGet v139 key="ownKeys"
+    v141 = Integer integer=1
+    v142 = NewObject -, v141 layout=L0 fields=[0]
+    v143 = NewObject -, v142 layout=L1 fields=[0]
+    v144 = Call v140, v139, v143 calleeKey="ownKeys"
+    v145 = PropGet v0 key="Reflect" [isFreeName]
+    v146 = PropGet v145 key="construct"
+    v147 = NewClosure function=f1
+    v148 = Integer integer=1
+    v149 = NewObject -, v148 layout=L0 fields=[0]
+    v150 = NewObject -, v149 layout=L1 fields=[0]
+    v151 = NewArray v150 contents=anything
+    v152 = NewClosure function=f1
+    v153 = Call v146, v145, v147, v151, v152 calleeKey="construct"
+    v154 = PropGet v0 key="Reflect" [isFreeName]
+    v155 = PropGet v154 key="apply"
+    v156 = NewClosure function=f1
+    v157 = Integer integer=1
+    v158 = NewObject -, v157 layout=L0 fields=[0]
+    v159 = NewObject -, v158 layout=L1 fields=[0]
+    v160 = Integer integer=1
+    v161 = NewObject -, v160 layout=L0 fields=[0]
+    v162 = NewObject -, v161 layout=L1 fields=[0]
+    v163 = NewArray v162 contents=anything
+    v164 = Call v155, v154, v156, v159, v163 calleeKey="apply"
+    v165 = PropGet v0 key="String" [isFreeName]
+    v166 = Integer integer=1
+    v167 = NewObject -, v166 layout=L0 fields=[0]
+    v168 = NewObject -, v167 layout=L1 fields=[0]
+    v169 = Call v165, -, v168
+    v170 = PropGet v0 key="Number" [isFreeName]
+    v171 = Integer integer=1
+    v172 = NewObject -, v171 layout=L0 fields=[0]
+    v173 = NewObject -, v172 layout=L1 fields=[0]
+    v174 = Call v170, -, v173
+    v175 = PropGet v0 key="Array" [isFreeName]
+    v176 = PropGet v175 key="isArray"
+    v177 = Integer integer=1
+    v178 = NewObject -, v177 layout=L0 fields=[0]
+    v179 = NewObject -, v178 layout=L1 fields=[0]
+    v180 = Call v176, v175, v179 calleeKey="isArray"
+    v181 = PropGet v0 key="Bun" [isFreeName]
+    v182 = PropGet v181 key="serve"
+    v183 = Integer integer=1
+    v184 = NewObject -, v183 layout=L0 fields=[0]
+    v185 = NewObject -, v184 layout=L1 fields=[0]
+    v186 = Call v182, v181, v185 calleeKey="serve"
+    v187 = PropGet v0 key="Bun" [isFreeName]
+    v188 = PropGet v187 key="file"
+    v189 = String string="text"
+    v190 = Call v188, v187, v189 calleeKey="file"
+    v191 = PropGet v0 key="Bun" [isFreeName]
+    v192 = PropGet v191 key="write"
+    v193 = String string="text"
+    v194 = Integer integer=1
+    v195 = NewObject -, v194 layout=L0 fields=[0]
+    v196 = NewObject -, v195 layout=L1 fields=[0]
+    v197 = Call v192, v191, v193, v196 calleeKey="write"
+    v198 = PropGet v0 key="Bun" [isFreeName]
+    v199 = PropGet v198 key="inspect"
+    v200 = Integer integer=1
+    v201 = NewObject -, v200 layout=L0 fields=[0]
+    v202 = NewObject -, v201 layout=L1 fields=[0]
+    v203 = Call v199, v198, v202 calleeKey="inspect"
+    v204 = PropGet v0 key="Bun" [isFreeName]
+    v205 = PropGet v204 key="deepEquals"
+    v206 = Integer integer=1
+    v207 = NewObject -, v206 layout=L0 fields=[0]
+    v208 = NewObject -, v207 layout=L1 fields=[0]
+    v209 = Integer integer=1
+    v210 = NewObject -, v209 layout=L0 fields=[0]
+    v211 = NewObject -, v210 layout=L1 fields=[0]
+    v212 = Call v205, v204, v208, v211 calleeKey="deepEquals"
+    v213 = PropGet v0 key="process" [isFreeName]
+    v214 = PropGet v213 key="nextTick"
+    v215 = NewClosure function=f1
+    v216 = Call v214, v213, v215 calleeKey="nextTick"
+    v217 = PropGet v0 key="process" [isFreeName]
+    v218 = PropGet v217 key="on"
+    v219 = String string="text"
+    v220 = NewClosure function=f1
+    v221 = Call v218, v217, v219, v220 calleeKey="on"
+    v222 = PropGet v0 key="addEventListener" [isFreeName]
+    v223 = String string="text"
+    v224 = Integer integer=1
+    v225 = NewObject -, v224 layout=L0 fields=[0]
+    v226 = NewObject -, v225 layout=L1 fields=[0]
+    v227 = Call v222, -, v223, v226
+    v228 = PropGet v0 key="Error" [isFreeName]
+    v229 = PropGet v228 key="captureStackTrace"
+    v230 = Integer integer=1
+    v231 = NewObject -, v230 layout=L0 fields=[0]
+    v232 = NewObject -, v231 layout=L1 fields=[0]
+    v233 = Call v229, v228, v232 calleeKey="captureStackTrace"
+    v234 = PropGet v0 key="Math" [isFreeName]
+    v235 = PropGet v234 key="max"
+    v236 = Integer integer=1
+    v237 = NewObject -, v236 layout=L0 fields=[0]
+    v238 = NewObject -, v237 layout=L1 fields=[0]
+    v239 = Call v235, v234, v238 calleeKey="max"
+    v240 = PropGet v0 key="parseInt" [isFreeName]
+    v241 = Integer integer=1
+    v242 = NewObject -, v241 layout=L0 fields=[0]
+    v243 = NewObject -, v242 layout=L1 fields=[0]
+    v244 = Call v240, -, v243
+    v245 = PropGet v0 key="Symbol" [isFreeName]
+    v246 = PropGet v245 key="for"
+    v247 = Integer integer=1
+    v248 = NewObject -, v247 layout=L0 fields=[0]
+    v249 = NewObject -, v248 layout=L1 fields=[0]
+    v250 = Call v246, v245, v249 calleeKey="for"
+    v251 = PropGet v0 key="Intl" [isFreeName]
+    v252 = PropGet v251 key="NumberFormat"
+    v253 = String string="text"
+    v254 = Integer integer=1
+    v255 = NewObject -, v254 layout=L0 fields=[0]
+    v256 = NewObject -, v255 layout=L1 fields=[0]
+    v257 = Call v252, v251, v253, v256 calleeKey="NumberFormat"
+    v258 = PropGet v0 key="Iterator" [isFreeName]
+    v259 = PropGet v258 key="from"
+    v260 = Integer integer=1
+    v261 = NewObject -, v260 layout=L0 fields=[0]
+    v262 = NewObject -, v261 layout=L1 fields=[0]
+    v263 = Call v259, v258, v262 calleeKey="from"
+    v264 = PropGet v0 key="Array" [isFreeName]
+    v265 = PropGet v264 key="fromAsync"
+    v266 = Integer integer=1
+    v267 = NewObject -, v266 layout=L0 fields=[0]
+    v268 = NewObject -, v267 layout=L1 fields=[0]
+    v269 = NewArray v268 contents=anything
+    v270 = Call v265, v264, v269 calleeKey="fromAsync"
+    v271 = PropGet v0 key="Object" [isFreeName]
+    v272 = PropGet v271 key="fromEntries"
+    v273 = Integer integer=1
+    v274 = NewObject -, v273 layout=L0 fields=[0]
+    v275 = NewObject -, v274 layout=L1 fields=[0]
+    v276 = NewArray v275 contents=anything
+    v277 = Call v272, v271, v276 calleeKey="fromEntries"
+    v278 = PropGet v0 key="Object" [isFreeName]
+    v279 = PropGet v278 key="entries"
+    v280 = Integer integer=1
+    v281 = NewObject -, v280 layout=L0 fields=[0]
+    v282 = NewObject -, v281 layout=L1 fields=[0]
+    v283 = Call v279, v278, v282 calleeKey="entries"
+    v284 = PropGet v0 key="Object" [isFreeName]
+    v285 = PropGet v284 key="getPrototypeOf"
+    v286 = Integer integer=1
+    v287 = NewObject -, v286 layout=L0 fields=[0]
+    v288 = NewObject -, v287 layout=L1 fields=[0]
+    v289 = Call v285, v284, v288 calleeKey="getPrototypeOf"
+    v290 = PropGet v0 key="Object" [isFreeName]
+    v291 = PropGet v290 key="setPrototypeOf"
+    v292 = Integer integer=1
+    v293 = NewObject -, v292 layout=L0 fields=[0]
+    v294 = NewObject -, v293 layout=L1 fields=[0]
+    v295 = Integer integer=1
+    v296 = NewObject -, v295 layout=L0 fields=[0]
+    v297 = NewObject -, v296 layout=L1 fields=[0]
+    v298 = Call v291, v290, v294, v297 calleeKey="setPrototypeOf"
+    v299 = PropGet v0 key="Object" [isFreeName]
+    v300 = PropGet v299 key="getOwnPropertyDescriptor"
+    v301 = Integer integer=1
+    v302 = NewObject -, v301 layout=L0 fields=[0]
+    v303 = NewObject -, v302 layout=L1 fields=[0]
+    v304 = String string="text"
+    v305 = Call v300, v299, v303, v304 calleeKey="getOwnPropertyDescriptor"
+    v306 = PropGet v0 key="Object" [isFreeName]
+    v307 = PropGet v306 key="getOwnPropertyNames"
+    v308 = Integer integer=1
+    v309 = NewObject -, v308 layout=L0 fields=[0]
+    v310 = NewObject -, v309 layout=L1 fields=[0]
+    v311 = Call v307, v306, v310 calleeKey="getOwnPropertyNames"
+    v312 = PropGet v0 key="Object" [isFreeName]
+    v313 = PropGet v312 key="groupBy"
+    v314 = Integer integer=1
+    v315 = NewObject -, v314 layout=L0 fields=[0]
+    v316 = NewObject -, v315 layout=L1 fields=[0]
+    v317 = NewArray v316 contents=anything
+    v318 = NewClosure function=f1
+    v319 = Call v313, v312, v317, v318 calleeKey="groupBy"
+    v320 = PropGet v0 key="Buffer" [isFreeName]
+    v321 = PropGet v320 key="concat"
+    v322 = Integer integer=1
+    v323 = NewObject -, v322 layout=L0 fields=[0]
+    v324 = NewObject -, v323 layout=L1 fields=[0]
+    v325 = NewArray v324 contents=anything
+    v326 = Call v321, v320, v325 calleeKey="concat"
+    v327 = PropGet v0 key="Buffer" [isFreeName]
+    v328 = PropGet v327 key="alloc"
+    v329 = Integer integer=3
+    v330 = Integer integer=1
+    v331 = NewObject -, v330 layout=L0 fields=[0]
+    v332 = NewObject -, v331 layout=L1 fields=[0]
+    v333 = Integer integer=1
+    v334 = NewObject -, v333 layout=L0 fields=[0]
+    v335 = NewObject -, v334 layout=L1 fields=[0]
+    v336 = Call v328, v327, v329, v332, v335 calleeKey="alloc"
+    v337 = PropGet v0 key="RegExp" [isFreeName]
+    v338 = Integer integer=1
+    v339 = NewObject -, v338 layout=L0 fields=[0]
+    v340 = NewObject -, v339 layout=L1 fields=[0]
+    v341 = Call v337, -, v340
+    v342 = PropGet v0 key="Date" [isFreeName]
+    v343 = Call v342, -
+    v344 = PropGet v0 key="Bun" [isFreeName]
+    v345 = PropGet v344 key="sleep"
+    v346 = Integer integer=3
+    v347 = Call v345, v344, v346 calleeKey="sleep"
+    v348 = PropGet v0 key="Bun" [isFreeName]
+    v349 = PropGet v348 key="spawn"
+    v350 = Integer integer=1
+    v351 = NewObject -, v350 layout=L0 fields=[0]
+    v352 = NewObject -, v351 layout=L1 fields=[0]
+    v353 = NewArray v352 contents=anything
+    v354 = Integer integer=1
+    v355 = NewObject -, v354 layout=L0 fields=[0]
+    v356 = NewObject -, v355 layout=L1 fields=[0]
+    v357 = Call v349, v348, v353, v356 calleeKey="spawn"
+    v358 = PropGet v0 key="Bun" [isFreeName]
+    v359 = PropGet v358 key="hash"
+    v360 = String string="text"
+    v361 = Call v359, v358, v360 calleeKey="hash"
+    v362 = PropGet v0 key="Bun" [isFreeName]
+    v363 = PropGet v362 key="which"
+    v364 = String string="text"
+    v365 = Call v363, v362, v364 calleeKey="which"
+    v366 = PropGet v0 key="process" [isFreeName]
+    v367 = PropGet v366 key="cwd"
+    v368 = Call v367, v366 calleeKey="cwd"
+    v369 = PropGet v0 key="process" [isFreeName]
+    v370 = PropGet v369 key="emitWarning"
+    v371 = Integer integer=1
+    v372 = NewObject -, v371 layout=L0 fields=[0]
+    v373 = NewObject -, v372 layout=L1 fields=[0]
+    v374 = Call v370, v369, v373 calleeKey="emitWarning"
+    v375 = PropGet v0 key="process" [isFreeName]
+    v376 = PropGet v375 key="hrtime"
+    v377 = Call v376, v375 calleeKey="hrtime"
+    v378 = PropGet v0 key="crypto" [isFreeName]
+    v379 = PropGet v378 key="randomUUID"
+    v380 = Call v379, v378 calleeKey="randomUUID"
+    v381 = PropGet v0 key="crypto" [isFreeName]
+    v382 = PropGet v381 key="getRandomValues"
+    v383 = Integer integer=1
+    v384 = NewObject -, v383 layout=L0 fields=[0]
+    v385 = NewObject -, v384 layout=L1 fields=[0]
+    v386 = Call v382, v381, v385 calleeKey="getRandomValues"
+    v387 = PropGet v0 key="performance" [isFreeName]
+    v388 = PropGet v387 key="now"
+    v389 = Call v388, v387 calleeKey="now"
+    v390 = PropGet v0 key="escape" [isFreeName]
+    v391 = Integer integer=1
+    v392 = NewObject -, v391 layout=L0 fields=[0]
+    v393 = NewObject -, v392 layout=L1 fields=[0]
+    v394 = Call v390, -, v393
+    v395 = PropGet v0 key="setInterval" [isFreeName]
+    v396 = NewClosure function=f1
+    v397 = Integer integer=3
+    v398 = Call v395, -, v396, v397
+    v399 = PropGet v0 key="setImmediate" [isFreeName]
+    v400 = NewClosure function=f1
+    v401 = Integer integer=1
+    v402 = NewObject -, v401 layout=L0 fields=[0]
+    v403 = NewObject -, v402 layout=L1 fields=[0]
+    v404 = Call v399, -, v400, v403
+    v405 = PropGet v0 key="clearTimeout" [isFreeName]
+    v406 = Integer integer=1
+    v407 = NewObject -, v406 layout=L0 fields=[0]
+    v408 = NewObject -, v407 layout=L1 fields=[0]
+    v409 = Call v405, -, v408
+    v410 = PropGet v0 key="console" [isFreeName]
+    v411 = PropGet v410 key="error"
+    v412 = Integer integer=1
+    v413 = NewObject -, v412 layout=L0 fields=[0]
+    v414 = NewObject -, v413 layout=L1 fields=[0]
+    v415 = Integer integer=1
+    v416 = NewObject -, v415 layout=L0 fields=[0]
+    v417 = NewObject -, v416 layout=L1 fields=[0]
+    v418 = NewArray v417 contents=anything
+    v419 = Call v411, v410, v414, v418 calleeKey="error"
+    v420 = PropGet v0 key="console" [isFreeName]
+    v421 = PropGet v420 key="table"
+    v422 = Integer integer=1
+    v423 = NewObject -, v422 layout=L0 fields=[0]
+    v424 = NewObject -, v423 layout=L1 fields=[0]
+    v425 = NewArray v424 contents=anything
+    v426 = Call v421, v420, v425 calleeKey="table"
+    v427 = PropGet v0 key="console" [isFreeName]
+    v428 = PropGet v427 key="dir"
+    v429 = Integer integer=1
+    v430 = NewObject -, v429 layout=L0 fields=[0]
+    v431 = NewObject -, v430 layout=L1 fields=[0]
+    v432 = Integer integer=1
+    v433 = NewObject -, v432 layout=L0 fields=[0]
+    v434 = NewObject -, v433 layout=L1 fields=[0]
+    v435 = Call v428, v427, v431, v434 calleeKey="dir"
+    v436 = PropGet v0 key="JSON" [isFreeName]
+    v437 = PropGet v436 key="parse"
+    v438 = String string="text"
+    v439 = NewClosure function=f1
+    v440 = Call v437, v436, v438, v439 calleeKey="parse"
+    v441 = PropGet v0 key="JSON" [isFreeName]
+    v442 = PropGet v441 key="stringify"
+    v443 = Integer integer=1
+    v444 = NewObject -, v443 layout=L0 fields=[0]
+    v445 = NewObject -, v444 layout=L1 fields=[0]
+    v446 = NewClosure function=f1
+    v447 = Integer integer=3
+    v448 = Call v442, v441, v445, v446, v447 calleeKey="stringify"
+    v449 = PropGet v0 key="atob" [isFreeName]
+    v450 = Integer integer=1
+    v451 = NewObject -, v450 layout=L0 fields=[0]
+    v452 = NewObject -, v451 layout=L1 fields=[0]
+    v453 = Call v449, -, v452
+    v454 = PropGet v0 key="reportError" [isFreeName]
+    v455 = Integer integer=1
+    v456 = NewObject -, v455 layout=L0 fields=[0]
+    v457 = NewObject -, v456 layout=L1 fields=[0]
+    v458 = Call v454, -, v457
+    v459 = PropGet v0 key="dispatchEvent" [isFreeName]
+    v460 = Integer integer=1
+    v461 = NewObject -, v460 layout=L0 fields=[0]
+    v462 = NewObject -, v461 layout=L1 fields=[0]
+    v463 = Call v459, -, v462
+    v464 = PropGet v0 key="postMessage" [isFreeName]
+    v465 = Integer integer=1
+    v466 = NewObject -, v465 layout=L0 fields=[0]
+    v467 = NewObject -, v466 layout=L1 fields=[0]
+    v468 = Call v464, -, v467
+    v469 = Integer integer=1
+    v470 = NewObject -, v469 layout=L0 fields=[0]
+    v471 = NewObject -, v470 layout=L1 fields=[0]
+    v472 = NewArray v471 contents=anything
+    v473 = PropGet v472 key="toString"
+    v474 = Call v473, v472 calleeKey="toString"
+    v475 = Integer integer=1
+    v476 = NewObject -, v475 layout=L0 fields=[0]
+    v477 = NewObject -, v476 layout=L1 fields=[0]
+    v478 = NewArray v477 contents=anything
+    v479 = PropGet v478 key="join"
+    v480 = Call v479, v478 calleeKey="join"
+    v481 = Integer integer=1
+    v482 = NewObject -, v481 layout=L0 fields=[0]
+    v483 = NewObject -, v482 layout=L1 fields=[0]
+    v484 = NewArray v483 contents=anything
+    v485 = PropGet v484 key="toLocaleString"
+    v486 = Call v485, v484 calleeKey="toLocaleString"
+    v487 = Integer integer=1
+    v488 = NewObject -, v487 layout=L0 fields=[0]
+    v489 = NewObject -, v488 layout=L1 fields=[0]
+    v490 = NewArray v489 contents=anything
+    v491 = PropGet v490 key="concat"
+    v492 = Integer integer=1
+    v493 = NewObject -, v492 layout=L0 fields=[0]
+    v494 = NewObject -, v493 layout=L1 fields=[0]
+    v495 = NewArray v494 contents=anything
+    v496 = Call v491, v490, v495 calleeKey="concat"
+    v497 = Integer integer=1
+    v498 = NewObject -, v497 layout=L0 fields=[0]
+    v499 = NewObject -, v498 layout=L1 fields=[0]
+    v500 = NewArray v499 contents=anything
+    v501 = PropGet v500 key="flat"
+    v502 = Call v501, v500 calleeKey="flat"
+    v503 = Integer integer=1
+    v504 = NewObject -, v503 layout=L0 fields=[0]
+    v505 = NewObject -, v504 layout=L1 fields=[0]
+    v506 = NewArray v505 contents=anything
+    v507 = PropGet v506 key="slice"
+    v508 = Call v507, v506 calleeKey="slice"
+    v509 = Integer integer=1
+    v510 = NewObject -, v509 layout=L0 fields=[0]
+    v511 = NewObject -, v510 layout=L1 fields=[0]
+    v512 = NewArray v511 contents=anything
+    v513 = PropGet v512 key="sort"
+    v514 = Call v513, v512 calleeKey="sort"
+    v515 = Integer integer=1
+    v516 = NewObject -, v515 layout=L0 fields=[0]
+    v517 = NewObject -, v516 layout=L1 fields=[0]
+    v518 = NewArray v517 contents=anything
+    v519 = PropGet v518 key="includes"
+    v520 = Integer integer=1
+    v521 = NewObject -, v520 layout=L0 fields=[0]
+    v522 = NewObject -, v521 layout=L1 fields=[0]
+    v523 = Call v519, v518, v522 calleeKey="includes"
+    v524 = Integer integer=1
+    v525 = NewObject -, v524 layout=L0 fields=[0]
+    v526 = NewObject -, v525 layout=L1 fields=[0]
+    v527 = NewArray v526 contents=anything
+    v528 = PropGet v527 key="push"
+    v529 = Integer integer=1
+    v530 = NewObject -, v529 layout=L0 fields=[0]
+    v531 = NewObject -, v530 layout=L1 fields=[0]
+    v532 = Call v528, v527, v531 calleeKey="push"
+    v533 = Integer integer=1
+    v534 = NewObject -, v533 layout=L0 fields=[0]
+    v535 = NewObject -, v534 layout=L1 fields=[0]
+    v536 = PropGet v535 key="toString"
+    v537 = Call v536, v535 calleeKey="toString"
+    v538 = Integer integer=1
+    v539 = NewObject -, v538 layout=L0 fields=[0]
+    v540 = NewObject -, v539 layout=L1 fields=[0]
+    v541 = PropGet v540 key="toLocaleString"
+    v542 = Call v541, v540 calleeKey="toLocaleString"
+    v543 = Integer integer=1
+    v544 = NewObject -, v543 layout=L0 fields=[0]
+    v545 = NewObject -, v544 layout=L1 fields=[0]
+    v546 = PropGet v545 key="hasOwnProperty"
+    v547 = String string="text"
+    v548 = Call v546, v545, v547 calleeKey="hasOwnProperty"
+    v549 = Integer integer=1
+    v550 = NewObject -, v549 layout=L0 fields=[0]
+    v551 = NewObject -, v550 layout=L1 fields=[0]
+    v552 = PropGet v551 key="valueOf"
+    v553 = Call v552, v551 calleeKey="valueOf"
+    v554 = NewClosure function=f1
+    v555 = PropGet v554 key="bind"
+    v556 = Integer integer=1
+    v557 = NewObject -, v556 layout=L0 fields=[0]
+    v558 = NewObject -, v557 layout=L1 fields=[0]
+    v559 = Call v555, v554, v558 calleeKey="bind"
+    v560 = NewClosure function=f1
+    v561 = PropGet v560 key="call"
+    v562 = Integer integer=1
+    v563 = NewObject -, v562 layout=L0 fields=[0]
+    v564 = NewObject -, v563 layout=L1 fields=[0]
+    v565 = Call v561, v560, v564 calleeKey="call"
+    v566 = NewClosure function=f1
+    v567 = PropGet v566 key="apply"
+    v568 = Integer integer=1
+    v569 = NewObject -, v568 layout=L0 fields=[0]
+    v570 = NewObject -, v569 layout=L1 fields=[0]
+    v571 = Integer integer=1
+    v572 = NewObject -, v571 layout=L0 fields=[0]
+    v573 = NewObject -, v572 layout=L1 fields=[0]
+    v574 = NewArray v573 contents=anything
+    v575 = Call v567, v566, v570, v574 calleeKey="apply"
+    v576 = NewClosure function=f1
+    v577 = PropGet v576 key="toString"
+    v578 = Call v577, v576 calleeKey="toString"
+    v579 = NewClosure function=f2
+    v580 = Call v579
+    v581 = PropGet v580 key="then"
+    v582 = NewClosure function=f1
+    v583 = Call v581, v580, v582 calleeKey="then"
+    v584 = NewClosure function=f2
+    v585 = Call v584
+    v586 = PropGet v585 key="catch"
+    v587 = NewClosure function=f1
+    v588 = Call v586, v585, v587 calleeKey="catch"
+    v589 = NewClosure function=f2
+    v590 = Call v589
+    v591 = PropGet v590 key="finally"
+    v592 = NewClosure function=f1
+    v593 = Call v591, v590, v592 calleeKey="finally"
+    v594 = String string="text"
+    v595 = PropGet v594 key="startsWith"
+    v596 = Integer integer=1
+    v597 = NewObject -, v596 layout=L0 fields=[0]
+    v598 = NewObject -, v597 layout=L1 fields=[0]
+    v599 = Call v595, v594, v598 calleeKey="startsWith"
+    v600 = String string="text"
+    v601 = PropGet v600 key="replace"
+    v602 = Integer integer=1
+    v603 = NewObject -, v602 layout=L0 fields=[0]
+    v604 = NewObject -, v603 layout=L1 fields=[0]
+    v605 = String string="text"
+    v606 = Call v601, v600, v604, v605 calleeKey="replace"
+    v607 = String string="text"
+    v608 = PropGet v607 key="split"
+    v609 = Integer integer=1
+    v610 = NewObject -, v609 layout=L0 fields=[0]
+    v611 = NewObject -, v610 layout=L1 fields=[0]
+    v612 = Call v608, v607, v611 calleeKey="split"
+    v613 = String string="text"
+    v614 = PropGet v613 key="concat"
+    v615 = Integer integer=1
+    v616 = NewObject -, v615 layout=L0 fields=[0]
+    v617 = NewObject -, v616 layout=L1 fields=[0]
+    v618 = Call v614, v613, v617 calleeKey="concat"
+    v619 = String string="text"
+    v620 = PropGet v619 key="localeCompare"
+    v621 = String string="text"
+    v622 = String string="text"
+    v623 = Integer integer=1
+    v624 = NewObject -, v623 layout=L0 fields=[0]
+    v625 = NewObject -, v624 layout=L1 fields=[0]
+    v626 = Call v620, v619, v621, v622, v625 calleeKey="localeCompare"
+    v627 = PropGet v0 key="Map" [isFreeName]
+    v628 = Integer integer=1
+    v629 = NewObject -, v628 layout=L0 fields=[0]
+    v630 = NewObject -, v629 layout=L1 fields=[0]
+    v631 = NewArray v630 contents=anything
+    v632 = Construct v627, -, v631
+    v633 = PropGet v0 key="Set" [isFreeName]
+    v634 = Integer integer=1
+    v635 = NewObject -, v634 layout=L0 fields=[0]
+    v636 = NewObject -, v635 layout=L1 fields=[0]
+    v637 = NewArray v636 contents=anything
+    v638 = Construct v633, -, v637
+    v639 = PropGet v0 key="Error" [isFreeName]
+    v640 = String string="text"
+    v641 = Integer integer=1
+    v642 = NewObject -, v641 layout=L0 fields=[0]
+    v643 = NewObject -, v642 layout=L1 fields=[0]
+    v644 = Construct v639, -, v640, v643
+    v645 = PropGet v0 key="AggregateError" [isFreeName]
+    v646 = Integer integer=1
+    v647 = NewObject -, v646 layout=L0 fields=[0]
+    v648 = NewObject -, v647 layout=L1 fields=[0]
+    v649 = NewArray v648 contents=anything
+    v650 = Construct v645, -, v649
+    v651 = PropGet v0 key="Promise" [isFreeName]
+    v652 = NewClosure function=f1
+    v653 = Construct v651, -, v652
+    v654 = PropGet v0 key="Proxy" [isFreeName]
+    v655 = Integer integer=1
+    v656 = NewObject -, v655 layout=L0 fields=[0]
+    v657 = NewObject -, v656 layout=L1 fields=[0]
+    v658 = Integer integer=1
+    v659 = NewObject -, v658 layout=L0 fields=[0]
+    v660 = NewObject -, v659 layout=L1 fields=[0]
+    v661 = Construct v654, -, v657, v660
+    v662 = PropGet v0 key="Uint8Array" [isFreeName]
+    v663 = Integer integer=1
+    v664 = NewObject -, v663 layout=L0 fields=[0]
+    v665 = NewObject -, v664 layout=L1 fields=[0]
+    v666 = NewArray v665 contents=anything
+    v667 = Construct v662, -, v666
+    v668 = PropGet v0 key="Uint8Array" [isFreeName]
+    v669 = Integer integer=1
+    v670 = NewObject -, v669 layout=L0 fields=[0]
+    v671 = NewObject -, v670 layout=L1 fields=[0]
+    v672 = Construct v668, -, v671
+    v673 = PropGet v0 key="ArrayBuffer" [isFreeName]
+    v674 = Integer integer=3
+    v675 = Integer integer=1
+    v676 = NewObject -, v675 layout=L0 fields=[0]
+    v677 = NewObject -, v676 layout=L1 fields=[0]
+    v678 = Construct v673, -, v674, v677
+    v679 = PropGet v0 key="Date" [isFreeName]
+    v680 = Integer integer=1
+    v681 = NewObject -, v680 layout=L0 fields=[0]
+    v682 = NewObject -, v681 layout=L1 fields=[0]
+    v683 = Construct v679, -, v682
+    v684 = PropGet v0 key="RegExp" [isFreeName]
+    v685 = Integer integer=1
+    v686 = NewObject -, v685 layout=L0 fields=[0]
+    v687 = NewObject -, v686 layout=L1 fields=[0]
+    v688 = Construct v684, -, v687
+    v689 = PropGet v0 key="WeakMap" [isFreeName]
+    v690 = Integer integer=1
+    v691 = NewObject -, v690 layout=L0 fields=[0]
+    v692 = NewObject -, v691 layout=L1 fields=[0]
+    v693 = NewArray v692 contents=anything
+    v694 = Construct v689, -, v693
+    v695 = PropGet v0 key="WeakRef" [isFreeName]
+    v696 = Integer integer=1
+    v697 = NewObject -, v696 layout=L0 fields=[0]
+    v698 = NewObject -, v697 layout=L1 fields=[0]
+    v699 = Construct v695, -, v698
+    v700 = PropGet v0 key="Request" [isFreeName]
+    v701 = String string="text"
+    v702 = Integer integer=1
+    v703 = NewObject -, v702 layout=L0 fields=[0]
+    v704 = NewObject -, v703 layout=L1 fields=[0]
+    v705 = Construct v700, -, v701, v704
+    v706 = PropGet v0 key="Response" [isFreeName]
+    v707 = Integer integer=1
+    v708 = NewObject -, v707 layout=L0 fields=[0]
+    v709 = NewObject -, v708 layout=L1 fields=[0]
+    v710 = Integer integer=1
+    v711 = NewObject -, v710 layout=L0 fields=[0]
+    v712 = NewObject -, v711 layout=L1 fields=[0]
+    v713 = Construct v706, -, v709, v712
+    v714 = PropGet v0 key="Headers" [isFreeName]
+    v715 = Integer integer=1
+    v716 = NewObject -, v715 layout=L0 fields=[0]
+    v717 = NewObject -, v716 layout=L1 fields=[0]
+    v718 = Construct v714, -, v717
+    v719 = PropGet v0 key="URL" [isFreeName]
+    v720 = Integer integer=1
+    v721 = NewObject -, v720 layout=L0 fields=[0]
+    v722 = NewObject -, v721 layout=L1 fields=[0]
+    v723 = Construct v719, -, v722
+    v724 = PropGet v0 key="URLSearchParams" [isFreeName]
+    v725 = Integer integer=1
+    v726 = NewObject -, v725 layout=L0 fields=[0]
+    v727 = NewObject -, v726 layout=L1 fields=[0]
+    v728 = Construct v724, -, v727
+    v729 = PropGet v0 key="Blob" [isFreeName]
+    v730 = Integer integer=1
+    v731 = NewObject -, v730 layout=L0 fields=[0]
+    v732 = NewObject -, v731 layout=L1 fields=[0]
+    v733 = NewArray v732 contents=anything
+    v734 = Integer integer=1
+    v735 = NewObject -, v734 layout=L0 fields=[0]
+    v736 = NewObject -, v735 layout=L1 fields=[0]
+    v737 = Construct v729, -, v733, v736
+    v738 = PropGet v0 key="TextDecoder" [isFreeName]
+    v739 = String string="text"
+    v740 = Integer integer=1
+    v741 = NewObject -, v740 layout=L0 fields=[0]
+    v742 = NewObject -, v741 layout=L1 fields=[0]
+    v743 = Construct v738, -, v739, v742
+    v744 = PropGet v0 key="ReadableStream" [isFreeName]
+    v745 = Integer integer=1
+    v746 = NewObject -, v745 layout=L0 fields=[0]
+    v747 = NewObject -, v746 layout=L1 fields=[0]
+    v748 = Construct v744, -, v747
+    v749 = PropGet v0 key="EventTarget" [isFreeName]
+    v750 = Construct v749, -
+    v751 = PropGet v0 key="AbortController" [isFreeName]
+    v752 = Construct v751, -
+    v753 = PropGet v0 key="FinalizationRegistry" [isFreeName]
+    v754 = NewClosure function=f1
+    v755 = Construct v753, -, v754
+    Return
+}
+function f1 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}

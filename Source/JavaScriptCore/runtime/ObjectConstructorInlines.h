@@ -25,12 +25,15 @@
 
 #pragma once
 
-#include "AOTTypedObject.h"
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
 #include "StructureArrayStorageInlines.h"
 #include "StructureCreateInlines.h"
+
+#if ENABLE(AOT)
+#include "AOTPropertyWalkInlines.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -62,12 +65,8 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool mayBeIntercepted = target->structure()->holesMustForwardToPrototype(target);
     source->forEachOwnIndexedProperty<>(globalObject, [&](unsigned index, JSValue value) {
-        if (mayBeIntercepted) [[unlikely]]
-            target->methodTable()->putByIndex(target, globalObject, index, value, true);
-        else
-            target->putDirectIndex(globalObject, index, value);
+        target->putDirectIndex(globalObject, index, value);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         return IterationStatus::Continue;
     });
@@ -308,10 +307,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (target->structure()->hasImmutableShape()) [[unlikely]]
-        return false;
-#endif
+    ASSERT(!target->structure()->isCompiledStructure());
 
     if (source->hasNonReifiedStaticProperties())
         return false;
@@ -319,14 +315,18 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     Structure* sourceStructure = source->structure();
     if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
 #if ENABLE(AOT)
-        if (sourceStructure->compiledLayout()) {
+        if (sourceStructure->isCompiledStructure()) {
             EnsureStillAliveScope sourceScope(source);
-            bool isWalked = AOT::Typed::forEachCompiledObjectOwnProperty(source, [&](UniquedStringImpl& name, JSValue value) {
-                properties.append(&name);
-                values.appendWithCrashOnOverflow(value);
-                return true;
+            auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+                if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+                    return IterationStatus::Continue;
+                if (property.name == vm.propertyNames->underscoreProto.impl())
+                    return IterationStatus::Done;
+                properties.append(property.name);
+                values.appendWithCrashOnOverflow(property.value);
+                return IterationStatus::Continue;
             });
-            if (!isWalked)
+            if (result != AOT::PropertyWalk::Result::Completed)
                 return false;
             if (properties.size())
                 target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
@@ -340,6 +340,9 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
         return true;
 
     if (source->canHaveExistingOwnIndexedGetterSetterProperties())
+        return false;
+
+    if (source->canHaveExistingOwnIndexedProperties() && target->structure()->holesMustForwardToPrototype(target)) [[unlikely]]
         return false;
 
     EnsureStillAliveScope sourceStructureScope(sourceStructure);

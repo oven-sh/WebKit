@@ -1,0 +1,18 @@
+# Two stores to a young environment both get the flag for an unmarked owner, and neither counts as covered
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 2
+# STATISTIC: BarriersCoveredLater = 0
+# CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+# CHECK-NEXT: PutEnvironmentField v1, v0 layout=L0 field=1 [ownerCannotBeMarked]
+# CHECK-NOT: laterBarrierCovers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="one-flag-per-store" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    Return
+}

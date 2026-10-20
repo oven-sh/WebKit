@@ -1,0 +1,103 @@
+# A handler sees the values that were available in front of the covered block and at every operation that may throw
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="readInFrontOfCoveredBlock" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Claim v1 castType=number
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    Return v5
+}
+# CHECK-LABEL: function f0 name="readInFrontOfCoveredBlock"
+# CHECK: = CatchValue
+# CHECK-NEXT: v5: anything = Upcast v2
+
+function f1 name="readInCoveredBlock" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Claim v1 castType=number
+    Jump -> next b2()
+  b2():
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetEnvironmentField v0 layout=L0 field=0
+    Return v6
+}
+# CHECK-LABEL: function f1 name="readInCoveredBlock"
+# CHECK: b2():
+# CHECK-NEXT: v4: anything = Upcast v2
+# CHECK: = CatchValue
+# CHECK-NEXT: v6: anything = GetEnvironmentField v0
+
+function f2 name="storeInFrontOfCoveredBlock" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Claim v1 castType=number
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    Return v5
+}
+# CHECK-LABEL: function f2 name="storeInFrontOfCoveredBlock"
+# CHECK: = CatchValue
+# CHECK-NEXT: v5: anything = Upcast v1
+
+function f3 name="storeInFrontOfThrowingOperation" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Jump -> next b1()
+  b1() handler=b3():
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v4 = Claim v1 castType=number
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetEnvironmentField v0 layout=L0 field=0
+    Return v6
+}
+# CHECK-LABEL: function f3 name="storeInFrontOfThrowingOperation"
+# CHECK: = CatchValue
+# CHECK-NEXT: v6: anything = GetEnvironmentField v0
+
+function f4 name="storeBehindThrowingOperation" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Claim v1 castType=number
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetEnvironmentField v0 layout=L0 field=0
+    Return v6
+}
+# CHECK-LABEL: function f4 name="storeBehindThrowingOperation"
+# CHECK: = CatchValue
+# CHECK-NEXT: v6: anything = Upcast v2

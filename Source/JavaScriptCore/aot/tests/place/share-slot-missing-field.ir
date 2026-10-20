@@ -1,0 +1,39 @@
+# A member of the receivers that never stores the field has no slot for it and takes no part in the request of an access: the others get one location
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots accesses
+# STATISTIC: SharedSlots = 2
+# STATISTIC: SharesRefused = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HasFieldFirst" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HasFieldLast" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="NeverStoresField" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="x" declared={type=number}}]
+variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v2 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g0
+    v12 = GetModuleVariable variable=g0
+    v13 = PropGet v12 key="x"
+    v14 = PropGet v12 key="y"
+    Return
+}
+# CHECK: "x" {L0 L1 L2} read weight={{*}} sites=1
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: without slot {L2}
+# CHECK-NEXT: "y" {L0 L1 L2} read weight={{*}} sites=1
+# CHECK-NEXT: one location Double @
+# CHECK-NOT: without slot

@@ -311,6 +311,7 @@ macro doVMEntry(makeCall)
     ret
 end
 
+endSectionPart()
 section "trampolines"
 
 _llint_throw_stack_overflow_error_from_vm_entry:
@@ -369,6 +370,8 @@ macro makeHostFunctionCall(entry, protoCallFrame, temp1, temp2)
         storep lr, ReturnPC[sp]
         cloopCallNative temp1
     else
+        # A stack walk reads the return address of this frame to tell it from a frame record of ahead-of-time compiled code.
+        storep 0, ReturnPC[sp]
         call temp1, HostFunctionPtrTag
     end
 end
@@ -403,6 +406,7 @@ op(llint_get_host_call_return_value, macro ()
     ret
 end)
 
+endSectionPart()
 section "bytecode"
 
 macro prepareStateForCCall()
@@ -1006,34 +1010,6 @@ llintOpWithReturn(op_is_undefined_or_null, OpIsUndefinedOrNull, macro (size, get
 end)
 
 
-macro numberToDouble(number, result)
-    bqaeq number, numberTag, .isInt32
-    addq numberTag, number
-    fq2d number, result
-    jmp .converted
-.isInt32:
-    ci2ds number, result
-.converted:
-end
-
-# Both are cells whose types are at most LastValueCompareCellType, and they are not the same cell.
-macro compareStringsStrictly(left, right, scratch1, scratch2, scratch3, equal, notEqual, slow)
-    bbneq JSCell::m_type[left], StringType, slow
-    bbneq JSCell::m_type[right], StringType, slow
-    loadp JSString::m_fiber[left], scratch1
-    loadp JSString::m_fiber[right], scratch2
-    btpnz scratch1, isRopeInPointer, slow
-    btpnz scratch2, isRopeInPointer, slow
-    bpeq scratch1, scratch2, equal
-    loadi StringImpl::m_length[scratch1], scratch3
-    bineq scratch3, StringImpl::m_length[scratch2], notEqual
-    loadi StringImpl::m_hashAndFlags[scratch1], scratch3
-    loadi StringImpl::m_hashAndFlags[scratch2], scratch2
-    andi scratch2, scratch3
-    btinz scratch3, constexpr (StringImpl::flagIsAtom()), notEqual
-    jmp slow
-end
-
 macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
         get(m_rhs, t0)
@@ -1065,7 +1041,7 @@ macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
         addq t5, t3
         orq t2, t3
         lshiftq 1, t5
-        bqaeq t3, t5, .hasDouble
+        bqaeq t3, t5, .slow
 
         cqeq t0, t1, t5
         btqnz t5, t5, .done #is there a better way of checking t5 != 0 ?
@@ -1078,31 +1054,11 @@ macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
         # Both are cells. Only String / HeapBigInt have value-based equality, so if either
         # cell is something else the pointer compare result (false) is correct.
         bba JSCell::m_type[t0], constexpr LastValueCompareCellType, .done
-        bbbeq JSCell::m_type[t1], constexpr LastValueCompareCellType, .compareByValue
+        bbbeq JSCell::m_type[t1], constexpr LastValueCompareCellType, .slow
 
     .done:
         createBoolean(t5)
         return(t5)
-
-    .hasDouble:
-        move 0, t5
-        btqz t0, numberTag, .done
-        btqz t1, numberTag, .done
-        numberToDouble(t0, ft0)
-        numberToDouble(t1, ft1)
-        bdeq ft0, ft1, .equal
-        jmp .done
-
-    .compareByValue:
-        compareStringsStrictly(t0, t1, t2, t3, t5, .equal, .notEqual, .slow)
-
-    .equal:
-        move 1, t5
-        jmp .done
-
-    .notEqual:
-        move 0, t5
-        jmp .done
 
     .slow:
         callSlowPath(_slow_path_%opcodeName%)
@@ -1148,7 +1104,7 @@ macro strictEqualityJumpOp(opcodeName, opcodeStruct, jumpIfEqual, jumpIfNotEqual
         addq t5, t3
         orq t2, t3
         lshiftq 1, t5
-        bqaeq t3, t5, .hasDouble
+        bqaeq t3, t5, .slow
 
         bqeq t0, t1, .equal
 
@@ -1160,24 +1116,13 @@ macro strictEqualityJumpOp(opcodeName, opcodeStruct, jumpIfEqual, jumpIfNotEqual
         # Both are cells. Only String / HeapBigInt have value-based equality, so if either
         # cell is something else the pointer compare result (false) is correct.
         bba JSCell::m_type[t0], constexpr LastValueCompareCellType, .notEqual
-        bbbeq JSCell::m_type[t1], constexpr LastValueCompareCellType, .compareByValue
+        bbbeq JSCell::m_type[t1], constexpr LastValueCompareCellType, .slow
 
     .notEqual:
         jumpIfNotEqual(jump, m_targetLabel, dispatch)
 
     .equal:
         jumpIfEqual(jump, m_targetLabel, dispatch)
-
-    .hasDouble:
-        btqz t0, numberTag, .notEqual
-        btqz t1, numberTag, .notEqual
-        numberToDouble(t0, ft0)
-        numberToDouble(t1, ft1)
-        bdeq ft0, ft1, .equal
-        jmp .notEqual
-
-    .compareByValue:
-        compareStringsStrictly(t0, t1, t2, t3, t5, .equal, .notEqual, .slow)
 
     .slow:
         callSlowPath(_llint_slow_path_%opcodeName%)
@@ -1289,71 +1234,7 @@ llintOpWithMetadata(op_negate, OpNegate, macro (size, get, dispatch, metadata, r
 end)
 
 
-const RopeStringFreeList = VM::clientHeap + GCClient::Heap::ropeStringSpace + GCClient::IsoSubspace::m_localAllocator + constexpr (LocalAllocator::offsetOfFreeList())
-const FreeListIntervalStart = constexpr (FreeList::offsetOfIntervalStart())
-const FreeListIntervalEnd = constexpr (FreeList::offsetOfIntervalEnd())
-
-# t0 holds the left operand, which is no number, and t1 the right one.
-macro joinStrings(size, get, dispatch, slow)
-    btqnz t0, notCellMask, slow
-    btqnz t1, notCellMask, slow
-    bbneq JSCell::m_type[t0], StringType, slow
-    bbneq JSCell::m_type[t1], StringType, slow
-
-    loadp JSString::m_fiber[t0], t2
-    btpnz t2, isRopeInPointer, .leftIsRope
-    loadi StringImpl::m_length[t2], t3
-    loadi StringImpl::m_hashAndFlags[t2], t2
-    jmp .leftIsRead
-.leftIsRope:
-    loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t0], t3
-.leftIsRead:
-    btiz t3, slow
-
-    loadp JSString::m_fiber[t1], t5
-    btpnz t5, isRopeInPointer, .rightIsRope
-    loadi StringImpl::m_length[t5], t6
-    loadi StringImpl::m_hashAndFlags[t5], t5
-    jmp .rightIsRead
-.rightIsRope:
-    loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t1], t6
-.rightIsRead:
-    btiz t6, slow
-    baddio t6, t3, slow
-    andi t5, t2
-    andi HashFlags8BitBuffer, t2
-
-    loadp CodeBlock[cfr], t5
-    loadp CodeBlock::m_vm[t5], t5
-    loadp RopeStringFreeList + FreeListIntervalStart[t5], t6
-    bpaeq t6, RopeStringFreeList + FreeListIntervalEnd[t5], slow
-    leap (sizeof JSRopeString)[t6], t7
-    storep t7, RopeStringFreeList + FreeListIntervalStart[t5]
-
-    loadi JSCell::m_structureID[t0], t7
-    storei t7, JSCell::m_structureID[t6]
-    move constexpr (JSString::defaultTypeInfoBlob()), t7
-    storei t7, JSCell::m_indexingTypeAndMisc[t6]
-    orp t0, t2
-    orp isRopeInPointer, t2
-    storep t2, JSString::m_fiber[t6]
-    move t1, t2
-    lshiftp 32, t2
-    orp t3, t2
-    storep t2, JSRopeString::m_compactFibers[t6]
-    urshiftp 32, t1
-    storep t1, JSRopeString::m_compactFibers + 8[t6]
-    if ARM64 or ARM64E
-        btbz VM::heap + Heap::m_mutatorShouldBeFenced[t5], .isFenced
-        memfence
-    .isFenced:
-    end
-    get(m_dst, t2)
-    storeq t6, [cfr, t2, 8]
-    dispatch()
-end
-
-macro binaryOpCustomStore(opcodeName, opcodeStruct, integerOperationAndStore, doubleOperation, leftNotNumber)
+macro binaryOpCustomStore(opcodeName, opcodeStruct, integerOperationAndStore, doubleOperation)
     llintOpWithMetadata(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, metadata, return)
         get(m_rhs, t0)
         get(m_lhs, t2)
@@ -1369,7 +1250,7 @@ macro binaryOpCustomStore(opcodeName, opcodeStruct, integerOperationAndStore, do
 
     .op1NotInt:
         # First operand is definitely not an int, the second operand could be anything.
-        btqz t0, numberTag, .op1NotNumber
+        btqz t0, numberTag, .slow
         bqaeq t1, numberTag, .op1NotIntOp2Int
         btqz t1, numberTag, .slow
         addq numberTag, t1
@@ -1403,9 +1284,6 @@ macro binaryOpCustomStore(opcodeName, opcodeStruct, integerOperationAndStore, do
         storeq t0, [cfr, t2, 8]
         dispatch()
 
-    .op1NotNumber:
-        leftNotNumber(size, get, dispatch, .slow)
-
     .slow:
         callSlowPath(_slow_path_%opcodeName%)
         dispatch()
@@ -1430,8 +1308,7 @@ if X86_64
             orq numberTag, t0
             storeq t0, [cfr, index, 8]
         end,
-        macro (lhs, rhs) divd rhs, lhs end,
-        macro (size, get, dispatch, slow) end)
+        macro (lhs, rhs) divd rhs, lhs end)
 else
     slowPathOp(div)
 end
@@ -1449,31 +1326,27 @@ binaryOpCustomStore(mul, OpMul,
         orq numberTag, t3
         storeq t3, [cfr, index, 8]
     end,
-    macro (lhs, rhs) muld rhs, lhs end,
-    macro (size, get, dispatch, slow) end)
+    macro (lhs, rhs) muld rhs, lhs end)
 
 
-macro binaryOp(opcodeName, opcodeStruct, integerOperation, doubleOperation, leftNotNumber)
+macro binaryOp(opcodeName, opcodeStruct, integerOperation, doubleOperation)
     binaryOpCustomStore(opcodeName, opcodeStruct,
         macro (lhs, rhs, slow, index)
             integerOperation(lhs, rhs, slow)
             orq numberTag, lhs
             storeq lhs, [cfr, index, 8]
         end,
-        doubleOperation,
-        leftNotNumber)
+        doubleOperation)
 end
 
 binaryOp(add, OpAdd,
     macro (lhs, rhs, slow) baddio rhs, lhs, slow end,
-    macro (lhs, rhs) addd rhs, lhs end,
-    joinStrings)
+    macro (lhs, rhs) addd rhs, lhs end)
 
 
 binaryOp(sub, OpSub,
     macro (lhs, rhs, slow) bsubio rhs, lhs, slow end,
-    macro (lhs, rhs) subd rhs, lhs end,
-    macro (size, get, dispatch, slow) end)
+    macro (lhs, rhs) subd rhs, lhs end)
 
 if X86_64
     llintOpWithReturn(op_mod, OpMod, macro (size, get, dispatch, return)
@@ -1644,48 +1517,14 @@ llintOpWithReturn(op_typeof_is_function, OpTypeofIsFunction, macro (size, get, d
     get(m_operand, t1)
     loadConstantOrVariable(size, t1, t0)
     btqnz t0, notCellMask, .opTypeOfIsFunctionIsImm
-    loadb JSCell::m_type[t0], t1
-    bbb t1, ObjectType, .opTypeOfIsFunctionIsImm
-    btbnz JSCell::m_flags[t0], MasqueradesAsUndefined, .opTypeOfIsFunctionSlowCase
-    bbeq t1, JSFunctionType, .opTypeOfIsFunctionIsFunction
-    bbeq t1, InternalFunctionType, .opTypeOfIsFunctionIsFunction
-    btbnz JSCell::m_flags[t0], constexpr OverridesGetCallData, .opTypeOfIsFunctionSlowCase
+    bbaeq JSCell::m_type[t0], ObjectType, .opTypeOfIsFunctionSlowCase
 .opTypeOfIsFunctionIsImm:
     move ValueFalse, t0
-    return(t0)
-.opTypeOfIsFunctionIsFunction:
-    move ValueTrue, t0
     return(t0)
 .opTypeOfIsFunctionSlowCase:
     callSlowPath(_slow_path_typeof_is_function)
     dispatch()
 end)
-
-if not C_LOOP
-    llintOpWithReturn(op_typeof_is_object, OpTypeofIsObject, macro (size, get, dispatch, return)
-        get(m_operand, t1)
-        loadConstantOrVariable(size, t1, t0)
-        btqnz t0, notCellMask, .opTypeOfIsObjectIsImm
-        loadb JSCell::m_type[t0], t1
-        bbb t1, ObjectType, .opTypeOfIsObjectNotObject
-        btbnz JSCell::m_flags[t0], MasqueradesAsUndefined, .opTypeOfIsObjectSlowCase
-        bbeq t1, JSFunctionType, .opTypeOfIsObjectNotObject
-        bbeq t1, InternalFunctionType, .opTypeOfIsObjectNotObject
-        btbnz JSCell::m_flags[t0], constexpr OverridesGetCallData, .opTypeOfIsObjectSlowCase
-        move ValueTrue, t0
-        return(t0)
-    .opTypeOfIsObjectIsImm:
-        cqeq t0, ValueNull, t0
-        orq ValueFalse, t0
-        return(t0)
-    .opTypeOfIsObjectNotObject:
-        move ValueFalse, t0
-        return(t0)
-    .opTypeOfIsObjectSlowCase:
-        callSlowPath(_slow_path_typeof_is_object)
-        dispatch()
-    end)
-end
 
 llintOpWithReturn(op_is_boolean, OpIsBoolean, macro (size, get, dispatch, return)
     get(m_operand, t1)
@@ -1794,129 +1633,6 @@ macro storePropertyAtVariableOffset(propertyOffsetAsInt, objectAndStorage, value
 end
 
 
-if not C_LOOP
-    const LocalAllocatorIntervalStart = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart())
-    const LocalAllocatorIntervalEnd = constexpr (LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd())
-    const LocalAllocatorCellSize = constexpr (LocalAllocator::offsetOfCellSize())
-
-    llintOpWithMetadata(op_new_object, OpNewObject, macro (size, get, dispatch, metadata, return)
-        metadata(t5, t0)
-        loadp OpNewObject::Metadata::m_objectAllocationProfile + (constexpr (ObjectAllocationProfile::offsetOfAllocator()))[t5], t1
-        btpz t1, .opNewObjectSlow
-        loadp LocalAllocatorIntervalStart[t1], t0
-        bpaeq t0, LocalAllocatorIntervalEnd[t1], .opNewObjectSlow
-        loadi LocalAllocatorCellSize[t1], t2
-        addp t0, t2
-        storep t2, LocalAllocatorIntervalStart[t1]
-
-        loadp OpNewObject::Metadata::m_objectAllocationProfile + (constexpr (ObjectAllocationProfile::offsetOfStructure()))[t5], t3
-        storei t3, JSCell::m_structureID[t0]
-        loadi (constexpr (Structure::indexingModeIncludingHistoryOffset()))[t3], t3
-        storei t3, JSCell::m_indexingTypeAndMisc[t0]
-        move 0, t3
-        storep t3, JSObjectWithButterfly::m_butterfly[t0]
-        leap sizeof JSObjectWithButterfly[t0], t1
-        bpaeq t1, t2, .opNewObjectIsCleared
-    .opNewObjectClear:
-        storep t3, [t1]
-        storep t3, 8[t1]
-        addp 16, t1
-        bpb t1, t2, .opNewObjectClear
-    .opNewObjectIsCleared:
-        if ARM64 or ARM64E
-            loadp CodeBlock[cfr], t3
-            loadp CodeBlock::m_vm[t3], t3
-            btbz VM::heap + Heap::m_mutatorShouldBeFenced[t3], .opNewObjectIsFenced
-            memfence
-        .opNewObjectIsFenced:
-        end
-        return(t0)
-
-    .opNewObjectSlow:
-        callSlowPath(_llint_slow_path_new_object)
-        dispatch()
-    end)
-
-    const ArrayAllocator = VM::clientHeap + GCClient::Heap::arraySpace + GCClient::IsoSubspace::m_localAllocator
-    const SizeOfEmptyArrayStorage = constexpr (sizeof(IndexingHeader) + BASE_CONTIGUOUS_VECTOR_LEN_EMPTY * sizeof(EncodedJSValue))
-    const EmptyArrayStorageAllocator = VM::heap + Heap::auxiliarySpace + constexpr (CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(sizeof(IndexingHeader) + BASE_CONTIGUOUS_VECTOR_LEN_EMPTY * sizeof(EncodedJSValue)) * sizeof(Allocator))
-
-    llintOpWithMetadata(op_new_array, OpNewArray, macro (size, get, dispatch, metadata, return)
-        getu(size, OpNewArray, m_argc, t0)
-        btinz t0, .opNewArraySlow
-        metadata(t5, t0)
-
-        # The profile is the last array made here and, in the sixteen bits above the pointer, an indexing type and a vector length.
-        loadq OpNewArray::Metadata::m_arrayAllocationProfile[t5], t3
-        move t3, t2
-        urshiftq 56, t2
-        lshiftq 16, t3
-        urshiftq 16, t3
-        btpz t3, .opNewArrayProfileIsCurrent
-        loadb JSCell::m_indexingTypeAndMisc[t3], t1
-        andi constexpr AllWritableArrayTypes, t1
-        bineq t1, t2, .opNewArraySlow
-    .opNewArrayProfileIsCurrent:
-        bieq t2, constexpr ArrayWithDouble, .opNewArraySlow
-        bia t2, constexpr ArrayWithContiguous, .opNewArraySlow
-
-        loadp CodeBlock[cfr], t1
-        loadp CodeBlock::m_globalObject[t1], t0
-        loadp CodeBlock::m_vm[t1], t1
-        move t2, t3
-        andi IndexingShapeMask, t3
-        loadi JSGlobalObject::m_arrayStructureForIndexingShapeDuringAllocation[t0, t3, 2], t3
-        structureIDToStructureWithScratch(t3, t0)
-        loadi (constexpr (Structure::indexingModeIncludingHistoryOffset()))[t3], t7
-        move t7, t0
-        andi constexpr AllWritableArrayTypes, t0
-        bineq t0, t2, .opNewArraySlow
-
-        loadp EmptyArrayStorageAllocator[t1], t2
-        btpz t2, .opNewArraySlow
-        loadp LocalAllocatorIntervalStart[t2], t0
-        bpaeq t0, LocalAllocatorIntervalEnd[t2], .opNewArraySlow
-        addp SizeOfEmptyArrayStorage, t0
-        storep t0, LocalAllocatorIntervalStart[t2]
-
-        loadp ArrayAllocator + LocalAllocatorIntervalStart[t1], t2
-        bpaeq t2, ArrayAllocator + LocalAllocatorIntervalEnd[t1], .opNewArraySlow
-        addp sizeof JSArray, t2
-        storep t2, ArrayAllocator + LocalAllocatorIntervalStart[t1]
-
-        storei t3, JSCell::m_structureID - sizeof JSArray[t2]
-        storei t7, JSCell::m_indexingTypeAndMisc - sizeof JSArray[t2]
-        move 0, t3
-        storei t3, IndexingHeader::u.lengths.publicLength - SizeOfEmptyArrayStorage[t0]
-        storei constexpr BASE_CONTIGUOUS_VECTOR_LEN_EMPTY, IndexingHeader::u.lengths.vectorLength - SizeOfEmptyArrayStorage[t0]
-        storeq t3, 8 - SizeOfEmptyArrayStorage[t0]
-        storeq t3, 16 - SizeOfEmptyArrayStorage[t0]
-        storeq t3, 24 - SizeOfEmptyArrayStorage[t0]
-        storeq t3, 32 - SizeOfEmptyArrayStorage[t0]
-        storeq t3, 40 - SizeOfEmptyArrayStorage[t0]
-        subp SizeOfEmptyArrayStorage - sizeof IndexingHeader, t0
-        storep t0, JSObjectWithButterfly::m_butterfly - sizeof JSArray[t2]
-        subp sizeof JSArray, t2
-
-        loadh 6 + OpNewArray::Metadata::m_arrayAllocationProfile[t5], t0
-        lshiftq 48, t0
-        orq t2, t0
-        storeq t0, OpNewArray::Metadata::m_arrayAllocationProfile[t5]
-
-        if ARM64 or ARM64E
-            btbz VM::heap + Heap::m_mutatorShouldBeFenced[t1], .opNewArrayIsFenced
-            memfence
-        .opNewArrayIsFenced:
-        end
-        return(t2)
-
-    .opNewArraySlow:
-        callSlowPath(_llint_slow_path_new_array)
-        dispatch()
-    end)
-end
-
-
 llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
     get(m_base, t0)
@@ -1966,7 +1682,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
     return(t0)
 
 .opGetByIdArrayLength:
-    bbneq t1, constexpr GetByIdMode::ArrayLength, .opGetByIdCompiledField
+    bbneq t1, constexpr GetByIdMode::ArrayLength, .opGetByIdUnset
     loadb JSCell::m_indexingTypeAndMisc[t3], t0
     btiz t0, IsArray, slowLabel
     btiz t0, IndexingShapeMask, slowLabel
@@ -1977,143 +1693,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
     valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
     return(t0)
 
-.opGetByIdCompiledField:
-    bbneq t1, constexpr GetByIdMode::CompiledField, .opGetByIdUnset
-    loadi JSCell::m_structureID[t3], t1
-    loadi %opcodeStruct%::Metadata::%modeMetadataName%.compiledFieldMode.structureID[t2], t0
-    bineq t0, t1, slowLabel
-    loadh %opcodeStruct%::Metadata::%modeMetadataName%.compiledFieldMode.offset[t2], t1
-    loadi %opcodeStruct%::Metadata::%modeMetadataName%.compiledFieldMode.kind[t2], t0
-    addp t3, t1
-    bineq t0, constexpr GetByIdCompiledFieldKind::Cell32, .opGetByIdCompiledFieldInt32OrNumberBox
-    loadi [t1], t0
-    bia t0, constexpr getByIdMaxCell32Immediate, .opGetByIdCompiledFieldCell
-    btiz t0, .opGetByIdCompiledFieldAbsent
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldCell:
-    btpnz t3, (constexpr PreciseAllocation::halfAlignment), slowLabel
-    lshiftq constexpr getByIdCell32Shift, t0
-    urshiftq constexpr getByIdMarkedBlockCageBits, t3
-    lshiftq constexpr getByIdMarkedBlockCageBits, t3
-    addq t3, t0
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldInt32OrNumberBox:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Int32OrNumberBox, .opGetByIdCompiledFieldJSValue
-    loadi [t1], t0
-    bilt t0, constexpr getByIdMinInlineInt32, .opGetByIdCompiledFieldNotInlineInt32
-    orq numberTag, t0
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldJSValue:
-    bineq t0, constexpr GetByIdCompiledFieldKind::JSValue, .opGetByIdCompiledFieldDouble
-    loadq [t1], t0
-    btqz t0, .opGetByIdCompiledFieldAbsent
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldDouble:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Double, .opGetByIdCompiledFieldBoolean
-    loadd [t1], ft0
-    bdnequn ft0, ft0, slowLabel
-    fd2q ft0, t0
-    subq numberTag, t0
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldBoolean:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Boolean, .opGetByIdCompiledFieldInt32
-    loadb [t1], t0
-    orq ValueFalse, t0
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldNotInlineInt32:
-    bineq t0, constexpr getByIdAbsentInt32, slowLabel
-
-.opGetByIdCompiledFieldAbsent:
-    loadh %opcodeStruct%::Metadata::%modeMetadataName%.compiledFieldMode.absentIsUndefined[t2], t0
-    btiz t0, slowLabel
-    move ValueUndefined, t0
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldInt32:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Int32, .opGetByIdCompiledFieldUint8
-    loadi [t1], t0
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldUint8:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Uint8, .opGetByIdCompiledFieldInt8
-    loadb [t1], t0
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldInt8:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Int8, .opGetByIdCompiledFieldUint16
-    loadbsi [t1], t0
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldUint16:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Uint16, .opGetByIdCompiledFieldInt16
-    loadh [t1], t0
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldInt16:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Int16, .opGetByIdCompiledFieldUint32
-    loadhsi [t1], t0
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldUint32:
-    bineq t0, constexpr GetByIdCompiledFieldKind::Uint32, .opGetByIdCompiledFieldOptionalBoolean
-    loadi [t1], t0
-    bilt t0, 0, slowLabel
-    jmp .opGetByIdCompiledFieldIsInt32
-
-.opGetByIdCompiledFieldOptionalBoolean:
-    bineq t0, constexpr GetByIdCompiledFieldKind::OptionalBoolean, .opGetByIdCompiledFieldInt64
-    loadb [t1], t0
-    btiz t0, .opGetByIdCompiledFieldAbsent
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdCompiledFieldInt64:
-    bieq t0, constexpr GetByIdCompiledFieldKind::OptionalInt64, .opGetByIdCompiledFieldIsInt64
-    bieq t0, constexpr GetByIdCompiledFieldKind::ExtraProperty, .opGetByIdExtraProperty
-    bineq t0, constexpr GetByIdCompiledFieldKind::Int64, .opGetByIdCompiledFieldAbsent
-.opGetByIdCompiledFieldIsInt64:
-    loadq [t1], t1
-    sxi2q t1, t0
-    bqneq t0, t1, slowLabel
-    zxi2q t0, t0
-
-.opGetByIdCompiledFieldIsInt32:
-    orq numberTag, t0
-
-.opGetByIdCompiledFieldDone:
-    valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
-    return(t0)
-
-.opGetByIdExtraProperty:
-    loadh %opcodeStruct%::Metadata::%modeMetadataName%.compiledFieldMode.absentIsUndefined[t2], t0
-    bpeq t1, t3, .opGetByIdExtraPropertyViaHandle
-    btpnz t3, (constexpr PreciseAllocation::halfAlignment), slowLabel
-    loadi [t1], t1
-    lshiftq constexpr getByIdCell32Shift, t1
-    urshiftq constexpr getByIdMarkedBlockCageBits, t3
-    lshiftq constexpr getByIdMarkedBlockCageBits, t3
-    addq t1, t3
-    move t0, t1
-    loadPropertyAtVariableOffset(t1, t3, t0)
-    jmp .opGetByIdCompiledFieldDone
-
-.opGetByIdExtraPropertyViaHandle:
-    push PB, PC
-    move t0, a1
-    move t3, a0
-    cCall2(_llint_get_compiled_object_extra_property)
-    pop PC, PB
-    btqz r0, slowLabel
-    move r0, t0
-    jmp .opGetByIdCompiledFieldDone
-
 .opGetByIdUnset:
-    bbneq t1, constexpr GetByIdMode::Unset, slowLabel
     loadi JSCell::m_structureID[t3], t1
     loadi %opcodeStruct%::Metadata::%modeMetadataName%.unsetMode.structureID[t2], t0
     bineq t0, t1, slowLabel
@@ -2144,26 +1724,7 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
     metadata(t2, t1)
     arrayProfile(OpGetLength::Metadata::m_arrayProfile, t3, t2, t5)
-    if BUN_JSC_ADDITIONS
-        bbeq JSCell::m_type[t3], StringType, .opGetLengthString
-    end
     performGetByIDHelper(OpGetLength, m_modeMetadata, m_valueProfile, .opGetLengthSlow, size, return)
-
-    if BUN_JSC_ADDITIONS
-    .opGetLengthString:
-        loadp JSString::m_fiber[t3], t0
-        btpnz t0, isRopeInPointer, .opGetLengthRope
-        loadi StringImpl::m_length[t0], t0
-        orq numberTag, t0
-        valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
-        return(t0)
-
-    .opGetLengthRope:
-        loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t3], t0
-        orq numberTag, t0
-        valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
-        return(t0)
-    end
 
 .opGetLengthSlow:
     callSlowPath(_llint_slow_path_get_length)
@@ -2205,7 +1766,7 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
     loadConstantOrVariableCell(size, t3, t0, .opPutByIdSlow)
     metadata(t5, t2)
     loadi OpPutById::Metadata::m_oldStructureID[t5], t2
-    bineq t2, JSCell::m_structureID[t0], .opPutByIdCompiledField
+    bineq t2, JSCell::m_structureID[t0], .opPutByIdSlow
 
     # At this point, we have:
     # t0 -> object base
@@ -2245,116 +1806,21 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
 
 .opPutByIdTransitionDirect:
     storei t1, JSCell::m_structureID[t0]
-    get(m_value, t1)
-    loadConstantOrVariable(size, t1, t2)
-    loadi OpPutById::Metadata::m_offset[t5], t1
-    move t0, t3
-    storePropertyAtVariableOffset(t1, t3, t2)
-    writeBarrierOnCellWithReload(t0, macro () end)
-    dispatch()
+    writeBarrierOnOperandWithReload(size, get, m_base, macro ()
+        # Reload metadata into t5
+        metadata(t5, t1)
+        # Reload base into t0
+        get(m_base, t1)
+        loadConstantOrVariable(size, t1, t0)
+    end)
 
 .opPutByIdNotTransition:
+    # The only thing live right now is t0, which holds the base.
     get(m_value, t1)
     loadConstantOrVariable(size, t1, t2)
     loadi OpPutById::Metadata::m_offset[t5], t1
-    move t0, t3
-    storePropertyAtVariableOffset(t1, t3, t2)
-    writeBarrierOnCellAndValueWithReload(t0, t2, macro () end)
-    dispatch()
-
-.opPutByIdCompiledField:
-    btinz t2, .opPutByIdSlow
-    loadi OpPutById::Metadata::m_newStructureID[t5], t2
-    bineq t2, JSCell::m_structureID[t0], .opPutByIdSlow
-    loadi (constexpr putByIdOffsetOfOrderWord)[t0], t3
-    btinz t3, constexpr putByIdOrderWordIsFrozen, .opPutByIdSlow
-    get(m_value, t1)
-    loadConstantOrVariable(size, t1, t2)
-    loadi OpPutById::Metadata::m_offset[t5], t1
-    move t1, t3
-    andi 0xffff, t3
-    addp t0, t3
-    urshifti constexpr putByIdCompiledFieldKindShift, t1
-    biaeq t1, constexpr PutByIdCompiledFieldKind::ExtraProperty, .opPutByIdExtraProperty
-    bineq t1, constexpr PutByIdCompiledFieldKind::Int32OrNumberBox, .opPutByIdCompiledFieldDouble
-    bqb t2, numberTag, .opPutByIdSlow
-    loadi [t3], t1
-    bilt t1, constexpr getByIdMinInlineInt32, .opPutByIdSlow
-    bilt t2, constexpr getByIdMinInlineInt32, .opPutByIdSlow
-    storei t2, [t3]
-    dispatch()
-
-.opPutByIdCompiledFieldDouble:
-    bieq t1, constexpr PutByIdCompiledFieldKind::Double, .opPutByIdCompiledFieldIsDouble
-    bineq t1, constexpr PutByIdCompiledFieldKind::OptionalDouble, .opPutByIdCompiledFieldInt32
-    loadq [t3], t1
-    move constexpr putByIdAbsentDouble, t5
-    bqeq t1, t5, .opPutByIdSlow
-.opPutByIdCompiledFieldIsDouble:
-    bqb t2, numberTag, .opPutByIdCompiledFieldNotInt32
-    ci2ds t2, ft0
-    stored ft0, [t3]
-    dispatch()
-.opPutByIdCompiledFieldNotInt32:
-    btqz t2, numberTag, .opPutByIdSlow
-    addq numberTag, t2
-    storeq t2, [t3]
-    dispatch()
-
-.opPutByIdCompiledFieldInt32:
-    bineq t1, constexpr PutByIdCompiledFieldKind::Int32, .opPutByIdCompiledFieldBoolean
-    bqb t2, numberTag, .opPutByIdSlow
-    storei t2, [t3]
-    dispatch()
-
-.opPutByIdCompiledFieldBoolean:
-    bineq t1, constexpr PutByIdCompiledFieldKind::Boolean, .opPutByIdCompiledFieldJSValue
-    move t2, t1
-    andq ~1, t1
-    bqneq t1, ValueFalse, .opPutByIdSlow
-    andi 1, t2
-    storeb t2, [t3]
-    dispatch()
-
-.opPutByIdCompiledFieldJSValue:
-    bineq t1, constexpr PutByIdCompiledFieldKind::JSValue, .opPutByIdCompiledFieldString
-    loadq [t3], t1
-    btqz t1, .opPutByIdSlow
-    storeq t2, [t3]
-    writeBarrierOnCellAndValueWithReload(t0, t2, macro () end)
-    dispatch()
-
-.opPutByIdCompiledFieldString:
-    bineq t1, constexpr PutByIdCompiledFieldKind::StringInCell32, .opPutByIdSlow
-    btqnz t2, notCellMask, .opPutByIdSlow
-    bbneq JSCell::m_type[t2], StringType, .opPutByIdSlow
-    loadi [t3], t1
-    btiz t1, .opPutByIdSlow
-    urshiftq constexpr getByIdCell32Shift, t2
-    storei t2, [t3]
-    writeBarrierOnCellWithReload(t0, macro () end)
-    dispatch()
-
-.opPutByIdExtraProperty:
-    urshifti constexpr (putByIdExtraPropertyOffsetShift - putByIdCompiledFieldKindShift), t1
-    bpeq t3, t0, .opPutByIdExtraPropertyViaHandle
-    btpnz t0, (constexpr PreciseAllocation::halfAlignment), .opPutByIdSlow
-    loadi [t3], t3
-    lshiftq constexpr getByIdCell32Shift, t3
-    urshiftq constexpr getByIdMarkedBlockCageBits, t0
-    lshiftq constexpr getByIdMarkedBlockCageBits, t0
-    addq t3, t0
-    move t0, t3
-    storePropertyAtVariableOffset(t1, t3, t2)
-    writeBarrierOnCellAndValueWithReload(t0, t2, macro () end)
-    dispatch()
-
-.opPutByIdExtraPropertyViaHandle:
-    push PB, PC
-    move t0, a0
-    cCall3(_llint_store_compiled_object_extra_property)
-    pop PC, PB
-    btpz r0, .opPutByIdSlow
+    storePropertyAtVariableOffset(t1, t0, t2)
+    writeBarrierOnOperands(size, get, m_base, m_value)
     dispatch()
 
 .opPutByIdSlow:
@@ -2368,7 +1834,7 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
 end)
 
 
-llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+macro getByVal(size, get, dispatch, metadata, return, slowPath)
     macro finishGetByVal(result, scratch)
         get(m_dst, scratch)
         storeq result, [cfr, scratch, 8]
@@ -2448,8 +1914,14 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     getByValTypedArray(t0, t1, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, .opGetByValSlow)
 
 .opGetByValSlow:
-    callSlowPath(_llint_slow_path_get_by_val)
-    dispatch()
+    slowPath()
+end
+
+llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
+    getByVal(size, get, dispatch, metadata, return, macro ()
+        callSlowPath(_llint_slow_path_get_by_val)
+        dispatch()
+    end)
 
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_get_by_val, size)
@@ -2726,48 +2198,17 @@ macro llintJumpTrueOrFalseOp(opcodeName, opcodeStruct, miscConditionOp, truthyCe
         get(m_condition, t1)
         loadConstantOrVariable(size, t1, t0)
         btqnz t0, ~0xf, .maybeCell
-    .misc:
         miscConditionOp(t0, .target)
         dispatch()
 
     .maybeCell:
-        btqnz t0, notCellMask, .number
-        bbbeq JSCell::m_type[t0], constexpr LastValueCompareCellType, .stringOrBigInt
+        btqnz t0, notCellMask, .slow
+        bbbeq JSCell::m_type[t0], constexpr LastValueCompareCellType, .slow
         btbnz JSCell::m_flags[t0], constexpr MasqueradesAsUndefined, .slow
         truthyCellConditionOp(dispatch)
 
     .target:
         jump(m_targetLabel)
-
-    .number:
-        bqb t0, numberTag, .double
-        btiz t0, .falsy
-    .truthy:
-        move ValueTrue, t0
-        jmp .misc
-
-    .falsy:
-        move ValueFalse, t0
-        jmp .misc
-
-    .double:
-        addq numberTag, t0
-        fq2d t0, ft0
-        move 0, t0
-        fq2d t0, ft1
-        bdneq ft0, ft1, .truthy
-        jmp .falsy
-
-    .stringOrBigInt:
-        bbneq JSCell::m_type[t0], StringType, .slow
-        loadp JSString::m_fiber[t0], t1
-        btpnz t1, isRopeInPointer, .rope
-        btinz StringImpl::m_length[t1], .truthy
-        jmp .falsy
-
-    .rope:
-        btinz JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t0], .truthy
-        jmp .falsy
 
     .slow:
         callSlowPath(_llint_slow_path_%opcodeName%)
@@ -3347,6 +2788,7 @@ commonOp(llint_op_catch, macro () end, macro (size)
     dispatchOp(size, op_catch)
 end)
 
+endSectionPart()
 section "trampolines"
 
 op(llint_throw_from_slow_path_trampoline, macro ()
@@ -3374,39 +2816,11 @@ op(llint_throw_during_call_trampoline, macro ()
     jmp _llint_throw_from_slow_path_trampoline
 end)
 
+endSectionPart()
 section "bytecode"
-
-macro clearStackForHostCall()
-    if ASSERT_ENABLED and not C_LOOP
-        move sp, t5
-        subp StackBytesClearedForCallSlowPath, sp
-        move sp, t3
-        move 0, t4
-    .clearStackForHostCall:
-        if ARM64 or ARM64E
-            storepairq t4, t4, 0[t3]
-            storepairq t4, t4, 16[t3]
-            storepairq t4, t4, 32[t3]
-            storepairq t4, t4, 48[t3]
-        else
-            storeq t4, 0[t3]
-            storeq t4, 8[t3]
-            storeq t4, 16[t3]
-            storeq t4, 24[t3]
-            storeq t4, 32[t3]
-            storeq t4, 40[t3]
-            storeq t4, 48[t3]
-            storeq t4, 56[t3]
-        end
-        addp 64, t3
-        bpb t3, t5, .clearStackForHostCall
-        move t5, sp
-    end
-end
 
 macro nativeCallTrampoline(executableOffsetToFunction)
     functionPrologue()
-    clearStackForHostCall()
     storep 0, CodeBlock[cfr]
     loadp Callee[cfr], a0
     loadp JSFunction::m_executableOrRareData[a0], a2
@@ -3443,7 +2857,6 @@ end
 
 macro internalFunctionCallTrampoline(offsetOfFunction)
     functionPrologue()
-    clearStackForHostCall()
     storep 0, CodeBlock[cfr]
     loadp Callee[cfr], a2
     loadp InternalFunction::m_globalObject[a2], a0
@@ -4352,7 +3765,7 @@ llintOpWithReturn(op_get_property_enumerator, OpGetPropertyEnumerator, macro (si
     dispatch()
 end)
 
-llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
+macro enumeratorNext(size, get, dispatch, slowPath)
     # Note: this will always call the slow path on at least the first/last execution of EnumeratorNext for any given loop.
     # The upside this is that we don't have to record any metadata or mode information here as the slow path will do it for us when transitioning from InitMode/IndexedMode to OwnStructureMode, or from OwnStructureMode to GenericMode.
     loadVariable(get, m_mode, t0)
@@ -4379,11 +3792,17 @@ llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
     dispatch()
 
 .nextSlowPath:
-    callSlowPath(_slow_path_enumerator_next)
-    dispatch()
+    slowPath()
+end
+
+llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
+    enumeratorNext(size, get, dispatch, macro ()
+        callSlowPath(_slow_path_enumerator_next)
+        dispatch()
+    end)
 end)
 
-llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
+macro enumeratorGetByVal(size, get, dispatch, metadata, return, slowPath)
     metadata(t5, t0)
 
     loadVariable(get, m_mode, t0)
@@ -4422,8 +3841,14 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     return(t2)
 
 .getSlowPath:
-    callSlowPath(_slow_path_enumerator_get_by_val)
-    dispatch()
+    slowPath()
+end
+
+llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
+    enumeratorGetByVal(size, get, dispatch, metadata, return, macro ()
+        callSlowPath(_slow_path_enumerator_get_by_val)
+        dispatch()
+    end)
 
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_enumerator_get_by_val, size)
@@ -4451,7 +3876,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     bineq t2, JSCell::m_structureID[t0], .putSlowPath
 
     structureIDToStructureWithScratch(t2, t3)
-    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_hasImmutablePropertiesBits)), .putSlowPath
+    btinz Structure::m_bitField[t2], ((constexpr Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits) | (constexpr Structure::s_isWatchingReplacementBits) | (constexpr Structure::s_anyImmutablePropertiesBits)), .putSlowPath
 
     get(m_value, t2)
     loadConstantOrVariable(size, t2, t3)
@@ -4520,39 +3945,7 @@ llintOpWithMetadata(op_enumerator_has_own_property, OpEnumeratorHasOwnProperty, 
     hasPropertyImpl(OpEnumeratorHasOwnProperty, size, get, dispatch, metadata, return, _slow_path_enumerator_has_own_property)
 end)
 
-llintOpWithMetadata(op_in_by_id, OpInById, macro (size, get, dispatch, metadata, return)
-    get(m_base, t0)
-    loadConstantOrVariableCell(size, t0, t3, .opInByIdSlow)
-    metadata(t2, t1)
-    loadi JSCell::m_structureID[t3], t1
-    bineq t1, OpInById::Metadata::m_structureID[t2], .opInByIdSlow
-    loadi OpInById::Metadata::m_kind[t2], t0
-    btiz t0, .opInByIdPresent
-    loadi OpInById::Metadata::m_offset[t2], t1
-    addp t3, t1
-    bineq t0, constexpr InByIdKind::Cell32, .opInByIdNotCell32
-    btiz [t1], .opInByIdSlow
-    return(ValueTrue)
-
-.opInByIdNotCell32:
-    bineq t0, constexpr InByIdKind::JSValue, .opInByIdNotJSValue
-    btqz [t1], .opInByIdSlow
-    return(ValueTrue)
-
-.opInByIdNotJSValue:
-    bineq t0, constexpr InByIdKind::Int32OrNumberBox, .opInByIdNotInt32OrNumberBox
-    bieq [t1], constexpr getByIdAbsentInt32, .opInByIdSlow
-    return(ValueTrue)
-
-.opInByIdNotInt32OrNumberBox:
-    bineq t0, constexpr InByIdKind::Double, .opInByIdPresent
-    loadd [t1], ft0
-    bdnequn ft0, ft0, .opInByIdSlow
-
-.opInByIdPresent:
-    return(ValueTrue)
-
-.opInByIdSlow:
+llintOpWithReturn(op_in_by_id, OpInById, macro (size, get, dispatch, return)
     callSlowPath(_llint_slow_path_in_by_id)
     dispatch()
 .osrReturnPoint:

@@ -1,0 +1,50 @@
+# function down(n, next) { return n === 0 ? 0 : next.apply(undefined, [n - 1, next]) }   globalThis.held = down   down(input, input)
+# Nobody knows `next`, so the call of apply stays a call by value and enters the function of the library that is Function.prototype.apply. That function passes the call on to a function nobody knows, which may be `down` again:
+# its own tail call lies on the cycle and has to reuse the frame
+# RUN: flow-apply
+# CHECK-LABEL: function f1 name="down"
+# CHECK: ReturnCall
+# CHECK-NOT: requirement=Allowed
+# CHECK-LABEL: function f2 name="apply"
+# CHECK: ReturnCall
+# CHECK-NOT: requirement=Allowed
+# RUN(BUILT): pipeline Select
+# BUILT-LABEL: function f2 name="apply"
+# BUILT-NOT: isDemotedTailCall
+# BUILT: [[passedOn]]: {{*}} = CallList
+# BUILT-NEXT: ReturnCall [[passedOn]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=4 function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v0, v2 key="held"
+    v4 = Call v2, -, v1, v1
+    Return
+}
+function f1 name="down" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v4 = PropGet v1 key="apply"
+    v5 = Undefined
+    v6 = Integer integer=1
+    v7 = Sub v0, v6
+    v8 = NewArray v7, v1 contents=anything holes=[]
+    v9 = Call v4, v1, v5, v8 calleeKey="apply"
+    ReturnCall v9
+}
+function f2 name="apply" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+}

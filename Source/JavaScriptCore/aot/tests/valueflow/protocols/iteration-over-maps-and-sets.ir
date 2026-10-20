@@ -1,0 +1,79 @@
+# first = new Map; first.set(keyOne, one); second = new Map; second.set(keyTwo, two); for (const [k, v] of first) v(); for (const v of second.values()) v(); for (const k of second.keys()) k(); set = new Set; set.add(three); for (const e of set) e()
+# A step over a map allocates a pair at the step, so the entries of two maps stay apart. A pair does not tell the key from the value. The iterators of keys and of values hand out one of the two.
+# RUN: valueflow-solve calls
+# CHECK: f0 v20 -> f1 f2
+# CHECK: f0 v27 -> f4
+# CHECK: f0 v34 -> f3
+# CHECK: f0 v44 -> f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="set"
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Call v2, v1, v3, v4 calleeKey="set"
+    v6 = Construct v0
+    v7 = PropGet v6 key="set"
+    v8 = NewClosure function=f3
+    v9 = NewClosure function=f4
+    v10 = Call v7, v6, v8, v9 calleeKey="set"
+    v11 = IteratorOpen v1
+    v12 = IteratorResume v11
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    v15 = IteratorOpen v14 elementCount=2 [isDestructuring]
+    v16 = IteratorResume v15 stepIndex=0
+    v17 = IteratorResume v15 stepIndex=1
+    v18 = ResultAt v17
+    v19 = ResultAt v17 index=1
+    v20 = Call v19
+    v21 = PropGet v6 key="values"
+    v22 = Call v21, v6 calleeKey="values"
+    v23 = IteratorOpen v22
+    v24 = IteratorResume v23
+    v25 = ResultAt v24
+    v26 = ResultAt v24 index=1
+    v27 = Call v26
+    v28 = PropGet v6 key="keys"
+    v29 = Call v28, v6 calleeKey="keys"
+    v30 = IteratorOpen v29
+    v31 = IteratorResume v30
+    v32 = ResultAt v31
+    v33 = ResultAt v31 index=1
+    v34 = Call v33
+    v35 = Builtin builtin=Set
+    v36 = Construct v35
+    v37 = PropGet v36 key="add"
+    v38 = NewClosure function=f5
+    v39 = Call v37, v36, v38 calleeKey="add"
+    v40 = IteratorOpen v36
+    v41 = IteratorResume v40
+    v42 = ResultAt v41
+    v43 = ResultAt v41 index=1
+    v44 = Call v43
+    Return
+}
+function f1 name="keyOne" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="keyTwo" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}

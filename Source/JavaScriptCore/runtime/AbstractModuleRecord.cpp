@@ -26,8 +26,11 @@
 #include "config.h"
 #include "AbstractModuleRecord.h"
 
-#include "AOTProgramData.h"
-
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "AOTModuleRecord.h"
+#include "AOTRuntimeCounters.h"
+#endif
 #include "BuiltinNames.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
@@ -37,7 +40,6 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
-#include "JSModuleNamespaceObjectInlines.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
@@ -242,6 +244,17 @@ auto AbstractModuleRecord::Resolution::ambiguous() -> Resolution
     return Resolution { Type::Ambiguous, nullptr, Identifier() };
 }
 
+bool AbstractModuleRecord::Resolution::isSameBinding(const Resolution& other) const
+{
+    if (moduleRecord == other.moduleRecord && localName == other.localName)
+        return true;
+#if ENABLE(AOT)
+    if (moduleRecord && other.moduleRecord && moduleRecord->inherits<AOT::ModuleRecord>() && other.moduleRecord->inherits<AOT::ModuleRecord>())
+        return AOT::ModuleRecord::isSameBinding(*this, other);
+#endif
+    return false;
+}
+
 AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType)
 {
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleName.impl(), moduleRequestType }); iter != m_loadedModules.end())
@@ -250,8 +263,8 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
     // A prelinked record's graph requests are answered by the loader's index table, not [[LoadedModules]] (until
     // something materializes the by-name view); a record has tens of requests, so find the request by name.
     if (m_prelinked) {
-        for (unsigned i = 0; i < requestedModules().size(); ++i) {
-            const ModuleRequest& request = requestedModules()[i];
+        for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+            const ModuleRequest& request = m_requestedModules[i];
             if (request.m_specifier.impl() == moduleName.impl() && request.type() == moduleRequestType)
                 return prelinkedRequestedModule(i);
         }
@@ -269,22 +282,7 @@ void AbstractModuleRecord::initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&& 
     const auto& module = prelinkedModule();
     m_isTypeScript = module.flags & PrelinkedModuleGraph::Module::IsTypeScript;
     m_hasTLA = module.flags & PrelinkedModuleGraph::Module::HasTLA;
-    fillPrelinkedRequestedModules();
-}
-
-void AbstractModuleRecord::releaseLinkingData()
-{
-    if (!m_prelinked || m_prelinkedEntriesMaterialized)
-        return;
-    m_requestedModules.clear();
-    m_didReleasePrelinkedRequests = true;
-    m_prelinkedImportResolutions.clear();
-}
-
-void AbstractModuleRecord::fillPrelinkedRequestedModules()
-{
-    m_didReleasePrelinkedRequests = false;
-    auto requests = m_prelinked->requests(prelinkedModule());
+    auto requests = m_prelinked->requests(module);
     m_requestedModules = Vector<ModuleRequest>(requests.size(), [&](size_t i) {
         const auto& request = requests[i];
         return ModuleRequest { m_prelinked->identifier(request.specifierSid), m_prelinked->fetchParameters(request), request.isDeferred() ? ModulePhase::Defer : ModulePhase::Evaluation };
@@ -304,17 +302,14 @@ void AbstractModuleRecord::convertPrelinkedToEager()
 
 AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(unsigned requestIndex) const
 {
-    if (!m_prelinked)
+    if (!m_prelinked || requestIndex >= m_requestedModules.size())
         return nullptr;
-    auto requests = m_prelinked->requests(prelinkedModule());
-    if (requestIndex >= requests.size())
-        return nullptr;
-    const auto& request = requests[requestIndex];
+    const auto& request = m_prelinked->requests(prelinkedModule())[requestIndex];
     if (request.moduleIndex != PrelinkedModuleGraph::noModule) {
         if (AbstractModuleRecord* record = prelinkedRecordForResolution(globalObject(), request.moduleIndex)) [[likely]]
             return record;
     }
-    const ModuleRequest& moduleRequest = requestedModules()[requestIndex];
+    const ModuleRequest& moduleRequest = m_requestedModules[requestIndex];
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != m_loadedModules.end())
         return iter->value.m_module.get();
     return nullptr;
@@ -325,12 +320,12 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const Modul
     if (!m_prelinked)
         return nullptr;
     // Graph walks hand us an element of requestedModules(): its position is the request index.
-    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(requestedModules().span().data());
-    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < requestedModules().size()) [[likely]]
+    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(m_requestedModules.span().data());
+    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < m_requestedModules.size()) [[likely]]
         return prelinkedRequestedModule(offset / sizeof(ModuleRequest));
     // A copy (a top-level load's own request, or a caller that copied an element): match it the way ModuleRequestsEqual does.
-    for (unsigned i = 0; i < requestedModules().size(); ++i) {
-        const ModuleRequest& candidate = requestedModules()[i];
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+        const ModuleRequest& candidate = m_requestedModules[i];
         if (candidate.m_specifier.impl() == request.m_specifier.impl() && candidate.type() == request.type())
             return prelinkedRequestedModule(i);
     }
@@ -339,7 +334,7 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const Modul
 
 bool AbstractModuleRecord::hasAllPrelinkedRequestedModules() const
 {
-    for (unsigned i = 0; i < requestedModules().size(); ++i) {
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
         if (!prelinkedRequestedModule(i))
             return false;
     }
@@ -356,12 +351,12 @@ void AbstractModuleRecord::materializePrelinkedEntries()
     PrelinkedModuleGraph& graph = *m_prelinked;
     const auto& module = prelinkedModule();
     auto requestType = [&](uint32_t requestIndex) {
-        RELEASE_ASSERT(requestIndex < requestedModules().size(), requestIndex, requestedModules().size());
-        return requestedModules()[requestIndex].type();
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].type();
     };
     auto requestSpecifier = [&](uint32_t requestIndex) -> const Identifier& {
-        RELEASE_ASSERT(requestIndex < requestedModules().size(), requestIndex, requestedModules().size());
-        return requestedModules()[requestIndex].m_specifier;
+        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
+        return m_requestedModules[requestIndex].m_specifier;
     };
 
     auto imports = graph.imports(module);
@@ -409,11 +404,11 @@ void AbstractModuleRecord::materializePrelinkedEntries()
         addStarExportEntry(requestSpecifier(requestIndex), requestType(requestIndex));
 
     Locker locker { cellLock() };
-    for (unsigned i = 0; i < requestedModules().size(); ++i) {
+    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
         AbstractModuleRecord* loaded = prelinkedRequestedModule(i);
         if (!loaded)
             continue;
-        const ModuleRequest& request = requestedModules()[i];
+        const ModuleRequest& request = m_requestedModules[i];
         m_loadedModules.ensure(ModuleMapKey { request.m_specifier.impl(), request.type() }, [&] {
             return LoadedModuleRequest { vm, request, loaded, this };
         });
@@ -556,6 +551,9 @@ bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* 
             throwSyntaxError(globalObject, scope, "Exported binding name 'default' cannot be resolved by star export entries."_s);
             return false;
         case Resolution::Type::Ambiguous:
+#if ENABLE(AOT)
+            m_ambiguousExportNames.appendIfNotContains(exportName);
+#endif
             break;
         case Resolution::Type::Resolved:
             resolutions.append({ WTF::move(exportName), *resolution });
@@ -1045,6 +1043,24 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             if (!resolveSet.add(task.query).isNewEntry)
                 continue;
 
+#if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+                Resolution resolution = compiled->resolveExport(globalObject, Identifier::fromUid(vm, query.exportName.get()));
+                RETURN_IF_EXCEPTION(scope, Resolution::error());
+                switch (resolution.type) {
+                case Resolution::Type::Error:
+                    return Resolution::error();
+                case Resolution::Type::Ambiguous:
+                    return Resolution::ambiguous();
+                case Resolution::Type::NotFound:
+                case Resolution::Type::Resolved:
+                    if (!mergeToCurrentTop(resolution))
+                        return Resolution::ambiguous();
+                    continue;
+                }
+            }
+#endif
+
             //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
             if (!moduleRecord->starExportEntries().isEmpty())
                 foundStarLinks = true;
@@ -1187,6 +1203,18 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+        if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
+            return *cachedResolution;
+        Resolution resolution = compiled->resolveExport(globalObject, exportName);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution.type == Resolution::Type::Resolved)
+            cacheResolution(exportName.impl(), resolution);
+        return resolution;
+    }
+#endif
+
     // Local / Namespace exports are trivially derivable from m_exportEntries.
     // m_resolutionCache only holds results that actually amortise costly traversals, Indirect resolutions and star-resolved results.
     if (const auto optionalExportEntry = tryGetExportEntry(exportName.impl())) {
@@ -1215,8 +1243,20 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, resolveExportImpl(globalObject, ResolveQuery(this, exportName.impl())));
 }
 
+JSObject* AbstractModuleRecord::moduleNamespaceObject(JSGlobalObject* globalObject, ModulePhase phase)
+{
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        return compiled->moduleNamespaceObject(globalObject, phase);
+#endif
+    return getModuleNamespace(globalObject, phase);
+}
+
 JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
 {
+#if ENABLE(AOT)
+    RELEASE_ASSERT(!inherits<AOT::ModuleRecord>());
+#endif
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1261,6 +1301,32 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
         if (!exportStarSet.add(moduleRecord).isNewEntry)
             continue;
         bool isRoot = moduleRecord == this;
+
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+            Vector<Identifier> names;
+            compiled->collectExportedNames(globalObject, names);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            for (const Identifier& name : names) {
+                SUPPRESS_UNCOUNTED_LOCAL auto* exportName = name.impl();
+                if (vm.propertyNames->defaultKeyword == name || rootShadowedNames.contains(exportName) || slowPathNames.contains(exportName))
+                    continue;
+                Resolution candidate = compiled->resolveExport(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (candidate.type != Resolution::Type::Resolved) {
+                    uniqueBindings.remove(exportName);
+                    slowPathNames.add(exportName);
+                    continue;
+                }
+                auto addResult = uniqueBindings.add(exportName, candidate);
+                if (!addResult.isNewEntry && !addResult.iterator->value.isSameBinding(candidate)) {
+                    slowPathNames.add(exportName);
+                    uniqueBindings.remove(addResult.iterator);
+                }
+            }
+            continue;
+        }
+#endif
 
         for (const auto& pair : moduleRecord->exportEntries()) {
             const ExportEntry& exportEntry = pair.value;
@@ -1345,6 +1411,9 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             return nullptr;
 
         case Resolution::Type::Ambiguous:
+#if ENABLE(AOT)
+            m_ambiguousExportNames.appendIfNotContains(ident);
+#endif
             break;
 
         case Resolution::Type::Resolved:
@@ -1356,12 +1425,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     } // !collected
 #endif
 
-    Structure* namespaceStructure = globalObject->moduleNamespaceObjectStructure();
-#if ENABLE(AOT)
-    if (vm.useImmutableIntrinsics && AOT::VMProgram::of(vm))
-        namespaceStructure = JSModuleNamespaceObject::createStructure(vm, globalObject, namespaceStructure->storedPrototype());
-#endif
-    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, namespaceStructure, this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
+    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (phase == ModulePhase::Defer) {
@@ -1371,7 +1435,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
     if (m_moduleEnvironment) {
-        putWellKnownVariable(globalObject, m_moduleEnvironment.get(), vm.propertyNames->starNamespacePrivateName, JSModuleEnvironment::starNamespaceScopeOffset(), moduleNamespaceObject);
+        bool putResult = false;
+        constexpr bool shouldThrowReadOnlyError = false;
+        constexpr bool ignoreReadOnlyErrors = true;
+        symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
@@ -1382,6 +1449,10 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
 void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
 {
+#if ENABLE(AOT)
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#endif
     // The spec text is recursive; we use an explicit work list to avoid native stack overflow on
     // deep graphs. Children are pushed in reverse to preserve the spec's pre-order discovery order.
     Vector<AbstractModuleRecord*, 8> stack;
@@ -1392,6 +1463,13 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
         // 4. Append module to seen.
         if (!seen.add(module).isNewEntry)
             continue;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module)) {
+            compiled->gatherAsynchronousTransitiveDependencies(result, seen);
+            RETURN_IF_EXCEPTION(scope, void());
+            continue;
+        }
+#endif
         // 5. If module is not a Cyclic Module Record, return result.
         auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
         if (!cyclic)
@@ -1420,8 +1498,17 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
 // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
 bool AbstractModuleRecord::readyForSyncExecution()
 {
-    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
     UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    return readyForSyncExecution(seen);
+}
+
+bool AbstractModuleRecord::readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+{
+#if ENABLE(AOT)
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#endif
+    // The spec text is recursive; we use an explicit work list to avoid native stack overflow on deep graphs.
     Vector<AbstractModuleRecord*, 8> stack;
     stack.append(this);
     while (!stack.isEmpty()) {
@@ -1434,6 +1521,15 @@ bool AbstractModuleRecord::readyForSyncExecution()
         // 4. Append module to seen.
         if (!seen.add(module).isNewEntry)
             continue;
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module)) {
+            bool isReady = compiled->readyForSyncExecution(seen);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!isReady)
+                return false;
+            continue;
+        }
+#endif
         // 5. If IsModuleSCCEvaluated(module), return true.
         if (cyclic->isSCCEvaluated())
             continue;
@@ -1464,7 +1560,9 @@ void AbstractModuleRecord::evaluateSync(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // 1. If ReadyForSyncExecution(module) is false, throw a TypeError exception.
-    if (!readyForSyncExecution()) {
+    bool isReady = readyForSyncExecution();
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isReady) {
         throwTypeError(globalObject, scope, "Unable to synchronously evaluate deferred module"_s);
         return;
     }
@@ -1494,30 +1592,20 @@ void AbstractModuleRecord::asyncCapability(VM& vm, JSPromise* promise)
     m_asyncCapability.set(vm, this, promise);
 }
 
-void AbstractModuleRecord::putWellKnownVariable(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment, const Identifier& name, ScopeOffset offsetInSourceTextModule, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    if (inherits<JSModuleRecord>() && moduleEnvironment->symbolTable()->hasCachedEntriesPending()) {
-        moduleEnvironment->variableAt(offsetInSourceTextModule).set(vm, moduleEnvironment, value);
-        return;
-    }
-    bool putResult = false;
-    constexpr bool shouldThrowReadOnlyError = false;
-    constexpr bool ignoreReadOnlyErrors = true;
-    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, name, value, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
-}
-
 void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!m_moduleEnvironment);
-    putWellKnownVariable(globalObject, moduleEnvironment, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), JSModuleEnvironment::moduleLoaderScopeOffset(), moduleLoader());
+    bool putResult = false;
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
     RETURN_IF_EXCEPTION(scope, void());
     // If module namespace object is materialized, we will materialize *namespace* slot too.
     if (m_moduleNamespaceObject) {
-        putWellKnownVariable(globalObject, moduleEnvironment, vm.propertyNames->starNamespacePrivateName, JSModuleEnvironment::starNamespaceScopeOffset(), m_moduleNamespaceObject.get());
+        symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->starNamespacePrivateName, m_moduleNamespaceObject.get(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
         RETURN_IF_EXCEPTION(scope, void());
     }
     m_moduleEnvironment.set(vm, this, moduleEnvironment);
@@ -1629,7 +1717,7 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
 {
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
@@ -1682,14 +1770,26 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             follow(generator->context());
         else if (auto* module = dynamicDowncast<AbstractModuleRecord>(cell))
             found = resumesDependency(module);
+#if ENABLE(AOT)
+        else {
+            for (JSPromise* settledPromise : AOT::promisesSettledBy(cell))
+                work.append(settledPromise);
+        }
+#endif
     };
 
     auto visitReaction = [&](InternalMicrotask task, JSValue cell, JSValue context) -> bool {
         switch (task) {
         case InternalMicrotask::AsyncFunctionResume:
+#if ENABLE(AOT)
+        case InternalMicrotask::CompiledAsyncFunctionResume:
+#endif
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:
             followPromiseOrDriver(unwrapContext(context));
+            break;
+        case InternalMicrotask::AsyncModuleExecutionDone:
+            followPromiseOrDriver(cellOf(context));
             break;
         case InternalMicrotask::AsyncFromSyncIteratorContinue:
         case InternalMicrotask::AsyncFromSyncIteratorDone: {
@@ -1738,6 +1838,9 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::DynamicImportEvaluateSettled:
         case InternalMicrotask::DynamicImportDeferLoadSettled:
         case InternalMicrotask::DynamicImportDeferDependencySettled:
+#if ENABLE(AOT)
+        case InternalMicrotask::CompiledModuleImportSettled:
+#endif
             follow(cell);
             break;
         default:
@@ -1747,14 +1850,21 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
     };
 
     constexpr size_t maxPromises = 4096;
+#if ENABLE(AOT)
+    static_assert(maxPromises == AOT::defaultLimitValue(AOT::LimitID::PromisesWalkedPerImport, AOT::hostArchitecture()));
+#endif
     while (!work.isEmpty() && !found) {
         JSPromise* promise = work.takeLast();
         if (promise->status() != JSPromise::Status::Pending)
             continue;
         if (!seen.add(promise).isNewEntry)
             continue;
-        if (seen.size() > maxPromises)
+        if (seen.size() > maxPromises) {
+#if ENABLE(AOT)
+            AOT::countLimitHit(importPromise->vm(), AOT::LimitID::PromisesWalkedPerImport);
+#endif
             return false;
+        }
         promise->forEachPendingReaction(visitReaction);
     }
     return found;
@@ -1775,6 +1885,10 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise));
+#endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
 
     // 1. If module is not a Cyclic Module Record, then
@@ -1826,6 +1940,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             //   11.b.ii.1. If evaluationList does not contain additionalModule, then append additionalModule to evaluationList.
             UncheckedKeyHashSet<AbstractModuleRecord*> seen;
             requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
+            RETURN_IF_EXCEPTION(scope, invalid);
         } else {
             // 11.c. Else if evaluationList does not contain requiredModule, then
             //   11.c.i. Append requiredModule to evaluationList.
@@ -1969,6 +2084,10 @@ void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* glob
 
     if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
         RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->generateDeferredSyntheticModules(globalObject, visited));
+#endif
 
     // Everything below a record that has been linked went through this pass when that link started.
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
@@ -1997,6 +2116,10 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->innerModuleLinking(globalObject, stack, index, WTF::move(scriptFetcher)));
+#endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
 
     // 1. If module is not a Cyclic Module Record, then
@@ -2145,8 +2268,8 @@ void AbstractModuleRecord::dump()
 {
     dataLog("\nAnalyzing ModuleRecord key(", printableName(m_moduleKey), ")\n");
 
-    dataLog("    Dependencies: ", requestedModules().size(), " modules\n");
-    for (const auto& request : requestedModules())
+    dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
+    for (const auto& request : m_requestedModules)
         dataLogLn("      module(", printableName(request.m_specifier), "),attributes(", RawPointer(request.m_attributes.get()), ")");
 
     dataLog("    Import: ", m_importEntries.size(), " entries\n");

@@ -1,0 +1,48 @@
+# A name that compiled code stores on a literal becomes an optional field of its layout; an index, an index-like name and a name with an accessor do not
+# RUN: flow
+# RUN(NOWHERE): flow
+# STATISTIC: FlowAppendedFields = 1
+# CHECK: class {{*}} layout=L0 impossibleMutations=[{{*}}AddProperty
+# CHECK: class {{*}} layout=L2 {{*}}addedKeys=["NaN", "1.5", "-1"]
+# CHECK: class {{*}} layout=L3 {{*}}addedKeys=["c"]
+# CHECK: field L0.0 "a" type=1 written=anything flags=[IsRequired] flow={location={writers=AllKnown
+# CHECK-NEXT: field L0.1 "b" type="s" flags=[IsAppendedByFlow] flow={location={writers=AllKnown
+# CHECK-NEXT: layout L1 flow={
+# NOWHERE-NOT: layout=L0 {{*}}addedKeys=[
+# NOWHERE-NOT: field L0.1 {{*}}occupancy=
+# NOWHERE-NOT: field L0.1 {{*}}written=
+# NOWHERE-NOT: layout=L1 impossibleMutations=[{{*}}AddProperty
+# NOWHERE-NOT: layout=L2 impossibleMutations=[{{*}}AddProperty
+# NOWHERE-NOT: layout=L3 impossibleMutations=[{{*}}AddProperty
+# NOWHERE-NOT: field L1.1
+# NOWHERE-NOT: field L2.1
+# NOWHERE-NOT: field L3.1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Index" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="IndexLike" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Accessor" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="s"
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v2, v1 key="b" mode=Strict
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v4, v1 key="7" mode=Strict
+    v6 = NewObject -, v0 layout=L2 fields=[0]
+    PropSet v6, v1 key="NaN" mode=Strict
+    PropSet v6, v1 key="1.5" mode=Strict
+    PropSet v6, v1 key="-1" mode=Strict
+    v10 = NewObject -, v0 layout=L3 fields=[0]
+    PropSet v10, v1 key="c" mode=Strict
+    v12 = NewClosure function=f1
+    DefineGetter v10, v12 key="c"
+    Return
+}
+function f1 name="c" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

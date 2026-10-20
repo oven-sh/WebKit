@@ -1,0 +1,50 @@
+# A summary that is unknown code names the entry that made it so, however many calls down, and not the unknown entry of a function it never calls
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="hasItsOwnUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = ScopeHasBinding v0 key="other"
+    Return v1
+}
+function f1 name="first" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+function f2 name="second" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+function f3 name="third" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+function f4 name="fourth" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f5
+    Return v1
+}
+function f5 name="last" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = Integer integer=1
+    v2 = Add v1, v1
+    v3 = ScopeHasBinding v0 key="name"
+    Return v3
+}
+function f6 name="besideTheChain" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK: f0 return: {{*}}callsUnknownCode{{*}} unknown code from f0 v1
+# CHECK-NEXT: f1 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
+# CHECK-NEXT: f2 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
+# CHECK-NEXT: f3 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
+# CHECK-NEXT: f4 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
+# CHECK-NEXT: f5 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
+# CHECK-NEXT: f6 return: none throw: none
+# CHECK-NOT: unknown code from

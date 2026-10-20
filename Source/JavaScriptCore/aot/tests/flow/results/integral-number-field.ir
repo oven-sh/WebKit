@@ -1,0 +1,73 @@
+# Numbers built from integers by sums, differences, products and conversions have no fractional part wherever they are stored
+# RUN: flow
+# RUN(NOWHERE): flow
+# LOSS: MaxFlowRangeGrowth
+# CHECK: field L0.0 "count" type=int|whole written=number
+# CHECK: field L1.0 "scaled" type=int|whole written=number
+# CHECK: variable g0 type=int|whole written=number
+# CHECK: variable g1 type=int|whole written=undefined|number
+# CHECK: variable g2 type=number flow=
+# CHECK: variable g3 type=number flow=
+# CHECK: function f2 result 0 type=5 written=number
+# NOWHERE-NOT: function f3 result
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="sums" fields=[{key="count" declared={type=number}}]
+layout L1 kind=Environment name="products" fields=[{key="scaled" declared={type=number}}]
+variable g0 name="total" module=m0 declared={type=number}
+variable g1 name="converted" module=m0 declared={type=undefined|number}
+variable g2 name="ratio" module=m0 declared={type=number}
+variable g3 name="shifted" module=m0 declared={type=number}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = Integer integer=1
+    v2 = Integer integer=10
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    v5 = NewClosure v3, v4 function=f1
+    v6 = Call v5
+    Jump -> next b1(v0)
+  b1(v7):
+    LoopHint
+    v9 = Add v7, v1
+    v10 = Less v9, v2
+    Branch v10 -> taken b1(v9), notTaken b2()
+  b2():
+    PutModuleVariable v9 variable=g0
+    v12 = ToNumber v9
+    v13 = ToNumeric v12
+    v14 = Upcast v13 castType=undefined|number
+    PutModuleVariable v14 variable=g1
+    v16 = CallDirect function=f3
+    PutModuleVariable v16 variable=g2
+    v18 = Double number=0.5
+    v19 = Add v9, v18
+    PutModuleVariable v19 variable=g3
+    Return
+}
+function f1 name="step" captures=[{type=env L0}, {type=env L1}] results=[{type=anything}] {
+  b0(v0: env L0, v1: env L1):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = CallDirect function=f2
+    v4 = Add v2, v3
+    PutEnvironmentField v0, v4 layout=L0 field=0
+    v6 = Mul v2, v2
+    PutEnvironmentField v1, v6 layout=L1 field=0
+    Return
+}
+function f2 name="difference" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Sub v0, v1
+    Return v2
+}
+function f3 name="quotient" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = Integer integer=2
+    v2 = Div v0, v1
+    Return v2
+}

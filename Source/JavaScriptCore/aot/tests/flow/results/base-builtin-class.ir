@@ -1,0 +1,56 @@
+# A class whose heritage holds the constructor of one built-in class has that class as its proven base; a built-in function that constructs no class proves nothing
+# RUN: flow
+# RUN(NOWHERE): flow
+# STATISTIC: FlowProvenBases = 2
+# CHECK: layout L0 flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Error
+# CHECK: layout L1 flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Array
+# NOWHERE-NOT: layout L0 {{*}}base=L
+# NOWHERE-NOT: layout L1 {{*}}base=L
+# NOWHERE-NOT: layout L2 {{*}}baseState=
+# NOWHERE-NOT: layout L2 {{*}}baseClass=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage]
+layout L1 kind=Instance name="List" constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Largest" constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Error" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = ResolveHeritage v1
+    v4 = NewClass v2, v1, v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Builtin builtin=Array
+    v7 = NewClosure function=f2
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = Construct v5
+    v12 = Construct v10
+    v13 = Builtin builtin=MathMax
+    v14 = NewClosure function=f3
+    v15 = ResolveHeritage v13
+    v16 = NewClass v14, v13, v15 layout=L2
+    v17 = FinishClass v16 layout=L2
+    Return
+}
+function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Largest" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

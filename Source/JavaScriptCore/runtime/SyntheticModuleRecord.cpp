@@ -28,7 +28,6 @@
 
 #include "ArgList.h"
 #include "BuiltinNames.h"
-#include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
@@ -230,23 +229,6 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSCell* SyntheticModuleRecord::createLiveBinding(JSGlobalObject* globalObject, JSObject* source, const Identifier& name)
-{
-    VM& vm = globalObject->vm();
-    return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), source, identifierToJSValue(vm, name));
-}
-
-JSValue SyntheticModuleRecord::readLiveBinding(JSGlobalObject* globalObject, JSValue held)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* binding = uncheckedDowncast<InternalFieldTuple>(held.asCell());
-    JSObject* source = asObject(binding->internalField(InternalFieldTuple::Field::Slot0).get());
-    Identifier name = asString(binding->internalField(InternalFieldTuple::Field::Slot1).get())->toIdentifier(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, source->get(globalObject, name));
-}
-
 void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName)
 {
     JSObject* source = m_lazyExportsSource.get();

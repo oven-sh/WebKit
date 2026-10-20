@@ -1,0 +1,46 @@
+# Object.assign stores with [[Set]], so it runs a setter on the chain of its target: once, where the call runs once and one source alone has the key. A spread into the same target defines, and runs none
+# RUN(ASSIGN): flow-links calls
+# RUN(SPREAD): flow-links calls
+# RUN(SETTER): flow-solve nodes
+# RUN(OWN): flow-solve nodes locations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Target" constructor=f1 fields=[{key="stored" declared={type=anything}}]
+layout L1 name="Assigned" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Spread" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Setter key="x"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = String string="assigned"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = Builtin builtin=ObjectAssign
+    v9 = Call v8, -, v5, v7
+    v10 = String string="spread"
+    v11 = NewObject -, v10 layout=L2 fields=[0]
+    CopyDataProperties v5, v11
+    Return
+}
+function f1 name="Target" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="stored"
+    Return
+}
+# ASSIGN: f0 v9 -> i{{*}} f2 Accessor Once
+# ASSIGN-NOT: f2 Accessor Once cycle
+# SPREAD-NOT: f0 v12 ->
+# SETTER: , f2, parameter 0) = {L0#{{*}}}
+# SETTER-NEXT: , f2, parameter 1) = {"assigned"}
+# OWN: Property(L0#{{*}}, "x") = {{*}}"spread"
+# OWN: Property(L0#{{*}}, "x") events=[{{*}}StoredByManyOperations

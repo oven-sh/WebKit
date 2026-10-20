@@ -1,0 +1,41 @@
+# A for-in loop lists the keys of every object on the prototype chain of its operand; Object.keys lists those of its operand alone
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: layout L2 flow={{*}}keys=NeverEnumerated
+# CHECK: field L2.0 "a" {{*}}reads=NeverRead
+# CHECK: layout L4 flow={{*}}keys=NeverEnumerated
+# CHECK: field L4.0 "a" {{*}}reads=NeverRead
+# NOWHERE-NOT: layout L0 flow={{*}}keys=
+# NOWHERE-NOT: layout L1 flow={{*}}keys=
+# NOWHERE-NOT: layout L3 flow={{*}}keys=
+# NOWHERE-NOT: field L0.0 "a" {{*}}reads=
+# NOWHERE-NOT: field L1.0 "a" {{*}}reads=
+# NOWHERE-NOT: field L3.0 "a" {{*}}reads=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Parent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Grandparent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ParentOfListedObject" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="LinkedLater" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Unrelated" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Builtin builtin=ObjectSetPrototypeOf
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = NewObject v3, v0 layout=L0 fields=[0]
+    v5 = Call v1, -, v4
+    v6 = ForInOpen v5
+    v7 = NewObject -, v0 layout=L2 fields=[0]
+    v8 = Call v1, -, v7
+    v9 = Builtin builtin=ObjectKeys
+    v10 = Call v9, -, v8
+    v11 = NewObject -, v0 layout=L3 fields=[0]
+    v12 = Call v1, -, v3
+    v13 = ForInOpen v12
+    v14 = Call v2, -, v12, v11
+    v15 = NewObject -, v0 layout=L4 fields=[0]
+    Return
+}

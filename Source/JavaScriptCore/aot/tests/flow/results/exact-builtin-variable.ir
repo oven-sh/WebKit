@@ -1,0 +1,38 @@
+# A built-in function keeps its identity through a variable, a parameter, a result and a join
+# RUN: flow
+# CHECK: variable g0 type=builtin(ArrayPrototypePush) written=anything
+# CHECK: variable g1 type=builtin(ObjectFreeze)|builtin(ArrayPrototypePush) written=anything
+# CHECK: variable g2 type=anything predicted=builtin(ArrayPrototypePush) flow=
+# CHECK: function f1 parameter 0 type=builtin(ArrayPrototypePush) written=anything
+# CHECK: function f1 result 0 type=builtin(ArrayPrototypePush) written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="push" declared={type=anything} initialization=Uninitialized
+variable g1 name="either" declared={type=anything} initialization=Uninitialized
+variable g2 name="patched" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypePush
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = CallDirect v2 function=f1
+    PutModuleVariable v0 variable=g2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="patch" [isFreeName]
+    PutModuleVariable v6 variable=g2
+    v8 = ToBoolean v6
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    v9 = Builtin builtin=ObjectFreeze
+    Jump -> next b3(v9)
+  b3(v10):
+    PutModuleVariable v10 variable=g1
+    Return
+}
+function f1 name="keep" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

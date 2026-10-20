@@ -1,0 +1,33 @@
+# A read on a primitive starts at the prototype of its wrapper class, and an index read on a string gives a character or undefined
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v1 Get {"length"}
+# CHECK-NEXT: string: BuiltinGetter Proven StringPrototype "length" StringPrototypeLength
+# CHECK-NEXT: f0@i{{*}} v2 Get {"foo"}
+# CHECK-NEXT: string: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v4 Get {"toFixed"}
+# CHECK-NEXT: number: BuiltinMember Proven NumberPrototype "toFixed" NumberPrototypeToFixed
+# CHECK-NEXT: f0@i{{*}} v6 Get {[0,0]}
+# RUN(NODES): flow-solve nodes
+# NODES-NOT: Local(i{{*}}, f0, v1) = {undefined
+# NODES: Local(i{{*}}, f0, v2) = {undefined}
+# NODES: Local(i{{*}}, f0, v4) = {NumberPrototypeToFixed}
+# NODES: Local(i{{*}}, f0, v6) = {undefined|string}
+# NODES: Local(i{{*}}, f0, v7) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = String string="s"
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="foo"
+    v3 = Integer integer=1
+    v4 = PropGet v3 key="toFixed"
+    v5 = Integer integer=0
+    v6 = ElemGet v0, v5
+    v7 = ElemGet v3, v5
+    Return
+  b1() role=CatchHandler:
+    v8 = CatchValue
+    Return
+}

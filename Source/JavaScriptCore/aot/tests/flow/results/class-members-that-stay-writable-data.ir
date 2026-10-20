@@ -1,0 +1,76 @@
+# A member of a prototype object that only plain stores create stays a writable data property, whether it holds a function or another value: a store to an instance passes it.
+# A member that a descriptor defines, an accessor, and every member of a prototype object that is frozen may stop such a store
+# RUN: flow
+# CHECK: layout L0 flow={{*}} namedMembers=[{key="size" isWritableData=true}, {key="walk" function=f5 mutability=Fixed{{*}} isWritableData=true}]
+# CHECK: layout L1 flow={{*}} namedMembers=[{key="size"}, {key="walk" function=f5 {{*}}isWritableData=true}]
+# CHECK: layout L2 flow={{*}} namedMembers=[{key="size"}, {key="walk" function=f5{{*}}}]
+# CHECK-NOT: isWritableData
+# CHECK: layout L4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Described" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Frozen" constructor=f3 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="WithSetter" constructor=f4 flags=[IsConstructorFunction]
+layout L4 name="Value" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Set" fields=[{key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Object
+    v1 = Integer integer=1
+    v2 = NewClosure function=f5
+    v3 = NewClosure function=f1
+    v4 = PropGet v3 key="prototype"
+    PropSet v4, v1 key="size" mode=Strict
+    PropSet v4, v2 key="walk" mode=Strict
+    v7 = NewClosure function=f2
+    v8 = PropGet v7 key="prototype"
+    PropSet v8, v2 key="walk" mode=Strict
+    v10 = NewObject -, v1 layout=L4 fields=[0]
+    v11 = FinishObject v10
+    v12 = Builtin builtin=ObjectDefineProperty
+    v13 = String string="size"
+    v14 = Call v12, v0, v8, v13, v11
+    v15 = NewClosure function=f3
+    v16 = PropGet v15 key="prototype"
+    PropSet v16, v1 key="size" mode=Strict
+    PropSet v16, v2 key="walk" mode=Strict
+    v19 = Builtin builtin=ObjectFreeze
+    v20 = Call v19, v0, v16
+    v21 = NewClosure function=f4
+    v22 = PropGet v21 key="prototype"
+    v23 = NewClosure function=f6
+    v24 = NewObject -, v23 layout=L5 fields=[0]
+    v25 = FinishObject v24
+    v26 = Call v12, v0, v22, v13, v25
+    v27 = Construct v3
+    v28 = Construct v7
+    v29 = Construct v15
+    v30 = Construct v21
+    Return
+}
+function f1 name="Plain" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f2 name="Described" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="Frozen" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f4 name="WithSetter" flags=[HasThis] thisType={type=L3} results=[{type=anything}] {
+  b0(v0: object ? L3):
+    Return
+}
+function f5 name="walk" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="size" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

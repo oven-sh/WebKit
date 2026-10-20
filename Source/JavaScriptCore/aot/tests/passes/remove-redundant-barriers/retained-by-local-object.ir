@@ -1,0 +1,23 @@
+# The concurrent marker reaches a young object through any heap object that retains it, so a later store to it keeps its barrier even though neither object escapes
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+# CHECK: PutSlot v2, v2, v0 key="x" {{*}} [ownerCannotBeMarked]
+# CHECK-NOT: ownerCannotBeMarked
+# CHECK: [[boxed]]{{*}}= Box v2
+# CHECK-NEXT: PutSlot v1, v1, [[boxed]] key="x"
+# CHECK-NEXT: PutSlot v2, v2, v0 key="y"
+# CHECK-NOT: ownerCannotBeMarked
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={members=[L0]}
+function f0 name="retained-by-local-object" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutSlot v2, v2, v0 key="x" receivers=[L0] level=Proven
+    PutSlot v1, v1, v2 key="x" receivers=[L0] level=Proven
+    PutSlot v2, v2, v0 key="y" receivers=[L0] level=Proven
+    Return
+}

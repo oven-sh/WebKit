@@ -55,8 +55,7 @@ enum class InternalMicrotask : uint8_t {
 
     AsyncFunctionResume,
 #if ENABLE(AOT)
-    AOTAsyncFunctionResume,
-    AOTAsyncGeneratorResume,
+    CompiledAsyncFunctionResume,
 #endif
     AsyncFromSyncIteratorContinue,
     AsyncFromSyncIteratorDone,
@@ -69,6 +68,10 @@ enum class InternalMicrotask : uint8_t {
     InvokeFunctionJob,
     AsyncModuleExecutionResume,
     AsyncModuleExecutionDone,
+#if ENABLE(AOT)
+    CompiledModuleImport,
+    CompiledModuleImportSettled,
+#endif
     ModuleRegistryFetchSettled,
     ModuleRegistryModuleSettled,
     ModuleGraphLoadingError,

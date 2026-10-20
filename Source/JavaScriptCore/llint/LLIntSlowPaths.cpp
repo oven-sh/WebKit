@@ -25,10 +25,9 @@
 
 #include "config.h"
 #include "LLIntSlowPaths.h"
-#include "CompilerHooks.h"
 
-#include "AOTFunction.h"
-#include "AOTLockedOperation.h"
+#include "AOTInterpreterSlowPaths.h"
+#include "AOTRemovableFeature.h"
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
 #include "BaselineJITPlan.h"
@@ -101,7 +100,7 @@ namespace JSC { namespace LLInt {
     } while (false)
 #else
 #define LLINT_SET_PC_FOR_STUBS() do { \
-        callFrame->setCallSiteIndex(CallSiteIndex(codeBlock->bytecodeIndex(pc))); \
+        callFrame->setCurrentVPC(pc); \
     } while (false)
 #endif
 
@@ -381,6 +380,12 @@ static inline bool shouldJIT(CodeBlock* codeBlock)
     return Options::useBaselineJIT();
 }
 
+static void enqueueBaselinePlan(CodeBlock* codeBlock)
+{
+    Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
+    JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
+}
+
 // Returns true if we should try to OSR.
 static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
 {
@@ -411,7 +416,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     }
 
     if (worklistState == JITWorklist::NotKnown) {
-        g_compilerHooks.enqueueBaselinePlan(codeBlock);
+        callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &enqueueBaselinePlan>(codeBlock);
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
 
@@ -780,9 +785,6 @@ LLINT_SLOW_PATH_DECL(slow_path_new_array)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewArray>();
     auto& metadata = bytecode.metadata(codeBlock);
-    static_assert(!(sizeof(JSArray) % MarkedBlock::atomSize));
-    static_assert(!((sizeof(IndexingHeader) + BASE_CONTIGUOUS_VECTOR_LEN_EMPTY * sizeof(EncodedJSValue)) % MarkedSpace::sizeStep));
-    static_assert(sizeof(IndexingHeader) + BASE_CONTIGUOUS_VECTOR_LEN_EMPTY * sizeof(EncodedJSValue) <= MarkedSpace::preciseCutoff);
     LLINT_RETURN(constructArrayNegativeIndexed(globalObject, &metadata.m_arrayAllocationProfile, std::bit_cast<JSValue*>(&callFrame->uncheckedR(bytecode.m_argv)), bytecode.m_argc));
 }
 
@@ -913,13 +915,8 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
 {
     Structure* structure = baseCell->structure();
 
-#if ENABLE(AOT)
-    if (structure->typeInfo().prohibitsPropertyCaching() && (!slot.isValue() || !AOT::Typed::compiledObjectStructureGuaranteesAbsence(structure, ident.impl())))
-        return;
-#else
     if (structure->typeInfo().prohibitsPropertyCaching())
         return;
-#endif
     
     if (structure->needImpurePropertyWatchpoint())
         return;
@@ -930,21 +927,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
     }
 
-    if (slot.isUnset() && structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence())
-        return;
-
-#if ENABLE(AOT)
-    if (slot.isValue() && baseCell->isObject()) {
-        for (JSValue next = asObject(baseCell)->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
-            AOT::Typed::reifyClassPrototypeIfNeeded(asObject(next));
-            if (asObject(next) == slot.slotBase())
-                break;
-        }
-    }
-#endif
-    auto cachingStatus = prepareChainForCaching(globalObject, baseCell, ident.impl(), slot);
-    if (!slot.isValue() && (!cachingStatus || cachingStatus->usesPolyProto))
-        return;
+    prepareChainForCaching(globalObject, baseCell, ident.impl(), slot);
 
     ObjectPropertyConditionSet conditions;
     if (slot.isUnset())
@@ -977,10 +960,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         ConcurrentJSLocker locker(codeBlock->m_lock);
         if (slot.isUnset())
             metadata.setUnsetMode(structure);
-        else if (slot.isCustom()) {
-            if (!metadata.trySetCustomAccessorMode(structure, offset, slot.slotBase()))
-                metadata.clearToDefaultModeWithoutCache();
-        } else {
+        else {
             ASSERT(slot.isValue());
             metadata.setProtoLoadMode(structure, offset, slot.slotBase());
         }
@@ -992,38 +972,10 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (metadata.mode == GetByIdMode::CustomAccessor && baseValue.isCell() && baseValue.asCell()->structureID() == metadata.customAccessorMode.structureID) {
-        JSObject* holder = metadata.customAccessorHolder();
-        JSValue accessor = holder->getDirect(metadata.customAccessorMode.cachedOffset);
-        if (accessor.isCell() && accessor.asCell()->type() == CustomGetterSetterType) {
-            auto* withClass = dynamicDowncast<DOMAttributeGetterSetter>(accessor.asCell());
-            if (!withClass || baseValue.asCell()->inherits(withClass->domAttribute().classInfo))
-                RELEASE_AND_RETURN(throwScope, JSValue::decode(uncheckedDowncast<CustomGetterSetter>(accessor.asCell())->getter()(holder->realm(), JSValue::encode(baseValue), ident)));
-        }
-    }
 #if ENABLE(AOT)
-    if (baseValue.isCell() && baseValue.asCell()->type() == ObjectType) {
-        JSCell* cell = baseValue.asCell();
-        JSValue ownData = AOT::Typed::tryGetCompiledObjectOwnData(vm, cell, ident.impl());
-        bool isAbsentField = !ownData && AOT::Typed::absentFieldReadsAsUndefined(globalObject, cell, ident.impl());
-        bool isNotProperty = !ownData && !isAbsentField && AOT::Typed::structureGuaranteesUndefinedRead(globalObject, cell, ident.impl());
-        if (ownData || isAbsentField || isNotProperty) {
-            auto place = Options::useLLIntICs() && !isNotProperty ? AOT::Typed::fieldOffsetAndKindForInterpreter(cell, ident.impl()) : std::nullopt;
-            if (place || (isNotProperty && Options::useLLIntICs())) {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
-                if (place)
-                    metadata.setCompiledFieldMode(cell->structure(), place->first, static_cast<GetByIdCompiledFieldKind>(place->second), isAbsentField);
-                else
-                    metadata.setCompiledFieldMode(cell->structure(), 0, GetByIdCompiledFieldKind::Nothing, true);
-                vm.writeBarrier(codeBlock);
-            } else if (auto extra = ownData && Options::useLLIntICs() ? AOT::Typed::extraPropertyLocationForInterpreter(vm, cell, ident) : std::nullopt) {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
-                metadata.setCompiledFieldMode(cell->structure(), extra->first, GetByIdCompiledFieldKind::ExtraProperty, false);
-                metadata.compiledFieldMode.absentIsUndefined = extra->second;
-                vm.writeBarrier(codeBlock);
-            }
-            return ownData ? ownData : jsUndefined();
-        }
+    if (baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) {
+        if (std::optional<JSValue> result = AOT::Interpreter::tryGetById(globalObject, baseValue.asCell(), ident))
+            RELEASE_AND_RETURN(throwScope, *result);
     }
 #endif
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
@@ -1033,7 +985,8 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 
     if (Options::useLLIntICs()
         && baseValue.isCell()
-        && slot.isCacheable()) {
+        && slot.isCacheable()
+        && !slot.isUnset()) {
         {
             StructureID oldStructureID;
             switch (metadata.mode) {
@@ -1075,8 +1028,8 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
                 metadata.defaultMode.cachedOffset = slot.cachedOffset();
                 vm.writeBarrier(codeBlock);
             }
-        } else if (metadata.hitCountForLLIntCaching && (slot.isValue() || slot.isUnset() || (slot.isCustom() && slot.attributes() & PropertyAttribute::CustomAccessor && (!slot.domAttribute() || baseValue.inherits(slot.domAttribute()->classInfo)) && isValidOffset(slot.cachedOffset()) && slot.slotBase() != baseValue))) [[unlikely]] {
-            ASSERT(slot.isUnset() || slot.slotBase() != baseValue);
+        } else if (metadata.hitCountForLLIntCaching && slot.isValue()) [[unlikely]] {
+            ASSERT(slot.slotBase() != baseValue);
 
             if (!(--metadata.hitCountForLLIntCaching))
                 setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
@@ -1094,33 +1047,9 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::Typed::countIfCompiledObject(vm, baseValue, "InterpreterGetByIdOfCompiledObject");
-#endif
 
     JSValue result = performLLIntGetByID(codeBlock->bytecodeIndex(pc), codeBlock, globalObject, baseValue, ident, metadata.m_modeMetadata);
     LLINT_RETURN_PROFILED(result);
-}
-
-extern "C" UGPRPair SYSV_ABI llint_call_cached_custom_accessor(CallFrame* callFrame, EncodedJSValue base, GetByIdModeMetadata* cache, unsigned property)
-{
-    static constexpr uintptr_t cacheIsInvalid = 1;
-    CodeBlock* codeBlock = callFrame->codeBlock();
-    VM& vm = codeBlock->vm();
-    SlowPathFrameTracer tracer(vm, callFrame);
-    JSCell* baseCell = JSValue::decode(base).asCell();
-    if (cache->mode != GetByIdMode::CustomAccessor || baseCell->structureID() != cache->customAccessorMode.structureID) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
-    JSObject* holder = cache->customAccessorHolder();
-    JSValue accessor = holder->getDirect(cache->customAccessorMode.cachedOffset);
-    if (!accessor.isCell() || accessor.asCell()->type() != CustomGetterSetterType) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
-    auto* withClass = dynamicDowncast<DOMAttributeGetterSetter>(accessor.asCell());
-    if (withClass && !baseCell->inherits(withClass->domAttribute().classInfo)) [[unlikely]]
-        return encodeResult(nullptr, std::bit_cast<void*>(cacheIsInvalid));
-    EncodedJSValue result = uncheckedDowncast<CustomGetterSetter>(accessor.asCell())->getter()(holder->realm(), base, codeBlock->unlinkedCodeBlock()->identifier(property));
-    return encodeResult(std::bit_cast<void*>(result), vm.exceptionForInspection() ? exceptionSignal() : nullptr);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_get_length)
@@ -1262,76 +1191,6 @@ LLINT_SLOW_PATH_DECL(slow_path_instanceof)
     LLINT_RETURN(jsBoolean(result));
 }
 
-static bool tryWatchPrototypeChainForAddingStore(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, Structure* oldStructure, UniquedStringImpl* uid)
-{
-    if (Options::useJIT())
-        return false;
-
-    CodeBlock::StructureWatchpointMap& watchpointMap = codeBlock->llintGetByIdWatchpointMap();
-    auto key = std::make_tuple(oldStructure->id(), bytecodeIndex);
-    if (watchpointMap.contains(key) || watchpointMap.size() > codeBlock->instructionsSize() / 4)
-        return false;
-
-    ObjectPropertyConditionSet conditions = generateConditionsForPropertySetterMiss(vm, codeBlock, globalObject, oldStructure, uid);
-    if (!conditions.isValid())
-        return false;
-    for (ObjectPropertyCondition condition : conditions) {
-        if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
-            return false;
-    }
-
-    FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint> watchpoints(conditions.size());
-    unsigned index = 0;
-    for (ObjectPropertyCondition condition : conditions) {
-        auto& watchpoint = watchpoints[index++];
-        watchpoint.initialize(codeBlock, condition, bytecodeIndex);
-        watchpoint.install(vm);
-    }
-    watchpointMap.add(key, WTF::move(watchpoints));
-    return true;
-}
-
-extern "C" EncodedJSValue SYSV_ABI llint_get_compiled_object_extra_property(JSCell* object, unsigned offset)
-{
-#if ENABLE(AOT)
-    return JSValue::encode(AOT::Typed::compiledObjectExtraProperty(object, offset));
-#else
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(offset);
-    return JSValue::encode(JSValue());
-#endif
-}
-
-extern "C" size_t SYSV_ABI llint_store_compiled_object_extra_property(JSCell* object, unsigned offset, EncodedJSValue value)
-{
-#if ENABLE(AOT)
-    return AOT::Typed::storeCompiledObjectExtraProperty(object, offset, JSValue::decode(value));
-#else
-    UNUSED_PARAM(object);
-    UNUSED_PARAM(offset);
-    UNUSED_PARAM(value);
-    return 0;
-#endif
-}
-
-#if ENABLE(AOT)
-static void cacheCompiledObjectFieldStore(VM& vm, CodeBlock* codeBlock, OpPutById::Metadata& metadata, JSCell* base, const Identifier& ident)
-{
-    auto place = Options::useLLIntICs() ? AOT::Typed::fieldStoreOffsetAndKindForInterpreter(vm, base, ident) : std::nullopt;
-    if (!place)
-        return;
-    {
-        ConcurrentJSLocker locker(codeBlock->m_lock);
-        metadata.m_oldStructureID = StructureID();
-        metadata.m_offset = place->second << putByIdCompiledFieldKindShift | place->first;
-        static_assert(static_cast<uint32_t>(PutByIdCompiledFieldKind::ExtraProperty) < 1u << (putByIdExtraPropertyOffsetShift - putByIdCompiledFieldKindShift));
-        metadata.m_newStructureID = base->structureID();
-        metadata.m_structureChain.clear();
-    }
-    vm.writeBarrier(codeBlock);
-}
-#endif
-
 LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
 {
     LLINT_BEGIN();
@@ -1341,14 +1200,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
 #if ENABLE(AOT)
-    bool mayBeCompiledObject = baseValue.isCell() && baseValue.asCell()->type() == ObjectType && !bytecode.m_flags.isDirect();
-    if (mayBeCompiledObject) {
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::Typed::countIfCompiledObject(vm, baseValue, "InterpreterPutByIdOfCompiledObject");
-        if (AOT::Typed::tryStorePrimitiveToCompiledObjectField(vm, baseValue.asCell(), ident.impl(), getOperand(callFrame, bytecode.m_value))) {
-            cacheCompiledObjectFieldStore(vm, codeBlock, metadata, baseValue.asCell(), ident);
+    if (baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType && !bytecode.m_flags.isDirect()) {
+        if (AOT::Interpreter::tryPutById(globalObject, baseValue.asCell(), ident, getOperand(callFrame, bytecode.m_value), bytecode.m_flags.ecmaMode().isStrict()))
             LLINT_END();
-        }
     }
 #endif
     PutPropertySlot slot(baseValue, bytecode.m_flags.ecmaMode().isStrict(), codeBlock->putByIdContext());
@@ -1359,10 +1213,6 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     else
         baseValue.putInline(globalObject, ident, getOperand(callFrame, bytecode.m_value), slot);
     LLINT_CHECK_EXCEPTION();
-#if ENABLE(AOT)
-    if (mayBeCompiledObject)
-        cacheCompiledObjectFieldStore(vm, codeBlock, metadata, baseValue.asCell(), ident);
-#endif
     
     if (Options::useLLIntICs()
         && baseValue.isCell()
@@ -1404,7 +1254,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                     if (result != InvalidPrototypeChain && !sawPolyProto) {
                         ASSERT(oldStructure->isObject());
                         StructureChain* chain = nullptr;
-                        if (!(bytecode.m_flags.isDirect()) && !tryWatchPrototypeChainForAddingStore(vm, globalObject, codeBlock, codeBlock->bytecodeIndex(pc), oldStructure, ident.impl())) {
+                        if (!(bytecode.m_flags.isDirect())) {
                             chain = newStructure->prototypeChain(vm, globalObject, asObject(baseCell));
                             ASSERT(chain);
                         }
@@ -1448,8 +1298,6 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_id)
     LLINT_CHECK_EXCEPTION();
     bool couldDelete = JSCell::deleteProperty(baseObject, globalObject, codeBlock->identifier(bytecode.m_property));
     LLINT_CHECK_EXCEPTION();
-    if (!couldDelete && baseObject->recordIfOnlyLockRejects(vm, codeBlock->identifier(bytecode.m_property).impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
-        LLINT_THROW(createTypeError(globalObject, AOT::lockedOperationErrorMessage(vm, baseObject, AOT::LockedOperation::Delete, codeBlock->identifier(bytecode.m_property).impl())));
     if (!couldDelete && bytecode.m_ecmaMode.isStrict())
         LLINT_THROW(createTypeError(globalObject, UnableToDeletePropertyError));
     LLINT_RETURN(jsBoolean(couldDelete));
@@ -1459,6 +1307,12 @@ static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, Code
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) {
+        if (std::optional<JSValue> result = AOT::Interpreter::tryGetByVal(globalObject, baseValue.asCell(), subscript))
+            RELEASE_AND_RETURN(scope, *result);
+    }
+#endif
     if (baseValue.isCell() && subscript.isString()) [[likely]] {
         Structure& structure = *baseValue.asCell()->structure();
         if (JSCell::canUseFastGetOwnProperty(structure)) {
@@ -1610,6 +1464,12 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_val)
         LLINT_END();
     }
 
+#if ENABLE(AOT)
+    if (baseValue.isCell() && baseValue.asCell()->type() == CompiledObjectType) {
+        if (AOT::Interpreter::tryPutByVal(globalObject, baseValue.asCell(), subscript, value, isStrictMode))
+            LLINT_END();
+    }
+#endif
     auto property = subscript.toPropertyKey(globalObject);
     LLINT_CHECK_EXCEPTION();
     PutPropertySlot slot(baseValue, isStrictMode);
@@ -1766,12 +1626,7 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     baseObject->setPrivateBrand(globalObject, brand);
     LLINT_CHECK_EXCEPTION();
 
-#if ENABLE(AOT)
-    bool isOneTransition = oldStructure == baseObject->structure()->previousID();
-#else
-    constexpr bool isOneTransition = true;
-#endif
-    if (Options::useLLIntICs() && !oldStructure->isDictionary() && isOneTransition) {
+    if (Options::useLLIntICs() && !oldStructure->isDictionary() && baseObject->structure()->isCacheableTransitionFrom(oldStructure)) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         Structure* newStructure = baseObject->structure();
 
@@ -1845,9 +1700,6 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_val)
         auto property = subscript.toPropertyKey(globalObject);
         LLINT_CHECK_EXCEPTION();
         couldDelete = JSCell::deleteProperty(baseObject, globalObject, property);
-        LLINT_CHECK_EXCEPTION();
-        if (!couldDelete && baseObject->recordIfOnlyLockRejects(vm, property.impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && !bytecode.m_ecmaMode.isStrict(), true))
-            LLINT_THROW(createTypeError(globalObject, AOT::lockedOperationErrorMessage(vm, baseObject, AOT::LockedOperation::Delete, property.impl())));
     }
     LLINT_CHECK_EXCEPTION();
 
@@ -1866,55 +1718,7 @@ LLINT_SLOW_PATH_DECL(slow_path_in_by_id)
     if (!baseValue.isObject())
         LLINT_THROW(createInvalidInParameterError(globalObject, baseValue));
 
-    JSObject* base = asObject(baseValue);
-    const Identifier& ident = codeBlock->identifier(bytecode.m_property);
-    if (Options::useLLIntICs()) {
-        auto& metadata = bytecode.metadata(codeBlock);
-        Structure* structure = base->structure();
-        auto remember = [&](unsigned offset, InByIdKind kind) {
-            ConcurrentJSLocker locker(codeBlock->m_lock);
-            metadata.m_structureID = structure->id();
-            metadata.m_offset = offset;
-            metadata.m_kind = static_cast<unsigned>(kind);
-            vm.writeBarrier(codeBlock);
-        };
-#if ENABLE(AOT)
-        if (auto place = AOT::Typed::fieldOffsetAndKindForInterpreter(base, ident.impl())) {
-            switch (static_cast<GetByIdCompiledFieldKind>(place->second)) {
-            case GetByIdCompiledFieldKind::JSValue:
-                remember(place->first, InByIdKind::JSValue);
-                break;
-            case GetByIdCompiledFieldKind::Cell32:
-                remember(place->first, InByIdKind::Cell32);
-                break;
-            case GetByIdCompiledFieldKind::Int32OrNumberBox:
-                remember(place->first, InByIdKind::Int32OrNumberBox);
-                break;
-            case GetByIdCompiledFieldKind::Double:
-                remember(place->first, InByIdKind::Double);
-                break;
-            case GetByIdCompiledFieldKind::Int32:
-            case GetByIdCompiledFieldKind::Boolean:
-            case GetByIdCompiledFieldKind::Uint8:
-            case GetByIdCompiledFieldKind::Int8:
-            case GetByIdCompiledFieldKind::Uint16:
-            case GetByIdCompiledFieldKind::Int16:
-            case GetByIdCompiledFieldKind::Uint32:
-            case GetByIdCompiledFieldKind::Int64:
-                remember(place->first, InByIdKind::AlwaysThere);
-                break;
-            case GetByIdCompiledFieldKind::Nothing:
-            case GetByIdCompiledFieldKind::OptionalInt64:
-            case GetByIdCompiledFieldKind::OptionalBoolean:
-                break;
-            }
-        } else
-#endif
-        if (!structure->typeInfo().overridesGetOwnPropertySlot() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && isValidOffset(structure->get(vm, ident.impl())))
-            remember(0, InByIdKind::ByStructure);
-    }
-
-    LLINT_RETURN(jsBoolean(base->hasProperty(globalObject, ident)));
+    LLINT_RETURN(jsBoolean(asObject(baseValue)->hasProperty(globalObject, codeBlock->identifier(bytecode.m_property))));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_in_by_val)
@@ -1924,6 +1728,65 @@ LLINT_SLOW_PATH_DECL(slow_path_in_by_val)
     auto& metadata = bytecode.metadata(codeBlock);
     LLINT_RETURN(jsBoolean(CommonSlowPaths::opInByVal(globalObject, getOperand(callFrame, bytecode.m_base), getOperand(callFrame, bytecode.m_property), &metadata.m_arrayProfile)));
 }
+
+#if ENABLE(AOT)
+LLINT_SLOW_PATH_DECL(slow_path_aot_in_by_id)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpInById>();
+    JSValue baseValue = getOperand(callFrame, bytecode.m_base);
+    if (baseValue.isObject()) {
+        if (std::optional<bool> result = AOT::Interpreter::tryInById(globalObject, asObject(baseValue), codeBlock->identifier(bytecode.m_property)))
+            LLINT_RETURN(jsBoolean(*result));
+    }
+    RELEASE_AND_RETURN(throwScope, llint_slow_path_in_by_id(callFrame, pc));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_in_by_val)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpInByVal>();
+    JSValue baseValue = getOperand(callFrame, bytecode.m_base);
+    if (baseValue.isObject()) {
+        if (std::optional<bool> result = AOT::Interpreter::tryInByVal(globalObject, asObject(baseValue), getOperand(callFrame, bytecode.m_property)))
+            LLINT_RETURN(jsBoolean(*result));
+    }
+    RELEASE_AND_RETURN(throwScope, llint_slow_path_in_by_val(callFrame, pc));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpEnumeratorGetByVal>();
+    if (std::optional<JSValue> result = AOT::Interpreter::tryGetByVal(globalObject, getOperand(callFrame, bytecode.m_base).asCell(), getOperand(callFrame, bytecode.m_propertyName)))
+        LLINT_RETURN_PROFILED(*result);
+    RELEASE_AND_RETURN(throwScope, slow_path_enumerator_get_by_val(callFrame, pc));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_new_object)
+{
+    AOT::Interpreter::didLeaveInlineAllocation(callFrame->codeBlock()->vm());
+    return llint_slow_path_new_object(callFrame, pc);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_new_array)
+{
+    AOT::Interpreter::didLeaveInlineAllocation(callFrame->codeBlock()->vm());
+    return llint_slow_path_new_array(callFrame, pc);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_jtrue)
+{
+    AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
+    return llint_slow_path_jtrue(callFrame, pc);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_jfalse)
+{
+    AOT::Interpreter::didLeaveInlineBranch(callFrame->codeBlock()->vm());
+    return llint_slow_path_jfalse(callFrame, pc);
+}
+#endif
 
 LLINT_SLOW_PATH_DECL(slow_path_has_private_name)
 {
@@ -2246,12 +2109,7 @@ LLINT_SLOW_PATH_DECL(slow_path_switch_string)
         unsigned length = string->length();
         if (length < unlinkedTable.minLength() || length > unlinkedTable.maxLength())
             JUMP_TO(defaultOffset);
-        else if (string->isRope()) {
-            auto view = string->view(globalObject);
-            LLINT_CHECK_EXCEPTION();
-
-            JUMP_TO(unlinkedTable.offsetForValue(view.data));
-        } else {
+        else {
             auto scrutineeString = string->value(globalObject);
             LLINT_CHECK_EXCEPTION();
 
@@ -2407,6 +2265,12 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
             auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
             LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
         }
+#if ENABLE(AOT)
+        if (callData.type == CallData::Type::Compiled) {
+            auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+            LLINT_CALL_RETURN(globalObject, callerSP, const_cast<void*>(callData.compiled.entrypoint), JSEntryPtrTag);
+        }
+#endif
         
         slowPathLog("Call callee is not a function: ", callee, "\n");
 
@@ -2427,6 +2291,12 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
         LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
     }
+#if ENABLE(AOT)
+    if (constructData.type == CallData::Type::Compiled) {
+        auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+        LLINT_CALL_RETURN(globalObject, callerSP, const_cast<void*>(constructData.compiled.entrypoint), JSEntryPtrTag);
+    }
+#endif
     
     slowPathLog("Constructor callee is not a function: ", callee, "\n");
 
@@ -2453,12 +2323,6 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
             auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
             LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
         }
-#if ENABLE(AOT)
-        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
-            auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
-            LLINT_CALL_RETURN(globalObject, callerSP, AOT::taggedSlimClosureEntrypoint(), JSEntryPtrTag);
-        }
-#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(calleeFrame, calleeAsValue, kind));
     }
     JSFunction* callee = uncheckedDowncast<JSFunction>(calleeAsFunctionCell);
@@ -3234,8 +3098,13 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
 
 extern "C" UGPRPair SYSV_ABI llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
 {
+    CallFrame* callFrame = vm->topCallFrame;
     auto scope = DECLARE_THROW_SCOPE(*vm);
-    JSGlobalObject* globalObject = vm->topCallFrame ? vm->topFrameGlobalObject() : protoFrame->callee()->realm();
+    JSGlobalObject* globalObject = nullptr;
+    if (callFrame)
+        globalObject = vm->topFrameGlobalObject();
+    else
+        globalObject = protoFrame->callee()->realm();
     throwStackOverflowError(globalObject, scope);
     return encodeResult(nullptr, nullptr);
 }

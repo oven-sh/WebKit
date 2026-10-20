@@ -1,0 +1,82 @@
+# An access under a key that is one constant string or symbol is the access by that name, and the next run resolves it
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# RUN(TWICE): pass ResolveAccesses ResolveAccesses
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+function f0 name="every-operation" parameters=[{type=anything}, {type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: anything):
+    v3 = String string="x"
+    v4 = ElemGet v0, v3 accessSite=1 receivers=[L0, ..]
+    ElemSet v0, v3, v2 mode=Sloppy accessSite=2
+    ElemDefine v1, v3, v2
+    v7 = ElemHas v0, v3
+    v8 = ElemDelete v0, v3 mode=Sloppy
+    Return v4
+}
+# CHECK-LABEL: function f0 name="every-operation"
+# CHECK: v4: anything = PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
+# CHECK-NEXT: PropSet v0, v2 key="x" mode=Sloppy accessSite=2
+# CHECK-NEXT: PropDefine v1, v2 key="x"
+# CHECK-NEXT: v7: boolean = PropHas v0 key="x"
+# CHECK-NEXT: v8: boolean = PropDelete v0 key="x" mode=Sloppy
+# TWICE-LABEL: function f0 name="every-operation"
+function f1 name="symbol-key" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = KeyConstant key=@@iterator
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="symbol-key"
+# CHECK: v2: anything = PropGet v0 key=@@iterator
+# TWICE-LABEL: function f1 name="symbol-key"
+function f2 name="field-of-a-proven-receiver" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = String string="x"
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="field-of-a-proven-receiver"
+# CHECK: = PropGet v0 key="x"
+# TWICE-LABEL: function f2 name="field-of-a-proven-receiver"
+# TWICE: v2: number = GetSlot v0 key="x" receivers=[L0] level=Proven
+function f3 name="index-like-keys" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="0"
+    v2 = ElemGet v0, v1
+    v3 = String string="1.5"
+    v4 = ElemGet v0, v3
+    Return v2
+}
+# CHECK-LABEL: function f3 name="index-like-keys"
+# CHECK: = ElemGet v0, v1
+# CHECK: = ElemGet v0, v3
+# TWICE-LABEL: function f3 name="index-like-keys"
+function f4 name="one-of-two-strings" parameters=[{type=anything}, {type="x"|"y"}] results=[{type=anything}] {
+  b0(v0: anything, v1: "x"|"y"):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="one-of-two-strings"
+# CHECK: = ElemGet v0, v1
+# TWICE-LABEL: function f4 name="one-of-two-strings"
+function f5 name="string-or-undefined" parameters=[{type=anything}, {type=undefined|"x"}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|"x"):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="string-or-undefined"
+# CHECK: = ElemGet v0, v1
+# TWICE-LABEL: function f5 name="string-or-undefined"
+function f6 name="any-string" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="any-string"
+# CHECK: = ElemGet v0, v1
+# TWICE-LABEL: function f6 name="any-string"

@@ -7,11 +7,11 @@ A precompiled header and unified sources hide a missing include: something earli
 provide it. The builds for Windows have neither the same header nor the same bundles, stop at the first few errors, and take
 ten minutes a round. This finds the same errors natively, all at once.
 
-Every .cpp outside aot/ that differs from <base commit> is checked for syntax on its own, with the flags of the build in
-<build directory> (which needs a compile_commands.json) minus the precompiled header.
+Every .cpp outside aot/ whose working copy differs from <base commit>, committed or not, is checked for syntax on its own, with
+the flags of the build in <build directory> (which needs a compile_commands.json) minus the precompiled header.
 
 --headers   instead, every changed header outside aot/ is included on its own after config.h: is it self-contained?
---gate-off  with ENABLE(AOT) forced off, as on the platforms without a back end. (Forcing them on the
+--gate-off  with ENABLE(AOT) forced off, as on the platforms without a back end. (Forcing it on the
             command line means something here because no precompiled header was built with the other value.)
 
 Run all four combinations before pushing. Errors on lines that the branch adds are the branch's. The rest are shown apart: some
@@ -60,7 +60,7 @@ def flags_of(commands, library):
 
 def lines_added(base, path):
     added = set()
-    for match in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", git("diff", "-U0", base, "HEAD", "--", path), re.M):
+    for match in re.finditer(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", git("diff", "-U0", base, "--", path), re.M):
         first, count = int(match.group(1)), int(match.group(2) or 1)
         added.update(range(first, first + count))
     return added
@@ -84,7 +84,9 @@ def main():
         extra += ["-DENABLE_AOT=0"]
 
     suffix = ".h" if arguments.headers else ".cpp"
-    changed = git("diff", "--name-only", arguments.base, "HEAD", "--", *(f"Source/{library}" for library in LIBRARIES)).split()
+    folders = [f"Source/{library}" for library in LIBRARIES]
+    untracked = set(git("ls-files", "--others", "--exclude-standard", "--", *folders).split())
+    changed = git("diff", "--name-only", arguments.base, "--", *folders).split() + sorted(untracked)
     files = [f for f in changed if f.endswith(suffix) and "/aot/" not in f and os.path.exists(os.path.join(ROOT, f))]
     scratch = tempfile.mkdtemp(prefix="check-includes-")
 
@@ -104,14 +106,14 @@ def main():
     ours, others = [], []
     with concurrent.futures.ThreadPoolExecutor(arguments.jobs) as pool:
         for path, errors in pool.map(check, files):
-            added = lines_added(arguments.base, path) if errors else set()
+            added = lines_added(arguments.base, path) if errors and path not in untracked else set()
             for error in errors:
                 match = re.match(r"(.*?):(\d+):\d+: (?:fatal )?error: (.*)", error)
                 if not match:
                     continue
                 where, line, message = match.group(1), int(match.group(2)), match.group(3)[:120]
                 entry = f"{os.path.relpath(where, ROOT) if os.path.isabs(where) else where}:{line}: {message}"
-                (ours if where.endswith(path) and line in added else others).append(entry)
+                (ours if where.endswith(path) and (path in untracked or line in added) else others).append(entry)
 
     print(f"{len(files)} files checked on their own")
     print(f"{len(ours)} errors on lines that the branch adds")

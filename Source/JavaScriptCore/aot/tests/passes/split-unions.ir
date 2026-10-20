@@ -1,0 +1,187 @@
+# An access on a value proven to be a union of parts of different kinds is copied once per part, behind type tests whose edges pass the narrowed value
+# FORM: Prepared
+# RUN: pass SplitUnions
+# STATISTIC: UnionsSplit = 9
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Scanner" fields=[{key="pos" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+
+function f0 name="string-or-array" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="string-or-array"
+# CHECK-NEXT: b0(v0: string|Array<number>):
+# CHECK-NEXT: [[isString]]: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString]] -> taken [[stringArm]](| 0), notTaken [[arrayArm]](| 0)
+# CHECK-NEXT: [[join]](v1: anything):
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[stringArm]]([[string]]: string):
+# CHECK-NEXT: [[characters]]: anything = PropGet [[string]] key="length"
+# CHECK-NEXT: Jump -> next [[join]]([[characters]])
+# CHECK-NEXT: [[arrayArm]]([[array]]: Array<number>):
+# CHECK-NEXT: [[elements]]: anything = PropGet [[array]] key="length"
+# CHECK-NEXT: Jump -> next [[join]]([[elements]])
+# CHECK-NEXT: }
+function f1 name="three-parts" parameters=[{type=string|Array<number>|Uint8Array}] results=[{type=anything}] {
+  b0(v0: string|Array<number>|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="three-parts"
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: ([[objects]]: Array<number>|Uint8Array):
+# CHECK-NEXT: = TypeTest [[objects]] testedType=Array
+# CHECK-NOT: TypeTest
+# CHECK: ([[numbers]]: Array<number>):
+# CHECK-NEXT: = PropGet [[numbers]] key="length"
+# CHECK: ([[bytes]]: Uint8Array):
+# CHECK-NEXT: = PropGet [[bytes]] key="length"
+function f2 name="expected-part-comes-first" parameters=[{type=string|Array<number> predicted=Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number> ~ Array<number>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="expected-part-comes-first"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK-NOT: TypeTest
+# CHECK: ([[expected]]: Array<number>{{*}}):
+# CHECK-NEXT: = PropGet [[expected]] key="length"
+# CHECK: ([[unexpected]]: string) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[unexpected]] key="length"
+function f3 name="layout-or-string" parameters=[{type=string|L0}] results=[{type=anything}] {
+  b0(v0: string|L0):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="layout-or-string"
+# CHECK-NEXT: b0(v0: string|L0):
+# CHECK-NEXT: [[isScanner]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isScanner]] -> taken [[scannerArm]](| 0), notTaken [[rest]](| 0)
+# CHECK: [[scannerArm]]([[scanner]]: L0):
+# CHECK-NEXT: = PropGet [[scanner]] key="pos" receivers=[L0]
+# CHECK: [[rest]]([[text]]: string) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[text]] key="pos"
+# CHECK-NOT: TypeTest
+function f4 name="element-of-array-or-typed-array" parameters=[{type=Array<number>|Uint8Array}, {type=int}] results=[{type=anything}] {
+  b0(v0: Array<number>|Uint8Array, v1: int):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="element-of-array-or-typed-array"
+# CHECK-NEXT: b0(v0: Array<number>|Uint8Array, v1: int):
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK-NOT: TypeTest
+# CHECK: ([[list]]: Array<number>):
+# CHECK-NEXT: = ElemGet [[list]], v1
+# CHECK: ([[view]]: Uint8Array):
+# CHECK-NEXT: = ElemGet [[view]], v1
+function f5 name="store" parameters=[{type=Array<number>|Uint8Array}, {type=int}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>|Uint8Array, v1: int, v2: number):
+    ElemSet v0, v1, v2
+    Return
+}
+# CHECK-LABEL: function f5 name="store"
+# CHECK-NEXT: b0(v0: Array<number>|Uint8Array, v1: int, v2: number):
+# CHECK-NEXT: [[storesInArray]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[storesInArray]] -> taken [[arrayStore]](| 0), notTaken [[viewStore]](| 0)
+# CHECK-NEXT: [[afterStore]]():
+# CHECK-NEXT: Return
+# CHECK-NEXT: [[arrayStore]]([[storedList]]: Array<number>):
+# CHECK-NEXT: ElemSet [[storedList]], v1, v2
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# CHECK-NEXT: [[viewStore]]([[storedView]]: Uint8Array):
+# CHECK-NEXT: ElemSet [[storedView]], v1, v2
+# CHECK-NEXT: Jump -> next [[afterStore]]()
+# CHECK-NEXT: }
+function f6 name="under-handler" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number>) handler=b2():
+    v1 = PropGet v0 key="length"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: function f6 name="under-handler"
+# CHECK: ({{*}}: string) handler=b2():
+# CHECK-NEXT: = PropGet {{*}} key="length"
+# CHECK: ({{*}}: Array<number>) handler=b2():
+# CHECK-NEXT: = PropGet {{*}} key="length"
+function f7 name="class-without-an-instance-test-beside-a-primitive" parameters=[{type=string|ArrayIterator}] results=[{type=anything}] {
+  b0(v0: string|ArrayIterator):
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="class-without-an-instance-test-beside-a-primitive"
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK: ([[iterated]]: string):
+# CHECK-NEXT: = PropGet [[iterated]] key="toString"
+# CHECK: ([[iterator]]: ArrayIterator):
+# CHECK-NEXT: = PropGet [[iterator]] key="toString"
+function f8 name="class-without-an-instance-test-beside-another-object" parameters=[{type=string|Array<number>|ArrayIterator}] results=[{type=anything}] {
+  b0(v0: string|Array<number>|ArrayIterator):
+    v1 = PropGet v0 key="toString"
+    Return v1
+}
+# CHECK-LABEL: function f8 name="class-without-an-instance-test-beside-another-object"
+# CHECK-NOT: testedType=ArrayIterator
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: testedType=ArrayIterator
+# CHECK: ([[untested]]: {{*}}ArrayIterator) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[untested]] key="toString"
+# CHECK-NOT: testedType=ArrayIterator
+function f9 name="one-part" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f9 name="one-part"
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f10 name="no-part-resolves" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number>):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-LABEL: function f10 name="no-part-resolves"
+# CHECK-NEXT: b0(v0: string|Array<number>):
+# CHECK-NEXT: = PropGet v0 key="pos"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f11 name="nullish-in-the-type" parameters=[{type=undefined|string|Array<number>}] results=[{type=anything}] {
+  b0(v0: undefined|string|Array<number>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f11 name="nullish-in-the-type"
+# CHECK-NEXT: b0(v0: undefined|string|Array<number>):
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f12 name="element-under-a-key-of-any-type" parameters=[{type=Array<number>|Uint8Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number>|Uint8Array, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="element-under-a-key-of-any-type"
+# CHECK-NEXT: b0(v0: Array<number>|Uint8Array, v1: anything):
+# CHECK-NEXT: = ElemGet v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f13 name="free-name" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number>):
+    v1 = PropGet v0 key="length" [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f13 name="free-name"
+# CHECK-NEXT: b0(v0: string|Array<number>):
+# CHECK-NEXT: = PropGet v0 key="length" [isFreeName]
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

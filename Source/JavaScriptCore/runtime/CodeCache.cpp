@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CodeCache.h"
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeGenerator.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
@@ -86,8 +87,9 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
     });
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
+NEVER_INLINE static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, generateUnlinkedCodeBlockForFunctions);
     if (!depth)
         return;
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
@@ -107,8 +109,9 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
-UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, DerivedContextType derivedContextType, bool isArrowFunctionContext, const TDZEnvironment* variablesUnderTDZ = nullptr, const PrivateNameEnvironment* privateNameEnvironment = nullptr, ExecutableType* executable = nullptr, OptimizeBytecode optimize = OptimizeBytecode::No)
+NEVER_INLINE UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, DerivedContextType derivedContextType, bool isArrowFunctionContext, const TDZEnvironment* variablesUnderTDZ = nullptr, const PrivateNameEnvironment* privateNameEnvironment = nullptr, ExecutableType* executable = nullptr, OptimizeBytecode optimize = OptimizeBytecode::No)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, generateUnlinkedCodeBlockImpl<UnlinkedCodeBlockType, ExecutableType>);
     typedef typename CacheTypes<UnlinkedCodeBlockType>::RootNode RootNode;
     bool isInsideOrdinaryFunction = executable && executable->isInsideOrdinaryFunction();
 
@@ -204,9 +207,6 @@ void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const Source
 template<class UnlinkedCodeBlockType, class ExecutableType>
 UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableType* executable, const SourceCode& source, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType)
 {
-    if (source.provider()->auditSites()) [[unlikely]]
-        return generateUnlinkedCodeBlock<UnlinkedCodeBlockType, ExecutableType>(vm, executable, source, scriptMode, codeGenerationMode, error, evalContextType);
-
     DerivedContextType derivedContextType = executable->derivedContextType();
     bool isArrowFunctionContext = executable->isArrowFunctionContext();
     SourceCodeKey key(
@@ -220,7 +220,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // the records that share its executable then use.
     bool privateToExecutable = false;
     if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
-        privateToExecutable = !executable->resolvesInGlobalScope() && !source.provider()->hasNoSourceText();
+        privateToExecutable = !executable->resolvesInGlobalScope();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
     UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
@@ -323,8 +323,6 @@ UnlinkedFunctionExecutable* CodeCache::getUnlinkedGlobalFunctionExecutable(VM& v
 
     // We initially start with hasCapturedVariables = false.
     functionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
-    if ((Options::useBytecodeOptimizer() || !Options::useJIT()) && !(lexicallyScopedFeatures & TaintedByWithScopeLexicallyScopedFeature))
-        functionExecutable->setParentDeclaredNames(DeclaredNamesLink::createForGlobalScope());
 
     if (Options::useCodeCache())
         m_sourceCode.addCache(key, SourceCodeValue(vm, functionExecutable, m_sourceCode.age()));

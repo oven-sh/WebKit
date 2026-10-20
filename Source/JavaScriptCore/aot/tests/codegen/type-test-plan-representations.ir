@@ -1,0 +1,45 @@
+# The representation of the tested value leaves out of a plan what it cannot hold, and the verdict is settled again
+# FORM: Selected
+# RUN: type-test-plan t0 JSValue t1 t0 Boolean t1 t0 Int32 t1 t0 Int64 t1 t0 Double t1 t0 OptionalInt64 t1 t0 OptionalDouble t1 t0 Cell t1 t0 Cell32 t1 t0 LiteralString t1
+# CHECK: t0 JSValue t1: NeedsTest pass=Undefined|True|Integer|String fail=Null|False|WholeNumber|FractionalNumber|Symbol|BigInt|Absent integers=[0, 10] strings=1 objects=NeedTest
+# CHECK-NEXT: cell ShapeIn [[point]]
+# CHECK-NEXT: t0 Boolean t1: NeedsTest pass=True fail=False integers=any strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 Int32 t1: NeedsTest pass=Integer fail=none integers=[0, 10] strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 Int64 t1: NeedsTest pass=Integer fail=none integers=[0, 10] strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 Double t1: NeedsTest pass=Integer fail=WholeNumber|FractionalNumber integers=[0, 10] strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 OptionalInt64 t1: NeedsTest pass=Undefined|Integer fail=Null|Absent integers=[0, 10] strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 OptionalDouble t1: NeedsTest pass=Undefined|Integer fail=Null|WholeNumber|FractionalNumber|Absent integers=[0, 10] strings=0 objects=DoNotOccur
+# CHECK-NEXT: t0 Cell t1: NeedsTest pass=String fail=Symbol|BigInt integers=any strings=1 objects=NeedTest
+# CHECK-NEXT: cell ShapeIn [[point]]
+# CHECK-NEXT: t0 Cell32 t1: NeedsTest pass=Undefined|String fail=Null|Symbol|BigInt|Absent integers=any strings=1 objects=NeedTest
+# CHECK-NEXT: cell ShapeIn [[point]]
+# CHECK-NEXT: t0 LiteralString t1: NeedsTest pass=Undefined|String fail=Null|Absent integers=any strings=1 objects=DoNotOccur
+# RUN(SETTLED): type-test-plan t0 Boolean t2 t0 Int32 t3
+# SETTLED: t0 Boolean t2: AlwaysPasses
+# SETTLED-NEXT: t0 Int32 t3: NeverPasses
+# RUN(SLOTS): type-test-plan t4 Cell32 t5 t6 OptionalDouble t7 t5 Cell t8
+# SLOTS: t4 Cell32 t5: NeedsTest pass=none fail=Absent integers=any strings=0 objects=AllPass
+# SLOTS-NEXT: t6 OptionalDouble t7: NeedsTest pass=Integer|WholeNumber|FractionalNumber fail=Absent integers=any strings=0 objects=DoNotOccur
+# SLOTS-NEXT: t5 Cell t8: NeverPasses
+# SLOTS-NOT: cell
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Environment name="outer" fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Environment name="inner" fields=[{key="y" declared={type=anything}}]
+variable g0 name="t0" declared={type=anything|absent} initialization=Undefined
+variable g1 name="t1" declared={type=undefined|true|int[0, 10]|"a"|L0} initialization=Undefined
+variable g2 name="t2" declared={type=boolean|L0} initialization=Undefined
+variable g3 name="t3" declared={type=string} initialization=Undefined
+variable g4 name="t4" declared={type=absent|env L1} initialization=Undefined
+variable g5 name="t5" declared={type=env L1} initialization=Undefined
+variable g6 name="t6" declared={type=number|absent} initialization=Undefined
+variable g7 name="t7" declared={type=number} initialization=Undefined
+variable g8 name="t8" declared={type=env L2} initialization=Undefined
+function f0 name="allocate" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: anything, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0] [keepsShape]
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = NewObject -, v0 layout=L2 fields=[0]
+    Return
+}

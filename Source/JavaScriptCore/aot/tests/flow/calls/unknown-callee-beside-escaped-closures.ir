@@ -1,0 +1,69 @@
+# Beside an unknown callee, closures that have reached native code are linked only to predict them: all of them where the call can have an arm for each, else none, because native code calls them with unknown operands anyway. A closure that has not reached native code is always linked. The closures reach the calls through a function that only native code calls, so they have escaped by then
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: flow-links calls unknown
+# RUN(SOLVE): flow-solve nodes
+# CHECK-NOT: f0 v20 -> {{*}} f1
+# CHECK-NOT: f0 v20 -> {{*}} f2
+# CHECK: f0 v20 -> {{*}} f3 Call Once
+# CHECK-NOT: f0 v20 -> {{*}} f1
+# CHECK-NOT: f0 v20 -> {{*}} f2
+# CHECK: f0 v22 -> {{*}} f1 Call Once
+# CHECK: unknown-callee {{*}} v20 Call
+# CHECK-NEXT: unknown-callee {{*}} v22 Call
+# SOLVE: NativeCode() = {{*}}L0#
+# SOLVE: f2, parameter 0) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Argument" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="many" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="few" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="bothEscaped" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="oneEscaped" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    PutModuleVariable v2 variable=g2
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v2 variable=g3
+    v7 = NewClosure function=f4
+    v8 = Call v1, -, v7, v2, v3
+    v9 = NewClosure function=f3
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v9 variable=g0
+    PutModuleVariable v1 variable=g1
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = GetModuleVariable variable=g0
+    v17 = GetModuleVariable variable=g1
+    v18 = Integer integer=1
+    v19 = NewObject -, v18 layout=L0 fields=[0]
+    v20 = Call v16, -, v19
+    v21 = NewObject -, v18 layout=L0 fields=[0]
+    v22 = Call v17, -, v21
+    Return
+}
+function f1 name="firstEscaped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="secondEscaped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="kept" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="calledByNativeCodeAlone" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g3
+    PutModuleVariable v2 variable=g1
+    Return
+}

@@ -1,0 +1,91 @@
+# An arguments object over a rest list that the function hands out: the count and the parameters are read without the object, and whatever needs the list keeps the object where it is created
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 2
+# STATISTIC: AllocationsSunk = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="lengthBesideOwnRestParameter" flags=[HasRestParameter, HasArgumentCount] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v2
+    v5 = PropGet v3 key="length"
+    Return v5
+}
+# CHECK-LABEL: function f0 name="lengthBesideOwnRestParameter"
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v5: anything = Upcast v0 castType=anything
+
+function f1 name="parameter" flags=[HasRestParameter, HasArgumentCount] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v2
+    v5 = Integer integer=0
+    v6 = ElemGet v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f1 name="parameter"
+# CHECK-NOT: CreateUnmappedArguments
+# CHECK: v6: anything = Upcast v1 castType=anything
+
+function f2 name="surplusArgument" flags=[HasRestParameter, HasArgumentCount] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v2
+    v5 = Integer integer=1
+    v6 = ElemGet v3, v5
+    Return v6
+}
+# CHECK-LABEL: function f2 name="surplusArgument"
+# CHECK: b0(
+# CHECK-NEXT: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK-NEXT: v4: anything = Call v1, -, v2
+# CHECK: v6: anything = ElemGet v3, v5
+
+function f3 name="unknownIndex" flags=[HasRestParameter, HasArgumentCount] parameters=[{type=i32}, {type=Array}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: i32, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v2
+    v7 = ElemGet v3, v1
+    Return v7
+}
+# CHECK-LABEL: function f3 name="unknownIndex"
+# CHECK: b0(
+# CHECK-NEXT: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK: v7: anything = ElemGet v3, v1
+
+function f4 name="returnedOnOnePath" flags=[HasRestParameter, HasArgumentCount] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v2
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    v6 = PropGet v3 key="length"
+    Return v6
+}
+# CHECK-LABEL: function f4 name="returnedOnOnePath"
+# CHECK: b0(
+# CHECK-NEXT: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+# CHECK-NEXT: v4: anything = Call v1, -, v2
+# CHECK: b1():
+# CHECK-NEXT: Return v3
+
+function f5 name="listedForCall" flags=[HasThis, HasRestParameter, HasArgumentCount] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateUnmappedArguments v1, v3, v2
+    v5 = Call v2, -, v3
+    v6 = NewArgumentList v2, v4
+    v7 = CallList v2, v0, v6
+    Return v7
+}
+# CHECK-LABEL: function f5 name="listedForCall"
+# CHECK: b0(
+# CHECK-NEXT: v4: Arguments = CreateUnmappedArguments v1, v3, v2
+# CHECK-NEXT: v5: anything = Call v2, -, v3
+# CHECK-NEXT: v6: Array = NewArgumentList v2, v4

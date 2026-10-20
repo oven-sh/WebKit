@@ -1,0 +1,131 @@
+# An object that one operation stores into the prototype property of a constructor function before anything reads the property is the prototype object of the class,
+# and the class whose prototype object it inherits from is the next one on the chain
+# RUN: flow
+# CHECK: layout L0 flow={{*}} prototypeProperty=Fixed {{*}} namedMembers=[{key="describe" function=f8 mutability=Fixed
+# CHECK: layout L1 flow={{*}}ChangePrototype{{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed {{*}} namedMembers=[{key="area" function=f9 mutability=Fixed{{*}} hasAssignedPrototype=true prototypeBase=L0}
+# CHECK: layout L2 flow={{*}}ChangePrototype{{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed {{*}} namedMembers=[{key="area" function=f9 mutability=Fixed{{*}} hasAssignedPrototype=true prototypeBase=L0}
+# CHECK: layout L3 flow={{*}}ChangePrototype{{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed {{*}} hasAssignedPrototype=true prototypeBase=L2}
+# CHECK: layout L4 flow=
+# CHECK-NOT: hasAssignedPrototype
+# CHECK: layout L(
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Direct" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="ThroughHelper" constructor=f3 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="Grandchild" constructor=f4 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="ConstructedFirst" constructor=f5 flags=[IsConstructorFunction]
+layout L5 kind=Instance name="AssignedOnOnePath" constructor=f6 flags=[IsConstructorFunction]
+layout L6 kind=Instance name="UnknownParent" constructor=f7 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="create"
+    v3 = NewClosure function=f10
+    v4 = NewClosure function=f11
+    v5 = NewClosure function=f1
+    v6 = PropGet v5 key="prototype"
+    v7 = NewClosure function=f8
+    PropSet v6, v7 key="describe" mode=Strict
+    v9 = NewClosure function=f2
+    v10 = PropGet v5 key="prototype"
+    v11 = Call v2, v1, v10 calleeKey="create"
+    PropSet v9, v11 key="prototype" mode=Strict
+    v13 = PropGet v9 key="prototype"
+    v14 = NewClosure function=f9
+    PropSet v13, v14 key="area" mode=Strict
+    v16 = NewClosure function=f3
+    v17 = Call v3, -, v16, v5
+    v18 = PropGet v16 key="prototype"
+    PropSet v18, v14 key="area" mode=Strict
+    v20 = NewClosure function=f4
+    v21 = Call v3, -, v20, v16
+    v22 = NewClosure function=f5
+    v23 = Construct v22
+    v24 = Call v2, v1, v10 calleeKey="create"
+    PropSet v22, v24 key="prototype" mode=Strict
+    v26 = NewClosure function=f6
+    v27 = Call v2, v1, v10 calleeKey="create"
+    v28 = PropGet v0 key="flag" [isFreeName]
+    v29 = ToBoolean v28
+    Branch v29 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v26, v27 key="prototype" mode=Strict
+    Jump -> next b2()
+  b2():
+    v31 = NewClosure function=f7
+    v32 = Call v2, v1, v28 calleeKey="create"
+    PropSet v31, v32 key="prototype" mode=Strict
+    v34 = Construct v9
+    v35 = Call v4, -, v34
+    v36 = Construct v16
+    v37 = Call v4, -, v36
+    v38 = Construct v20
+    v39 = Call v4, -, v38
+    v40 = Call v4, -, v23
+    v41 = Construct v26
+    v42 = Call v4, -, v41
+    v43 = Construct v31
+    v44 = Call v4, -, v43
+    Return
+}
+function f1 name="Parent" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f2 name="Direct" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="ThroughHelper" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f4 name="Grandchild" flags=[HasThis] thisType={type=L3} results=[{type=anything}] {
+  b0(v0: object ? L3):
+    Return
+}
+function f5 name="ConstructedFirst" flags=[HasThis] thisType={type=L4} results=[{type=anything}] {
+  b0(v0: object ? L4):
+    Return
+}
+function f6 name="AssignedOnOnePath" flags=[HasThis] thisType={type=L5} results=[{type=anything}] {
+  b0(v0: object ? L5):
+    Return
+}
+function f7 name="UnknownParent" flags=[HasThis] thisType={type=L6} results=[{type=anything}] {
+  b0(v0: object ? L6):
+    Return
+}
+function f8 name="describe" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f9 name="area" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f10 name="inherits" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Object" [isFreeName]
+    v4 = PropGet v3 key="create"
+    v5 = PropGet v1 key="prototype"
+    v6 = Call v4, v3, v5 calleeKey="create"
+    PropSet v0, v6 key="prototype" mode=Strict
+    v8 = PropGet v0 key="prototype"
+    PropSet v8, v0 key="constructor" mode=Strict
+    Return
+}
+function f11 name="use" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="describe"
+    v2 = Call v1, v0 calleeKey="describe"
+    v3 = PropGet v0 key="area"
+    v4 = TypeOf v3
+    Return v2
+}

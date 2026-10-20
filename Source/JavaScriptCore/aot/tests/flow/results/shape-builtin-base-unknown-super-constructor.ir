@@ -1,0 +1,51 @@
+# A read by an unknown key sends an instance of a class that extends Error to code nobody sees, which may give the class object another prototype. So super() may call anything, and the solver allocates a second object at it. No constructor makes a compiled object of a layout whose chain ends in a built-in class: both classes lose the shape for that cause, nothing is allocated with the layout, and it gets no slots
+# RUN: flow
+# RUN(SLOTS): plan-slots layouts
+# OPTIONS: disable=flow:CallVersions
+# CHECK: class [[byError]] layout=L0 {{*}}cause=BuiltinBase
+# CHECK: class [[byUnknown]] layout=L0 {{*}}cause=BuiltinBase
+# CHECK: site {{*}} function=f1 layout=L0 builtinClass=Error allocationClass=
+# CHECK: site {{*}} function=f1 layout=L0 allocationClass=
+# CHECK: layout L0 flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Error
+# CHECK-NOT: allocationClasses=[
+# CHECK: classFlow=
+# SLOTS-NOT: L0 CompiledObject
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Failure" module=m0 constructor=f1 fields=[{key="cursor" declared={type=anything}}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="Error" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 key="next"
+    v8 = FinishClass v5 layout=L0
+    v9 = Integer integer=4
+    v10 = Construct v8, -, v9
+    v11 = PropGet v10 key="next"
+    v12 = Call v11, v10 calleeKey="next"
+    v13 = Call v1, -, v12
+    Return
+}
+function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    v5 = Integer integer=0
+    PropDefine v4, v5 key="cursor"
+    Return v4
+}
+function f2 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="cursor"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PropSet v0, v3 key="cursor" mode=Strict
+    v5 = ElemGet v0, v1
+    Return v5
+}

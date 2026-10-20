@@ -1,0 +1,52 @@
+# A function no reached code enters loses its body, and what it stores does not count
+# OPTIONS: disable=flow:ReachedFunctions disable-in=3:1
+# LIBRARY: own
+# RUN: flow
+# RUN(APPLY): flow-apply
+# STATISTIC: FlowUnreachedFunctions = 1
+# CHECK: function f1 callers=AllKnown
+# CHECK-NOT: reachability=
+# CHECK: function f2 reachability=Unreached
+# CHECK-NOT: reachability=
+# CHECK: variable g0 type=1 written=anything flow={writers=AllKnown stores=AtMostOnce
+# APPLY-LABEL: function f1 name="reader"
+# APPLY: GetModuleVariable variable=g0
+# APPLY-LABEL: function f2 name="unreached"
+# APPLY-NOT: b0
+# APPLY-LABEL: function f3 name="switchedOff"
+# APPLY: String string="retained"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="narrow" declared={type=anything}
+variable g1 name="wide" declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    v6 = Call v3
+    Return
+}
+function f1 name="reader" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="unreached" results=[{type=anything}] {
+  b0():
+    v0 = String string="dropped"
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="switchedOff" results=[{type=anything}] {
+  b0():
+    v0 = String string="retained"
+    PutModuleVariable v0 variable=g1
+    Return
+}

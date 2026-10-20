@@ -962,4 +962,58 @@ TEST(WTF, StringImplCodePointAtNUL)
     ASSERT_EQ(string->codePointAt(1), 0xD800u);
 }
 
+TEST(WTF, StringImplCreateWithHash)
+{
+    auto characters = "typed key"_s.span8();
+    unsigned hash = StringHasher::computeHashAndMaskTop8Bits(characters);
+
+    auto hashedString = StringImpl::create(characters, hash);
+    ASSERT_TRUE(hashedString->hasHash());
+    ASSERT_EQ(hash, hashedString->existingHash());
+    ASSERT_NE(characters.data(), hashedString->span8().data());
+
+    auto plainString = StringImpl::create(characters);
+    ASSERT_FALSE(plainString->hasHash());
+    ASSERT_EQ(hash, plainString->hash());
+    ASSERT_TRUE(plainString->hasHash());
+    ASSERT_TRUE(equal(hashedString.get(), plainString.get()));
+
+    auto hashedAtom = AtomStringImpl::add(hashedString.ptr());
+    auto plainAtom = AtomStringImpl::add(plainString.ptr());
+    ASSERT_EQ(hashedAtom.get(), plainAtom.get());
+}
+
+TEST(WTF, StringImplCreateWithHashEmpty)
+{
+    std::span<const Latin1Character> characters;
+    auto string = StringImpl::create(characters, StringHasher::computeHashAndMaskTop8Bits(characters));
+    ASSERT_EQ(StringImpl::empty(), string.ptr());
+}
+
+TEST(WTF, StringImplCreateWithoutCopyingWithHash)
+{
+    auto characters = "typed key"_s.span8();
+    unsigned hash = StringHasher::computeHashAndMaskTop8Bits(characters);
+    auto string = StringImpl::createWithoutCopyingWithHash(characters, hash);
+    ASSERT_TRUE(string->hasHash());
+    ASSERT_EQ(hash, string->existingHash());
+    ASSERT_EQ(characters.data(), string->span8().data());
+
+    std::array<char16_t, 3> wideData { u'k', 0x65E5, u'y' };
+    std::span<const char16_t> wideCharacters { wideData };
+    unsigned wideHash = StringHasher::computeHashAndMaskTop8Bits(wideCharacters);
+    auto wideString = StringImpl::createWithoutCopyingWithHash(wideCharacters, wideHash);
+    ASSERT_FALSE(wideString->is8Bit());
+    ASSERT_TRUE(wideString->hasHash());
+    ASSERT_EQ(wideHash, wideString->existingHash());
+    ASSERT_EQ(wideCharacters.data(), wideString->span16().data());
+}
+
+TEST(WTF, StringImplCreateWithoutCopyingWithHashEmpty)
+{
+    std::span<const char16_t> characters;
+    auto string = StringImpl::createWithoutCopyingWithHash(characters, StringHasher::computeHashAndMaskTop8Bits(characters));
+    ASSERT_EQ(StringImpl::empty(), string.ptr());
+}
+
 } // namespace TestWebKitAPI

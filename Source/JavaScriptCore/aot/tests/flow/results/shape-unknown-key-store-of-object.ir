@@ -1,0 +1,37 @@
+# A dictionary that holds objects under keys nobody knows: the key may be __proto__, so the prototype link of the dictionary is not fixed. It keeps its shape, and what is stored keeps every proof but that it is no prototype. A dictionary that holds numbers keeps its link
+# RUN: flow
+# CHECK: class {{*}} layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK: class {{*}} layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK: field L1.0 "id" type=string {{*}}flow={location={writers=AllKnown stores=AtMostOnce
+# RUN(VALUES): flow-solve nodes
+# VALUES: f0, v13) = {undefined|string|L1#
+# VALUES: f0, v14) = {undefined|number}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="UsersById" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="User" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="CountsById" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewObject -, v5 layout=L2 fields=[0]
+    v9 = FinishObject v8
+    v10 = PropGet v4 key="id"
+    ElemSet v7, v10, v4 mode=Strict
+    ElemSet v9, v10, v1 mode=Strict
+    v13 = PropGet v7 key="id"
+    v14 = PropGet v9 key="id"
+    Return
+  b1() role=CatchHandler:
+    v15 = CatchValue
+    Return
+}

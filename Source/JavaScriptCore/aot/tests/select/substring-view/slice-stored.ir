@@ -1,0 +1,24 @@
+# A range that is stored is created for the store, and the comparison beside it reads the base string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+function f0 name="slice-stored" captures=[{type=env L0}] parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: env L0, v1: string, v2: int, v3: int):
+    v4 = GetStringLength v1
+    v5 = StringRange v4, v2, v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v1, v6, v7
+    PutEnvironmentField v0, v8 layout=L0 field=0
+    v10 = String string="ab"
+    v11 = StrictEq v8, v10
+    Return v11
+}
+# CHECK: [[flat]]: flatstring = FlattenString v1
+# CHECK-NEXT: v8: string = Substring [[flat]], v6, v7
+# CHECK-NEXT: PutEnvironmentField v0, v8 layout=L0
+# CHECK: v11: boolean = StringRangeEqualsLiteral [[flat]], v6, v7 literal="ab"
+# CHECK-NEXT: Return v11

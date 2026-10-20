@@ -1,0 +1,41 @@
+# join converts what the array holds, at every depth, and not the array: toString of an element and of an element of an element is called, and toString of the joined array is not
+# RUN: flow-links calls
+# RUN(NESTED): flow-links calls
+# RUN(JOINED): flow-links builtins
+# RUN(ELEMENT): flow-links builtins
+# CHECK: f0 v5 -> [[element]] f1 Protocol
+# NESTED: f0 v11 -> [[element]] f2 Protocol
+# JOINED: builtin [[main]] v5 ArrayPrototypeJoin/0 Call
+# JOINED-NOT: v5 ArrayPrototypeJoin/1
+# JOINED-NOT: v5 ArrayPrototypeToString
+# ELEMENT: builtin [[main]] v11 ArrayPrototypeToString/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Element" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v1 contents=anything @10
+    v3 = PropGet v2 key="join"
+    v4 = String string=","
+    v5 = Call v3, v2, v4 calleeKey="join"
+    v6 = NewClosure function=f2
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = NewArray v7 contents=anything @20
+    v9 = NewArray v8 contents=anything @30
+    v10 = PropGet v9 key="join"
+    v11 = Call v10, v9, v4 calleeKey="join"
+    Return
+}
+function f1 name="ofElement" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="element"
+    Return v1
+}
+function f2 name="ofNestedElement" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="nested"
+    Return v1
+}

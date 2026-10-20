@@ -53,6 +53,7 @@ Signature::Signature(std::span<const Type> arguments, Type returnType)
     , m_returnType(returnType)
 {
     m_hash = computeHash(arguments, returnType);
+    m_callLayout = computeCallLayout(hostNativeCC(), *this);
 }
 
 RefPtr<Signature> Signature::tryCreate(std::span<const Type> arguments, Type returnType)

@@ -1,0 +1,60 @@
+# A call with a list that has positions passes each position to its parameter: an array literal, a rest array, and beside a caller that passes arguments one by one
+# RUN: flow-solve nodes
+# CHECK: , f1, parameter 0) = {L0#[[x]]}
+# CHECK-NEXT: , f1, parameter 1) = {L1#[[a]]}
+# CHECK-NEXT: , f1, parameter 2) = {L2#[[b]]}
+# RUN(SHARED): flow-solve nodes
+# SHARED: , f2, parameter 0) = {L0#[[x]]|L3#[[c]]}
+# SHARED-NEXT: , f2, parameter 1) = {undefined|L1#[[a]]}
+# SHARED-NEXT: , f2, parameter 2) = {undefined|L2#[[b]]}
+# RUN(REST): flow-solve nodes
+# REST: , f4, parameter 0) = {L1#[[a]]}
+# REST-NEXT: , f4, parameter 1) = {L2#[[b]]}
+# REST-NEXT: , f4, parameter 2) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="X" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="A" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="B" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="C" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L3 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewClosure function=f1
+    v10 = NewArray v2, v4, v6 contents=anything
+    v11 = CallList v9, -, v10
+    v12 = NewClosure function=f2
+    v13 = NewArray v2, v4, v6 contents=anything
+    v14 = CallList v12, -, v13
+    v15 = Call v12, -, v8
+    v16 = NewClosure function=f3
+    v17 = Call v16, -, v4, v6
+    Return
+}
+function f1 name="calledWithListOnly" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}
+function f2 name="calledWithListAndPlainly" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}
+function f3 name="forwardsRest" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = NewClosure function=f4
+    v2 = CallList v1, -, v0
+    Return v2
+}
+function f4 name="calledWithRest" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}

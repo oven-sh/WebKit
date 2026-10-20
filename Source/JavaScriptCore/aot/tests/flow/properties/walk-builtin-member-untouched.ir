@@ -1,0 +1,41 @@
+# A lookup ends at a member of the table that nothing has touched, though the table does not name the prototype of its holder. A member that the program deletes or redefines is passed, and that member alone. A member that it assigns stays filled: the lookup ends at what is stored or at the member
+# RUN: flow-walk
+# CHECK: v1 Get {"log"}
+# CHECK-NEXT: Console: BuiltinMember own Proven Console "log" ConsoleLog
+# CHECK-NEXT: v2 Get {"warn"}
+# CHECK-NEXT: Console: {{*}} own Proven Console "warn"
+# CHECK: Console: Unknown own Predicted Console *
+# CHECK: v3 Get {"info"}
+# CHECK-NEXT: Console: Value own Proven Console "info"
+# CHECK: v4 Get {"error"}
+# CHECK: Console: Unknown own Predicted Console *
+# RUN(NODES): flow-solve nodes
+# NODES: , f0, v1) = {ConsoleLog}
+# NODES-NEXT: , f0, v2) = {undefined|null|boolean|number|string|symbol|bigint|unknown|ConsoleWarn}
+# NODES-NEXT: , f0, v3) = {f1|ConsoleInfo}
+# NODES-NEXT: , f0, v4) = {undefined|null|boolean|number|string|symbol|bigint|unknown|
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = PropGet v0 key="log"
+    v2 = PropGet v0 key="warn"
+    v3 = PropGet v0 key="info"
+    v4 = PropGet v0 key="error"
+    v5 = PropDelete v0 key="warn" mode=Sloppy
+    v6 = NewClosure function=f1
+    PropSet v0, v6 key="info" mode=Strict
+    v8 = NewClosure function=f2
+    DefineGetter v0, v8 key="error"
+    Return
+}
+function f1 name="info" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="error" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

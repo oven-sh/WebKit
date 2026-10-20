@@ -1,0 +1,354 @@
+# What one call defines from a descriptor on the prototype object of a constructor function is a fixed member, like a function that a store puts there: an accessor with the halves
+# that the descriptor always has, or a function under `value`. The call runs once and has completed before anything looks the name up, by a read or by a store that looks for a setter.
+# Not fixed: the holder may refuse the definition and the call answers false, two calls define the name or one half each, the name is read or stored to first, nobody knows the descriptor,
+# a half may be missing, the descriptor is of one kind or the other, the name is deleted later, one path alone defines the name, the function object is created twice.
+# A store to an instance runs a fixed setter and nothing else, so the instances get no field of that name. Where the setter may be missing at the store, they do.
+# RUN: flow
+# CHECK: layout L0 flow={{*}} namedMembers=[{key="k" kind=Getter function=f17 mutability=Fixed{{*}}{key="k" kind=Setter function=f18 mutability=Fixed
+# CHECK-NOT: field L0.
+# CHECK: layout L1 flow={{*}} namedMembers=[{key="k" kind=Getter function=f17 mutability=Fixed
+# CHECK: layout L2 flow={{*}} namedMembers=[{key="k" function=f17 mutability=Fixed
+# CHECK: layout L3 flow={{*}} namedMembers=[{key="k" kind=Getter function=f17 mutability=Fixed
+# CHECK: layout L4 flow={{*}} namedMembers=[{key="k" kind=Getter function=f17 mutability=Fixed{{*}}{key="k" kind=Setter function=f18 mutability=Fixed
+# CHECK-NOT: field L4.
+# CHECK: layout L5 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L6 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L7 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L8 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: field L8.0 "k" {{*}}flags=[IsAppendedByFlow]
+# CHECK: layout L9 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L10 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: field L10.0 "k" {{*}}flags=[IsAppendedByFlow]
+# CHECK: layout L11 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L12 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L13 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: layout L14 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: field L14.0 "k" {{*}}flags=[IsAppendedByFlow]
+# CHECK: layout L15 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: field L15.0 "k" {{*}}flags=[IsAppendedByFlow]
+# CHECK: layout L16 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Defined" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="GetterAlone" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Value" constructor=f3 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="ByReflect" constructor=f4 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="Declared" constructor=f5 flags=[IsConstructorFunction]
+layout L5 kind=Instance name="ByReflectOnFrozenHolder" constructor=f6 flags=[IsConstructorFunction]
+layout L6 kind=Instance name="DefinedTwice" constructor=f7 flags=[IsConstructorFunction]
+layout L7 kind=Instance name="ReadBefore" constructor=f8 flags=[IsConstructorFunction]
+layout L8 kind=Instance name="StoredBefore" constructor=f9 flags=[IsConstructorFunction]
+layout L9 kind=Instance name="UnknownDescriptor" constructor=f10 flags=[IsConstructorFunction]
+layout L10 kind=Instance name="HalvesByTwoCalls" constructor=f11 flags=[IsConstructorFunction]
+layout L11 kind=Instance name="GetterOrNothing" constructor=f12 flags=[IsConstructorFunction]
+layout L12 kind=Instance name="AccessorOrValue" constructor=f13 flags=[IsConstructorFunction]
+layout L13 kind=Instance name="RemovedLater" constructor=f14 flags=[IsConstructorFunction]
+layout L14 kind=Instance name="DefinedOnOnePath" constructor=f15 flags=[IsConstructorFunction]
+layout L15 kind=Instance name="CreatedTwice" constructor=f16 flags=[IsConstructorFunction]
+layout L16 name="GetAndSet" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}]
+layout L17 name="Get" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L18 name="Set" fields=[{key="set" declared={type=anything} flags=[IsRequired]}]
+layout L19 name="Value" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Declared" module=m0 declared={type=anything} initialization=Function function=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = PropGet v0 key="unknown" [isFreeName]
+    v3 = ToBoolean v1
+    v4 = Builtin builtin=Object
+    v5 = NewClosure function=f1
+    v6 = PropGet v5 key="prototype"
+    v7 = NewClosure function=f17
+    v8 = NewClosure function=f18
+    v9 = NewObject -, v7, v8 layout=L16 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = String string="k"
+    v13 = Call v11, v4, v6, v12, v10
+    v14 = Construct v5
+    v15 = PropGet v14 key="k"
+    v16 = Integer integer=1
+    PropSet v14, v16 key="k" mode=Sloppy
+    v18 = NewClosure function=f2
+    v19 = PropGet v18 key="prototype"
+    v20 = NewClosure function=f17
+    v21 = NewObject -, v20 layout=L17 fields=[0]
+    v22 = FinishObject v21
+    v23 = Builtin builtin=ObjectDefineProperty
+    v24 = String string="k"
+    v25 = Call v23, v4, v19, v24, v22
+    v26 = Construct v18
+    v27 = PropGet v26 key="k"
+    v28 = NewClosure function=f3
+    v29 = PropGet v28 key="prototype"
+    v30 = NewClosure function=f17
+    v31 = NewObject -, v30 layout=L19 fields=[0]
+    v32 = FinishObject v31
+    v33 = Builtin builtin=ObjectDefineProperty
+    v34 = String string="k"
+    v35 = Call v33, v4, v29, v34, v32
+    v36 = Construct v28
+    v37 = PropGet v36 key="k"
+    v38 = Call v37, v36 calleeKey="k"
+    v39 = NewClosure function=f4
+    v40 = PropGet v39 key="prototype"
+    v41 = NewClosure function=f17
+    v42 = NewObject -, v41 layout=L17 fields=[0]
+    v43 = FinishObject v42
+    v44 = Builtin builtin=ReflectDefineProperty
+    v45 = String string="k"
+    v46 = Call v44, v4, v40, v45, v43
+    v47 = Construct v39
+    v48 = PropGet v47 key="k"
+    v49 = GetModuleVariable variable=g0
+    v50 = PropGet v49 key="prototype"
+    v51 = NewClosure function=f17
+    v52 = NewClosure function=f18
+    v53 = NewObject -, v51, v52 layout=L16 fields=[0, 1]
+    v54 = FinishObject v53
+    v55 = Builtin builtin=ObjectDefineProperty
+    v56 = String string="k"
+    v57 = Call v55, v4, v50, v56, v54
+    v58 = Construct v49
+    v59 = PropGet v58 key="k"
+    v60 = Integer integer=1
+    PropSet v58, v60 key="k" mode=Sloppy
+    v62 = NewClosure function=f6
+    v63 = PropGet v62 key="prototype"
+    v64 = Builtin builtin=ObjectFreeze
+    v65 = Call v64, v4, v63
+    v66 = NewClosure function=f17
+    v67 = NewObject -, v66 layout=L17 fields=[0]
+    v68 = FinishObject v67
+    v69 = Builtin builtin=ReflectDefineProperty
+    v70 = String string="k"
+    v71 = Call v69, v4, v63, v70, v68
+    v72 = Construct v62
+    v73 = PropGet v72 key="k"
+    v74 = NewClosure function=f7
+    v75 = PropGet v74 key="prototype"
+    v76 = NewClosure function=f17
+    v77 = NewObject -, v76 layout=L17 fields=[0]
+    v78 = FinishObject v77
+    v79 = Builtin builtin=ObjectDefineProperty
+    v80 = String string="k"
+    v81 = Call v79, v4, v75, v80, v78
+    v82 = Construct v74
+    v83 = PropGet v82 key="k"
+    v84 = NewClosure function=f17
+    v85 = NewObject -, v84 layout=L17 fields=[0]
+    v86 = FinishObject v85
+    v87 = Builtin builtin=ObjectDefineProperty
+    v88 = String string="k"
+    v89 = Call v87, v4, v75, v88, v86
+    v90 = NewClosure function=f8
+    v91 = Construct v90
+    v92 = PropGet v91 key="k"
+    v93 = PropGet v90 key="prototype"
+    v94 = NewClosure function=f17
+    v95 = NewObject -, v94 layout=L17 fields=[0]
+    v96 = FinishObject v95
+    v97 = Builtin builtin=ObjectDefineProperty
+    v98 = String string="k"
+    v99 = Call v97, v4, v93, v98, v96
+    v100 = NewClosure function=f9
+    v101 = Construct v100
+    v102 = Integer integer=1
+    PropSet v101, v102 key="k" mode=Sloppy
+    v104 = PropGet v100 key="prototype"
+    v105 = NewClosure function=f17
+    v106 = NewClosure function=f18
+    v107 = NewObject -, v105, v106 layout=L16 fields=[0, 1]
+    v108 = FinishObject v107
+    v109 = Builtin builtin=ObjectDefineProperty
+    v110 = String string="k"
+    v111 = Call v109, v4, v104, v110, v108
+    v112 = NewClosure function=f10
+    v113 = PropGet v112 key="prototype"
+    v114 = Builtin builtin=ObjectDefineProperty
+    v115 = String string="k"
+    v116 = Call v114, v4, v113, v115, v2
+    v117 = Construct v112
+    v118 = PropGet v117 key="k"
+    v119 = NewClosure function=f11
+    v120 = PropGet v119 key="prototype"
+    v121 = NewClosure function=f17
+    v122 = NewObject -, v121 layout=L17 fields=[0]
+    v123 = FinishObject v122
+    v124 = Builtin builtin=ObjectDefineProperty
+    v125 = String string="k"
+    v126 = Call v124, v4, v120, v125, v123
+    v127 = NewClosure function=f18
+    v128 = NewObject -, v127 layout=L18 fields=[0]
+    v129 = FinishObject v128
+    v130 = Builtin builtin=ObjectDefineProperty
+    v131 = String string="k"
+    v132 = Call v130, v4, v120, v131, v129
+    v133 = Construct v119
+    v134 = PropGet v133 key="k"
+    v135 = Integer integer=1
+    PropSet v133, v135 key="k" mode=Sloppy
+    v137 = NewClosure function=f12
+    v138 = PropGet v137 key="prototype"
+    v139 = NewClosure function=f17
+    v140 = Undefined
+    Branch v3 -> taken b1(v139), notTaken b1(v140)
+  b1(v141):
+    v142 = NewClosure function=f18
+    v143 = NewObject -, v141, v142 layout=L16 fields=[0, 1]
+    v144 = FinishObject v143
+    v145 = Builtin builtin=ObjectDefineProperty
+    v146 = String string="k"
+    v147 = Call v145, v4, v138, v146, v144
+    v148 = Construct v137
+    v149 = PropGet v148 key="k"
+    v150 = NewClosure function=f13
+    v151 = PropGet v150 key="prototype"
+    v152 = NewClosure function=f17
+    v153 = NewObject -, v152 layout=L17 fields=[0]
+    v154 = FinishObject v153
+    v155 = NewClosure function=f17
+    v156 = NewObject -, v155 layout=L19 fields=[0]
+    v157 = FinishObject v156
+    Branch v3 -> taken b2(v154), notTaken b2(v157)
+  b2(v158):
+    v159 = Builtin builtin=ObjectDefineProperty
+    v160 = String string="k"
+    v161 = Call v159, v4, v151, v160, v158
+    v162 = Construct v150
+    v163 = PropGet v162 key="k"
+    v164 = NewClosure function=f14
+    v165 = PropGet v164 key="prototype"
+    v166 = NewClosure function=f17
+    v167 = NewObject -, v166 layout=L17 fields=[0]
+    v168 = FinishObject v167
+    v169 = Builtin builtin=ObjectDefineProperty
+    v170 = String string="k"
+    v171 = Call v169, v4, v165, v170, v168
+    v172 = Construct v164
+    v173 = PropGet v172 key="k"
+    v174 = PropDelete v165 key="k" mode=Strict
+    v175 = NewClosure function=f15
+    v176 = PropGet v175 key="prototype"
+    v177 = NewClosure function=f17
+    v178 = NewClosure function=f18
+    v179 = NewObject -, v177, v178 layout=L16 fields=[0, 1]
+    v180 = FinishObject v179
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v181 = Builtin builtin=ObjectDefineProperty
+    v182 = String string="k"
+    v183 = Call v181, v4, v176, v182, v180
+    Jump -> next b4()
+  b4():
+    v184 = Construct v175
+    v185 = PropGet v184 key="k"
+    v186 = Integer integer=1
+    PropSet v184, v186 key="k" mode=Sloppy
+    v188 = NewClosure function=f19
+    v189 = Call v188
+    v190 = Call v188
+    Return
+}
+function f1 name="Defined" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f2 name="GetterAlone" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="Value" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f4 name="ByReflect" flags=[HasThis] thisType={type=L3} results=[{type=anything}] {
+  b0(v0: object ? L3):
+    Return
+}
+function f5 name="Declared" flags=[HasThis] thisType={type=L4} results=[{type=anything}] {
+  b0(v0: object ? L4):
+    Return
+}
+function f6 name="ByReflectOnFrozenHolder" flags=[HasThis] thisType={type=L5} results=[{type=anything}] {
+  b0(v0: object ? L5):
+    Return
+}
+function f7 name="DefinedTwice" flags=[HasThis] thisType={type=L6} results=[{type=anything}] {
+  b0(v0: object ? L6):
+    Return
+}
+function f8 name="ReadBefore" flags=[HasThis] thisType={type=L7} results=[{type=anything}] {
+  b0(v0: object ? L7):
+    Return
+}
+function f9 name="StoredBefore" flags=[HasThis] thisType={type=L8} results=[{type=anything}] {
+  b0(v0: object ? L8):
+    Return
+}
+function f10 name="UnknownDescriptor" flags=[HasThis] thisType={type=L9} results=[{type=anything}] {
+  b0(v0: object ? L9):
+    Return
+}
+function f11 name="HalvesByTwoCalls" flags=[HasThis] thisType={type=L10} results=[{type=anything}] {
+  b0(v0: object ? L10):
+    Return
+}
+function f12 name="GetterOrNothing" flags=[HasThis] thisType={type=L11} results=[{type=anything}] {
+  b0(v0: object ? L11):
+    Return
+}
+function f13 name="AccessorOrValue" flags=[HasThis] thisType={type=L12} results=[{type=anything}] {
+  b0(v0: object ? L12):
+    Return
+}
+function f14 name="RemovedLater" flags=[HasThis] thisType={type=L13} results=[{type=anything}] {
+  b0(v0: object ? L13):
+    Return
+}
+function f15 name="DefinedOnOnePath" flags=[HasThis] thisType={type=L14} results=[{type=anything}] {
+  b0(v0: object ? L14):
+    Return
+}
+function f16 name="CreatedTwice" flags=[HasThis] thisType={type=L15} results=[{type=anything}] {
+  b0(v0: object ? L15):
+    Return
+}
+function f17 name="get" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f18 name="set" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f19 name="make" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f16
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f17
+    v3 = NewClosure function=f18
+    v4 = NewObject -, v2, v3 layout=L16 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = String string="k"
+    v9 = Call v7, v6, v1, v8, v5
+    v10 = Construct v0
+    v11 = Integer integer=1
+    PropSet v10, v11 key="k" mode=Sloppy
+    Return
+}

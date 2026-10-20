@@ -58,10 +58,10 @@ public:
         return &vm.propertyNameEnumeratorSpace();
     }
 
-    static JSPropertyNameEnumerator* tryCreate(VM&, Structure*, uint32_t, uint32_t, PropertyNameArrayBuilder&&);
-    static JSPropertyNameEnumerator* create(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames)
+    static JSPropertyNameEnumerator* tryCreate(VM&, Structure*, uint32_t, uint32_t, PropertyNameArrayBuilder&&, uint32_t cachedOrderWord = 0, uint32_t cachedOrderWordMask = 0);
+    static JSPropertyNameEnumerator* create(VM& vm, Structure* structure, uint32_t indexedLength, uint32_t numberStructureProperties, PropertyNameArrayBuilder&& propertyNames, uint32_t cachedOrderWord = 0, uint32_t cachedOrderWordMask = 0)
     {
-        auto* result = tryCreate(vm, structure, indexedLength, numberStructureProperties, WTF::move(propertyNames));
+        auto* result = tryCreate(vm, structure, indexedLength, numberStructureProperties, WTF::move(propertyNames), cachedOrderWord, cachedOrderWordMask);
         RELEASE_ASSERT_RESOURCE_AVAILABLE(result, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
         return result;
     }
@@ -95,9 +95,20 @@ public:
     static constexpr ptrdiff_t endGenericPropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endGenericPropertyIndex); }
     static constexpr ptrdiff_t cachedInlineCapacityOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedInlineCapacity); }
     static constexpr ptrdiff_t flagsOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_flags); }
+    static constexpr ptrdiff_t cachedOrderWordOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedOrderWord); }
+    static constexpr ptrdiff_t cachedOrderWordMaskOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedOrderWordMask); }
     static constexpr ptrdiff_t cachedPropertyNamesVectorOffset()
     {
         return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_propertyNames);
+    }
+
+    // One Structure of a compiled object covers several key orders. The word after the cell header tells them apart.
+    bool describesOrdinaryObject() const { return !m_cachedOrderWordMask; }
+    bool isCurrentFor(JSObject* base) const
+    {
+        if (base->structureID() != cachedStructureID())
+            return false;
+        return describesOrdinaryObject() || (*std::bit_cast<const uint32_t*>(std::bit_cast<const char*>(base) + sizeof(JSCell)) & m_cachedOrderWordMask) == m_cachedOrderWord;
     }
 
     JSString* computeNext(JSGlobalObject*, JSObject* base, uint32_t& currentIndex, Flag&, bool shouldAllocateIndexedNameString = true);
@@ -107,7 +118,7 @@ public:
 private:
     friend class LLIntOffsetsExtractor;
 
-    JSPropertyNameEnumerator(VM&, Structure*, uint32_t, uint32_t, WriteBarrier<JSString>*, unsigned);
+    JSPropertyNameEnumerator(VM&, Structure*, uint32_t, uint32_t, WriteBarrier<JSString>*, unsigned, uint32_t cachedOrderWord, uint32_t cachedOrderWordMask);
     void finishCreation(VM&, RefPtr<PropertyNameArray>&&);
 
     // JSPropertyNameEnumerator is immutable data structure, which allows VM to cache the empty one.
@@ -119,6 +130,8 @@ private:
     uint32_t m_endGenericPropertyIndex;
     uint32_t m_cachedInlineCapacity;
     uint32_t m_flags { 0 };
+    uint32_t m_cachedOrderWord;
+    uint32_t m_cachedOrderWordMask;
 };
 
 void getEnumerablePropertyNames(JSGlobalObject*, JSObject*, PropertyNameArrayBuilder&, uint32_t& indexedLength, uint32_t& structurePropertyCount);

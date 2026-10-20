@@ -108,16 +108,16 @@
 #define OFFLINE_ASM_JIT 0
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
-#define OFFLINE_ASM_BUN_JSC_ADDITIONS 1
-#else
-#define OFFLINE_ASM_BUN_JSC_ADDITIONS 0
-#endif
-
 #if ENABLE(JIT_CAGE)
 #define OFFLINE_ASM_JIT_CAGE 1
 #else
 #define OFFLINE_ASM_JIT_CAGE 0
+#endif
+
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+#define OFFLINE_ASM_AOT 1
+#else
+#define OFFLINE_ASM_AOT 0
 #endif
 
 #if ENABLE(WEBASSEMBLY)

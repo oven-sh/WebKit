@@ -29,15 +29,17 @@
 #if ENABLE(B3_JIT)
 
 #include "AirArgInlines.h"
+#include "AirBitMatrixLiveness.h"
 #include "AirCode.h"
 #include "AirDominators.h"
-#include "AirEliminateDeadCode.h"
 #include "AirEmitShuffle.h"
 #include "AirEnsureDedicatedLoopEntryExitBlocks.h"
 #include "AirFixSpillsAfterTerminals.h"
 #include "AirFormTable.h"
+#include "AirFormTraits.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
+#include "AirLimits.h"
 #include "AirLiveness.h"
 #include "AirNaturalLoops.h"
 #include "AirPhaseInsertionSet.h"
@@ -47,8 +49,8 @@
 #include "AirTmpMap.h"
 #include "AirTmpWidthInlines.h"
 #include "AirUseCounts.h"
+#include "B3Procedure.h"
 #include <wtf/GenerationalSet.h>
-#include <wtf/GraphOrdering.h>
 #include <wtf/IntervalSet.h>
 #include <wtf/IterationStatus.h>
 #include <wtf/ListDump.h>
@@ -628,7 +630,7 @@ public:
             m_allocations.erase(interval);
     }
 
-    bool LEGACY_NODELETE hasConflict(LiveRange& range, Width width)
+    bool LEGACY_NODELETE hasConflict(const LiveRange& range, Width width)
     {
         for (auto interval : range.intervals()) {
             if (m_allocations.hasOverlap(interval))
@@ -849,10 +851,7 @@ struct TmpData {
         // The spillCostSizeBias causes the range size penalty to be relatively insignificant
         // for smaller ranges but become significant for very larger ranges.
         float weight = useDefCost.value();
-#if USE(BUN_JSC_ADDITIONS)
-        if (isX86_64())
-            weight = std::max(weight - preferredWeight - secondPreferredWeight, weight / 8);
-#endif
+        weight = std::max(weight - spillCostDiscount, weight / 8);
         SpillCost cost = SpillCost(weight / (liveRange.size() + spillCostSizeBias));
         return std::min(cost, maxSpillableSpillCost);
     }
@@ -864,33 +863,44 @@ struct TmpData {
         ASSERT_IMPLIES(stage == Stage::Spilled, spillCost() != unspillableCost);
     }
 
+    void setLiveRange(LiveRange&& range)
+    {
+        liveRange = WTF::move(range);
+        allocationFailedAtEpoch = 0;
+        evictionFailedAtEpoch = 0;
+        hasClobberedRegs = false;
+    }
+
+    void setPaysForCalleeSave()
+    {
+        paysForCalleeSave = true;
+        allocationFailedAtEpoch = 0;
+        evictionFailedAtEpoch = 0;
+    }
+
     LiveRange liveRange;
     Coalescables coalescables;
     UseDefCost useDefCost { 0 };
     UseDefCost cumulativeFixupCost { 0 };
     uint32_t spillSlotTableIndex { 0 };
-#if USE(BUN_JSC_ADDITIONS)
     uint32_t allocationFailedAtEpoch { 0 };
     uint32_t evictionFailedAtEpoch { 0 };
     uint64_t clobberedRegs { 0 };
     bool hasClobberedRegs { false };
-#endif
     uint32_t splitAroundClobbersMetadataIndex : 31 { 0 };
     uint32_t hasColdUse : 1 { 0 };
     bool paysForCalleeSave { false };
-#if USE(BUN_JSC_ADDITIONS)
     bool spansStretch { false };
     bool isClusterOverBlocks { false };
-#endif
     Stage stage { Stage::New };
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
     Reg assigned;
     Tmp splitFrom;
-#if USE(BUN_JSC_ADDITIONS)
     Reg secondPreferredReg;
     float preferredWeight { 0 };
     float secondPreferredWeight { 0 };
+    float spillCostDiscount { 0 };
 
     void prefer(Reg reg, float weight)
     {
@@ -925,12 +935,366 @@ struct TmpData {
         else if (!neighbours[1])
             neighbours[1] = tmp;
     }
-#endif
+};
+
+class RegisterOccupancy {
+    WTF_MAKE_NONCOPYABLE(RegisterOccupancy);
+public:
+    enum class FailureMemo : uint8_t { Allocation, Eviction, None };
+    enum class Clobbers : bool { Exclude, Ignore };
+
+    class Candidates {
+    public:
+        ALWAYS_INLINE bool contains(Reg reg) const
+        {
+            if (m_excludedRegs >> reg.index() & 1)
+                return false;
+            return !(m_failedAtEpoch && m_occupancy.m_lastRemovalEpoch[reg.index()] <= m_failedAtEpoch);
+        }
+
+    private:
+        friend class RegisterOccupancy;
+
+        Candidates(const RegisterOccupancy& occupancy, uint64_t excludedRegs, uint32_t failedAtEpoch)
+            : m_occupancy(occupancy)
+            , m_excludedRegs(excludedRegs)
+            , m_failedAtEpoch(failedAtEpoch)
+        {
+        }
+
+        const RegisterOccupancy& m_occupancy;
+        uint64_t m_excludedRegs;
+        uint32_t m_failedAtEpoch;
+    };
+
+    class ClobberWalk {
+    public:
+        explicit ClobberWalk(RegisterOccupancy& occupancy)
+            : m_occupancy(occupancy)
+            , m_points(occupancy.m_clobberPoints.span().data())
+            , m_clobberedRegsAtPoint(occupancy.m_clobberedRegsAtPoint.span().data())
+            , m_numberOfPoints(occupancy.m_clobberPoints.size())
+            , m_next(m_numberOfPoints)
+        {
+            occupancy.m_deadClobbersAtPoint.fill(0, m_numberOfPoints);
+            m_deadClobbersAtPoint = occupancy.m_deadClobbersAtPoint.mutableSpan().data();
+            updateNextPoint();
+        }
+
+        ALWAYS_INLINE Point nextPoint() const { return m_nextPoint; }
+        ALWAYS_INLINE uint64_t regsAtNextPoint() const { return m_clobberedRegsAtPoint[m_next - 1]; }
+
+        ALWAYS_INLINE void finishNextPoint(uint64_t deadClobbers)
+        {
+            m_deadClobbersAtPoint[--m_next] = deadClobbers;
+            m_occupancy.m_regsWithDeadClobbers |= deadClobbers;
+            updateNextPoint();
+        }
+
+        ALWAYS_INLINE bool lastPointHasDeadClobber(uint64_t bit, Point point) const
+        {
+            return m_next < m_numberOfPoints && m_points[m_next] == point && (m_deadClobbersAtPoint[m_next] & bit);
+        }
+
+        ALWAYS_INLINE bool takeDeadClobberAtLastPoint(uint64_t bit, Point point)
+        {
+            if (!lastPointHasDeadClobber(bit, point))
+                return false;
+            m_deadClobbersAtPoint[m_next] &= ~bit;
+            return true;
+        }
+
+        bool isDone() const { return !m_next; }
+
+    private:
+        ALWAYS_INLINE void updateNextPoint()
+        {
+            m_nextPoint = m_next ? m_points[m_next - 1] : std::numeric_limits<Point>::max();
+        }
+
+        RegisterOccupancy& m_occupancy;
+        const Point* m_points;
+        const uint64_t* m_clobberedRegsAtPoint;
+        uint64_t* m_deadClobbersAtPoint { nullptr };
+        const size_t m_numberOfPoints;
+        size_t m_next;
+        Point m_nextPoint { 0 };
+    };
+
+    RegisterOccupancy()
+        : m_regRanges(Reg::maxIndex() + 1)
+    {
+    }
+
+    void addFreshCalleeSave(Reg reg)
+    {
+        m_freshCalleeSaves |= bitOf(reg);
+        ++m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
+        ++m_numberOfCalleeSaves[reg.isGPR() ? GP : FP];
+    }
+
+    void setCalleeSavesClobberedAtSuspensions(uint64_t regs) { m_calleeSavesClobberedAtSuspensions = regs; }
+
+    NEVER_INLINE void recordClobbers(unsigned ordinal, uint64_t early, uint64_t earlyHigh64, uint64_t late, uint64_t lateHigh64)
+    {
+        Point positionOfEarly = ordinal * PointOffsets::PointsPerInst + PointOffsets::Early;
+        Point positionOfLate = ordinal * PointOffsets::PointsPerInst + PointOffsets::Late;
+        if (early) {
+            m_clobberPoints.append(positionOfEarly);
+            m_clobberedRegsAtPoint.append(early);
+        }
+        if (late) {
+            m_clobberPoints.append(positionOfLate);
+            m_clobberedRegsAtPoint.append(late);
+        }
+        m_allClobberedRegs |= early | late;
+        if (earlyHigh64 | lateHigh64) [[unlikely]] {
+            WTF::forEachSetBit(std::span<const uint64_t> { &earlyHigh64, 1 }, [&](size_t index) {
+                m_regRanges[Reg::fromIndex(index)].addClobberHigh64(Reg::fromIndex(index), positionOfEarly);
+            });
+            WTF::forEachSetBit(std::span<const uint64_t> { &lateHigh64, 1 }, [&](size_t index) {
+                m_regRanges[Reg::fromIndex(index)].addClobberHigh64(Reg::fromIndex(index), positionOfLate);
+            });
+        }
+    }
+
+    void buildClobberIndices(unsigned numberOfInsts)
+    {
+        if (!m_allClobberedRegs)
+            return;
+        m_instFirstClobber.grow(numberOfInsts);
+        unsigned* instFirstClobber = m_instFirstClobber.mutableSpan().data();
+        const Point* points = m_clobberPoints.span().data();
+        const unsigned numberOfPoints = m_clobberPoints.size();
+        unsigned next = 0;
+        for (unsigned ordinal = 0; ordinal < numberOfInsts; ++ordinal) {
+            while (next < numberOfPoints && points[next] < ordinal * PointOffsets::PointsPerInst)
+                ++next;
+            instFirstClobber[ordinal] = next;
+        }
+        if (numberOfPoints >= AirLimits::minClobberPointsForChunks) {
+            m_clobberedRegsInChunk.fill(0, (numberOfPoints + AirLimits::clobberPointsPerChunk - 1) / AirLimits::clobberPointsPerChunk);
+            for (unsigned index = 0; index < numberOfPoints; ++index)
+                m_clobberedRegsInChunk[index / AirLimits::clobberPointsPerChunk] |= m_clobberedRegsAtPoint[index];
+        }
+    }
+
+    size_t numberOfClobberPoints() const { return m_clobberPoints.size(); }
+    uint64_t allClobberedRegs() const { return m_allClobberedRegs; }
+
+    ALWAYS_INLINE Candidates candidatesFor(TmpData& tmpData, FailureMemo memo, Clobbers clobbers)
+    {
+        uint64_t excludedRegs = tmpData.paysForCalleeSave ? 0 : m_freshCalleeSaves;
+        if (clobbers == Clobbers::Exclude)
+            excludedRegs |= clobberedRegs(tmpData);
+        return Candidates(*this, excludedRegs, failedAtEpoch(tmpData, memo));
+    }
+
+    void rememberFailure(TmpData& tmpData, FailureMemo memo) const
+    {
+        switch (memo) {
+        case FailureMemo::Allocation:
+            tmpData.allocationFailedAtEpoch = m_removalEpoch;
+            return;
+        case FailureMemo::Eviction:
+            tmpData.evictionFailedAtEpoch = m_removalEpoch;
+            return;
+        case FailureMemo::None:
+            return;
+        }
+    }
+
+    ALWAYS_INLINE bool hasConflict(Reg reg, const TmpData& tmpData, Width width)
+    {
+        return m_regRanges[reg].hasConflict(tmpData.liveRange, width);
+    }
+
+    // Sees no dead clobber, so reg has to come from Candidates that exclude clobbered registers.
+    ALWAYS_INLINE void forEachTmpConflict(Reg reg, const LiveRange& range, Width width, NOESCAPE const Invocable<IterationStatus(RegisterRange::AllocatedInterval&)> auto& func)
+    {
+        m_regRanges[reg].forEachConflict(range, width, func);
+    }
+
+    void forEachConflict(Reg reg, const LiveRange& range, Width width, NOESCAPE const Invocable<IterationStatus(RegisterRange::AllocatedInterval&)> auto& func)
+    {
+        if (m_clobberPoints.size() > AirLimits::minClobberPointsToLeap) [[unlikely]]
+            forEachConflictImpl<true>(reg, range, width, func);
+        else
+            forEachConflictImpl<false>(reg, range, width, func);
+    }
+
+    uint64_t clobberedRegs(TmpData& tmpData)
+    {
+        if (tmpData.hasClobberedRegs)
+            return tmpData.clobberedRegs;
+        uint64_t result = 0;
+        const Point* points = m_clobberPoints.span().data();
+        const size_t numberOfPoints = m_clobberPoints.size();
+        for (auto& interval : tmpData.liveRange.intervals()) {
+            if (result == m_allClobberedRegs)
+                break;
+            size_t index = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
+            while (index < numberOfPoints && points[index] < interval.begin())
+                ++index;
+            for (; index < numberOfPoints && points[index] < interval.end() && result != m_allClobberedRegs; ++index) {
+                if (!(index % AirLimits::clobberPointsPerChunk) && !m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
+                    while (index + AirLimits::clobberPointsPerChunk <= numberOfPoints && points[index + AirLimits::clobberPointsPerChunk - 1] < interval.end()) {
+                        result |= m_clobberedRegsInChunk[index / AirLimits::clobberPointsPerChunk];
+                        index += AirLimits::clobberPointsPerChunk;
+                    }
+                    if (index == numberOfPoints || points[index] >= interval.end())
+                        break;
+                }
+                result |= m_clobberedRegsAtPoint[index];
+            }
+        }
+        tmpData.clobberedRegs = result;
+        tmpData.hasClobberedRegs = true;
+        return result;
+    }
+
+    bool hasPointClobberingAll(uint64_t regs, Interval interval) const
+    {
+        auto clobberPoints = m_clobberPoints.span();
+        size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
+        for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
+            if ((m_clobberedRegsAtPoint[index] & regs) == regs)
+                return true;
+        }
+        return false;
+    }
+
+    ALWAYS_INLINE void add(Tmp tmp, TmpData& tmpData, Reg reg)
+    {
+        const uint64_t bit = bitOf(reg);
+        if ((m_freshCalleeSaves & bit) && (!tmp.isReg() || tmpData.liveRange.size() || (m_regsWithDeadClobbers & ~m_calleeSavesClobberedAtSuspensions & bit))) {
+            m_freshCalleeSaves &= ~bit;
+            m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
+            --m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
+        }
+        m_regRanges[reg].add(tmp, tmpData.liveRange);
+    }
+
+    ALWAYS_INLINE void remove(TmpData& tmpData, Reg reg)
+    {
+        m_regRanges[reg].evict(tmpData.liveRange);
+        m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
+    }
+
+    unsigned numberOfFreshCalleeSaves(Bank bank) const { return m_numberOfFreshCalleeSaves[bank]; }
+    unsigned numberOfCalleeSaves(Bank bank) const { return m_numberOfCalleeSaves[bank]; }
+    const RegisterRange& rangeOf(Reg reg) const { return m_regRanges[reg]; }
+
+private:
+    static_assert(Reg::maxIndex() < 64);
+
+    static uint64_t bitOf(Reg reg) { return static_cast<uint64_t>(1) << reg.index(); }
+
+    static uint32_t failedAtEpoch(const TmpData& tmpData, FailureMemo memo)
+    {
+        switch (memo) {
+        case FailureMemo::Allocation:
+            return tmpData.allocationFailedAtEpoch;
+        case FailureMemo::Eviction:
+            return tmpData.evictionFailedAtEpoch;
+        case FailureMemo::None:
+            return 0;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    NEVER_INLINE size_t nextDeadClobberFor(Reg reg, size_t from)
+    {
+        if (m_regFirstDeadClobber.isEmpty()) {
+            m_regFirstDeadClobber.fill(0, Reg::maxIndex() + 2);
+            for (uint64_t regs : m_deadClobbersAtPoint) {
+                for (; regs; regs &= regs - 1)
+                    ++m_regFirstDeadClobber[std::countr_zero(regs) + 1];
+            }
+            for (unsigned i = 0; i <= Reg::maxIndex(); ++i)
+                m_regFirstDeadClobber[i + 1] += m_regFirstDeadClobber[i];
+            m_regDeadClobbers.grow(m_regFirstDeadClobber.last());
+            Vector<unsigned> next = m_regFirstDeadClobber;
+            for (unsigned clobber = 0; clobber < m_deadClobbersAtPoint.size(); ++clobber) {
+                for (uint64_t regs = m_deadClobbersAtPoint[clobber]; regs; regs &= regs - 1)
+                    m_regDeadClobbers[next[std::countr_zero(regs)]++] = clobber;
+            }
+        }
+        auto own = m_regDeadClobbers.span().subspan(m_regFirstDeadClobber[reg.index()], m_regFirstDeadClobber[reg.index() + 1] - m_regFirstDeadClobber[reg.index()]);
+        auto iterator = std::ranges::lower_bound(own, static_cast<unsigned>(from));
+        return iterator == own.end() ? m_deadClobbersAtPoint.size() : *iterator;
+    }
+
+    template<bool leaps>
+    void forEachConflictImpl(Reg reg, const LiveRange& range, Width width, NOESCAPE const Invocable<IterationStatus(RegisterRange::AllocatedInterval&)> auto& func)
+    {
+        RegisterRange& regRange = m_regRanges[reg];
+        const uint64_t bit = bitOf(reg);
+        if (!(m_regsWithDeadClobbers & bit)) {
+            regRange.forEachConflict(range, width, func);
+            return;
+        }
+        const Point* points = m_clobberPoints.span().data();
+        const uint64_t* deadClobbersAtPoint = m_deadClobbersAtPoint.span().data();
+        const size_t numberOfPoints = m_clobberPoints.size();
+        for (auto interval : range.intervals()) {
+            size_t clobber = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
+            while (clobber < numberOfPoints && points[clobber] < interval.begin())
+                ++clobber;
+            while (true) {
+                auto conflict = regRange.firstConflict(interval);
+                Point limit = conflict ? conflict->interval.begin() : interval.end();
+                [[maybe_unused]] unsigned consecutiveMisses = 0;
+                for (; clobber < numberOfPoints && points[clobber] < limit; ++clobber) {
+                    if (!(deadClobbersAtPoint[clobber] & bit)) {
+                        if constexpr (leaps) {
+                            if (++consecutiveMisses > AirLimits::maxConsecutiveClobberMisses) [[unlikely]] {
+                                clobber = nextDeadClobberFor(reg, clobber) - 1;
+                                consecutiveMisses = 0;
+                            }
+                        }
+                        continue;
+                    }
+                    consecutiveMisses = 0;
+                    RegisterRange::AllocatedInterval deadClobber { std::pair { Interval(points[clobber]), Tmp(reg) } };
+                    if (func(deadClobber) == IterationStatus::Done)
+                        return;
+                }
+                if (!conflict)
+                    break;
+                if (func(*conflict) == IterationStatus::Done)
+                    return;
+                if (interval.end() <= conflict->interval.end())
+                    break;
+                interval = { conflict->interval.end(), interval.end() };
+            }
+        }
+        if (width > Width64) [[unlikely]]
+            regRange.forEachConflictInHigh64(range, func);
+    }
+
+    IndexMap<Reg, RegisterRange> m_regRanges;
+    std::array<uint32_t, Reg::maxIndex() + 1> m_lastRemovalEpoch { };
+    uint32_t m_removalEpoch { 1 };
+    Vector<Point> m_clobberPoints;
+    Vector<uint64_t> m_clobberedRegsAtPoint;
+    uint64_t m_allClobberedRegs { 0 };
+    Vector<unsigned> m_instFirstClobber;
+    Vector<uint64_t> m_clobberedRegsInChunk;
+    Vector<uint64_t> m_deadClobbersAtPoint;
+    uint64_t m_regsWithDeadClobbers { 0 };
+    Vector<unsigned> m_regFirstDeadClobber;
+    Vector<unsigned> m_regDeadClobbers;
+    uint64_t m_freshCalleeSaves { 0 };
+    uint64_t m_calleeSavesClobberedAtSuspensions { 0 };
+    std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
+    std::array<unsigned, numBanks> m_numberOfCalleeSaves { };
 };
 
 struct LoopData {
     LiveRange range;
     LiveRange boundary;
+    bool hasExitWithEntryClobbers { false };
 };
 
 class UseDefList {
@@ -1024,83 +1388,6 @@ struct AroundLoopSplitMetadata {
     bool loopHasDef { false };
     const NaturalLoop* loop { nullptr };
 };
-
-struct Mentions {
-    static constexpr unsigned earlyUse = 1;
-    static constexpr unsigned lateUse = 2;
-    static constexpr unsigned earlyDef = 4;
-    static constexpr unsigned lateDef = 8;
-    static constexpr unsigned timingMask = 15;
-    static constexpr unsigned wasDecodedSlowly = 16;
-    static constexpr unsigned anyUse = 16;
-    static constexpr unsigned zDef = 32;
-    static constexpr unsigned anyDef = 64;
-    static constexpr unsigned warmUseOrDef = 128;
-    static constexpr unsigned coldUse = 256;
-    static constexpr unsigned widthShift = 9;
-    static constexpr unsigned widthMask = 7;
-    static constexpr unsigned isFP = 1 << 12;
-    static constexpr unsigned hasNoWidthInformation = 1 << 13;
-    static constexpr unsigned isDefByConstant = 1 << 14;
-    static constexpr unsigned numberOfRoles = 12;
-
-    static constexpr unsigned traitsOf(Arg::Role role)
-    {
-        switch (role) {
-        case Arg::Use:
-            return earlyUse | anyUse | warmUseOrDef;
-        case Arg::ColdUse:
-            return earlyUse | anyUse | coldUse;
-        case Arg::LateUse:
-            return lateUse | anyUse | warmUseOrDef;
-        case Arg::LateColdUse:
-            return lateUse | anyUse | coldUse;
-        case Arg::Def:
-            return lateDef | anyDef | warmUseOrDef;
-        case Arg::ZDef:
-            return lateDef | anyDef | zDef | warmUseOrDef;
-        case Arg::UseDef:
-            return earlyUse | lateDef | anyUse | anyDef | warmUseOrDef;
-        case Arg::UseZDef:
-            return earlyUse | lateDef | anyUse | anyDef | zDef | warmUseOrDef;
-        case Arg::EarlyDef:
-            return earlyDef | anyDef | warmUseOrDef;
-        case Arg::EarlyZDef:
-            return earlyDef | anyDef | zDef | warmUseOrDef;
-        case Arg::Scratch:
-            return earlyDef | lateUse | anyUse | anyDef | warmUseOrDef;
-        case Arg::UseAddr:
-            return 0;
-        }
-        return 0;
-    }
-
-    static constexpr unsigned traitsOf(Arg::Role role, Bank bank, Width width)
-    {
-        return traitsOf(role) | static_cast<unsigned>(width) << widthShift | (bank == FP ? isFP : 0);
-    }
-
-    static constexpr std::array<uint16_t, 256> computeFormTraits()
-    {
-        std::array<uint16_t, 256> result { };
-        for (unsigned form = 0; form < 256; ++form) {
-            unsigned role = (form >> formRoleShift) & formRoleMask;
-            unsigned width = (form >> formWidthShift) & formWidthMask;
-            if (role >= numberOfRoles || !width || width > 5)
-                continue;
-            result[form] = traitsOf(static_cast<Arg::Role>(role), static_cast<Bank>((form >> formBankShift) & formBankMask), static_cast<Width>(width - 1));
-        }
-        return result;
-    }
-
-    Vector<unsigned> tmps;
-    Vector<uint16_t> traits;
-    Vector<unsigned> instFirstMention;
-    Vector<uint8_t> instTimings;
-    unsigned numberOfInsts { 0 };
-};
-
-static constexpr std::array<uint16_t, 256> formTraits = Mentions::computeFormTraits();
 
 static void validateFormTraits()
 {
@@ -1305,26 +1592,135 @@ private:
     Vector<TmpData> m_fp;
 };
 
+struct BlockEnds {
+    unsigned firstInst { 0 };
+    unsigned exposedUses { 0 };
+    unsigned defs { 0 };
+    unsigned usesAtTail { 0 };
+};
+
+struct BlockFacts {
+    std::span<const BlockEnds> blockEnds;
+    std::span<const unsigned> exposedUses;
+    std::span<const unsigned> defsInBlocks;
+    std::span<const unsigned> usesAtTails;
+    std::span<const uint8_t> crossesBoundary;
+    std::span<const unsigned> indexToColumn;
+    unsigned numberOfColumns { 0 };
+};
+
+class TmpBoundaryRows {
+public:
+    static constexpr bool recordsLayoutBoundaries = true;
+
+    explicit TmpBoundaryRows(const BlockFacts& facts)
+        : m_facts(facts)
+    {
+    }
+
+    unsigned numIndices() const { return m_facts.numberOfColumns; }
+    bool needsLiveAtTail(BasicBlock*) const { return false; }
+
+    void willComputeInSlices(size_t wordsPerSlice)
+    {
+        m_wordsPerSlice = wordsPerSlice;
+        const size_t wordsPerSet = (m_facts.numberOfColumns + 63) / 64;
+        const unsigned numberOfBlocks = m_facts.blockEnds.size();
+        m_endOfSlice.fill(0, (wordsPerSet + wordsPerSlice - 1) / wordsPerSlice);
+        for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+            forEachFactOf(blockIndex, [&](unsigned column, Row) {
+                ++m_endOfSlice[column / 64 / wordsPerSlice];
+            });
+        }
+        size_t numberOfFacts = 0;
+        for (size_t& end : m_endOfSlice)
+            numberOfFacts += std::exchange(end, numberOfFacts);
+        m_factsBySlice.grow(numberOfFacts);
+        for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
+            forEachFactOf(blockIndex, [&](unsigned column, Row row) {
+                m_factsBySlice[m_endOfSlice[column / 64 / wordsPerSlice]++] = Fact { blockIndex, column, row };
+            });
+        }
+    }
+
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        bool hasFact = false;
+        auto setBit = [&](unsigned bit, Row row) ALWAYS_INLINE_LAMBDA {
+            ASSERT_UNUSED(numberOfWords, bit / 64 < numberOfWords);
+            uint64_t* words = nullptr;
+            switch (row) {
+            case Row::Gen:
+                words = gen;
+                break;
+            case Row::Kill:
+                words = kill;
+                break;
+            case Row::Tail:
+                words = tail;
+                break;
+            }
+            words[bit / 64] |= static_cast<uint64_t>(1) << (bit % 64);
+            hasFact = true;
+        };
+        if (!m_wordsPerSlice) {
+            forEachFactOf(block->index(), setBit);
+            return hasFact;
+        }
+        const size_t slice = firstWord / m_wordsPerSlice;
+        ASSERT(m_nextFact >= (slice ? m_endOfSlice[slice - 1] : 0) && m_nextFact <= m_endOfSlice[slice]);
+        for (; m_nextFact < m_endOfSlice[slice] && m_factsBySlice[m_nextFact].blockIndex == block->index(); ++m_nextFact) {
+            const Fact& fact = m_factsBySlice[m_nextFact];
+            setBit(fact.column - firstWord * 64, fact.row);
+        }
+        return hasFact;
+    }
+
+private:
+    enum class Row : uint8_t { Gen, Kill, Tail };
+
+    struct Fact {
+        unsigned blockIndex;
+        unsigned column;
+        Row row;
+    };
+
+    ALWAYS_INLINE void forEachFactOf(unsigned blockIndex, NOESCAPE const Invocable<void(unsigned column, Row)> auto& func) const
+    {
+        const BlockEnds begin = blockIndex ? m_facts.blockEnds[blockIndex - 1] : BlockEnds { };
+        const BlockEnds end = m_facts.blockEnds[blockIndex];
+        for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
+            func(m_facts.indexToColumn[m_facts.exposedUses[i]], Row::Gen);
+        for (unsigned i = begin.defs; i < end.defs; ++i) {
+            unsigned index = m_facts.defsInBlocks[i];
+            if (m_facts.crossesBoundary[index])
+                func(m_facts.indexToColumn[index], Row::Kill);
+        }
+        for (unsigned i = begin.usesAtTail; i < end.usesAtTail; ++i)
+            func(m_facts.indexToColumn[m_facts.usesAtTails[i]], Row::Tail);
+    }
+
+    BlockFacts m_facts;
+    Vector<Fact> m_factsBySlice;
+    Vector<size_t> m_endOfSlice;
+    size_t m_wordsPerSlice { 0 };
+    size_t m_nextFact { 0 };
+};
+
 class GreedyAllocator {
 public:
-    enum class DeadCodeSearch : bool { No, Yes };
-
-    GreedyAllocator(Code& code, DeadCodeSearch deadCodeSearch)
+    GreedyAllocator(Code& code)
         : m_code(code)
+        , m_registerPolicy(code.policy().registers)
+        , m_splitPolicy(code.policy().splitting)
+        , m_discountsPreferredRegisterMoves(isX86_64() && m_registerPolicy.discountsPreferredRegisterMoves)
         , m_blockToHeadPoint(code.size())
         , m_tailPoints(code.size())
-        , m_searchesForDeadCode(deadCodeSearch == DeadCodeSearch::Yes)
         , m_map(code)
         , m_aroundClobbersMetadata(1) // Sacrifice index 0.
         , m_spillSlotTable(FillWith { }, 1, nullptr) // Sacrifice index 0.
-        , m_regRanges(Reg::maxIndex() + 1)
-#if !USE(BUN_JSC_ADDITIONS)
-        , m_insertionSets(code.size())
-#endif
     {
         decode();
-        if (m_hasDeadCode)
-            return;
 
         if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
             validateFormTraits();
@@ -1357,11 +1753,6 @@ public:
         findWidths(movesForWidths);
         countUsesAndDefs();
         findBlockExposedUsesAndDefs();
-        if (m_searchesForDeadCode && m_hasDefOfUnreadTmp && findDeadCode()) [[unlikely]] {
-            m_hasDeadCode = true;
-            return;
-        }
-        m_isRead.clear();
 
         InsertionSet insertionSet(m_code);
         for (size_t i = 0; i < paddingSites.size();) {
@@ -1370,30 +1761,6 @@ public:
                 insertionSet.insert(paddingSites[i].instIndex, Padding, block->at(paddingSites[i].instIndex).origin);
             insertionSet.execute(block);
         }
-    }
-
-    bool hasDeadCode() const { return m_hasDeadCode; }
-
-    NEVER_INLINE bool findDeadCode()
-    {
-        for (BasicBlock* block : m_code) {
-            for (Inst& inst : *block) {
-                if (inst.hasNonArgEffects())
-                    continue;
-                bool isLive = false;
-                inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
-                    if (!Arg::isAnyDef(role) || role == Arg::Scratch)
-                        return;
-                    if (arg.isTmp())
-                        isLive |= m_isRead[linearIndex(arg.tmp())];
-                    else
-                        isLive |= !arg.isStack() || arg.stackSlot()->isLocked();
-                });
-                if (!isLive)
-                    return true;
-            }
-        }
-        return false;
     }
 
     struct PaddingSite {
@@ -1420,11 +1787,6 @@ public:
         unsigned* tmps = m_mentions.tmps.mutableSpan().data();
         uint16_t* mentionTraits = m_mentions.traits.mutableSpan().data();
         unsigned numberOfMentions = 0;
-
-        m_isRead.fill(0, m_numberOfLinearIndices);
-        uint8_t* isRead = m_isRead.mutableSpan().data();
-        for (unsigned i = 0; i <= Reg::maxIndex(); ++i)
-            isRead[linearIndex(Tmp(Reg::fromIndex(i)))] = 1;
 
         movesForWidths.grow(precedingInstCount);
         unsigned* nextMoveForWidths = movesForWidths.mutableSpan().data();
@@ -1453,7 +1815,7 @@ public:
         Clobbers early;
         Clobbers late;
         Vector<MentionDecodedSlowly, 16> mentionsDecodedSlowly;
-        const bool recordsNeighbors = isX86() && m_code.chargesForCalleeSaves();
+        const bool recordsNeighbors = isX86() && m_registerPolicy.hintsTwoAddressOperands;
         constexpr unsigned baseTraits = Mentions::traitsOf(Arg::Use, GP, pointerWidth());
         constexpr unsigned kindsWithBase = 1u << Arg::SimpleAddr | 1u << Arg::Addr | 1u << Arg::ExtendedOffsetAddr | 1u << Arg::Index | 1u << Arg::PreIndex | 1u << Arg::PostIndex;
 
@@ -1528,8 +1890,6 @@ public:
                 auto note = [&](Tmp tmp, unsigned traits) ALWAYS_INLINE_LAMBDA {
                     unsigned index = tmp.isGP() ? AbsoluteTmpMapper<GP>::absoluteIndex(tmp) : gpIndicesEnd + AbsoluteTmpMapper<FP>::absoluteIndex(tmp);
                     tmps[numberOfMentions] = index;
-                    if ((traits & (Mentions::anyUse | Mentions::anyDef)) == Mentions::anyUse)
-                        isRead[index] = 1;
                     mentionTraits[numberOfMentions] = traits | allMentionTraits;
                     ++numberOfMentions;
                     instTraits |= traits;
@@ -1571,10 +1931,6 @@ public:
                     late.update(inst.extraClobberedRegs());
                     hasEarlyDef |= early.whole || early.high64;
                     hasLateUseOrDef |= late.whole || late.high64;
-                    if ((instTraits & (Mentions::earlyDef | Mentions::lateDef)) && inst.hasNonArgEffects()) {
-                        for (unsigned i = firstMention; i < numberOfMentions; ++i)
-                            isRead[tmps[i]] = 1;
-                    }
                 }
 
                 if (previousHasLateUseOrDef && hasEarlyDef) {
@@ -1600,7 +1956,7 @@ public:
                         }
                     }
                     if (opcode == Patch)
-                        recordClobbers(ordinal, early.whole, early.high64, late.whole, late.high64);
+                        m_occupancy.recordClobbers(ordinal, early.whole, early.high64, late.whole, late.high64);
                 }
                 ++ordinal;
             }
@@ -1644,29 +2000,6 @@ public:
             m_useCounts.fpConstantWidths[fpIndex] = opcode == MoveFloat ? Width32 : opcode == MoveDouble ? Width64 : Width128;
         }
         return traits | Mentions::isDefByConstant;
-    }
-
-    NEVER_INLINE void recordClobbers(unsigned ordinal, uint64_t early, uint64_t earlyHigh64, uint64_t late, uint64_t lateHigh64)
-    {
-        Point positionOfEarly = ordinal * PointOffsets::PointsPerInst + PointOffsets::Early;
-        Point positionOfLate = ordinal * PointOffsets::PointsPerInst + PointOffsets::Late;
-        if (early) {
-            m_clobberPoints.append(positionOfEarly);
-            m_clobberedRegsAtPoint.append(early);
-        }
-        if (late) {
-            m_clobberPoints.append(positionOfLate);
-            m_clobberedRegsAtPoint.append(late);
-        }
-        m_allClobberedRegs |= early | late;
-        if (earlyHigh64 | lateHigh64) [[unlikely]] {
-            WTF::forEachSetBit(std::span<const uint64_t> { &earlyHigh64, 1 }, [&](size_t index) {
-                m_regRanges[Reg::fromIndex(index)].addClobberHigh64(Reg::fromIndex(index), positionOfEarly);
-            });
-            WTF::forEachSetBit(std::span<const uint64_t> { &lateHigh64, 1 }, [&](size_t index) {
-                m_regRanges[Reg::fromIndex(index)].addClobberHigh64(Reg::fromIndex(index), positionOfLate);
-            });
-        }
     }
 
     void findWidths(Vector<unsigned>& movesForWidths)
@@ -1751,7 +2084,7 @@ public:
                 continue;
             double frequency = block->frequency();
             if (!m_fastBlocks.saw(block))
-                frequency *= Options::rareBlockPenalty();
+                frequency *= m_registerPolicy.rareBlockPenalty;
             unsigned end = instFirstMention[blockIndex + 1 < m_code.size() ? m_blockEnds[blockIndex + 1].firstInst : m_mentions.numberOfInsts];
             for (unsigned i = instFirstMention[m_blockEnds[blockIndex].firstInst]; i < end; ++i) {
                 unsigned traits = mentionTraits[i];
@@ -1783,8 +2116,6 @@ public:
         unsigned* defsInBlocks = m_defsInBlocks.mutableSpan().data();
         unsigned numberOfExposedUses = 0;
         unsigned numberOfDefs = 0;
-        const uint8_t* isRead = m_isRead.span().data();
-        unsigned areAllDefsRead = 1;
 
         for (unsigned blockIndex = 0; blockIndex < m_code.size(); ++blockIndex) {
             const unsigned useStamp = (blockIndex + 1) << 1;
@@ -1801,7 +2132,6 @@ public:
                     return;
                 tmpStamp[index] = defStamp;
                 defsInBlocks[numberOfDefs++] = index;
-                areAllDefsRead &= isRead[index];
             };
 
             unsigned instsEnd = blockIndex + 1 < m_code.size() ? m_blockEnds[blockIndex + 1].firstInst : m_mentions.numberOfInsts;
@@ -1844,7 +2174,6 @@ public:
             m_blockEnds[blockIndex].defs = numberOfDefs;
             m_blockEnds[blockIndex].usesAtTail = m_usesAtTails.size();
         }
-        m_hasDefOfUnreadTmp = !areAllDefsRead;
     }
 
     struct MentionDecodedSlowly {
@@ -1866,278 +2195,6 @@ public:
                     });
             });
         return argTraits;
-    }
-
-    void solveLiveness()
-    {
-        constexpr unsigned wordBits = 64;
-        unsigned numberOfBlocks = m_code.size();
-
-        Vector<unsigned> columnStore(m_numberOfLinearIndices);
-        unsigned* indexColumn = columnStore.mutableSpan().data();
-        for (unsigned index = 0; index < m_numberOfLinearIndices; ++index) {
-            if (!m_crossesBoundary[index])
-                continue;
-            indexColumn[index] = m_columnIndex.size();
-            m_columnIndex.append(index);
-        }
-        m_wordsPerSet = (m_columnIndex.size() + wordBits - 1) / wordBits;
-        const size_t wordsPerSet = m_wordsPerSet;
-        if (!wordsPerSet)
-            return;
-
-        size_t matrixWords = static_cast<size_t>(numberOfBlocks) * wordsPerSet;
-        if (matrixWords > maxWordsPerLivenessMatrix) [[unlikely]] {
-            solveLivenessInSlices(indexColumn);
-            return;
-        }
-        m_liveAtBoundaries.fill(0, 2 * matrixWords);
-        Vector<uint64_t> transferStore;
-        transferStore.fill(0, 2 * matrixWords);
-        uint64_t* liveAtHead = m_liveAtBoundaries.mutableSpan().data();
-        uint64_t* liveAtTail = liveAtHead + matrixWords;
-        uint64_t* gen = transferStore.mutableSpan().data();
-        uint64_t* kill = gen + matrixWords;
-
-        auto setBit = [](uint64_t* set, unsigned bit) {
-            set[bit / wordBits] |= static_cast<uint64_t>(1) << (bit % wordBits);
-        };
-
-        BlockEnds begin;
-        unsigned numberOfActiveBlocks = 0;
-        for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-            BlockEnds end = m_blockEnds[blockIndex];
-            size_t offset = static_cast<size_t>(blockIndex) * wordsPerSet;
-            for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
-                setBit(gen + offset, indexColumn[m_exposedUses[i]]);
-            for (unsigned i = begin.defs; i < end.defs; ++i) {
-                unsigned index = m_defsInBlocks[i];
-                if (m_crossesBoundary[index])
-                    setBit(kill + offset, indexColumn[index]);
-            }
-            for (unsigned i = begin.usesAtTail; i < end.usesAtTail; ++i)
-                setBit(liveAtTail + offset, indexColumn[m_usesAtTails[i]]);
-            begin = end;
-            if (m_code[blockIndex])
-                ++numberOfActiveBlocks;
-        }
-
-        Vector<unsigned, 64> worklist;
-        worklist.reserveInitialCapacity(numberOfActiveBlocks);
-        BitVector dirtyBlocks(numberOfBlocks);
-        appendNodeIndicesInOrder(m_code.cfg(), GraphOrder::PostOrder, dirtyBlocks, worklist);
-        worklist.reverse();
-        for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-            if (m_code[blockIndex] && !dirtyBlocks.quickSet(blockIndex))
-                worklist.append(blockIndex);
-        }
-
-        while (!worklist.isEmpty()) {
-            unsigned blockIndex = worklist.takeLast();
-            dirtyBlocks.quickClear(blockIndex);
-
-            size_t offset = static_cast<size_t>(blockIndex) * wordsPerSet;
-            uint64_t* head = liveAtHead + offset;
-            uint64_t changed = 0;
-            for (size_t i = 0; i < wordsPerSet; ++i) {
-                uint64_t newWord = gen[offset + i] | (liveAtTail[offset + i] & ~kill[offset + i]);
-                changed |= newWord ^ head[i];
-                head[i] = newWord;
-            }
-            if (!changed)
-                continue;
-
-            for (BasicBlock* predecessor : m_code[blockIndex]->predecessors()) {
-                uint64_t* tail = liveAtTail + static_cast<size_t>(predecessor->index()) * wordsPerSet;
-                uint64_t predecessorChanged = 0;
-                for (size_t i = 0; i < wordsPerSet; ++i) {
-                    uint64_t newWord = tail[i] | head[i];
-                    predecessorChanged |= newWord ^ tail[i];
-                    tail[i] = newWord;
-                }
-                if (predecessorChanged && !dirtyBlocks.quickSet(predecessor->index()))
-                    worklist.append(predecessor->index());
-            }
-        }
-    }
-
-    NEVER_INLINE void solveLivenessInSlices(const unsigned* indexColumn)
-    {
-        constexpr unsigned wordBits = 64;
-        const unsigned numberOfBlocks = m_code.size();
-        const size_t wordsPerSlice = std::max<size_t>(1, maxWordsPerLivenessMatrix / numberOfBlocks);
-        const size_t numberOfSlices = (m_wordsPerSet + wordsPerSlice - 1) / wordsPerSlice;
-        m_livenessIsInLists = true;
-
-        Vector<unsigned, 64> order;
-        BitVector dirtyBlocks(numberOfBlocks);
-        appendNodeIndicesInOrder(m_code.cfg(), GraphOrder::PostOrder, dirtyBlocks, order);
-        order.reverse();
-        for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-            if (m_code[blockIndex] && !dirtyBlocks.quickSet(blockIndex))
-                order.append(blockIndex);
-        }
-        Vector<unsigned> positionInOrder(numberOfBlocks);
-        for (unsigned position = 0; position < order.size(); ++position) {
-            positionInOrder[order[position]] = position;
-            dirtyBlocks.quickClear(order[position]);
-        }
-
-        constexpr unsigned noBlock = std::numeric_limits<unsigned>::max();
-        Vector<unsigned> blockBefore(FillWith { }, numberOfBlocks, noBlock);
-        Vector<unsigned> blockAfter(FillWith { }, numberOfBlocks, noBlock);
-        unsigned firstBlock = noBlock;
-        for (unsigned blockIndex = 0, previous = noBlock; blockIndex < numberOfBlocks; ++blockIndex) {
-            if (!m_code[blockIndex])
-                continue;
-            if (previous == noBlock)
-                firstBlock = blockIndex;
-            else {
-                blockBefore[blockIndex] = previous;
-                blockAfter[previous] = blockIndex;
-            }
-            previous = blockIndex;
-        }
-
-        enum class Set : unsigned { Gen, Kill, Tail };
-        struct Fact {
-            unsigned blockIndex;
-            unsigned columnAndSet;
-        };
-        auto forEachFact = [&](const auto& func) {
-            BlockEnds begin;
-            for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex) {
-                BlockEnds end = m_blockEnds[blockIndex];
-                for (unsigned i = begin.exposedUses; i < end.exposedUses; ++i)
-                    func(blockIndex, indexColumn[m_exposedUses[i]], Set::Gen);
-                for (unsigned i = begin.defs; i < end.defs; ++i) {
-                    unsigned index = m_defsInBlocks[i];
-                    if (m_crossesBoundary[index])
-                        func(blockIndex, indexColumn[index], Set::Kill);
-                }
-                for (unsigned i = begin.usesAtTail; i < end.usesAtTail; ++i)
-                    func(blockIndex, indexColumn[m_usesAtTails[i]], Set::Tail);
-                begin = end;
-            }
-        };
-        Vector<size_t> endOfSlice(FillWith { }, numberOfSlices, static_cast<size_t>(0));
-        forEachFact([&](unsigned, unsigned column, Set) {
-            ++endOfSlice[column / wordBits / wordsPerSlice];
-        });
-        size_t numberOfFacts = 0;
-        for (size_t& end : endOfSlice)
-            numberOfFacts += std::exchange(end, numberOfFacts);
-        Vector<Fact> facts(numberOfFacts);
-        forEachFact([&](unsigned blockIndex, unsigned column, Set set) {
-            facts[endOfSlice[column / wordBits / wordsPerSlice]++] = Fact { blockIndex, column << 2 | static_cast<unsigned>(set) };
-        });
-
-        const size_t maxMatrixWords = static_cast<size_t>(numberOfBlocks) * std::min(wordsPerSlice, m_wordsPerSet);
-        Vector<uint64_t> store(FillWith { }, 4 * maxMatrixWords, static_cast<uint64_t>(0));
-        Vector<unsigned> sliceThatTouched(FillWith { }, numberOfBlocks, 0u);
-        Vector<unsigned> sliceThatLookedBack(FillWith { }, numberOfBlocks, 0u);
-        Vector<unsigned> touched;
-        Vector<unsigned, 64> worklist;
-        size_t firstFact = 0;
-        for (size_t slice = 0; slice < numberOfSlices; ++slice) {
-            const size_t firstWord = slice * wordsPerSlice;
-            const size_t words = std::min(wordsPerSlice, m_wordsPerSet - firstWord);
-            const size_t matrixWords = static_cast<size_t>(numberOfBlocks) * words;
-            uint64_t* liveAtHead = store.mutableSpan().data();
-            uint64_t* liveAtTail = liveAtHead + matrixWords;
-            uint64_t* gen = liveAtTail + matrixWords;
-            uint64_t* kill = gen + matrixWords;
-            const unsigned stamp = slice + 1;
-
-            auto touch = [&](unsigned blockIndex) {
-                if (sliceThatTouched[blockIndex] == stamp)
-                    return;
-                sliceThatTouched[blockIndex] = stamp;
-                touched.append(blockIndex);
-            };
-            touched.shrink(0);
-            worklist.shrink(0);
-            for (; firstFact < endOfSlice[slice]; ++firstFact) {
-                Fact fact = facts[firstFact];
-                unsigned column = fact.columnAndSet >> 2;
-                Set set = static_cast<Set>(fact.columnAndSet & 3);
-                uint64_t* matrix = set == Set::Gen ? gen : set == Set::Kill ? kill : liveAtTail;
-                matrix[static_cast<size_t>(fact.blockIndex) * words + (column / wordBits - firstWord)] |= static_cast<uint64_t>(1) << (column % wordBits);
-                touch(fact.blockIndex);
-                if (set != Set::Kill && !dirtyBlocks.quickSet(fact.blockIndex))
-                    worklist.append(fact.blockIndex);
-            }
-            std::ranges::sort(worklist, { }, [&](unsigned blockIndex) {
-                return positionInOrder[blockIndex];
-            });
-
-            while (!worklist.isEmpty()) {
-                unsigned blockIndex = worklist.takeLast();
-                dirtyBlocks.quickClear(blockIndex);
-                size_t offset = static_cast<size_t>(blockIndex) * words;
-                uint64_t* head = liveAtHead + offset;
-                uint64_t changed = 0;
-                for (size_t i = 0; i < words; ++i) {
-                    uint64_t newWord = gen[offset + i] | (liveAtTail[offset + i] & ~kill[offset + i]);
-                    changed |= newWord ^ head[i];
-                    head[i] = newWord;
-                }
-                if (!changed)
-                    continue;
-                for (BasicBlock* predecessor : m_code[blockIndex]->predecessors()) {
-                    uint64_t* tail = liveAtTail + static_cast<size_t>(predecessor->index()) * words;
-                    uint64_t predecessorChanged = 0;
-                    for (size_t i = 0; i < words; ++i) {
-                        uint64_t newWord = tail[i] | head[i];
-                        predecessorChanged |= newWord ^ tail[i];
-                        tail[i] = newWord;
-                    }
-                    if (!predecessorChanged)
-                        continue;
-                    touch(predecessor->index());
-                    if (!dirtyBlocks.quickSet(predecessor->index()))
-                        worklist.append(predecessor->index());
-                }
-            }
-
-            auto note = [&](Vector<BlockEdgeKind>& list, unsigned blockIndex, const uint64_t* a, const uint64_t* b) {
-                for (size_t wordIndex = 0; wordIndex < words; ++wordIndex) {
-                    uint64_t word = a[wordIndex] & ~(b ? b[wordIndex] : 0);
-                    for (; word; word &= word - 1)
-                        list.append(BlockEdgeKind { blockIndex, m_columnIndex[(firstWord + wordIndex) * wordBits + std::countr_zero(word)] });
-                }
-            };
-            auto lookBack = [&](unsigned blockIndex) {
-                if (sliceThatLookedBack[blockIndex] == stamp)
-                    return;
-                sliceThatLookedBack[blockIndex] = stamp;
-                const uint64_t* tail = liveAtTail + static_cast<size_t>(blockIndex) * words;
-                const uint64_t* headAfter = blockAfter[blockIndex] != noBlock ? liveAtHead + static_cast<size_t>(blockAfter[blockIndex]) * words : nullptr;
-                if (headAfter)
-                    note(m_closesAfterBlock, blockIndex, headAfter, tail);
-                note(m_opensAtTailOfBlock, blockIndex, tail, headAfter);
-            };
-            for (unsigned blockIndex : touched) {
-                lookBack(blockIndex);
-                if (blockBefore[blockIndex] != noBlock)
-                    lookBack(blockBefore[blockIndex]);
-                else if (blockIndex == firstBlock)
-                    note(m_closesAfterBlock, numberOfBlocks, liveAtHead + static_cast<size_t>(blockIndex) * words, nullptr);
-            }
-            for (unsigned blockIndex : touched) {
-                size_t offset = static_cast<size_t>(blockIndex) * words;
-                for (uint64_t* matrix : { liveAtHead, liveAtTail, gen, kill }) {
-                    for (size_t i = 0; i < words; ++i)
-                        matrix[offset + i] = 0;
-                }
-            }
-        }
-
-        auto byBlock = [](const BlockEdgeKind& left, const BlockEdgeKind& right) {
-            return left.blockIndex < right.blockIndex;
-        };
-        std::stable_sort(m_closesAfterBlock.begin(), m_closesAfterBlock.end(), byBlock);
-        std::stable_sort(m_opensAtTailOfBlock.begin(), m_opensAtTailOfBlock.end(), byBlock);
     }
 
     unsigned linearIndex(Tmp tmp) const
@@ -2207,9 +2264,7 @@ public:
         if (hasFPTmps)
             coalesceTmps<FP>();
         rewriteCoalescedTmps();
-#if USE(BUN_JSC_ADDITIONS)
         recordNeighbors();
-#endif
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " state before allocate registers:\n", *this, "IR:\n", m_code);
 
@@ -2288,18 +2343,18 @@ private:
     void dumpRegRanges(PrintStream& out) const
     {
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
-            if (!m_regRanges[r].isEmpty())
-                out.println("    ", r, ": ", m_regRanges[r]);
+            if (!m_occupancy.rangeOf(r).isEmpty())
+                out.println("    ", r, ": ", m_occupancy.rangeOf(r));
         }
         m_code.pinnedRegisters().forEachReg([&](Reg r) {
             if (bankForReg(r) == bank)
-                out.println("    ", r, ": ", m_regRanges[r]);
+                out.println("    ", r, ": ", m_occupancy.rangeOf(r));
         });
     }
 
     bool LEGACY_NODELETE shouldSpillEverything()
     {
-        if (!Options::airGreedyRegAllocSpillsEverything())
+        if (!m_registerPolicy.spillsEverything)
             return false;
 
         // You're meant to hack this so that you selectively spill everything depending on reasons.
@@ -2319,25 +2374,20 @@ private:
             }
         });
         ASSERT(m_allAllowedRegisters == m_code.mutableRegs().toScalarRegisterSet());
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_code.chargesForCalleeSaves()) {
+        if (m_registerPolicy.chargesForCalleeSaves) {
             RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
             calleeSaves.exclude(m_code.unsavedCalleeSaves());
+            calleeSaves.merge(m_registerPolicy.savedByCallee);
             m_allAllowedRegisters.forEach([&](Reg reg) {
-                if (!calleeSaves.contains(reg, IgnoreVectors))
-                    return;
-                m_freshCalleeSaves.add(reg);
-                ++m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
-                ++m_numberOfCalleeSaves[reg.isGPR() ? GP : FP];
+                if (calleeSaves.contains(reg, IgnoreVectors))
+                    m_occupancy.addFreshCalleeSave(reg);
             });
+            uint64_t clobberedAtSuspensions = 0;
+            m_code.calleeSavesClobberedAtSuspensions().forEach([&](Reg reg) {
+                clobberedAtSuspensions |= static_cast<uint64_t>(1) << reg.index();
+            });
+            m_occupancy.setCalleeSavesClobberedAtSuspensions(clobberedAtSuspensions);
         }
-#endif
-    }
-
-    // The prologue saves, and every epilogue restores, a callee-saved register that anything is assigned to. The first to take it pays.
-    bool mayTake(const TmpData& tmpData, Reg reg) const
-    {
-        return tmpData.paysForCalleeSave || !m_freshCalleeSaves.contains(reg);
     }
 
     void buildIndices()
@@ -2361,23 +2411,7 @@ private:
         }
         RELEASE_ASSERT(instBlockIndex == m_instBlockIndex.mutableSpan().data() + m_instBlockIndex.size());
 
-        if (m_allClobberedRegs) {
-            m_instFirstClobber.grow(m_mentions.numberOfInsts);
-            unsigned* instFirstClobber = m_instFirstClobber.mutableSpan().data();
-            const Point* points = m_clobberPoints.span().data();
-            const unsigned numberOfPoints = m_clobberPoints.size();
-            unsigned next = 0;
-            for (unsigned ordinal = 0; ordinal < m_mentions.numberOfInsts; ++ordinal) {
-                while (next < numberOfPoints && points[next] < ordinal * PointOffsets::PointsPerInst)
-                    ++next;
-                instFirstClobber[ordinal] = next;
-            }
-            if (numberOfPoints >= minClobberPointsForChunks) {
-                m_clobberedRegsInChunk.fill(0, (numberOfPoints + clobberPointsPerChunk - 1) / clobberPointsPerChunk);
-                for (unsigned index = 0; index < numberOfPoints; ++index)
-                    m_clobberedRegsInChunk[index / clobberPointsPerChunk] |= m_clobberedRegsAtPoint[index];
-            }
-        }
+        m_occupancy.buildClobberIndices(m_mentions.numberOfInsts);
         m_stats[GP].numInsts += (tailPosition + 1) / PointOffsets::PointsPerInst;
     }
 
@@ -2429,6 +2463,15 @@ private:
     static size_t LEGACY_NODELETE instIndex(Point positionOfHead, Point point)
     {
         return (point - positionOfHead) / PointOffsets::PointsPerInst;
+    }
+
+    Origin originAt(Point point)
+    {
+        if (!m_code.shouldPreserveB3Origins() && !m_code.proc().policy().allocation.keepsValuesAfterLowering)
+            return Origin();
+        BasicBlock* block = findBlockContainingPoint(point);
+        Value* origin = block->at(instIndex(positionOfHead(block), point)).origin;
+        return origin ? origin->origin() : Origin();
     }
 
     static Point LEGACY_NODELETE pointAtOffset(Point point, PointOffsets offset)
@@ -2546,7 +2589,7 @@ private:
     {
         float freq = block->frequency();
         if (!m_fastBlocks.saw(block)) [[unlikely]]
-            freq *= Options::rareBlockPenalty();
+            freq *= m_registerPolicy.rareBlockPenalty;
         return freq;
     }
 
@@ -2612,12 +2655,79 @@ private:
             }
         };
 
+        auto sitsInClobberedRegister = [&](Tmp tmp, const RegisterSet& clobberedRegs) {
+            Reg reg = assignedReg(tmp);
+            if (!reg)
+                return false;
+            bool result = false;
+            clobberedRegs.forEachWithWidthAndPreserved([&](Reg clobberedReg, Width, PreservedWidth preservedWidth) {
+                if (clobberedReg == reg)
+                    result = preservedWidth == PreservesNothing || widthForConflicts<bank>(tmp) > Width64;
+            });
+            return result;
+        };
+
+        auto failAtClobber = [&](BasicBlock* block, Inst& patch, Tmp tmp) {
+            dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE");
+            dataLogLn("   In BB", *block, " at ", patch);
+            dataLogLn("     clobbers the register of tmp = ", tmp, " : ", m_map[tmp]);
+            anyFailures = true;
+        };
+
+        auto checkClobbers = [&](BasicBlock* block, Inst& patch, const Vector<Tmp>& liveAfter, const typename TmpLiveness<bank>::LocalCalc& liveBefore) {
+            RegisterSet earlyClobberedRegs = patch.extraEarlyClobberedRegs();
+            RegisterSet lateClobberedRegs = patch.extraClobberedRegs();
+            for (Tmp tmp : liveBefore.live()) {
+                if (!tmp.isReg() && sitsInClobberedRegister(tmp, earlyClobberedRegs))
+                    failAtClobber(block, patch, tmp);
+            }
+            for (Tmp tmp : liveAfter) {
+                if (liveBefore.isLive(tmp) && sitsInClobberedRegister(tmp, lateClobberedRegs))
+                    failAtClobber(block, patch, tmp);
+            }
+        };
+
         TmpLiveness<bank> liveness(m_code);
+
+        auto checkInstAfterTerminal = [&](Inst& inst, BasicBlock* successor) {
+            Inst& first = successor->at(0);
+            if (!first.clobbersAtBlockEntry())
+                return;
+            auto liveAtHead = liveness.liveAtHead(successor);
+            bool definesLiveTmp = false;
+            inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank tmpBank, Width) {
+                definesLiveTmp |= tmpBank == bank && Arg::isAnyDef(role) && liveAtHead.contains(tmp);
+            });
+            if (!definesLiveTmp)
+                return;
+            RegisterSet clobberedRegs = first.extraEarlyClobberedRegs();
+            inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank tmpBank, Width) {
+                if (tmpBank == bank && Arg::isAnyUse(role) && sitsInClobberedRegister(tmp, clobberedRegs))
+                    failAtClobber(successor, first, tmp);
+            });
+        };
+
+        Vector<Tmp> liveAfterPatch;
         for (BasicBlock* block : m_code) {
+            for (unsigned instIndex = block->size(); instIndex-- && !block->at(instIndex).isTerminal();) {
+                for (BasicBlock* successor : block->successorBlocks())
+                    checkInstAfterTerminal(block->at(instIndex), successor);
+            }
             typename TmpLiveness<bank>::LocalCalc localCalc(liveness, block);
             for (unsigned instIndex = block->size(); instIndex--;) {
                 checkConflicts(block, localCalc);
+                Inst& inst = block->at(instIndex);
+                if (inst.kind.opcode != Patch) {
+                    localCalc.execute(instIndex);
+                    continue;
+                }
+                liveAfterPatch.shrink(0);
+                for (Tmp tmp : localCalc.live()) {
+                    if (!tmp.isReg())
+                        liveAfterPatch.append(tmp);
+                }
                 localCalc.execute(instIndex);
+                checkClobbers(block, inst, liveAfterPatch, localCalc);
             }
             checkConflicts(block, localCalc);
         }
@@ -2631,10 +2741,20 @@ private:
     void buildLiveRanges(bool hasFPTmps)
     {
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::buildLiveRanges"_s);
-        solveLiveness();
+
+        Vector<unsigned> indexToColumn(m_numberOfLinearIndices);
+        for (unsigned index = 0; index < m_numberOfLinearIndices; ++index) {
+            if (!m_crossesBoundary[index])
+                continue;
+            indexToColumn[index] = m_columnToIndex.size();
+            m_columnToIndex.append(index);
+        }
+        BitMatrixLiveness<TmpBoundaryRows> liveness(m_code, BlockFacts { m_blockEnds.span(), m_exposedUses.span(), m_defsInBlocks.span(), m_usesAtTails.span(), m_crossesBoundary.span(), indexToColumn.span(), static_cast<unsigned>(m_columnToIndex.size()) });
+        liveness.compute();
+        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
 
         Vector<Piece> pieceStore;
-        unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_clobberPoints.size() + 16;
+        unsigned pieceCapacity = m_numberOfLinearIndices + m_numberOfLinearIndices / 2 + 8 * m_occupancy.numberOfClobberPoints() + 16;
         pieceStore.grow(pieceCapacity);
         Piece* pieces = pieceStore.mutableSpan().data();
         unsigned numberOfPieces = 0;
@@ -2665,22 +2785,11 @@ private:
             regLinearIndex[i] = linearIndex(Tmp(Reg::fromIndex(i)));
             flags[regLinearIndex[i]] |= isRegFlag;
         }
-        const Point* clobberPoints = m_clobberPoints.span().data();
-        const uint64_t* clobberedRegsAtPoint = m_clobberedRegsAtPoint.span().data();
-        const size_t numberOfClobberPoints = m_clobberPoints.size();
-        size_t nextClobber = numberOfClobberPoints;
-        m_deadClobbersAtPoint.fill(0, numberOfClobberPoints);
-        uint64_t* deadClobbersAtPoint = m_deadClobbersAtPoint.mutableSpan().data();
+        RegisterOccupancy::ClobberWalk clobberWalk(m_occupancy);
         uint64_t activeRegs = 0;
 
         auto regBit = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
             return static_cast<uint64_t>(1) << tmpForLinearIndex(index).reg().index();
-        };
-        auto takeDeadClobberAt = [&](uint64_t bit, Point point) ALWAYS_INLINE_LAMBDA {
-            if (nextClobber == numberOfClobberPoints || clobberPoints[nextClobber] != point || !(deadClobbersAtPoint[nextClobber] & bit))
-                return false;
-            deadClobbersAtPoint[nextClobber] &= ~bit;
-            return true;
         };
         auto markUse = [&](unsigned index, Point point) ALWAYS_INLINE_LAMBDA {
             Point& end = states[index].activeEnd;
@@ -2690,7 +2799,7 @@ private:
                 if (flags[index] & isRegFlag) [[unlikely]] {
                     uint64_t bit = regBit(index);
                     activeRegs |= bit;
-                    if (takeDeadClobberAt(bit, point + 1))
+                    if (clobberWalk.takeDeadClobberAtLastPoint(bit, point + 1))
                         end = point + 2;
                 }
             }
@@ -2723,7 +2832,7 @@ private:
             if ((tmpFlags & (isRegFlag | isPinnedFlag)) == isRegFlag) [[unlikely]] {
                 uint64_t bit = regBit(index);
                 activeRegs &= ~bit;
-                if (!states[index].activeEnd && takeDeadClobberAt(bit, point + 1))
+                if (!states[index].activeEnd && clobberWalk.takeDeadClobberAtLastPoint(bit, point + 1))
                     states[index].activeEnd = point + 2;
             }
             if (!(tmpFlags & isPinnedFlag)) [[likely]]
@@ -2745,12 +2854,7 @@ private:
                 if (other.isReg())
                     continue;
                 if (m_allAllowedRegisters.contains(reg, IgnoreVectors)) {
-#if USE(BUN_JSC_ADDITIONS)
-                    m_map[other].prefer(reg, adjustedBlockFrequency(block));
-#else
-                    if (!m_map[other].preferredReg)
-                        m_map[other].preferredReg = inst.args()[regIdx].reg();
-#endif
+                    prefer(m_map[other], reg, adjustedBlockFrequency(block));
                     continue;
                 }
                 if (!m_code.isPinned(reg))
@@ -2775,32 +2879,7 @@ private:
         const uint16_t* timings = m_mentions.traits.span().data();
         const unsigned* instFirstMention = m_mentions.instFirstMention.span().data();
         const uint8_t* allInstTimings = m_mentions.instTimings.span().data();
-        Point nextClobberPoint = nextClobber ? clobberPoints[nextClobber - 1] : std::numeric_limits<Point>::max();
-
-        const size_t wordsPerSet = m_livenessIsInLists ? 0 : m_wordsPerSet;
-        const uint64_t* liveAtHead = m_liveAtBoundaries.span().data();
-        const uint64_t* liveAtTail = liveAtHead + static_cast<size_t>(m_code.size()) * wordsPerSet;
-        size_t nextClose = m_closesAfterBlock.size();
-        size_t nextOpen = m_opensAtTailOfBlock.size();
-        auto forEachAtBlockEdge = [&](const Vector<BlockEdgeKind>& list, size_t& next, unsigned blockIndex, const auto& func) {
-            size_t end = next;
-            while (next && list[next - 1].blockIndex == blockIndex)
-                --next;
-            for (size_t i = next; i < end; ++i)
-                func(list[i].index);
-        };
-        Vector<unsigned> liveAtEntry;
-        forEachAtBlockEdge(m_closesAfterBlock, nextClose, m_code.size(), [&](unsigned index) {
-            liveAtEntry.append(index);
-        });
-        const unsigned* columnIndex = m_columnIndex.span().data();
-        auto forEachInDifference = [&](const uint64_t* a, const uint64_t* b, const auto& func) {
-            for (size_t wordIndex = 0; wordIndex < wordsPerSet; ++wordIndex) {
-                uint64_t word = a[wordIndex] & ~(b ? b[wordIndex] : 0);
-                for (; word; word &= word - 1)
-                    func(columnIndex[wordIndex * 64 + std::countr_zero(word)]);
-            }
-        };
+        const unsigned* columnToIndex = m_columnToIndex.span().data();
 
         BasicBlock* blockAfter = nullptr;
         for (size_t blockIndex = m_code.size(); blockIndex--;) {
@@ -2810,32 +2889,18 @@ private:
 
             Point positionOfHead = this->positionOfHead(block);
             Point positionOfTail = this->positionOfTail(block);
-            const uint64_t* tail = liveAtTail + blockIndex * wordsPerSet;
 
             if (blockAfter) {
                 Point blockAfterPositionOfHead = this->positionOfHead(blockAfter);
-                const uint64_t* headAfter = liveAtHead + blockAfter->index() * wordsPerSet;
-                forEachInDifference(headAfter, tail, [&](unsigned index) {
+                liveness.forEachLiveOnlyAtHeadOfNextBlock(block, [&](unsigned column) {
+                    unsigned index = columnToIndex[column];
                     if (states[index].activeEnd && !(flags[index] & isPinnedFlag)) [[likely]]
                         closeRange(index, blockAfterPositionOfHead);
                 });
-                forEachInDifference(tail, headAfter, [&](unsigned index) {
-                    markUse(index, positionOfTail);
-                });
-            } else {
-                forEachInDifference(tail, nullptr, [&](unsigned index) {
-                    markUse(index, positionOfTail);
-                });
             }
-            if (m_livenessIsInLists) [[unlikely]] {
-                forEachAtBlockEdge(m_closesAfterBlock, nextClose, blockIndex, [&](unsigned index) {
-                    if (states[index].activeEnd && !(flags[index] & isPinnedFlag)) [[likely]]
-                        closeRange(index, this->positionOfHead(blockAfter));
-                });
-                forEachAtBlockEdge(m_opensAtTailOfBlock, nextOpen, blockIndex, [&](unsigned index) {
-                    markUse(index, positionOfTail);
-                });
-            }
+            liveness.forEachLiveOnlyAtTail(block, [&](unsigned column) {
+                markUse(columnToIndex[column], positionOfTail);
+            });
 
             unsigned headOrdinal = positionOfHead / PointOffsets::PointsPerInst;
             for (unsigned instIndex = block->size(); instIndex--;) {
@@ -2857,11 +2922,9 @@ private:
                             markDef(block, instIndex, tmps[i], positionOfLate);
                     }
                 }
-                if (nextClobberPoint == positionOfLate) [[unlikely]] {
-                    uint64_t regs = clobberedRegsAtPoint[--nextClobber] & regsToMark;
-                    nextClobberPoint = nextClobber ? clobberPoints[nextClobber - 1] : std::numeric_limits<Point>::max();
-                    deadClobbersAtPoint[nextClobber] = regs & ~activeRegs;
-                    m_regsWithDeadClobbers |= regs & ~activeRegs;
+                if (clobberWalk.nextPoint() == positionOfLate) [[unlikely]] {
+                    uint64_t regs = clobberWalk.regsAtNextPoint() & regsToMark;
+                    clobberWalk.finishNextPoint(regs & ~activeRegs);
                     for (regs &= activeRegs; regs; regs &= regs - 1)
                         markDef(block, instIndex, regLinearIndex[std::countr_zero(regs)], positionOfLate);
                 }
@@ -2877,52 +2940,33 @@ private:
                             markDef(block, instIndex, tmps[i], positionOfEarly);
                     }
                 }
-                if (nextClobberPoint == positionOfEarly) [[unlikely]] {
-                    uint64_t regs = clobberedRegsAtPoint[nextClobber - 1] & regsToMark;
+                if (clobberWalk.nextPoint() == positionOfEarly) [[unlikely]] {
+                    uint64_t regs = clobberWalk.regsAtNextPoint() & regsToMark;
                     uint64_t deadClobbers = 0;
                     for (; regs; regs &= regs - 1) {
                         unsigned index = regLinearIndex[std::countr_zero(regs)];
                         const RangeState& state = states[index];
                         uint64_t bit = regs & -regs;
-                        bool reachesUpperPiece = (nextClobber < numberOfClobberPoints && clobberPoints[nextClobber] == positionOfLate && (deadClobbersAtPoint[nextClobber] & bit))
+                        bool reachesUpperPiece = clobberWalk.lastPointHasDeadClobber(bit, positionOfLate)
                             || (state.lowestPiece != noPiece && pieces[state.lowestPiece].begin == positionOfLate);
                         if (!(activeRegs & bit) && !reachesUpperPiece)
                             deadClobbers |= bit;
                         else
                             markDef(block, instIndex, index, positionOfEarly);
                     }
-                    deadClobbersAtPoint[--nextClobber] = deadClobbers;
-                    m_regsWithDeadClobbers |= deadClobbers;
-                    nextClobberPoint = nextClobber ? clobberPoints[nextClobber - 1] : std::numeric_limits<Point>::max();
+                    clobberWalk.finishNextPoint(deadClobbers);
                 }
             }
-#if ASSERT_ENABLED
-            if (!m_livenessIsInLists) {
-                Vector<bool> isLiveAtHead(FillWith { }, m_numberOfLinearIndices, false);
-                forEachInDifference(liveAtHead + blockIndex * wordsPerSet, nullptr, [&](unsigned index) {
-                    isLiveAtHead[index] = true;
-                });
-                m_code.forEachTmp([&](Tmp tmp) {
-                    ASSERT(!!states[linearIndex(tmp)].activeEnd == isLiveAtHead[linearIndex(tmp)]);
-                });
-                m_code.pinnedRegisters().forEachReg([&](Reg reg) {
-                    ASSERT(states[linearIndex(Tmp(reg))].activeEnd);
-                });
-            }
-#endif
             blockAfter = block;
         }
-        RELEASE_ASSERT(!nextClobber);
+        RELEASE_ASSERT(clobberWalk.isDone());
         if (blockAfter) {
             Point firstBlockPositionOfHead = this->positionOfHead(blockAfter);
-            forEachInDifference(liveAtHead + blockAfter->index() * wordsPerSet, nullptr, [&](unsigned index) {
+            liveness.forEachLiveAtHeadOfFirstBlock([&](unsigned column) {
+                unsigned index = columnToIndex[column];
                 if (!(flags[index] & isPinnedFlag))
                     closeRange(index, firstBlockPositionOfHead);
             });
-            for (unsigned index : liveAtEntry) {
-                if (!(flags[index] & isPinnedFlag))
-                    closeRange(index, firstBlockPositionOfHead);
-            }
         }
         m_code.pinnedRegisters().forEachReg([&](Reg reg) {
             unsigned index = linearIndex(Tmp(reg));
@@ -2957,15 +3001,36 @@ private:
         }
         m_intervalArena.tryResizeInPlace(allIntervals, numberOfPieces, nextInterval - allIntervals);
 
-        m_liveAtBoundaries.clear();
-        m_closesAfterBlock.clear();
-        m_opensAtTailOfBlock.clear();
-        m_columnIndex.clear();
+        m_columnToIndex.clear();
         m_crossesBoundary.clear();
         m_exposedUses.clear();
         m_defsInBlocks.clear();
         m_usesAtTails.clear();
         m_blockEnds.clear();
+
+        validateLiveRanges();
+    }
+
+    void validateLiveRanges()
+    {
+        if (!Options::airValidateGreedRegAlloc())
+            return;
+        UnifiedTmpLiveness liveness(m_code);
+        for (BasicBlock* block : m_code) {
+            Point head = positionOfHead(block);
+            for (Tmp tmp : liveness.liveAtHead(block)) {
+                if (tmp.isReg() && m_code.isPinned(tmp.reg()))
+                    continue;
+                RELEASE_ASSERT(m_map[tmp].liveRange.contains(head));
+            }
+        }
+        m_code.forEachTmp([&](Tmp tmp) {
+            const LiveRange& liveRange = m_map[tmp].liveRange;
+            forEachBlockInLiveRange(liveRange, [&](BasicBlock* block) {
+                RELEASE_ASSERT_IMPLIES(liveRange.contains(positionOfHead(block)), liveness.liveAtHead(block).contains(tmp));
+                return IterationStatus::Continue;
+            });
+        });
     }
 
     NEVER_INLINE void pruneCoalescables(Inst& inst, Tmp def, Point point, const RangeState* states, const Piece* pieces)
@@ -3279,8 +3344,6 @@ private:
     class AffinityGroup {
         WTF_MAKE_NONCOPYABLE(AffinityGroup);
     public:
-        static constexpr unsigned maxSizeWithoutMap = 24;
-
         AffinityGroup(GreedyAllocator& allocator, Tmp tmp0, Tmp tmp1)
             : m_range(LiveRange::unionOf(allocator.m_intervalArena, allocator.m_map.template get<bank>(tmp0).liveRange, allocator.m_map.template get<bank>(tmp1).liveRange))
         {
@@ -3371,7 +3434,7 @@ private:
     private:
         void makeMapIfLarge(GreedyAllocator& allocator)
         {
-            if (m_size > maxSizeWithoutMap || m_range.intervals().size() > maxSizeWithoutMap) [[unlikely]]
+            if (m_size > AirLimits::maxAffinityGroupSizeWithoutMap || m_range.intervals().size() > AirLimits::maxAffinityGroupSizeWithoutMap) [[unlikely]]
                 ensureMap(allocator);
         }
 
@@ -3667,9 +3730,7 @@ private:
             UseDefCost cost(0);
             Reg preferred;
             bool hasColdUse = false;
-#if USE(BUN_JSC_ADDITIONS)
             TmpData preferences;
-#endif
             for (Tmp member : group.members()) {
                 m_stats[bank].numGroupTmpsCoalesced++;
                 if (isConstDef<bank>(member))
@@ -3681,10 +3742,8 @@ private:
                 if (!preferred)
                     preferred = memberData.preferredReg;
                 hasColdUse |= memberData.hasColdUse;
-#if USE(BUN_JSC_ADDITIONS)
-                preferences.prefer(memberData.preferredReg, memberData.preferredWeight);
-                preferences.prefer(memberData.secondPreferredReg, memberData.secondPreferredWeight);
-#endif
+                prefer(preferences, memberData.preferredReg, memberData.preferredWeight);
+                prefer(preferences, memberData.secondPreferredReg, memberData.secondPreferredWeight);
                 memberData.stage = Stage::Coalesced;
             }
             m_tmpWidth.setWidths(representative, useWidth, defWidth);
@@ -3695,12 +3754,11 @@ private:
             representativeData.liveRange = group.buildLiveRange(m_intervalArena);
             representativeData.preferredReg = preferred;
             representativeData.hasColdUse = hasColdUse;
-#if USE(BUN_JSC_ADDITIONS)
             ASSERT(preferences.preferredReg == preferred);
             representativeData.preferredWeight = preferences.preferredWeight;
             representativeData.secondPreferredReg = preferences.secondPreferredReg;
             representativeData.secondPreferredWeight = preferences.secondPreferredWeight;
-#endif
+            representativeData.spillCostDiscount = preferences.spillCostDiscount;
             representativeData.validate();
 
             group.m_representative = representative;
@@ -3959,24 +4017,14 @@ private:
     void doStageTryAllocate(Tmp tmp, TmpData& tmpData)
     {
         ASSERT(tmpData.stage == Stage::TryAllocate || tmpData.stage == Stage::Unspillable);
-#if USE(BUN_JSC_ADDITIONS)
-        if (tmpData.spillability != TmpData::Spillability::Spillable && !tmpData.paysForCalleeSave) {
-#else
-        if (tmpData.spillability != TmpData::Spillability::Spillable)
-#endif
-            tmpData.paysForCalleeSave = true;
-#if USE(BUN_JSC_ADDITIONS)
-            tmpData.allocationFailedAtEpoch = 0;
-            tmpData.evictionFailedAtEpoch = 0;
-        }
-#endif
+        if (tmpData.spillability != TmpData::Spillability::Spillable && !tmpData.paysForCalleeSave)
+            tmpData.setPaysForCalleeSave();
         if (tryAllocate<bank>(tmp, tmpData))
             return;
         if (tryEvict<bank>(tmp, tmpData))
             return;
         RELEASE_ASSERT(tmpData.stage == Stage::TryAllocate); // Unspillable must have succeeded
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_code.chargesForCalleeSaves()) {
+        if (m_splitPolicy.splitsAroundClobbersEarly) {
             if (nextCalleeSaveIsFree<bank>() && tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
                 return;
             if (trySplitAroundClobbers<bank>(tmp, tmpData, true))
@@ -3984,7 +4032,6 @@ private:
             if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
                 return;
         }
-#endif
         // If we couldn't allocate tmp, allow it to split next time.
         Stage nextStage = Stage::TrySplit;
         // If we already know splitting won't be profitable, skip it.
@@ -4021,68 +4068,32 @@ private:
     template <Bank bank>
     bool nextCalleeSaveIsFree() const
     {
-#if USE(BUN_JSC_ADDITIONS)
-        return isARM64() && bank == GP && ((m_numberOfCalleeSaves[GP] - m_numberOfFreshCalleeSaves[GP]) & 1);
-#else
-        return false;
-#endif
+        return isARM64() && bank == GP && ((m_occupancy.numberOfCalleeSaves(GP) - m_occupancy.numberOfFreshCalleeSaves(GP)) & 1);
     }
 
     template <Bank bank>
     bool tryAllocateFreshCalleeSave(Tmp tmp, TmpData& tmpData)
     {
         UseDefCost worth = tmpData.useDefCost;
-#if USE(BUN_JSC_ADDITIONS)
-        if (isX86_64())
-            worth.subtractSaturating(UseDefCost(tmpData.preferredWeight + tmpData.secondPreferredWeight));
-#endif
-        if (!m_numberOfFreshCalleeSaves[bank] || tmpData.paysForCalleeSave || (worth <= m_calleeSaveCost && !nextCalleeSaveIsFree<bank>()))
+        worth.subtractSaturating(UseDefCost(tmpData.spillCostDiscount));
+        if (!m_occupancy.numberOfFreshCalleeSaves(bank) || tmpData.paysForCalleeSave || (worth <= m_calleeSaveCost && !nextCalleeSaveIsFree<bank>()))
             return false;
-        tmpData.paysForCalleeSave = true;
-#if USE(BUN_JSC_ADDITIONS)
-        tmpData.allocationFailedAtEpoch = 0;
-        tmpData.evictionFailedAtEpoch = 0;
-#endif
+        tmpData.setPaysForCalleeSave();
         return tryAllocate<bank>(tmp, tmpData);
-    }
-
-#if USE(BUN_JSC_ADDITIONS)
-    uint64_t clobberedRegs(TmpData& tmpData)
-    {
-        static_assert(Reg::maxIndex() < 64);
-        if (tmpData.hasClobberedRegs)
-            return tmpData.clobberedRegs;
-        uint64_t result = 0;
-        const Point* points = m_clobberPoints.span().data();
-        const size_t numberOfPoints = m_clobberPoints.size();
-        for (auto& interval : tmpData.liveRange.intervals()) {
-            if (result == m_allClobberedRegs)
-                break;
-            size_t index = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
-            while (index < numberOfPoints && points[index] < interval.begin())
-                ++index;
-            for (; index < numberOfPoints && points[index] < interval.end() && result != m_allClobberedRegs; ++index) {
-                if (!(index % clobberPointsPerChunk) && !m_clobberedRegsInChunk.isEmpty()) [[unlikely]] {
-                    while (index + clobberPointsPerChunk <= numberOfPoints && points[index + clobberPointsPerChunk - 1] < interval.end()) {
-                        result |= m_clobberedRegsInChunk[index / clobberPointsPerChunk];
-                        index += clobberPointsPerChunk;
-                    }
-                    if (index == numberOfPoints || points[index] >= interval.end())
-                        break;
-                }
-                result |= m_clobberedRegsAtPoint[index];
-            }
-        }
-        tmpData.clobberedRegs = result;
-        tmpData.hasClobberedRegs = true;
-        return result;
     }
 
     bool m_isEvictingHolder { false };
 
+    void prefer(TmpData& tmpData, Reg reg, float weight)
+    {
+        tmpData.prefer(reg, weight);
+        if (m_discountsPreferredRegisterMoves)
+            tmpData.spillCostDiscount = tmpData.preferredWeight + tmpData.secondPreferredWeight;
+    }
+
     void recordNeighbors()
     {
-        if (!isX86() || !m_code.chargesForCalleeSaves())
+        if (!isX86() || !m_registerPolicy.hintsTwoAddressOperands)
             return;
         for (unsigned ordinal : m_conditionalMoves) {
             Inst& inst = instAtOrdinal(ordinal);
@@ -4103,11 +4114,10 @@ private:
     {
         for (Tmp neighbour : tmpData.neighbours) {
             if (neighbour)
-                m_map[neighbour].prefer(reg, 0);
+                prefer(m_map[neighbour], reg, 0);
         }
     }
 
-#endif
     template <Bank bank>
     bool tryAllocate(Tmp tmp, TmpData& tmpData)
     {
@@ -4115,23 +4125,12 @@ private:
         ASSERT(!assignedReg(tmp));
 
         Width width = widthForConflicts<bank>(tmp);
-#if USE(BUN_JSC_ADDITIONS)
-        uint32_t failedAtEpoch = tmpData.allocationFailedAtEpoch;
-        uint64_t clobbered = clobberedRegs(tmpData);
-#endif
+        auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::Allocation, RegisterOccupancy::Clobbers::Exclude);
 
         auto tryAllocateToReg = [&](Reg r) {
-            if (!mayTake(tmpData, r))
+            if (!candidates.contains(r))
                 return false;
-#if USE(BUN_JSC_ADDITIONS)
-            if (failedAtEpoch && m_lastRemovalEpoch[r.index()] <= failedAtEpoch)
-                return false;
-            if (clobbered >> r.index() & 1)
-                return false;
-#endif
-            LiveRange& liveRange = tmpData.liveRange;
-            RegisterRange& regRanges = m_regRanges[r];
-            if (!regRanges.hasConflict(liveRange, width)) {
+            if (!m_occupancy.hasConflict(r, tmpData, width)) {
                 assign(tmp, tmpData, r);
                 return true;
             }
@@ -4142,18 +4141,18 @@ private:
             if (tryAllocateToReg(tmpData.preferredReg))
                 return true;
         }
-#if USE(BUN_JSC_ADDITIONS)
-        Reg secondPreferredReg = m_code.chargesForCalleeSaves() ? tmpData.secondPreferredReg : Reg();
+        Reg secondPreferredReg = m_registerPolicy.usesSecondPreferredRegister ? tmpData.secondPreferredReg : Reg();
         if (secondPreferredReg && tryAllocateToReg(secondPreferredReg))
             return true;
-        if (m_code.chargesForCalleeSaves() && !m_isEvictingHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
+        if (m_registerPolicy.evictsHolderOfPreferredRegister && !m_isEvictingHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
+            auto holderCandidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Exclude);
             auto tryEvictHolder = [&](Reg r) {
                 float wish = tmpData.wishFor(r);
-                if (!r || !(wish > 0) || !mayTake(tmpData, r) || (clobbered >> r.index() & 1))
+                if (!r || !(wish > 0) || !holderCandidates.contains(r))
                     return false;
                 Tmp holder;
                 bool isPossible = true;
-                m_regRanges[r].forEachConflict(tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                m_occupancy.forEachTmpConflict(r, tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() || (holder && holder != conflict.tmp)) {
                         isPossible = false;
                         return IterationStatus::Done;
@@ -4184,20 +4183,15 @@ private:
             if (tryEvictHolder(tmpData.preferredReg) || tryEvictHolder(secondPreferredReg))
                 return true;
         }
-#endif
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (r == tmpData.preferredReg)
                 continue;
-#if USE(BUN_JSC_ADDITIONS)
             if (r == secondPreferredReg)
                 continue;
-#endif
             if (tryAllocateToReg(r))
                 return true;
         }
-#if USE(BUN_JSC_ADDITIONS)
-        tmpData.allocationFailedAtEpoch = m_removalEpoch;
-#endif
+        m_occupancy.rememberFailure(tmpData, RegisterOccupancy::FailureMemo::Allocation);
         return false;
     }
 
@@ -4212,9 +4206,12 @@ private:
             StringPrintStream out;
             out.println("FATAL: no register for ", tmp);
             out.println("Unspillable Conflicts:");
+            uint64_t clobbered = m_occupancy.clobberedRegs(m_map.get<bank>(tmp));
             for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
                 out.print("  ", r, ": ");
-                m_regRanges[r].forEachConflict(m_map.get<bank>(tmp).liveRange, widthForConflicts<bank>(tmp),
+                if (clobbered >> r.index() & 1)
+                    out.print("clobbered, ");
+                m_occupancy.forEachTmpConflict(r, m_map.get<bank>(tmp).liveRange, widthForConflicts<bank>(tmp),
                     [&](auto& conflict) -> IterationStatus {
                         if (m_map.get<bank>(conflict.tmp).spillCost() == unspillableCost)
                             out.print("{", conflict.tmp, ", ", conflict.interval, "}, ");
@@ -4233,22 +4230,13 @@ private:
         m_visited.resize(m_code.numTmps(bank));
         LiveRange& liveRange = tmpData.liveRange;
         Width width = widthForConflicts<bank>(tmp);
-#if USE(BUN_JSC_ADDITIONS)
-        uint32_t failedAtEpoch = tmpData.evictionFailedAtEpoch;
-        uint64_t clobbered = clobberedRegs(tmpData);
-#endif
+        auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::Eviction, RegisterOccupancy::Clobbers::Exclude);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
-            if (!mayTake(tmpData, r))
+            if (!candidates.contains(r))
                 continue;
-#if USE(BUN_JSC_ADDITIONS)
-            if (failedAtEpoch && m_lastRemovalEpoch[r.index()] <= failedAtEpoch)
-                continue;
-            if (clobbered >> r.index() & 1)
-                continue;
-#endif
             SpillCost conflictsSpillCost(0);
             m_visited.clear();
-            m_regRanges[r].forEachConflict(liveRange, width,
+            m_occupancy.forEachTmpConflict(r, liveRange, width,
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg()) {
                         // Conflicts with a fixed register use/def, cannot evict.
@@ -4279,13 +4267,11 @@ private:
             // If 'tmp' was unspillable, we better have found at least one suitable register.
             if (tmpData.spillCost() == unspillableCost) [[unlikely]]
                 failOutOfRegisters(tmp);
-#if USE(BUN_JSC_ADDITIONS)
-            tmpData.evictionFailedAtEpoch = m_removalEpoch;
-#endif
+            m_occupancy.rememberFailure(tmpData, RegisterOccupancy::FailureMemo::Eviction);
             return false;
         }
         // It's cheaper to spill all the already-assigned conflicting tmps, so evict them in favor of assigning 'tmp'.
-        m_regRanges[bestEvictReg].forEachConflict(liveRange, widthForConflicts<bank>(tmp),
+        m_occupancy.forEachTmpConflict(bestEvictReg, liveRange, widthForConflicts<bank>(tmp),
             [&](auto& conflict) -> IterationStatus {
                 TmpData& conflictData = m_map.get<bank>(conflict.tmp);
                 evict(conflict.tmp, conflictData, bestEvictReg);
@@ -4315,19 +4301,10 @@ private:
     void assign(Tmp tmp, TmpData& tmpData, Reg reg)
     {
         ASSERT(m_allAllowedRegisters.contains(reg, IgnoreVectors));
-        if (m_freshCalleeSaves.contains(reg) && (!tmp.isReg() || tmpData.liveRange.size() || ((m_regsWithDeadClobbers >> reg.index() & 1) && !m_code.calleeSavesClobberedAtSuspensions().contains(reg, IgnoreVectors)))) {
-            m_freshCalleeSaves.remove(reg);
-#if USE(BUN_JSC_ADDITIONS)
-            m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
-#endif
-            --m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
-        }
-        m_regRanges[reg].add(tmp, tmpData.liveRange);
+        m_occupancy.add(tmp, tmpData, reg);
         assignImpl(tmp, tmpData, reg);
-#if USE(BUN_JSC_ADDITIONS)
         if (tmpData.neighbours[0]) [[unlikely]]
             notifyNeighbors(tmpData, reg);
-#endif
     }
 
     void evict(Tmp tmp, TmpData& tmpData, Reg reg)
@@ -4335,10 +4312,7 @@ private:
         ASSERT(tmpData.stage == Stage::Assigned);
         ASSERT(tmpData.spillCost() != unspillableCost);
         ASSERT(tmpData.assigned == reg);
-        m_regRanges[reg].evict(tmpData.liveRange);
-#if USE(BUN_JSC_ADDITIONS)
-        m_lastRemovalEpoch[reg.index()] = ++m_removalEpoch;
-#endif
+        m_occupancy.remove(tmpData, reg);
         tmpData.stage = Stage::New;
         tmpData.assigned = Reg();
         dataLogLnIf(verbose(), "Evicted ", tmp, " from ", reg);
@@ -4356,7 +4330,7 @@ private:
     bool trySplit(Tmp tmp, TmpData& tmpData)
     {
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
-        if (!m_code.chargesForCalleeSaves()) {
+        if (!m_splitPolicy.splitsAroundClobbersEarly) {
             if (trySplitAroundClobbers<bank>(tmp, tmpData))
                 return true;
             if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
@@ -4381,6 +4355,7 @@ private:
             boundaryPoints.append(positionOfTail(pred));
         }
 
+        bool hasExitWithEntryClobbers = false;
         for (unsigned i = 0; i < loop.size(); i++) {
             BasicBlock* loopBlock = loop.at(i);
             for (auto& succ : loopBlock->successors()) {
@@ -4393,11 +4368,13 @@ private:
                     ASSERT(m_naturalLoops->belongsTo(exitPred, loop));
 #endif
                 boundaryPoints.append(positionOfHead(succ.block()));
+                hasExitWithEntryClobbers |= succ.block()->at(0).clobbersAtBlockEntry();
             }
         }
 
         LoopData& loopData = m_loopData[loop.index()];
         ASSERT(!loopData.range.size() && !loopData.boundary.size());
+        loopData.hasExitWithEntryClobbers = hasExitWithEntryClobbers;
 
         std::ranges::sort(boundaryPoints);
         removeRepeatedElements(boundaryPoints);
@@ -4454,8 +4431,10 @@ private:
 
                 auto& loopData = m_loopData[loop->index()];
                 if (liveRange.overlaps(loopData.boundary)) {
+                    if (loopData.hasExitWithEntryClobbers)
+                        continue;
                     // Skip loops that are too large relative to the live range since they are unlikely to improve allocation progress.
-                    if (loopData.range.size() > liveRange.size() * Options::airGreedyRegAllocLoopSplitMaxLoopFraction())
+                    if (loopData.range.size() > liveRange.size() * m_splitPolicy.maxLoopFractionOfLiveRange)
                         continue;
                     resultLoop = loop;
                     resultNonLoopRange = LiveRange::subtract(m_intervalArena, liveRange, loopData.range);
@@ -4470,7 +4449,7 @@ private:
     template<Bank bank>
     bool trySplitAroundLoop(Tmp tmp, TmpData& tmpData)
     {
-        if (!Options::airGreedyRegAllocSplitAroundLoops())
+        if (!m_splitPolicy.splitsAroundLoops)
             return false;
 
         // Clobber fixup references originalTmp which would be stale after loop splitting.
@@ -4520,7 +4499,7 @@ private:
         // Note: addSplitTmp() may have resized m_map, invalidating the tmpData parameter.
         TmpData& originalData = m_map.get<bank>(tmp);
         TmpData& loopData = m_map.get<bank>(loopTmp);
-        loopData.liveRange = LiveRange::subtract(m_intervalArena, originalData.liveRange, nonLoopRange);
+        loopData.setLiveRange(LiveRange::subtract(m_intervalArena, originalData.liveRange, nonLoopRange));
         ASSERT(loopData.liveRange.size());
 
         bool loopHasDef = false;
@@ -4547,12 +4526,7 @@ private:
         }
 
         // originalTmp no longer live within the loop.
-        originalData.liveRange = WTF::move(nonLoopRange);
-#if USE(BUN_JSC_ADDITIONS)
-        originalData.allocationFailedAtEpoch = 0;
-        originalData.evictionFailedAtEpoch = 0;
-        originalData.hasClobberedRegs = false;
-#endif
+        originalData.setLiveRange(WTF::move(nonLoopRange));
         originalData.useDefCost.subtractSaturating(loopData.useDefCost);
 
         m_aroundLoopMetadata.constructAndAppend(tmp, loop);
@@ -4577,82 +4551,13 @@ private:
         return true;
     }
 
-    NEVER_INLINE size_t nextDeadClobberFor(Reg reg, size_t from)
+    bool isLiveIntoBlockEntryClobbers(BasicBlock* block, const LiveRange& liveRange)
     {
-        if (m_regFirstDeadClobber.isEmpty()) {
-            m_regFirstDeadClobber.fill(0, Reg::maxIndex() + 2);
-            for (uint64_t regs : m_deadClobbersAtPoint) {
-                for (; regs; regs &= regs - 1)
-                    ++m_regFirstDeadClobber[std::countr_zero(regs) + 1];
-            }
-            for (unsigned i = 0; i <= Reg::maxIndex(); ++i)
-                m_regFirstDeadClobber[i + 1] += m_regFirstDeadClobber[i];
-            m_regDeadClobbers.grow(m_regFirstDeadClobber.last());
-            Vector<unsigned> next = m_regFirstDeadClobber;
-            for (unsigned clobber = 0; clobber < m_deadClobbersAtPoint.size(); ++clobber) {
-                for (uint64_t regs = m_deadClobbersAtPoint[clobber]; regs; regs &= regs - 1)
-                    m_regDeadClobbers[next[std::countr_zero(regs)]++] = clobber;
-            }
+        for (BasicBlock* successor : block->successorBlocks()) {
+            if (successor->at(0).clobbersAtBlockEntry() && liveRange.contains(positionOfHead(successor)))
+                return true;
         }
-        auto own = m_regDeadClobbers.span().subspan(m_regFirstDeadClobber[reg.index()], m_regFirstDeadClobber[reg.index() + 1] - m_regFirstDeadClobber[reg.index()]);
-        auto iterator = std::ranges::lower_bound(own, static_cast<unsigned>(from));
-        return iterator == own.end() ? m_deadClobbersAtPoint.size() : *iterator;
-    }
-
-    void forEachConflictAndDeadClobber(Reg reg, const LiveRange& range, Width width, NOESCAPE const Invocable<IterationStatus(RegisterRange::AllocatedInterval&)> auto& func)
-    {
-        if (m_clobberPoints.size() > fewClobberPoints) [[unlikely]]
-            forEachConflictAndDeadClobberImpl<true>(reg, range, width, func);
-        else
-            forEachConflictAndDeadClobberImpl<false>(reg, range, width, func);
-    }
-
-    template<bool leaps>
-    void forEachConflictAndDeadClobberImpl(Reg reg, const LiveRange& range, Width width, NOESCAPE const Invocable<IterationStatus(RegisterRange::AllocatedInterval&)> auto& func)
-    {
-        RegisterRange& regRange = m_regRanges[reg];
-        const uint64_t bit = static_cast<uint64_t>(1) << reg.index();
-        if (!(m_regsWithDeadClobbers & bit)) {
-            regRange.forEachConflict(range, width, func);
-            return;
-        }
-        const Point* points = m_clobberPoints.span().data();
-        const uint64_t* deadClobbersAtPoint = m_deadClobbersAtPoint.span().data();
-        const size_t numberOfPoints = m_clobberPoints.size();
-        for (auto interval : range.intervals()) {
-            size_t clobber = m_instFirstClobber[interval.begin() / PointOffsets::PointsPerInst];
-            while (clobber < numberOfPoints && points[clobber] < interval.begin())
-                ++clobber;
-            while (true) {
-                auto conflict = regRange.firstConflict(interval);
-                Point limit = conflict ? conflict->interval.begin() : interval.end();
-                [[maybe_unused]] unsigned consecutiveMisses = 0;
-                for (; clobber < numberOfPoints && points[clobber] < limit; ++clobber) {
-                    if (!(deadClobbersAtPoint[clobber] & bit)) {
-                        if constexpr (leaps) {
-                            if (++consecutiveMisses > maxConsecutiveMisses) [[unlikely]] {
-                                clobber = nextDeadClobberFor(reg, clobber) - 1;
-                                consecutiveMisses = 0;
-                            }
-                        }
-                        continue;
-                    }
-                    consecutiveMisses = 0;
-                    RegisterRange::AllocatedInterval deadClobber { std::pair { Interval(points[clobber]), Tmp(reg) } };
-                    if (func(deadClobber) == IterationStatus::Done)
-                        return;
-                }
-                if (!conflict)
-                    break;
-                if (func(*conflict) == IterationStatus::Done)
-                    return;
-                if (interval.end() <= conflict->interval.end())
-                    break;
-                interval = { conflict->interval.end(), interval.end() };
-            }
-        }
-        if (width > Width64) [[unlikely]]
-            regRange.forEachConflictInHigh64(range, func);
+        return false;
     }
 
     template<Bank bank>
@@ -4660,10 +4565,8 @@ private:
     {
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false; // Already split around clobbers
-#if USE(BUN_JSC_ADDITIONS)
         if (tmpData.spansStretch)
             return false;
-#endif
         if (tmpData.liveRange.size() < splitMinRangeSize)
             return false; // Not enough instructions to be worthwhile
 
@@ -4688,27 +4591,30 @@ private:
             inst.forEachTmpFast([&](Tmp useOrDef) {
                 usesOrDefsTmp |= useOrDef == tmp;
             });
+            usesOrDefsTmp |= inst.clobbersAtBlockEntry();
+            usesOrDefsTmp |= inst.isTerminal() && isLiveIntoBlockEntryClobbers(block, tmpData.liveRange);
             ClobberSite site { point, adjustedBlockFrequency(block) * 2, usesOrDefsTmp };
             clobberSites.insert(nextClobberSite, site);
             return site;
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
-#if USE(BUN_JSC_ADDITIONS)
-        const bool spansStretches = m_code.chargesForCalleeSaves();
-#endif
+        const bool spansStretches = m_splitPolicy.spansStretchesOfClobbers;
+        const uint64_t maxClobberSites = m_code.proc().limit(Limit::MaxClobberSitesPerSplit);
+        std::optional<Point> firstPointPastMaxClobberSites;
 
         Reg bestSplitReg;
         constexpr UseDefCost invalidSplitCost(std::numeric_limits<float>::infinity());
-        const float splitMultiplier = Options::airGreedyRegAllocSplitMultiplier();
+        const float splitMultiplier = m_splitPolicy.splitMultiplier;
         UseDefCost splitCostLimit = splitMultiplier > 0.0 ? tmpData.useDefCost / splitMultiplier : invalidSplitCost;
-        if (m_numberOfFreshCalleeSaves[bank] && !tmpData.paysForCalleeSave)
+        if (m_occupancy.numberOfFreshCalleeSaves(bank) && !tmpData.paysForCalleeSave)
             splitCostLimit = std::min(splitCostLimit, m_calleeSaveCost);
         UseDefCost minSplitCost = splitCostLimit;
         Reg bestSplitRegWithEviction;
         UseDefCost minSplitCostWithEviction = splitCostLimit;
         Width width = widthForConflicts<bank>(tmp);
+        auto candidates = m_occupancy.candidatesFor(tmpData, RegisterOccupancy::FailureMemo::None, RegisterOccupancy::Clobbers::Ignore);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
-            if (!mayTake(tmpData, r))
+            if (!candidates.contains(r))
                 continue;
             UseDefCost splitCost(0);
             unsigned numberOfClobbers = 0;
@@ -4719,11 +4625,14 @@ private:
                 m_visited.resize(m_code.numTmps(bank));
                 m_visited.clear();
             }
-            forEachConflictAndDeadClobber(r, tmpData.liveRange, width,
+            m_occupancy.forEachConflict(r, tmpData.liveRange, width,
                 [&](auto& conflict) -> IterationStatus {
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        if (site.usesOrDefsTmp || ++numberOfClobbers > 32) {
+                        bool isPastMaxClobberSites = !site.usesOrDefsTmp && m_splitPolicy.limitsClobberSitesPerSplit && ++numberOfClobbers > maxClobberSites;
+                        if (isPastMaxClobberSites && !firstPointPastMaxClobberSites)
+                            firstPointPastMaxClobberSites = site.point;
+                        if (site.usesOrDefsTmp || isPastMaxClobberSites) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any
@@ -4770,12 +4679,15 @@ private:
             minSplitCost = minSplitCostWithEviction;
             bestSplitReg = bestSplitRegWithEviction;
         }
-        if (minSplitCost >= splitCostLimit)
+        if (minSplitCost >= splitCostLimit) {
+            if (firstPointPastMaxClobberSites)
+                m_code.proc().didReachLimit(Limit::MaxClobberSitesPerSplit, originAt(*firstPointPastMaxClobberSites));
             return false; // No register found or better to spill than to split
+        }
         ASSERT(bestSplitReg);
 
         LiveRange holeRange;
-        forEachConflictAndDeadClobber(bestSplitReg, tmpData.liveRange, width,
+        m_occupancy.forEachConflict(bestSplitReg, tmpData.liveRange, width,
             [&](auto& conflict) -> IterationStatus {
                 if (!conflict.tmp.isReg())
                     return IterationStatus::Continue;
@@ -4787,7 +4699,6 @@ private:
                 holeRange.append(m_intervalArena, hole);
                 return IterationStatus::Continue;
             });
-#if USE(BUN_JSC_ADDITIONS)
         if (spansStretches && holeRange.intervals().size() > 1) {
             LiveRange stretches;
             Interval stretch;
@@ -4835,14 +4746,8 @@ private:
             finish();
             holeRange = WTF::move(stretches);
         }
-#endif
 
-        tmpData.liveRange = LiveRange::subtract(m_intervalArena, tmpData.liveRange, holeRange);
-#if USE(BUN_JSC_ADDITIONS)
-        tmpData.allocationFailedAtEpoch = 0;
-        tmpData.evictionFailedAtEpoch = 0;
-        tmpData.hasClobberedRegs = false;
-#endif
+        tmpData.setLiveRange(LiveRange::subtract(m_intervalArena, tmpData.liveRange, holeRange));
         tmpData.splitAroundClobbersMetadataIndex = m_aroundClobbersMetadata.size();
         setStageAndEnqueue(tmp, tmpData, Stage::TryAllocate);
 
@@ -4862,18 +4767,12 @@ private:
             // An alternative would be to use the Shuffle opcode (which can handle that
             // rotation of register assignments) but that would trigger an extra liveness
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
-#if USE(BUN_JSC_ADDITIONS)
             Interval gapInterval = hole | Interval(hole.begin() - 1);
             if (spansStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
-#else
-            Interval gapInterval = hole | Interval(hole.begin() - 1);
-#endif
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
             metadata.splits.append({ gapTmp });
-#if USE(BUN_JSC_ADDITIONS)
             m_map.get<bank>(gapTmp).spansStretch = hole.distance() > 2;
-#endif
             setStageAndEnqueue(gapTmp, m_map.get<bank>(gapTmp), Stage::TryAllocate);
         }
         dataLogLnIf(verbose(), "Split (clobbers): reg = ", bestSplitReg, " spillCost = ", m_map.get<bank>(tmp).spillCost().value(), " splitCost = ", minSplitCost.value(), " split tmp = ", metadata);
@@ -5004,34 +4903,40 @@ private:
         return { last + 1, end }; // Return the unprocessed portion of interval
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    template<Bank bank>
-    bool trySplitIntoClustersOverBlocks(Tmp tmp)
-    {
-        struct Group {
-            BasicBlock* block { nullptr };
-            Interval cluster;
-            Point lastDefPoint { 0 };
-            unsigned ptrsEnd { 0 };
-            unsigned coldUsePtrsEnd { 0 };
-            unsigned pointsEnd { 0 };
-            unsigned root { 0 };
-            unsigned numberOfPtrsInCluster { 0 };
-            unsigned numberOfGroupsInCluster { 1 };
-            float weight { 0 };
-            bool isLiveIn { false };
-            Tmp clusterTmp;
-        };
-        constexpr unsigned maxBlocksOnPaths = 6;
-        Vector<Group, 16> groups;
+    enum class ClusterReach : bool { WithinBlock, OverBlocks };
+
+    struct ClusterGroup {
+        BasicBlock* block { nullptr };
+        Interval cluster;
+        Point lastDefPoint { 0 };
+        unsigned ptrsEnd { 0 };
+        unsigned coldUsePtrsEnd { 0 };
+        unsigned pointsEnd { 0 };
+        unsigned root { 0 };
+        unsigned numberOfPtrsInCluster { 0 };
+        unsigned numberOfGroupsInCluster { 1 };
+        float weight { 0 };
+        bool isLiveIn { false };
+        Tmp clusterTmp;
+    };
+    using ClusterGroups = Vector<ClusterGroup, 16>;
+    using ClusterPieces = Vector<Vector<Interval, 4>, 16>;
+
+    struct ClusterMentions {
         Vector<Tmp*, 32> ptrs;
         Vector<std::pair<Tmp*, Point>, 8> coldUsePtrs;
         Vector<Point, 32> points;
+    };
+
+    template<Bank bank>
+    ClusterGroups collectClusterGroups(Tmp tmp, ClusterMentions& mentions)
+    {
+        ClusterGroups groups;
         size_t cursor = 0;
         for (Interval interval : m_map.get<bank>(tmp).liveRange.intervals()) {
             Interval remaining = interval;
             do {
-                Group group;
+                ClusterGroup group;
                 remaining = forEachUseDefWithin(tmp, remaining, cursor, [&](Point point, Inst& inst, BasicBlock& block) {
                     inst.forEachTmp([&](Tmp& t, Arg::Role role, Bank, Width) {
                         if (t != tmp)
@@ -5039,32 +4944,37 @@ private:
                         Point early = point + PointOffsets::Early;
                         Interval timingInterval = intervalForTiming(early, Arg::timing(role));
                         if (Arg::isColdUse(role)) {
-                            coldUsePtrs.append({ &t, timingInterval.begin() });
+                            mentions.coldUsePtrs.append({ &t, timingInterval.begin() });
                             return;
                         }
-                        ptrs.append(&t);
-                        points.append(point);
+                        mentions.ptrs.append(&t);
+                        mentions.points.append(point);
                         if (Arg::isAnyDef(role))
-                            group.lastDefPoint = early;
+                            group.lastDefPoint = early; // Remember where the fixup store to spill is needed
                         group.cluster |= timingInterval;
                         group.block = &block;
-                        group.weight += adjustedBlockFrequency(&block);
                     });
                 });
                 if (!group.block) {
-                    coldUsePtrs.shrink(groups.isEmpty() ? 0 : groups.last().coldUsePtrsEnd);
+                    mentions.coldUsePtrs.shrink(groups.isEmpty() ? 0 : groups.last().coldUsePtrsEnd);
                     continue;
                 }
                 group.isLiveIn = interval.contains(pointAtOffset(group.cluster.begin(), PointOffsets::Pre));
-                group.ptrsEnd = ptrs.size();
-                group.coldUsePtrsEnd = coldUsePtrs.size();
-                group.pointsEnd = points.size();
+                group.ptrsEnd = mentions.ptrs.size();
+                group.coldUsePtrsEnd = mentions.coldUsePtrs.size();
+                group.pointsEnd = mentions.points.size();
                 group.root = groups.size();
-                group.numberOfPtrsInCluster = ptrs.size() - (groups.isEmpty() ? 0 : groups.last().ptrsEnd);
+                group.numberOfPtrsInCluster = mentions.ptrs.size() - (groups.isEmpty() ? 0 : groups.last().ptrsEnd);
+                group.weight = group.numberOfPtrsInCluster * adjustedBlockFrequency(group.block);
                 groups.append(group);
             } while (remaining);
         }
+        return groups;
+    }
 
+    template<Bank bank>
+    void joinClusterGroups(Tmp tmp, ClusterGroups& groups, ClusterPieces& pieces)
+    {
         RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
         calleeSaves.exclude(m_code.unsavedCalleeSaves());
         uint64_t regsClobberedAtCalls = 0;
@@ -5072,15 +4982,11 @@ private:
             if (!calleeSaves.contains(reg, IgnoreVectors))
                 regsClobberedAtCalls |= 1ULL << reg.index();
         }
-        regsClobberedAtCalls &= m_allClobberedRegs;
+        regsClobberedAtCalls &= m_occupancy.allClobberedRegs();
+        if (!regsClobberedAtCalls)
+            return;
         auto keepsSomeRegisterWithin = [&](Interval interval) {
-            auto clobberPoints = m_clobberPoints.span();
-            size_t index = std::ranges::lower_bound(clobberPoints, interval.begin()) - clobberPoints.begin();
-            for (; index < clobberPoints.size() && clobberPoints[index] < interval.end(); ++index) {
-                if ((m_clobberedRegsAtPoint[index] & regsClobberedAtCalls) == regsClobberedAtCalls)
-                    return false;
-            }
-            return true;
+            return !m_occupancy.hasPointClobberingAll(regsClobberedAtCalls, interval);
         };
         auto isLiveThroughout = [&](Interval interval) {
             auto intervals = m_map.get<bank>(tmp).liveRange.intervals();
@@ -5089,15 +4995,13 @@ private:
             });
             return live != intervals.end() && live->begin() <= interval.begin() && interval.end() <= live->end();
         };
-        Vector<Vector<Interval, 4>, 16> pieces(groups.size());
         for (unsigned i = 0; i < groups.size(); ++i) {
-            Group& group = groups[i];
-            pieces[i].append(group.cluster);
-            if (!regsClobberedAtCalls || group.lastDefPoint || !group.isLiveIn || (i && groups[i - 1].block == group.block))
+            ClusterGroup& group = groups[i];
+            if (group.lastDefPoint || !group.isLiveIn || (i && groups[i - 1].block == group.block))
                 continue;
-            Vector<Interval, maxBlocksOnPaths + 1> way;
-            way.append(Interval(positionOfHead(group.block), group.cluster.end()));
-            Vector<BasicBlock*, maxBlocksOnPaths + 1> seen { group.block };
+            Vector<Interval, AirLimits::maxBlocksOnClusterPaths + 1> pathIntervals;
+            pathIntervals.append(Interval(positionOfHead(group.block), group.cluster.end()));
+            Vector<BasicBlock*, AirLimits::maxBlocksOnClusterPaths + 1> seen { group.block };
             auto earlier = groups.span().first(i);
             unsigned pathsRoot = i;
             bool isOpen = true;
@@ -5111,40 +5015,52 @@ private:
                     }
                     if (seen.contains(predecessor))
                         continue;
-                    unsigned candidate = std::ranges::upper_bound(earlier, predecessor->index(), { }, [](const Group& other) {
+                    unsigned candidate = std::ranges::upper_bound(earlier, predecessor->index(), { }, [](const ClusterGroup& other) {
                         return other.block->index();
                     }) - earlier.begin();
                     if (candidate && groups[candidate - 1].block == predecessor) {
-                        const Group& above = groups[candidate - 1];
+                        const ClusterGroup& above = groups[candidate - 1];
                         if ((pathsRoot != i && pathsRoot != above.root) || !keepsSomeRegisterWithin(above.cluster)) {
                             isOpen = false;
                             break;
                         }
                         pathsRoot = above.root;
-                        way.append(Interval(above.cluster.end() - 1, positionOfTail(predecessor) + 1));
+                        pathIntervals.append(Interval(above.cluster.end() - 1, positionOfTail(predecessor) + 1));
                         continue;
                     }
-                    if (seen.size() > maxBlocksOnPaths) {
+                    if (seen.size() > AirLimits::maxBlocksOnClusterPaths) {
                         isOpen = false;
                         break;
                     }
-                    way.append(Interval(positionOfHead(predecessor), positionOfTail(predecessor) + 1));
+                    pathIntervals.append(Interval(positionOfHead(predecessor), positionOfTail(predecessor) + 1));
                     seen.append(predecessor);
                 }
             }
             if (!isOpen || pathsRoot == i)
                 continue;
-            for (Interval interval : way)
+            for (Interval interval : pathIntervals)
                 isOpen &= isLiveThroughout(interval) && keepsSomeRegisterWithin(interval);
             if (!isOpen)
                 continue;
-            Group& root = groups[pathsRoot];
+            ClusterGroup& root = groups[pathsRoot];
             group.root = pathsRoot;
             root.numberOfPtrsInCluster += group.numberOfPtrsInCluster;
             root.numberOfGroupsInCluster++;
             root.weight += group.weight;
-            pieces[group.root].appendVector(way);
+            pieces[group.root].appendVector(pathIntervals);
         }
+    }
+
+    template<Bank bank>
+    bool trySplitIntoClusters(Tmp tmp, ClusterReach reach)
+    {
+        ClusterMentions mentions;
+        ClusterGroups groups = collectClusterGroups<bank>(tmp, mentions);
+        ClusterPieces pieces(groups.size());
+        for (unsigned i = 0; i < groups.size(); ++i)
+            pieces[i].append(groups[i].cluster);
+        if (reach == ClusterReach::OverBlocks)
+            joinClusterGroups<bank>(tmp, groups, pieces);
 
         IntraBlockSplitMetadata* metadata = nullptr;
         for (unsigned i = 0; i < groups.size(); ++i) {
@@ -5154,10 +5070,15 @@ private:
                 m_intraBlockMetadata.constructAndAppend(tmp);
                 metadata = &m_intraBlockMetadata.last();
             }
+            Interval& ownPiece = pieces[i][0];
+            // If the Tmp is live into the cluster then cluster range is extended to model the fixup load from
+            // the Tmp's spill slot before the first use. This also allows insertSplitIntraBlockFixupCode()
+            // to quickly determine whether the fixup load is needed.
             if (groups[i].isLiveIn)
-                pieces[i].append(Interval(pointAtOffset(groups[i].cluster.begin(), PointOffsets::Pre)));
+                ownPiece |= Interval(pointAtOffset(groups[i].cluster.begin(), PointOffsets::Pre));
+            // Likewise, if the cluster defs Tmp then a store to Tmp's spill slot will be needed after the final def point.
             if (groups[i].lastDefPoint)
-                pieces[i].append(Interval(pointAtOffset(groups[i].lastDefPoint, PointOffsets::Post)));
+                ownPiece |= Interval(pointAtOffset(groups[i].lastDefPoint, PointOffsets::Post));
             std::ranges::sort(pieces[i], { }, [](Interval interval) {
                 return interval.begin();
             });
@@ -5188,10 +5109,11 @@ private:
                 continue;
             TmpData& clusterData = m_map.get<bank>(clusterTmp);
             for (unsigned k = i ? groups[i - 1].ptrsEnd : 0; k < groups[i].ptrsEnd; ++k)
-                *ptrs[k] = clusterTmp;
+                *mentions.ptrs[k] = clusterTmp; // Within this cluster, use clusterTmp rather than Tmp
             for (unsigned k = i ? groups[i - 1].coldUsePtrsEnd : 0; k < groups[i].coldUsePtrsEnd; ++k) {
-                if (clusterData.liveRange.contains(coldUsePtrs[k].second)) {
-                    *coldUsePtrs[k].first = clusterTmp;
+                // Include coldUses only when they are within the warm cluster
+                if (clusterData.liveRange.contains(mentions.coldUsePtrs[k].second)) {
+                    *mentions.coldUsePtrs[k].first = clusterTmp;
                     clusterData.hasColdUse = true;
                 }
             }
@@ -5200,29 +5122,29 @@ private:
                     return UseDefList();
                 }).iterator->value;
                 for (unsigned k = i ? groups[i - 1].pointsEnd : 0; k < groups[i].pointsEnd; ++k)
-                    list.add(points[k]);
+                    list.add(mentions.points[k]);
             }
         }
         for (unsigned i = 0; i < groups.size(); ++i) {
             if (Tmp clusterTmp = groups[i].clusterTmp)
                 setStageAndEnqueue(clusterTmp, m_map.get<bank>(clusterTmp), Stage::TryAllocate);
         }
+
+        // The original Tmp is spilled, but the cluster Tmps will hopefully carry the value in registers
+        // within the cluster intervals.
         spill(tmp, m_map.get<bank>(tmp));
         m_stats[bank].numSplitIntraBlock++;
-        dataLogLnIf(verbose(), "Split (clusters over blocks): ", *metadata);
+        dataLogLnIf(verbose(), "Split (intra-block): ", *metadata);
         return true;
     }
-#endif
 
     template<Bank bank>
     bool trySplitIntraBlock(Tmp tmp, TmpData& tmpData)
     {
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false;
-#if USE(BUN_JSC_ADDITIONS)
         if (tmpData.spansStretch)
             return false;
-#endif
 
         if (isConstDef<bank>(tmp))
             return false; // Constant will be rematerialized instead
@@ -5233,91 +5155,7 @@ private:
             return false;
 
         ensureUseDefLists();
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_code.chargesForCalleeSaves() && !tmpData.isClusterOverBlocks)
-            return trySplitIntoClustersOverBlocks<bank>(tmp);
-#endif
-
-        IntraBlockSplitMetadata* metadata = nullptr;
-        Vector<Tmp*, 8> tmpPtrs;
-        Vector<std::pair<Tmp*, Point>, 4> coldUsePtrs;
-        size_t cursor = 0;
-
-        size_t numIntervals = tmpData.liveRange.intervals().size();
-        for (size_t i = 0; i < numIntervals; i++) {
-            // Note: this loop calls newTmp() which invalidates the tmpData reference.
-            Interval interval = *(m_map.get<bank>(tmp).liveRange.intervals().begin() + i);
-            Interval remaining = interval;
-
-            do {
-                Point lastDefPoint = 0;
-                Interval cluster = { };
-                tmpPtrs.shrink(0);
-                coldUsePtrs.shrink(0);
-
-                remaining = forEachUseDefWithin(tmp, remaining, cursor, [&](Point point, Inst& inst, BasicBlock&) {
-                    inst.forEachTmp([&](Tmp& t, Arg::Role role, Bank, Width) {
-                        if (t != tmp)
-                            return;
-                        Point early = point + PointOffsets::Early;
-                        Interval timingInterval = intervalForTiming(early, Arg::timing(role));
-                        if (Arg::isColdUse(role))
-                            coldUsePtrs.append({ &t, timingInterval.begin() });
-                        else {
-                            tmpPtrs.append(&t);
-                            if (Arg::isAnyDef(role))
-                                lastDefPoint = early; // Remember where the fixup store to spill is needed
-                            cluster |= timingInterval;
-                        }
-                    });
-                });
-
-                if (tmpPtrs.size() > 1) {
-                    ASSERT(cluster);
-                    if (!metadata) {
-                        m_intraBlockMetadata.constructAndAppend(tmp);
-                        metadata = &m_intraBlockMetadata.last();
-                    }
-                    Point pre = pointAtOffset(cluster.begin(), PointOffsets::Pre);
-                    // If the Tmp is live into the cluster then cluster range is extended to model the fixup load from
-                    // the Tmp's spill slot before the first use. This also allows insertSplitIntraBlockFixupCode()
-                    // to quickly determine whether the fixup load is needed.
-                    if (interval.contains(pre))
-                        cluster |= Interval(pre);
-                    // Likewise, if the cluster defs Tmp then a store to Tmp's spill slot will be needed after the final def point.
-                    if (lastDefPoint)
-                        cluster |= Interval(pointAtOffset(lastDefPoint, PointOffsets::Post));
-
-                    BasicBlock* block = findBlockContainingPoint(cluster.begin());
-                    Tmp clusterTmp = addSplitTmp(tmp, UseDefCost(tmpPtrs.size() * adjustedBlockFrequency(block)), cluster);
-                    TmpData& clusterData = m_map.get<bank>(clusterTmp);
-                    m_stats[bank].numSplitIntraBlockClusterTmps++;
-                    for (auto& ptr : tmpPtrs)
-                        *ptr = clusterTmp; // Within this cluster, use clusterTmp rather than Tmp
-                    for (auto& [ptr, point] : coldUsePtrs) {
-                        // Include coldUses only when they are within the warm cluster
-                        if (cluster.contains(point)) {
-                            *ptr = clusterTmp;
-                            clusterData.hasColdUse = true;
-                        }
-                    }
-                    metadata->splits.append({ clusterTmp, lastDefPoint });
-                    setStageAndEnqueue(clusterTmp, clusterData, Stage::TryAllocate);
-                }
-            } while (remaining);
-        }
-
-        if (!metadata) {
-            m_stats[bank].numSplitIntraBlockNoCluster++;
-            return false;
-        }
-
-        // The original Tmp is spilled, but the cluster Tmps will hopefully carry the value in registers
-        // within the cluster intervals.
-        spill(tmp, m_map.get<bank>(tmp));
-        m_stats[bank].numSplitIntraBlock++;
-        dataLogLnIf(verbose(), "Split (intra-block): ", *metadata);
-        return true;
+        return trySplitIntoClusters<bank>(tmp, m_splitPolicy.splitsIntoClustersOverBlocks && !tmpData.isClusterOverBlocks ? ClusterReach::OverBlocks : ClusterReach::WithinBlock);
     }
 
     static unsigned LEGACY_NODELETE stackSlotMinimumWidth(Width width)
@@ -5518,9 +5356,9 @@ private:
                                     imm = Arg::imm(value);
                                 else
                                     imm = Arg::bigImm(value);
-                                ASSERT(inst.isValidForm());
+                                ASSERT(inst.isValidForm(m_code.targetFeatures()));
                                 arg = imm;
-                                if (inst.isValidForm()) {
+                                if (inst.isValidForm(m_code.targetFeatures())) {
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (direct imm), BB", *block, " arg=", oldArg, ", inst=", inst);
                                     return;
@@ -5571,7 +5409,7 @@ private:
                     inst.setArgs(inst.args()[0], inst.args()[1], tmp);
                     RELEASE_ASSERT(inst.args().size() == 3);
                     m_stats[bank].numMoveSpillSpillInsts++;
-                    ASSERT(inst.isValidForm());
+                    ASSERT(inst.isValidForm(m_code.targetFeatures()));
                     // WTF::Liveness and Air::LivenessAdapter do not handle a late-def/use followed by early-def
                     // correctly. While this register allocator does handle it correctly (since it models distinct
                     // late and early points between instructions (i.e. intervalForSpill() won't overlap for different
@@ -5580,11 +5418,7 @@ private:
                     // (scratch is early-def, late-use).
                     // See https://bugs.webkit.org/show_bug.cgi?id=163548#c2 for more info.
                     // FIXME: reconsider this, https://bugs.webkit.org/show_bug.cgi?id=288122
-#if USE(BUN_JSC_ADDITIONS)
                     insert(block, instIndex, SpillMoveFrom, Padding, inst.origin);
-#else
-                    m_insertionSets[block].insert(instIndex, SpillMoveFrom, Padding, inst.origin);
-#endif
                     continue;
                 }
 
@@ -5621,22 +5455,14 @@ private:
 
                             if constexpr (bank == GP) {
                                 int64_t value = m_useCounts.constant<bank>(tmpIndex);
-                                if (Arg::isValidImmForm(value) && isValidForm(Move, Arg::Imm, Arg::Tmp)) {
-#if USE(BUN_JSC_ADDITIONS)
+                                if (Arg::isValidImmForm(value) && isValidForm(m_code.targetFeatures(), Move, Arg::Imm, Arg::Tmp)) {
                                     insert(block, instIndex, SpillMoveFrom, Move, inst.origin, Arg::imm(value), tmp);
-#else
-                                    m_insertionSets[block].insert(instIndex, SpillMoveFrom, Move, inst.origin, Arg::imm(value), tmp);
-#endif
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (imm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
                                     return true;
                                 }
-                                RELEASE_ASSERT(isValidForm(Move, Arg::BigImm, Arg::Tmp));
-#if USE(BUN_JSC_ADDITIONS)
+                                RELEASE_ASSERT(isValidForm(m_code.targetFeatures(), Move, Arg::BigImm, Arg::Tmp));
                                 insert(block, instIndex, SpillMoveFrom, Move, inst.origin, Arg::bigImm(value), tmp);
-#else
-                                m_insertionSets[block].insert(instIndex, SpillMoveFrom, Move, inst.origin, Arg::bigImm(value), tmp);
-#endif
                                 m_stats[bank].numRematerializeConst++;
                                 dataLogLnIf(verbose(), "Rematerialized (bigImm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
                                 return true;
@@ -5665,12 +5491,8 @@ private:
                                     RELEASE_ASSERT_NOT_REACHED();
                                 }
 
-                                if (imm && isValidForm(constMove, imm.kind(), Arg::Tmp)) {
-#if USE(BUN_JSC_ADDITIONS)
+                                if (imm && isValidForm(m_code.targetFeatures(), constMove, imm.kind(), Arg::Tmp)) {
                                     insert(block, instIndex, SpillMoveFrom, constMove, inst.origin, imm, tmp);
-#else
-                                    m_insertionSets[block].insert(instIndex, SpillMoveFrom, constMove, inst.origin, imm, tmp);
-#endif
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (FP) BB", *block, " ", originalTmp, ": ", tmp);
                                     return true;
@@ -5681,11 +5503,7 @@ private:
                         };
 
                         if (!tryRematerialize()) {
-#if USE(BUN_JSC_ADDITIONS)
                             insert(block, instIndex, SpillMoveFrom, move, inst.origin, arg, tmp);
-#else
-                            m_insertionSets[block].insert(instIndex, SpillMoveFrom, move, inst.origin, arg, tmp);
-#endif
                             m_stats[bank].numLoadSpill++;
                         }
                     }
@@ -5699,16 +5517,12 @@ private:
                             dataLogLnIf(verbose(), "Rematerialized BB", *block, " removing def inst: ", inst);
                         } else {
                             ASSERT(!doKillInst);
-#if USE(BUN_JSC_ADDITIONS)
                             insert(block, instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
-#else
-                            m_insertionSets[block].insert(instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
-#endif
                             m_stats[bank].numStoreSpill++;
                         }
                     }
                 });
-                ASSERT(inst.isValidForm());
+                ASSERT(inst.isValidForm(m_code.targetFeatures()));
                 if (doKillInst)
                     inst = Inst(); // Will be removed by assignRegisters()
             }
@@ -5725,22 +5539,21 @@ private:
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     void validateMovesAroundClobbers()
     {
         auto& moves = m_movesAroundClobbers;
         std::ranges::sort(moves, [](const MoveAroundClobber& a, const MoveAroundClobber& b) {
-            return std::tuple(a.blockIndex, a.index, a.isBehind) < std::tuple(b.blockIndex, b.index, b.isBehind);
+            return std::tuple(a.blockIndex, a.index, a.isAfterClobber) < std::tuple(b.blockIndex, b.index, b.isAfterClobber);
         });
         bool anyFailures = false;
         for (size_t begin = 0, end; begin < moves.size(); begin = end) {
-            for (end = begin + 1; end < moves.size() && moves[end].blockIndex == moves[begin].blockIndex && moves[end].index == moves[begin].index && moves[end].isBehind == moves[begin].isBehind; ++end) { }
+            for (end = begin + 1; end < moves.size() && moves[end].blockIndex == moves[begin].blockIndex && moves[end].index == moves[begin].index && moves[end].isAfterClobber == moves[begin].isAfterClobber; ++end) { }
             for (size_t i = begin; i < end; ++i) {
                 for (size_t j = begin; j < end; ++j) {
                     if (i == j || !moves[i].source || moves[i].source != moves[j].destination)
                         continue;
-                    dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE: MOVES ROUND A CLOBBER");
-                    dataLogLn("   In BB#", moves[i].blockIndex, moves[i].isBehind ? " behind" : " ahead of", " index ", moves[i].index, ": ", moves[i].source, " -> ", moves[i].destination, " and ", moves[j].source, " -> ", moves[j].destination);
+                    dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE: MOVES AROUND A CLOBBER");
+                    dataLogLn("   In BB#", moves[i].blockIndex, moves[i].isAfterClobber ? " after the clobber," : " before the clobber,", " index ", moves[i].index, ": ", moves[i].source, " -> ", moves[i].destination, " and ", moves[j].source, " -> ", moves[j].destination);
                     anyFailures = true;
                 }
             }
@@ -5751,19 +5564,16 @@ private:
         }
     }
 
-#endif
     void insertFixupCode()
     {
         // Skip index 0 which is sacrificed so that splitAroundClobbersMetadataIndex == 0 means "none".
         for (size_t i = 1; i < m_aroundClobbersMetadata.size(); i++)
             insertSplitAroundClobbersFixupCode(m_aroundClobbersMetadata[i]);
-#if USE(BUN_JSC_ADDITIONS)
         validateMovesAroundClobbers();
-#endif
         for (auto& metadata : m_intraBlockMetadata)
             insertSplitIntraBlockFixupCode(metadata);
 
-        if (Options::airGreedyRegAllocSplitAroundLoops()) {
+        if (m_splitPolicy.splitsAroundLoops) {
             HashMap<Tmp, unsigned> loopTmpToMetadataIndex;
             for (unsigned index = 0; index < m_aroundLoopMetadata.size(); index++)
                 loopTmpToMetadataIndex.add(m_aroundLoopMetadata[index].loopTmp, index);
@@ -5779,20 +5589,11 @@ private:
                 m_code.proc().setUsesShuffle(true);
 
             for (auto& [block, shufflePairs] : loopEntryFixups)
-#if USE(BUN_JSC_ADDITIONS)
                 insertInst(block, block->size() - 1, AroundLoopEntryFixup, createShuffle(block->at(block->size() - 1).origin, shufflePairs.span()));
-#else
-                m_insertionSets[block].insertInst(block->size() - 1, AroundLoopEntryFixup, createShuffle(block->at(block->size() - 1).origin, shufflePairs.span()));
-#endif
             for (auto& [block, shufflePairs] : loopExitFixups)
-#if USE(BUN_JSC_ADDITIONS)
                 insertInst(block, 0, AroundLoopExitFixup, createShuffle(block->at(0).origin, shufflePairs.span()));
-#else
-                m_insertionSets[block].insertInst(0, AroundLoopExitFixup, createShuffle(block->at(0).origin, shufflePairs.span()));
-#endif
         }
 
-#if USE(BUN_JSC_ADDITIONS)
         executeInsertions();
     }
 
@@ -5827,8 +5628,7 @@ private:
             unsigned end = endOfBlock[blockIndex];
             if (begin == end)
                 continue;
-            constexpr unsigned manyInsertions = 16;
-            if (end - begin >= manyInsertions) {
+            if (end - begin >= AirLimits::minInsertionsPerBlockToSort) {
                 std::stable_sort(order.begin() + begin, order.begin() + end, [&](unsigned left, unsigned right) {
                     return m_insertions[left] < m_insertions[right];
                 });
@@ -5839,10 +5639,6 @@ private:
         }
         m_insertions.shrink(0);
         m_insertionBlock.shrink(0);
-#else
-        for (BasicBlock* block : m_code)
-            m_insertionSets[block].execute(block);
-#endif
     }
 
     void insertSplitAroundClobbersFixupCode(AroundClobbersSplitMetadata& metadata)
@@ -5859,11 +5655,7 @@ private:
             Tmp gapTmp = split.tmp;
             TmpData& gapData = m_map[gapTmp];
             for (auto& interval : gapData.liveRange.intervals()) {
-#if USE(BUN_JSC_ADDITIONS)
                 ASSERT(interval.distance() >= 2);
-#else
-                ASSERT(interval.distance() == 2);
-#endif
                 Point lastPoint = interval.end() - 1;
                 BasicBlock* block = findBlockContainingPoint(lastPoint);
                 unsigned instIndex = this->instIndex(positionOfHead(block), lastPoint);
@@ -5874,7 +5666,6 @@ private:
                 if (spilled)
                     arg = Arg::stack(spilled);
                 Opcode move = moveOpcode(gapTmp);
-#if USE(BUN_JSC_ADDITIONS)
                 unsigned precedingIndex = this->instIndex(positionOfHead(block), interval.begin());
                 if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
                     Reg home = assignedReg(metadata.originalTmp);
@@ -5883,20 +5674,11 @@ private:
                     m_movesAroundClobbers.append({ block->index(), instIndex + 1, true, away, home });
                 }
                 insert(block, precedingIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-#else
-                m_insertionSets[block].insert(instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-#endif
-#if USE(BUN_JSC_ADDITIONS)
                 insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
-#else
-                m_insertionSets[block].insert(instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
-#endif
-#if USE(BUN_JSC_ADDITIONS)
                 if (spilled)
                     m_stats[gapTmp.bank()].numSplitAroundClobberStackMoves += 2;
                 else
                     m_stats[gapTmp.bank()].numSplitAroundClobberRegisterMoves += 2;
-#endif
                 dataLogLnIf(verbose(), "Inserted Moves around clobber tmp=", metadata.originalTmp, " gapTmp=", gapTmp, " gapReg = ", assignedReg(gapTmp), " block=", *block, " index=", instIndex, " inst = ", inst);
             }
         }
@@ -5930,11 +5712,7 @@ private:
             // trySplitIntraBlock includes the Pre point in the cluster interval iff the original Tmp is live into the cluster.
             if (pointAtOffset(clusterBegin, PointOffsets::Pre) == clusterBegin) {
                 unsigned instIndex = this->instIndex(positionOfHead, clusterBegin);
-#if USE(BUN_JSC_ADDITIONS)
                 insert(block, instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
-#else
-                m_insertionSets[block].insert(instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
-#endif
                 m_stats[bank].numSplitIntraBlockLoad++;
             } else
                 ASSERT(split.lastDefPoint);
@@ -5942,11 +5720,7 @@ private:
             // Need to store back into the original Tmp's spill slot only if the cluster def'ed the Tmp
             if (split.lastDefPoint) {
                 unsigned instIndex = this->instIndex(positionOfHead, split.lastDefPoint);
-#if USE(BUN_JSC_ADDITIONS)
                 insert(block, instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
-#else
-                m_insertionSets[block].insert(instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
-#endif
                 m_stats[bank].numSplitIntraBlockStore++;
             }
         }
@@ -6124,7 +5898,7 @@ private:
                     }
                     tmp = Tmp(reg);
                 });
-                ASSERT(inst.isValidForm());
+                ASSERT(inst.isValidForm(m_code.targetFeatures()));
 
                 if (mayBeCoalescable && inst.args()[0].isTmp() && inst.args()[1].isTmp()
                     && inst.args()[0].tmp() == inst.args()[1].tmp()) {
@@ -6140,23 +5914,17 @@ private:
     }
 
     Code& m_code;
+    const RegisterPolicy& m_registerPolicy;
+    const LiveRangeSplitPolicy& m_splitPolicy;
+    const bool m_discountsPreferredRegisterMoves;
     Vector<Reg> m_allowedRegistersInPriorityOrder[numBanks];
     ScalarRegisterSet m_allAllowedRegisters;
-    ScalarRegisterSet m_freshCalleeSaves;
-    std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
-#if USE(BUN_JSC_ADDITIONS)
-    std::array<unsigned, numBanks> m_numberOfCalleeSaves { };
-#endif
     UseDefCost m_calleeSaveCost { 0 };
     IndexMap<BasicBlock*, Point> m_blockToHeadPoint;
     Vector<Point> m_tailPoints;
     Vector<unsigned> m_instBlockIndex;
     Mentions m_mentions;
     Vector<unsigned> m_tmpMoves;
-    Vector<uint8_t> m_isRead;
-    const bool m_searchesForDeadCode;
-    bool m_hasDefOfUnreadTmp { false };
-    bool m_hasDeadCode { false };
     Vector<Tmp> m_tmpsWithCoalescables;
     Vector<unsigned> m_conditionalMoves;
     unsigned m_gpIndicesEnd { 0 };
@@ -6166,28 +5934,12 @@ private:
         int64_t value;
     };
     Vector<SmallConstantDef> m_smallConstantDefs;
-    struct BlockEnds {
-        unsigned firstInst { 0 };
-        unsigned exposedUses { 0 };
-        unsigned defs { 0 };
-        unsigned usesAtTail { 0 };
-    };
     Vector<BlockEnds> m_blockEnds;
     Vector<unsigned> m_exposedUses;
     Vector<unsigned> m_defsInBlocks;
     Vector<unsigned> m_usesAtTails;
     Vector<uint8_t> m_crossesBoundary;
-    Vector<unsigned> m_columnIndex;
-    Vector<uint64_t> m_liveAtBoundaries;
-    size_t m_wordsPerSet { 0 };
-    static constexpr size_t maxWordsPerLivenessMatrix = 1 << 19;
-    struct BlockEdgeKind {
-        unsigned blockIndex;
-        unsigned index;
-    };
-    Vector<BlockEdgeKind> m_closesAfterBlock;
-    Vector<BlockEdgeKind> m_opensAtTailOfBlock;
-    bool m_livenessIsInLists { false };
+    Vector<unsigned> m_columnToIndex;
     IntervalArena m_intervalArena;
     TmpDataMap m_map;
     Vector<unsigned> m_firstUseDef;
@@ -6196,50 +5948,27 @@ private:
     unsigned m_gpUseDefListsEnd { 0 };
     HashMap<Tmp, UseDefList> m_newTmpUseDefLists;
     Vector<Tmp> m_newlySpilledTmps;
-    Vector<unsigned> m_instFirstClobber;
-    static constexpr unsigned clobberPointsPerChunk = 64;
-    static constexpr unsigned minClobberPointsForChunks = 1024;
-    Vector<uint64_t> m_clobberedRegsInChunk;
-    Vector<uint64_t> m_deadClobbersAtPoint;
-    uint64_t m_regsWithDeadClobbers { 0 };
-    static constexpr unsigned maxConsecutiveMisses = 64;
-    static constexpr size_t fewClobberPoints = 4096;
-    Vector<unsigned> m_regFirstDeadClobber;
-    Vector<unsigned> m_regDeadClobbers;
     Vector<unsigned> m_representatives;
     Vector<AroundClobbersSplitMetadata> m_aroundClobbersMetadata;
-#if USE(BUN_JSC_ADDITIONS)
     struct MoveAroundClobber {
         unsigned blockIndex;
         unsigned index;
-        bool isBehind;
+        bool isAfterClobber;
         Reg source;
         Reg destination;
     };
     Vector<MoveAroundClobber> m_movesAroundClobbers;
-#endif
     Vector<IntraBlockSplitMetadata> m_intraBlockMetadata;
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
     Vector<StackSlot*> m_spillSlotTable;
-    IndexMap<Reg, RegisterRange> m_regRanges;
-#if USE(BUN_JSC_ADDITIONS)
-    std::array<uint32_t, Reg::maxIndex() + 1> m_lastRemovalEpoch { };
-    uint32_t m_removalEpoch { 1 };
-#endif
-    Vector<Point> m_clobberPoints;
-    Vector<uint64_t> m_clobberedRegsAtPoint;
-    uint64_t m_allClobberedRegs { 0 };
+    RegisterOccupancy m_occupancy;
     GenerationalSet<uint8_t, SaVector> m_visited;
     PriorityQueue<TmpPriority> m_queue;
     Vector<TmpPriority> m_queueAtStart;
     size_t m_nextInQueueAtStart { 0 };
     bool m_isFillingQueueAtStart { false };
-#if USE(BUN_JSC_ADDITIONS)
     Vector<PhaseInsertion> m_insertions;
     Vector<unsigned> m_insertionBlock;
-#else
-    IndexMap<BasicBlock*, PhaseInsertionSet> m_insertionSets;
-#endif
     BlockWorklist m_fastBlocks;
     TmpCounts m_useCounts;
     TmpWidths m_tmpWidth;
@@ -6254,48 +5983,12 @@ private:
 
 } // namespace JSC::B3::Air::Greedy
 
-#if USE(BUN_JSC_ADDITIONS)
-static void moveBlocksWithoutSuccessorsToEnd(Code& code)
-{
-    Vector<BasicBlock*> order;
-    order.reserveInitialCapacity(code.size());
-    for (BasicBlock* block : code) {
-        if (block->numSuccessors() || block == code[0])
-            order.append(block);
-    }
-    for (BasicBlock* block : code) {
-        if (!block->numSuccessors() && block != code[0])
-            order.append(block);
-    }
-    for (auto& entry : code.blockList())
-        entry.release();
-    code.blockList().shrink(0);
-    for (unsigned i = 0; i < order.size(); ++i) {
-        order[i]->setIndex(i);
-        code.blockList().append(std::unique_ptr<BasicBlock>(order[i]));
-    }
-}
-#endif
-
 void allocateRegistersByGreedy(Code& code)
 {
     PhaseScope phaseScope(code, "allocateRegistersByGreedy"_s);
-#if USE(BUN_JSC_ADDITIONS)
-    constexpr unsigned manyBlocks = 16384;
-    if (code.size() >= manyBlocks)
-        moveBlocksWithoutSuccessorsToEnd(code);
-#endif
-    if (Options::airGreedyRegAllocSplitAroundLoops())
+    if (code.policy().splitting.splitsAroundLoops)
         ensureDedicatedLoopEntryExitBlocks(code);
-    {
-        Greedy::GreedyAllocator allocator(code, Greedy::GreedyAllocator::DeadCodeSearch::Yes);
-        if (!allocator.hasDeadCode()) [[likely]] {
-            allocator.run();
-            return;
-        }
-    }
-    eliminateDeadCode(code);
-    Greedy::GreedyAllocator allocator(code, Greedy::GreedyAllocator::DeadCodeSearch::No);
+    Greedy::GreedyAllocator allocator(code);
     allocator.run();
 }
 

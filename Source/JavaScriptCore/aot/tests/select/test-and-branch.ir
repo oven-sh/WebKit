@@ -1,0 +1,147 @@
+# A condition whose only use is the branch of its block is fused into the branch
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: TestAndBranchGroups = 6
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="less" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0 name="less"
+# CHECK: v2: boolean = Less v0, v1
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
+function f1 name="truthiness" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1 name="truthiness"
+# CHECK: TestAndBranch v1 -> taken b1(), notTaken b2()
+function f2 name="typeTest" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="typeTest"
+# CHECK: TestAndBranch v1 -> taken b1(), notTaken b2()
+function f3 name="instanceOf" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Map
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3 name="instanceOf"
+# CHECK: TestAndBranch v2 -> taken b1(), notTaken b2()
+function f4 name="secondUse" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(v2), notTaken b2()
+  b1(v3):
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4 name="secondUse"
+# CHECK-NOT: TestAndBranch
+# CHECK: Branch v2 -> taken b1(v2), notTaken b2()
+# CHECK-NOT: TestAndBranch
+function f5 name="pureValueAfterTest" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f5 name="pureValueAfterTest"
+# CHECK: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v3: boolean = ToBoolean v0
+# CHECK-NEXT: v2: boolean = Less v0, v1
+# CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2()
+function f6 name="effectAfterTest" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Less v0, v1
+    v3 = PropGet v0 key="x"
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v3
+}
+# CHECK-LABEL: function f6 name="effectAfterTest"
+# CHECK-NOT: TestAndBranch
+# CHECK: v2: boolean = Less v0, v1
+# CHECK-NEXT: v3: anything = PropGet v0 key="x"
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NOT: TestAndBranch
+function f7 name="blockParameter" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f7 name="blockParameter"
+# CHECK-NOT: TestAndBranch
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NOT: TestAndBranch
+function f8 name="constant" results=[{type=undefined}] {
+  b0():
+    v0 = Boolean boolean=true
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f8 name="constant"
+# CHECK-NOT: TestAndBranch
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NOT: TestAndBranch
+function f9 name="branchPassesProof" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f9 name="branchPassesProof"
+# CHECK: TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+function f10 name="testPassesProofAndIsReturned" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return v2
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f10 name="testPassesProofAndIsReturned"
+# CHECK-NOT: TestAndBranch
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NOT: TestAndBranch

@@ -21,15 +21,17 @@
 #include "config.h"
 #include "FunctionPrototype.h"
 
-#include "AOTFunction.h"
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionExecutable.h"
-#include "ImmutableIntrinsics.h"
 #include "IntegrityInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+
+#if ENABLE(AOT)
+#include "AOTCompiledCallee.h"
+#endif
 
 namespace JSC {
 
@@ -39,7 +41,7 @@ const ClassInfo FunctionPrototype::s_info = { "Function"_s, &Base::s_info, nullp
 CLASSINFO_KEEP_ADDRESS_UNIQUE(FunctionPrototype);
 
 static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncToString);
-static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
+JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
 static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance);
 static JSC_DECLARE_HOST_FUNCTION(callFunctionPrototype);
 
@@ -101,8 +103,8 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
         JSObject* object = asObject(thisValue);
         Integrity::auditStructureID(object->structureID());
 #if ENABLE(AOT)
-        if (isSlimClosureType(object->type()))
-            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::slimClosureSourceText(globalObject, object)));
+        if (isCompiledCalleeType(object->type()))
+            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::CompiledCallee::sourceText(globalObject, object)));
 #endif
         if (object->isCallable())
             RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
@@ -197,14 +199,9 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
             name = jsEmptyString(vm);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    SourceTaintedOrigin taintedness = vm.mightBeExecutingTaintedCode() ? sourceTaintedOriginFromStack(vm, callFrame).first : SourceTaintedOrigin::Untainted;
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, taintedness)));
-#else
     auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
     SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source)));
-#endif
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#isallowedreceiverfunctionforcallerandargumentsfunc-expectedrealm (except step 3)
@@ -257,10 +254,10 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
-static bool isSloppyAOTFunction(JSValue receiver)
+static bool isSloppyCompiledFunction(JSValue receiver)
 {
 #if ENABLE(AOT)
-    return receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell());
+    return receiver.isCell() && isCompiledCalleeType(receiver.asCell()->type()) && AOT::CompiledCallee::kind(asObject(receiver.asCell())) == AOT::CompiledCallee::FunctionKind::Sloppy;
 #else
     UNUSED_PARAM(receiver);
     return false;
@@ -275,18 +272,13 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
+        if (isSloppyCompiledFunction(JSValue::decode(thisValue)))
             return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
 
-    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
-        return JSValue::encode(jsNull());
-
     JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
     EXCEPTION_ASSERT(scope.exception() || result);
-    if (vm.auditsImmutableIntrinsics() && result && !result.isNull()) [[unlikely]]
-        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
     return JSValue::encode(result);
 }
 
@@ -354,13 +346,10 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        if (isSloppyAOTFunction(JSValue::decode(thisValue)))
+        if (isSloppyCompiledFunction(JSValue::decode(thisValue)))
             return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
-
-    if (vm.useImmutableIntrinsics && vm.m_aotInstances.isEmpty() && thisObj->jsExecutable()->source().provider()->provenance() == SourceProvenance::Static) [[unlikely]]
-        return JSValue::encode(jsNull());
 
     JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
     if (caller.isNull())
@@ -382,8 +371,6 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     if (isGeneratorParseMode(parseMode) || isAsyncFunctionParseMode(parseMode))
         return JSValue::encode(jsNull());
 
-    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
-        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
     return JSValue::encode(caller);
 }
 
@@ -393,7 +380,7 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyAOTFunction(JSValue::decode(thisValue)))
+    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyCompiledFunction(JSValue::decode(thisValue)))
         throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
     return true;

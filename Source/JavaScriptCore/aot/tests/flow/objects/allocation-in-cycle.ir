@@ -1,0 +1,27 @@
+# An allocation inside a cycle is recorded as allocated repeatedly, and a second site of the same layout outside every cycle is not
+# RUN: flow-sites solved
+# CHECK: site {{*}} function=f0 value=v2 kind=Layout origin=Operation layout=L0 class=A0 object={{*}}(L0#0)
+# CHECK: site {{*}} function=f0 value=v7 kind=Layout origin=Operation layout=L0 class=A1 object={{*}}(L0#1)
+# CHECK: object {{*}} L0#0 kind=Allocation parts=1 positions=0 undeclared=no events=[Allocated, AllocatedRepeatedly]
+# CHECK: object {{*}} L0#1 kind=Allocation parts=1 positions=0 undeclared=no events=[Allocated]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Builtin builtin=MathRandom
+    v5 = Call v4
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    v7 = NewObject -, v0 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    Return
+}

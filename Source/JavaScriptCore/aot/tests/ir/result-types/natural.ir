@@ -1,0 +1,39 @@
+# Natural results are a function of the operand types
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v6: number
+# CHECK: v7: number
+# CHECK: v8: string
+# CHECK: v9: bigint
+# CHECK: v10: bigint
+# CHECK: v11: number
+# CHECK: v12: i32
+# CHECK: v13: int[0, 4294967295]
+# CHECK: v14: boolean
+# CHECK: v15: string
+# CHECK: v16: string|symbol
+# CHECK: v17: object
+# CHECK: v18: boolean
+# CHECK: v19: string
+# CHECK: v20: number|string|bigint
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="n" parameters=[{type=number}, {type=string}, {type=bigint}, {type=anything}, {type=boolean}, {type=undefined}] results=[{type=undefined}] {
+  b0(v0: number, v1: string, v2: bigint, v3: anything, v4: boolean, v5: undefined):
+    v6 = Add v0, v0
+    v7 = Add v0, v5
+    v8 = Add v1, v0
+    v9 = Add v2, v2
+    v10 = Sub v2, v2
+    v11 = Sub v4, v0
+    v12 = BitAnd v0, v0
+    v13 = URShift v0, v0
+    v14 = Less v3, v3
+    v15 = TypeOf v3
+    v16 = ToPropertyKey v3
+    v17 = ToObject v3
+    v18 = LogicalNot v4
+    v19 = Strcat v1, v0
+    v20 = Add v3, v3
+    Return
+}

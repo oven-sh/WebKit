@@ -1,0 +1,76 @@
+# A use in a cycle with an iteration operation that is not expanded yet is planned in the round after the expansion, when its test can stand on the entry of the loop
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(LATER): pass PlaceTypeTests ExpandIteration ResolveBuiltins PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Scale" fields=[{key="k" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="readInIteration" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: object ~ L0):
+    v2 = Undefined
+    v3 = IteratorOpen v0
+    Jump -> next b1(v2)
+  b1(v4: anything):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v8 = PropGet v1 key="k"
+    Jump -> next b1(v8)
+  b3():
+    Return v4
+}
+# CHECK-LABEL: function f0 name="readInIteration"
+# CHECK-NOT: ShapeTest
+# CHECK: b2():
+# CHECK-NEXT: = PropGet v1 key="k"
+# CHECK-NOT: ShapeTest
+# LATER-LABEL: function f0 name="readInIteration"
+# LATER: b1(v4: undefined|number,
+# LATER-NEXT: LoopHint
+# LATER: b2():
+# LATER-NEXT: [[guards]]: guard = AllGuards
+# LATER-NEXT: = GetSlot v1, [[guards]] key="k"
+# LATER-NEXT: Jump -> next b1(
+# LATER-COUNT-1: = ShapeTest v1 layouts=[L0]
+# LATER-NOT: ShapeTest
+
+function f1 name="readInFrontOfIteration" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: object ~ L0):
+    v2 = PropGet v1 key="k"
+    v3 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    Branch v6 -> taken b2(), notTaken b1()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="readInFrontOfIteration"
+# LATER-LABEL: function f1 name="readInFrontOfIteration"
+# CHECK: b0(
+# CHECK-NEXT: = ShapeTest v1 layouts=[L0]
+# CHECK: = GetSlot v1, {{*}} key="k"
+
+function f2 name="readInLoopWithoutIteration" parameters=[{type=boolean}, {type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object ~ L0):
+    v2 = Undefined
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b2()
+  b2():
+    v5 = PropGet v1 key="k"
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="readInLoopWithoutIteration"
+# CHECK: b2():
+# CHECK-NEXT: [[guards]]: guard = AllGuards
+# CHECK-NEXT: = GetSlot v1, [[guards]] key="k"
+# CHECK: = ShapeTest v1 layouts=[L0]

@@ -1,0 +1,64 @@
+# A slot store through a union writes the field of whichever member the object is: it goes only if the fields of all members go
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Circle" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Square" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="UnreadBesideRead" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Read" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="s" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="UnreadBesideCalled" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Called" fields=[{key="tag" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="s" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="Circle" fields=[{key="tag"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r"
+# CHECK: layout L1 name="Square" fields=[{key="tag"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="s"
+# CHECK: layout L2 name="UnreadBesideRead" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r"
+# CHECK: layout L3 name="Read" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="s"
+# CHECK: layout L4 name="UnreadBesideCalled" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r"
+# CHECK: layout L5 name="Called" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+
+function f0 name="bothUnread" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
+    PutSlot v0, -, v1 key="tag" receivers=[L0, L1] level=Proven
+    v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f0 name="bothUnread"
+# CHECK-NOT: PutSlot
+# CHECK: = NewObject -, v1 layout=L0 fields=[1]
+# CHECK-NEXT: = NewObject -, v1 layout=L1 fields=[1]
+
+function f1 name="oneRead" parameters=[{type=L2|L3}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L2|L3, v1: anything):
+    PutSlot v0, -, v1 key="tag" receivers=[L2, L3] level=Proven
+    v3 = NewObject -, v1, v1 layout=L2 fields=[0, 1]
+    v4 = NewObject -, v1, v1 layout=L3 fields=[0, 1]
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f1 name="oneRead"
+# CHECK: PutSlot v0, -, v1 key="tag" receivers=[L2, L3]
+# CHECK-NEXT: = NewObject -, v1, v1 layout=L2 fields=[0, 1]
+# CHECK-NEXT: = NewObject -, v1, v1 layout=L3 fields=[0, 1]
+
+function f2 name="oneStillCalled" parameters=[{type=L4|L5}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L4|L5, v1: anything):
+    PutSlot v0, -, v1 key="tag" receivers=[L4, L5] level=Proven
+    v3 = NewObject -, v1, v1 layout=L4 fields=[0, 1]
+    v4 = NewObject -, v1, v1 layout=L5 fields=[0, 1]
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f2 name="oneStillCalled"
+# CHECK: PutSlot v0, -, v1 key="tag" receivers=[L4, L5]
+# CHECK-NEXT: = NewObject -, v1, v1 layout=L4 fields=[0, 1]
+# CHECK-NEXT: = NewObject -, v1, v1 layout=L5 fields=[0, 1]
+
+function f3 name="callsOneMember" parameters=[{type=L5}] results=[{type=anything}] {
+  b0(v0: L5):
+    v1 = GetSlot v0 key="tag" receivers=[L5] level=Proven
+    v2 = Call v1, v0
+    Return v2
+}

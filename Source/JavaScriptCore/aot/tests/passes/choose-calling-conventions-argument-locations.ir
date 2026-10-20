@@ -1,0 +1,69 @@
+# Where arguments and results are, for each way a function is entered
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# RUN(X64): pass ChooseCallingConventions
+# REQUIRES(X64): x86_64
+# RUN(ARM64): pass ChooseCallingConventions
+# REQUIRES(ARM64): arm64
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK: f0 Direct ([[g0]]:JSValue, [[d0]]:Double, [[g1]]:Boolean, [[g2]]:Int64, [[g3]]:Int32, [[d1]]:OptionalDouble, [[g4]]:OptionalInt64, [[g5]]:Cell) -> ([[result]]:JSValue)
+function f0 name="oneOfEachRepresentation" parameters=[{type=anything}, {type=number}, {type=boolean}, {type=int}, {type=i32}, {type=undefined|number}, {type=undefined|int}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean, v3: int, v4: i32, v5: undefined|number, v6: undefined|int, v7: string):
+    Return v0
+}
+# CHECK-NEXT: f1 Direct ([[g0]]:Int64, [[g1]]:Int64, [[g2]]:Int64, [[g3]]:Int64, [[g4]]:Int64, [[g5]]:Int64, [[g6]]:Int64, [[g7]]:Int64, stack0:Int64, stack1:Int64, [[d0]]:Double, [[d1]]:Double, [[d2]]:Double, [[d3]]:Double, [[d4]]:Double, [[d5]]:Double, [[d6]]:Double, [[d7]]:Double, stack2:Double) -> (none:JSValue) reserved=3
+function f1 name="moreThanTheRegisters" parameters=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: int, v1: int, v2: int, v3: int, v4: int, v5: int, v6: int, v7: int, v8: int, v9: int, v10: number, v11: number, v12: number, v13: number, v14: number, v15: number, v16: number, v17: number, v18: number):
+    Return
+}
+# CHECK-NEXT: f2 Direct ([[g0]]:JSValue, [[d0]]:Double, [[g1]]:Cell, [[g2]]:Cell, [[g3]]:JSValue, [[g4]]:Int64, [[g5]]:Boolean, [[g6]]:Cell) -> ([[doubleResult]]:Double)
+function f2 name="everyKindOfEntryParameter" flags=[HasThis, HasNewTarget, TakesCallee, HasArgumentCount, HasHiddenRest] captures=[{type=anything}, {type=number}] thisType={type=object} parameters=[{type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: number, v2: object, v3: function, v4: anything, v5: int[0, 4294967295], v6: boolean, v7: Array<anything>):
+    Return v1
+}
+# CHECK-NEXT: f3 Direct ([[d0]]:Double, [[g0]]:JSValue) -> ([[d0]]:Double, [[g0]]:JSValue, [[d1]]:Double)
+function f3 name="threeResults" parameters=[{type=number}, {type=anything}] results=[{type=number}, {type=anything}, {type=number}] {
+  b0(v0: number, v1: anything):
+    v2 = Results v0, v1, v0
+    Return v2
+}
+# CHECK-NEXT: f4 Direct ([[g0]]:Int64) -> ([[g0]]:Int64, [[g1]]:Int64, [[g2]]:Int64, [[g3]]:Int64, [[g4]]:Int64, [[g5]]:Int64, [[g6]]:Int64, [[g7]]:Int64, stack0:Int64, stack1:Int64, stack2:Int64, stack3:Int64) reserved=4
+function f4 name="moreResultsThanTheRegisters" parameters=[{type=int}] results=[{type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}, {type=int}] {
+  b0(v0: int):
+    v1 = Results v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    Return v1
+}
+# CHECK-NEXT: f5 Direct ([[g0]]:Cell, [[g1]]:JSValue, [[d0]]:Double, [[g2]]:Boolean, [[d1]]:Double) -> ([[doubleResult]]:Double) closures=Unknown
+function f5 name="groupEntrypoint" role=GroupEntrypoint flags=[HasThis] captures=[{type=f8|f9}] thisType={type=anything} parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] derivation={source=f8} creator=Entrypoint{target=f8 group=[f8, f9] arguments=Registers} {
+  b0(v0: f8|f9, v1: anything, v2: number, v3: boolean, v4: number):
+    Return v2
+}
+# X64: f6 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, stack0:JSValue, stack1:JSValue, stack2:JSValue, stack3:JSValue, stack4:JSValue, stack5:JSValue) -> ([[result]]:JSValue)
+# X64-NEXT: f7 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
+# ARM64: f6 GenericRegisters ([[closure]]:Cell, [[this]]:JSValue, [[a0]]:JSValue, [[a1]]:JSValue, [[a2]]:JSValue, [[a3]]:JSValue, [[a4]]:JSValue, [[a5]]:JSValue, [[a6]]:JSValue, [[a7]]:JSValue, stack0:JSValue, stack1:JSValue) -> ([[result]]:JSValue)
+# ARM64-NEXT: f7 GenericBuffer ([[closure]]:Cell, [[this]]:JSValue) -> ([[result]]:JSValue) spills
+function f6 name="tenParameters" role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
+  b0(v0: f10, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything, v10: anything, v11: anything):
+    Return v1
+}
+function f7 name="collects" role=GenericEntrypoint flags=[HasThis] captures=[{type=f11}] thisType={type=anything} results=[{type=anything}] derivation={source=f11} creator=Entrypoint{target=f11} {
+  b0(v0: f11, v1: anything):
+    Return v1
+}
+function f8 name="first" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: anything, v1: number, v2: boolean, v3: number):
+    Return v1
+}
+function f9 name="second" kind=Arrow parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: boolean, v2: number):
+    Return v0
+}
+function f10 name="tenParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything):
+    Return v0
+}
+function f11 name="collects" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=undefined}] {
+  b0(v0: Array):
+    Return
+}

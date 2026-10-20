@@ -1,0 +1,55 @@
+# A member of a set whose field has no slot keeps the bytes of the others' slot zero. A field of its own that no access shares can lie anywhere, so it makes room: the bytes are taken before it is placed.
+# Where the fields of its own fill the cell there is no room, and the read through the set tests the shape
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts padding accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HoldsA" fields=[{key="shared" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="HoldsB" fields=[{key="shared" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="MakesRoom" fields=[{key="own" declared={type=anything} flags=[IsRequired]}, {key="shared" declared={type=anything}}]
+layout L3 name="HoldsC" fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="HoldsD" fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="IsFull" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything}}]
+variable g0 name="shared" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v1 layout=L2 fields=[0]
+    PutModuleVariable v6 variable=g0
+    v8 = NewObject -, v1 layout=L3 fields=[0]
+    PutModuleVariable v8 variable=g1
+    v10 = NewObject -, v1 layout=L4 fields=[0]
+    PutModuleVariable v10 variable=g1
+    v12 = NewObject -, v1, v1 layout=L5 fields=[0, 1]
+    PutModuleVariable v12 variable=g1
+    v14 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="shared"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="other"
+    Return
+}
+# CHECK: L2 CompiledObject size=32
+# CHECK-NEXT: "own" JSValue @24
+# CHECK: L5 CompiledObject size=32
+# CHECK: L2 zero [@16+8]
+# CHECK: L5 zero []
+# CHECK: "shared" {L0 L1 L2} read
+# CHECK-NEXT: one location JSValue @16
+# CHECK-NEXT: without slot {L2} zero
+# CHECK: "other" {L3 L4 L5} read
+# CHECK-NEXT: one location JSValue @16
+# CHECK-NEXT: without slot {L5}
+# CHECK-NOT: zero

@@ -1,0 +1,75 @@
+# A rest parameter that nothing reads goes with its flag, and the array a caller built for it dies
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ignoresRest" flags=[HasRestParameter] length=1 parameters=[{type=number}, {type=Array}] results=[{type=number}] {
+  b0(v0: number, v1: Array):
+    Return v0
+}
+# CHECK-LABEL: function f0 name="ignoresRest" module=m0 flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=number}, {type=Array}]
+# CHECK: b0(v0: number, v1: Array):
+# CHECK-NEXT: [[forwarded]]: number = CallDirect v0 function=f5
+# CHECK-NEXT: ReturnCall [[forwarded]] requirement=Allowed
+
+function f1 name="readsRest" flags=[HasRestParameter] length=1 parameters=[{type=number}, {type=Array}] results=[{type=anything}] {
+  b0(v0: number, v1: Array):
+    v2 = PropGet v1 key="length"
+    v3 = Add v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="readsRest"
+# CHECK: b0(v0: number, v1: Array):
+# CHECK-NEXT: = PropGet v1 key="length"
+
+function f2 name="readsOnlyRest" flags=[HasRestParameter] length=1 parameters=[{type=number}, {type=Array}] results=[{type=anything}] {
+  b0(v0: number, v1: Array):
+    v2 = PropGet v1 key="length"
+    Return v2
+}
+# CHECK-LABEL: function f2 name="readsOnlyRest"
+# CHECK: = CallDirect v1 function=f6
+# CHECK-NEXT: ReturnCall
+
+function f3 name="ignoresOneOfEachKind" flags=[HasRestParameter, HasThis] length=2 captures=[{type=number}, {type=number}] thisType={type=object} parameters=[{type=number}, {type=number}, {type=Array}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: object, v3: number, v4: number, v5: Array):
+    v6 = Add v1, v3
+    Return v6
+}
+# CHECK-LABEL: function f3 name="ignoresOneOfEachKind"
+# CHECK: = CallDirect v1, v3 function=f7
+# CHECK-NEXT: ReturnCall
+
+function f4 name="buildsRestArrays" parameters=[{type=number}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: object):
+    v3 = NewArray v1, v0 @10
+    v4 = CallDirect v0, v3 function=f0
+    v5 = NewArray v1, v4 @20
+    v6 = CallDirect v0, v5 function=f1
+    v7 = NewArray v1, v6 @30
+    v8 = CallDirect v0, v7 function=f2
+    v9 = NewArray v1, v8 @40
+    v10 = CallDirect v0, v4, v2, v4, v0, v9 function=f3
+    v11 = Add v8, v10
+    Return v11
+}
+# CHECK-LABEL: function f4 name="buildsRestArrays"
+# CHECK-NEXT: b0(v0: number, v1: anything, v2: object):
+# CHECK-NEXT: [[first]]: number = CallDirect v0 function=f5
+# CHECK-NEXT: [[read]]: Array = NewArray v1, [[first]]
+# CHECK-NEXT: [[second]]: anything = CallDirect v0, [[read]] function=f1
+# CHECK-NEXT: [[kept]]: Array = NewArray v1, [[second]]
+# CHECK-NEXT: = CallDirect [[kept]] function=f6
+# CHECK-NEXT: = CallDirect [[first]], [[first]] function=f7
+
+# CHECK-LABEL: function f5 name="ignoresRest" module=m0 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: Return v0
+# CHECK-LABEL: function f6 name="readsOnlyRest" module=m0 flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=Array}] results=[{type=anything}]{{*}}derivation={source=f2 parameterMap=[{original=1}]}
+# CHECK: b0([[rest]]: Array):
+# CHECK-NEXT: = PropGet [[rest]] key="length"
+# CHECK-LABEL: function f7 name="ignoresOneOfEachKind" module=m0 length=2 captures=[{type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f3 parameterMap=[{original=1}, {original=3}]}
+# CHECK: b0([[capture]]: number, [[parameter]]: number):
+# CHECK-NEXT: = Add [[capture]], [[parameter]]

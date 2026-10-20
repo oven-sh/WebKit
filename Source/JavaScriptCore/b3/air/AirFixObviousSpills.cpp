@@ -31,7 +31,7 @@
 #include "AirArgInlines.h"
 #include "AirCFG.h"
 #include "AirCode.h"
-#include "AirFormTable.h"
+#include "AirFormTraits.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "Options.h"
@@ -67,88 +67,55 @@ public:
         fixCode();
     }
 
-    RegisterSet takeNamedOrClobberedRegisters()
-    {
-        m_clobberedRegisters.exclude(m_code.calleeSavesClobberedAtSuspensions());
-        for (uint64_t regs = m_namedRegs; regs; regs &= regs - 1)
-            m_clobberedRegisters.add(Reg::fromIndex(std::countr_zero(regs)), IgnoreVectors);
-        return WTF::move(m_clobberedRegisters);
-    }
-
 private:
+    using Mentions = Greedy::Mentions;
+
     static constexpr uint8_t definesSpillSlot = 1;
     static constexpr uint8_t mayAddAlias = 2;
     static constexpr uint8_t namesSpillSlot = 4;
-
-    static constexpr uint8_t isEarlyDef = 1;
-    static constexpr uint8_t isLateDef = 2;
 
     struct DefinedRegs {
         uint64_t early;
         uint64_t late;
     };
 
-    static constexpr std::array<uint8_t, 256> computeFormDefs()
+    ALWAYS_INLINE static void noteArg(Arg& arg, unsigned traits, DefinedRegs& regs, uint8_t& flags)
     {
-        std::array<uint8_t, 256> result { };
-        for (unsigned form = 0; form < 256; ++form) {
-            switch (static_cast<Arg::Role>((form >> formRoleShift) & formRoleMask)) {
-            case Arg::Def:
-            case Arg::ZDef:
-            case Arg::UseDef:
-            case Arg::UseZDef:
-                result[form] = isLateDef;
-                break;
-            case Arg::EarlyDef:
-            case Arg::EarlyZDef:
-            case Arg::Scratch:
-                result[form] = isEarlyDef;
-                break;
-            default:
-                break;
-            }
+        if (isSpillSlot(arg)) {
+            flags |= traits & Mentions::anyDef ? namesSpillSlot | definesSpillSlot : namesSpillSlot;
+            return;
         }
-        return result;
+        forEachTmpWithTraits(arg, traits,
+            [&](Tmp tmp, unsigned tmpTraits) ALWAYS_INLINE_LAMBDA {
+                if (!tmp.isReg())
+                    return;
+                uint64_t bit = static_cast<uint64_t>(1) << tmp.reg().index();
+                regs.early |= tmpTraits & Mentions::earlyDef ? bit : 0;
+                regs.late |= tmpTraits & Mentions::lateDef ? bit : 0;
+            });
     }
 
-    NEVER_INLINE static uint8_t decodeSlowly(Inst& inst, DefinedRegs& regs, uint64_t& namedRegs)
+    NEVER_INLINE static uint8_t decodeSlowly(Inst& inst, DefinedRegs& regs)
     {
         uint8_t flags = 0;
         inst.forEachArg(
-            [&](Arg& arg, Arg::Role argRole, Bank bank, Width width) {
-                if (isSpillSlot(arg)) {
-                    flags |= namesSpillSlot;
-                    if (Arg::isAnyDef(argRole))
-                        flags |= definesSpillSlot;
-                }
-                arg.forEachTmp(argRole, bank, width,
-                    [&](Tmp& tmp, Arg::Role role, Bank, Width) {
-                        if (!tmp.isReg())
-                            return;
-                        namedRegs |= static_cast<uint64_t>(1) << tmp.reg().index();
-                        if (Arg::isEarlyDef(role))
-                            regs.early |= static_cast<uint64_t>(1) << tmp.reg().index();
-                        if (Arg::isLateDef(role))
-                            regs.late |= static_cast<uint64_t>(1) << tmp.reg().index();
-                    });
+            [&](Arg& arg, Arg::Role role, Bank bank, Width width) {
+                noteArg(arg, Mentions::traitsOf(role, bank, width), regs, flags);
             });
         return flags;
     }
 
     void decode()
     {
-        static constexpr std::array<uint8_t, 256> formDefs = computeFormDefs();
-
         struct Clobbers {
             RegisterSet set;
             uint64_t regs { 0 };
 
-            void update(const RegisterSet& newSet, RegisterSet& allClobberedRegisters)
+            void update(const RegisterSet& newSet)
             {
                 if (newSet == set) [[likely]]
                     return;
                 set = newSet;
-                allClobberedRegisters.merge(newSet);
                 regs = 0;
                 set.forEachWithWidthAndPreserved(
                     [&](Reg reg, Width, PreservedWidth) {
@@ -167,8 +134,6 @@ private:
         DefinedRegs* nextDefinedRegs = m_definedRegs.mutableSpan().data();
         uint8_t* nextFlags = m_flags.mutableSpan().data();
         unsigned ordinal = 0;
-        uint64_t namedRegs = 0;
-        constexpr unsigned kindsWithBase = 1u << Arg::SimpleAddr | 1u << Arg::Addr | 1u << Arg::ExtendedOffsetAddr | 1u << Arg::Index | 1u << Arg::PreIndex | 1u << Arg::PostIndex;
 
         for (BasicBlock* block : m_code) {
             m_firstInstOfBlock[block] = ordinal;
@@ -180,37 +145,10 @@ private:
                 uint8_t flags = 0;
                 unsigned argIndex = 0;
                 if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
-                    for (; argIndex < numberOfArgs; ++argIndex) {
-                        Arg& arg = args[argIndex];
-                        unsigned defs = formDefs[forms[argIndex]];
-                        unsigned kind = arg.kind();
-                        if (kind == Arg::Tmp) {
-                            if (arg.isReg()) {
-                                uint64_t bit = static_cast<uint64_t>(1) << arg.reg().index();
-                                namedRegs |= bit;
-                                regs.early |= defs & isEarlyDef ? bit : 0;
-                                regs.late |= defs & isLateDef ? bit : 0;
-                            }
-                            continue;
-                        }
-                        if (kind == Arg::Stack) {
-                            if (arg.stackSlot()->isSpill())
-                                flags |= defs ? namesSpillSlot | definesSpillSlot : namesSpillSlot;
-                            continue;
-                        }
-                        if (!(kindsWithBase >> kind & 1))
-                            continue;
-                        if (arg.base().isReg()) {
-                            uint64_t bit = static_cast<uint64_t>(1) << arg.base().reg().index();
-                            namedRegs |= bit;
-                            if (kind == Arg::PreIndex || kind == Arg::PostIndex) [[unlikely]]
-                                regs.late |= bit;
-                        }
-                        if (kind == Arg::Index && arg.index().isReg())
-                            namedRegs |= static_cast<uint64_t>(1) << arg.index().reg().index();
-                    }
+                    for (; argIndex < numberOfArgs; ++argIndex)
+                        noteArg(args[argIndex], Greedy::formTraits[forms[argIndex]], regs, flags);
                 } else
-                    flags = decodeSlowly(inst, regs, namedRegs);
+                    flags = decodeSlowly(inst, regs);
 
                 switch (inst.kind.opcode) {
                 case Move:
@@ -224,8 +162,8 @@ private:
                         flags |= mayAddAlias;
                     break;
                 case Patch:
-                    early.update(inst.extraEarlyClobberedRegs(), m_clobberedRegisters);
-                    late.update(inst.extraClobberedRegs(), m_clobberedRegisters);
+                    early.update(inst.extraEarlyClobberedRegs());
+                    late.update(inst.extraClobberedRegs());
                     regs.early |= early.regs;
                     regs.late |= late.regs;
                     break;
@@ -236,7 +174,6 @@ private:
                 *nextFlags++ = flags;
             }
         }
-        m_namedRegs = namedRegs;
     }
 
     void computeAliases()
@@ -314,6 +251,7 @@ private:
             const DefinedRegs* definedRegs = m_definedRegs.span().data() + m_firstInstOfBlock[block];
             const uint8_t* flags = m_flags.span().data() + m_firstInstOfBlock[block];
             unsigned blockSize = block->size();
+            bool removedAny = false;
             for (m_instIndex = 0; m_instIndex < blockSize; ++m_instIndex) {
                 uint8_t instFlags = flags[m_instIndex];
                 if (!instFlags) {
@@ -328,12 +266,21 @@ private:
                     clobberDefinedSlots([](Arg::Role role) { return Arg::isEarlyDef(role); });
                 m_state.clobber(definedRegs[m_instIndex].early);
                 fixInst();
-                if (!block->at(m_instIndex))
+                if (!block->at(m_instIndex)) {
+                    removedAny = true;
                     continue;
+                }
                 if (instFlags & definesSpillSlot) [[unlikely]]
                     clobberDefinedSlots([](Arg::Role role) { return Arg::isLateDef(role); });
                 m_state.clobber(definedRegs[m_instIndex].late);
                 addInstAliases();
+            }
+
+            if (removedAny) {
+                block->insts().removeAllMatching(
+                    [](const Inst& inst) {
+                        return !inst;
+                    });
             }
         }
     }
@@ -436,7 +383,7 @@ private:
         switch (inst.kind.opcode) {
         case Move: {
             if (inst.args()[0].isBigImm() && inst.args()[1].isReg()
-                && isValidForm(Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
+                && isValidForm(m_code.targetFeatures(), Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
                 // BigImm materializations are super expensive on both x86 and ARM. Let's try to
                 // materialize this bad boy using math instead. Note that we use unsigned math here
                 // since it's more deterministic.
@@ -544,17 +491,17 @@ private:
         };
         
         inst.forEachArg(handleArg);
-        if (!didThings || inst.isValidForm())
+        if (!didThings || inst.isValidForm(m_code.targetFeatures()))
             return;
         
         // We introduced something invalid along the way. Back up and carefully handle each argument.
         inst = instCopy;
-        ASSERT(inst.isValidForm());
+        ASSERT(inst.isValidForm(m_code.targetFeatures()));
         inst.forEachArg(
             [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
                 Arg argCopy = arg;
                 handleArg(arg, role, bank, width);
-                if (!inst.isValidForm())
+                if (!inst.isValidForm(m_code.targetFeatures()))
                     arg = argCopy;
             });
     }
@@ -789,7 +736,6 @@ private:
 
         void sort()
         {
-#if USE(BUN_JSC_ADDITIONS)
             static constexpr size_t minSizeToSortTailSeparately = 64;
             if (slotConst.size() >= minSizeToSortTailSeparately) {
                 auto isLess = [](const auto& a, const auto& b) {
@@ -800,9 +746,7 @@ private:
                     std::ranges::sort(endOfSorted, slotConst.end(), isLess);
                     std::ranges::inplace_merge(slotConst.begin(), endOfSorted, slotConst.end(), isLess);
                 }
-            } else
-#endif
-            if (slotConst.size() > 1) {
+            } else if (slotConst.size() > 1) {
                 std::ranges::sort(slotConst, [](const auto& a, const auto& b) {
                     return a < b;
                 });
@@ -909,25 +853,16 @@ private:
     State m_state;
     BasicBlock* m_block { nullptr };
     unsigned m_instIndex { 0 };
-    uint64_t m_namedRegs { 0 };
-    RegisterSet m_clobberedRegisters;
 };
 
 } // anonymous namespace
 
-#if USE(BUN_JSC_ADDITIONS)
-RegisterSet fixObviousSpills(Code& code)
-#else
 void fixObviousSpills(Code& code)
-#endif
 {
     PhaseScope phaseScope(code, "fixObviousSpills"_s);
 
     FixObviousSpills fixObviousSpills(code);
     fixObviousSpills.run();
-#if USE(BUN_JSC_ADDITIONS)
-    return fixObviousSpills.takeNamedOrClobberedRegisters();
-#endif
 }
 
 } } } // namespace JSC::B3::Air

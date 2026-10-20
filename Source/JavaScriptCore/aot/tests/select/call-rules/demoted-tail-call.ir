@@ -1,0 +1,57 @@
+# The rows that selection makes from a demoted tail call keep its mark, and those made from any other call have none
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: MethodCallGroups = 2
+# STATISTIC: ResolvedCallTargetGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="marked-method-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m" @10
+    v3 = Call v2, v0, v1 calleeKey="m" [isDemotedTailCall] @12
+    Return v3
+}
+# CHECK-LABEL: function f0 name="marked-method-call"
+# CHECK: [[marked0]]: anything = CallMethod v0, v1 key="m" readOrigin={position=10} [isDemotedTailCall] @12
+# CHECK-NEXT: Return [[marked0]]
+
+function f1 name="method-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="method-call"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: [[plain1]]: anything = CallMethod v0, v1 key="m"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: Return [[plain1]]
+
+function f2 name="marked-call-in-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean, v2: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2 [isDemotedTailCall]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="marked-call-in-loop"
+# CHECK: [[target2]]: codeaddress = ResolveCallTarget v0 argumentCount=1
+# CHECK: anything = CallResolved v0, [[target2]], -, v2 [isDemotedTailCall]
+
+function f3 name="call-in-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean, v2: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v0, -, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3 name="call-in-loop"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: anything = CallResolved v0,
+# CHECK-NOT: isDemotedTailCall

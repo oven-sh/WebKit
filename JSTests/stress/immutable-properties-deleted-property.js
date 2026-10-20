@@ -1,54 +1,119 @@
-// An object that has lost a property, so that its property table has a free offset, can be made immutable like any other, with its
-// attributes left as they are ($vm.makePropertiesImmutable(object)) or fixed ($vm.makePropertiesImmutable(object, true)).
+load("./resources/objects-with-deleted-properties.js", "caller relative");
 
-function shouldBe(actual, expected, message) { if (actual !== expected) throw new Error(message + ": expected " + String(expected) + " but got " + String(actual)); }
-// How a refused delete is reported (JSObject::recordIfOnlyLockRejects()): by a TypeError, in sloppy code too, unless the property looks like one that the language itself protects (Math.PI):
-// a number, boolean, undefined, null or symbol under a string key, the prototype of a function, the length of an array. Those return false in sloppy code.
-function deleteThrows(o, k) {
-    const d = Object.getOwnPropertyDescriptor(o, k);
-    if ((typeof o === "function" && k === "prototype") || (Array.isArray(o) && k === "length")) return false;
-    if (typeof k === "symbol" || !("value" in d) || (typeof o === "function" && k === "length")) return true;
-    return typeof d.value === "string" || typeof d.value === "bigint" || typeof d.value === "function" || (typeof d.value === "object" && d.value !== null);
+function shouldBe(actual, expected, label) {
+    if (actual !== expected)
+        throw new Error(`${label}: expected ${String(expected)} but got ${String(actual)}`);
 }
-function outcome(func) { try { return String(func()); } catch (e) { return e.constructor.name; } }
-function shouldThrow(func, message) { let error; try { func(); } catch (e) { error = e; } if (!(error instanceof TypeError)) throw new Error(message + ": expected a TypeError but got " + String(error)); }
-const flags = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + [d.writable, d.enumerable, d.configurable].map(b => b === undefined ? "-" : b ? "T" : "f").join(""); }).join(" ");
-const makers = {
-    first: () => { const o = { a: 1, b: 2 }; delete o.a; return o; }, last: () => { const o = { a: 1, b: 2 }; delete o.b; return o; }, middle: () => { const o = { a: 1, b: 2, c: 3 }; delete o.b; return o; },
-    all: () => { const o = { a: 1, b: 2 }; delete o.a; delete o.b; return o; }, two: () => { const o = { a: 1, b: 2, c: 3, d: 4 }; delete o.a; delete o.c; return o; },
-    outOfLine: () => { const o = {}; for (let i = 0; i < 20; ++i) o["p" + i] = i; delete o.p3; delete o.p17; return o; },
-    dictionary: () => { const o = { x: 0 }; for (let i = 0; i < 300; ++i) o["k" + i] = i; for (let i = 0; i < 150; ++i) delete o["k" + i]; return o; },
-    accessor: () => { const o = { a: 1, get g() { return 1; }, b: 2 }; delete o.a; return o; }, func: () => { const f = Object.assign(function () { }, { a: 1, b: 2 }); delete f.a; return f; },
-    functionName: () => { const f = function named() { }; delete f.name; return f; }, array: () => { const a = Object.assign([1, 2, 3], { a: 1, b: 2 }); delete a.a; return a; },
-    prototypeInUse: () => { const p = { a: 1, m() { } }; Object.create(p).w = 1; delete p.a; return p; }, symbol: () => { const s = Symbol(), o = { [s]: 1, b: 2 }; delete o[s]; return o; },
-};
-for (const fix of [false, true]) {
-    for (const [name, make] of Object.entries(makers)) {
-        const what = name + (fix ? ", fixed" : ""), o = make(), before = flags(o), keys = Reflect.ownKeys(o), values = keys.map(k => o[k]);
-        shouldBe($vm.makePropertiesImmutable(o, fix), o, what);
-        shouldBe($vm.hasImmutableProperties(o), true, what + ": immutable"); shouldBe(Object.isExtensible(o), false, what + ": not extensible");
-        shouldBe(flags(o), fix ? before.split(" ").map(entry => /^\d+:/.test(entry) ? entry : entry.replace(/:T(.).$/, ":f$1f").replace(/:(.)(.)T$/, ":$1$2f")).join(" ") : before, what + ": the attributes (what is fixed is the table: an element says what it said)");
-        shouldBe(Reflect.ownKeys(o).length, keys.length, what + ": as many keys");
-        for (const lost of ["a", "b", "c", "p3", "k7", "name", "fresh"]) {
-            if (Object.hasOwn(o, lost)) continue;
-            o[lost] = 1; shouldBe(Object.hasOwn(o, lost), false, what + ": " + lost + " does not come back"); shouldThrow(() => { "use strict"; o[lost] = 1; }, what + ": " + lost + ", strict");
-            shouldBe(Reflect.defineProperty(o, lost, { value: 1 }), false, what + ": " + lost + " is not defined");
-        }
-        keys.forEach((k, i) => {
-            const d = Object.getOwnPropertyDescriptor(o, k);
-            if ("value" in d) { o[k] = "other"; shouldBe(o[k], values[i], what + ": " + String(k) + " keeps its value"); shouldThrow(() => { "use strict"; o[k] = "other"; }, what + ": " + String(k) + ", strict"); }
-            shouldBe(outcome(() => delete o[k]), deleteThrows(o, k) ? "TypeError" : "false", what + ": " + String(k) + " is not deleted"); shouldBe(Object.hasOwn(o, k), true, what + ": " + String(k) + " is there");
-        });
-        const heir = Object.create(o); for (const k of keys) { const d = Object.getOwnPropertyDescriptor(o, k); if (fix || typeof k !== "string" || !("value" in d)) continue; heir[k] = "own"; shouldBe(Object.hasOwn(heir, k), d.writable, what + ": an heir has its own " + k + ", unless it is read-only"); }
-        heir.a = "own"; shouldBe(heir.a, "own", what + ": and what was lost");
-        shouldBe($vm.hasImmutableProperties({ ...o }), false, what + ": a copy is not immutable"); shouldBe(Object.keys({ ...o }).join(), Object.keys(o).join(), what + ": a copy has its keys");
+
+function shouldThrowTypeError(operation, label) {
+    let error;
+    try {
+        operation();
+    } catch (caught) {
+        error = caught;
     }
+    if (!(error instanceof TypeError))
+        throw new Error(`${label}: expected a TypeError but got ${String(error)}`);
 }
-// Hot: the sites have deleted from and stored into objects of these shapes.
-function del(o) { delete o.a; } function set(o, v) { o.b = v; } function add(o) { o.a = 1; } for (const f of [del, set, add]) noInline(f);
-for (const fix of [false, true]) {
-    for (let i = 0; i < testLoopCount; ++i) { const o = { a: 1, b: 2 }; del(o); set(o, i); if (i % 2) add(o); }
-    const o = { a: 1, b: 2 }; del(o); set(o, "kept"); $vm.makePropertiesImmutable(o, fix);
-    for (let i = 0; i < testLoopCount; ++i) { set(o, i); add(o); del(o); }
-    shouldBe(o.b, "kept", "hot: b"); shouldBe("a" in o, false, "hot: a"); shouldBe(Reflect.ownKeys(o).length, 1, "hot: keys");
+
+function describeAttributes(object) {
+    return Reflect.ownKeys(object).map(key => {
+        const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(object, key);
+        return `${String(key)}: ${writable} ${enumerable} ${configurable}`;
+    }).join("; ");
 }
+
+function testAbsentKey(immutable, key, label) {
+    immutable[key] = 1;
+    shouldBe(Object.hasOwn(immutable, key), false, `${label}: own property after a sloppy store`);
+    shouldThrowTypeError(() => { "use strict"; immutable[key] = 1; }, `${label}: strict store`);
+    shouldBe(Reflect.defineProperty(immutable, key, { value: 1 }), false, `${label}: Reflect.defineProperty`);
+}
+
+function testOwnKey(immutable, key, value, label) {
+    if ("value" in Object.getOwnPropertyDescriptor(immutable, key)) {
+        immutable[key] = "other";
+        shouldBe(immutable[key], value, `${label}: value after a sloppy store`);
+        shouldThrowTypeError(() => { "use strict"; immutable[key] = "other"; }, `${label}: strict store`);
+    }
+    shouldBe(delete immutable[key], false, `${label}: sloppy delete`);
+    shouldThrowTypeError(() => { "use strict"; delete immutable[key]; }, `${label}: strict delete`);
+    shouldBe(Object.hasOwn(immutable, key), true, `${label}: own property`);
+    shouldBe(immutable[key], value, `${label}: value`);
+}
+
+function testInheritor(immutable, keys, label) {
+    const inheritor = Object.create(immutable);
+    for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(immutable, key);
+        if (typeof key !== "string" || !("value" in descriptor))
+            continue;
+        inheritor[key] = "own";
+        shouldBe(Object.hasOwn(inheritor, key), descriptor.writable, `${label}: inheritor has an own ${key}`);
+    }
+    inheritor.a = "own";
+    shouldBe(inheritor.a, "own", `${label}: inheritor.a`);
+}
+
+function testCopy(immutable, label) {
+    const copy = { ...immutable };
+    shouldBe($vm.hasImmutableProperties(copy), false, `${label}: hasImmutableProperties(copy)`);
+    shouldBe(Object.keys(copy).join(), Object.keys(immutable).join(), `${label}: keys of the copy`);
+}
+
+for (const [name, create] of Object.entries({ ...plainObjectCreators, ...functionAndArrayCreators })) {
+    const object = create();
+    const attributes = describeAttributes(object);
+    const keys = Reflect.ownKeys(object);
+    const values = keys.map(key => object[key]);
+
+    shouldBe($vm.makePropertiesImmutable(object), object, `${name}: makePropertiesImmutable(object)`);
+    shouldBe($vm.hasImmutableProperties(object), true, `${name}: hasImmutableProperties(object)`);
+    shouldBe(Object.isExtensible(object), false, `${name}: Object.isExtensible(object)`);
+    shouldBe(describeAttributes(object), attributes, `${name}: attributes`);
+
+    for (const key of possiblyAbsentKeys) {
+        if (!Object.hasOwn(object, key))
+            testAbsentKey(object, key, `${name}, absent ${key}`);
+    }
+    keys.forEach((key, index) => testOwnKey(object, key, values[index], `${name}, ${String(key)}`));
+    testInheritor(object, keys, name);
+    testCopy(object, name);
+    shouldBe(describeAttributes(object), attributes, `${name}: attributes after every operation`);
+}
+
+function deleteA(object) {
+    delete object.a;
+}
+noInline(deleteA);
+
+function storeB(object, value) {
+    object.b = value;
+}
+noInline(storeB);
+
+function addA(object) {
+    object.a = 1;
+}
+noInline(addA);
+
+for (let i = 0; i < testLoopCount; ++i) {
+    const object = { a: 1, b: 2 };
+    deleteA(object);
+    storeB(object, i);
+    if (i % 2)
+        addA(object);
+}
+
+const immutable = { a: 1, b: 2 };
+deleteA(immutable);
+storeB(immutable, "initial");
+$vm.makePropertiesImmutable(immutable);
+for (let i = 0; i < testLoopCount; ++i) {
+    storeB(immutable, i);
+    addA(immutable);
+    deleteA(immutable);
+}
+shouldBe(immutable.b, "initial", "immutable.b after stores from optimized code");
+shouldBe("a" in immutable, false, "immutable.a after stores from optimized code");
+shouldBe(Reflect.ownKeys(immutable).length, 1, "key count after stores from optimized code");

@@ -1,0 +1,45 @@
+# On the wire a definition dominates its uses, and the subject of a cleanup block dominates the head of that block
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: UseNotDominated 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badOtherArm" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Undefined
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v1
+}
+function f1 name="badSubjectFromOtherArm" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = IteratorOpen v0
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v3 = Call v0
+    Return
+  b4() role=IterationCleanup subject=v2:
+    v4 = CatchException
+    Rethrow v4
+}
+function f2 name="goodSubject" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0
+    Return
+  b2() role=IterationCleanup subject=v1:
+    v3 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v3
+}

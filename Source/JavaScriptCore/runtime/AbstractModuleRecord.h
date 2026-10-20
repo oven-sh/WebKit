@@ -202,12 +202,7 @@ public:
     const Identifier& moduleKey() const { return m_moduleKey; }
     JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     ScriptFetchParameters::Type moduleType() const;
-    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND
-    {
-        if (m_didReleasePrelinkedRequests) [[unlikely]]
-            const_cast<AbstractModuleRecord*>(this)->fillPrelinkedRequestedModules();
-        return m_requestedModules;
-    }
+    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
@@ -246,12 +241,15 @@ public:
         static Resolution LEGACY_NODELETE error();
         static Resolution LEGACY_NODELETE ambiguous();
 
-        bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
+        JS_EXPORT_PRIVATE bool isSameBinding(const Resolution& other) const;
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
 
         Type type;
         AbstractModuleRecord* moduleRecord;
         Identifier localName;
+#if ENABLE(AOT)
+        std::optional<unsigned> compiledExportIndex { };
+#endif
     };
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
@@ -270,9 +268,15 @@ public:
         return getModuleNamespace(globalObject, ModulePhase::Evaluation, shouldPreventExtensions);
     }
 #endif
+    JS_EXPORT_PRIVATE JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation);
+#if ENABLE(AOT)
+    // The exported names that getModuleNamespace() left out of the namespace object for being ambiguous.
+    const Vector<Identifier>& ambiguousExportNames() const { return m_ambiguousExportNames; }
+#endif
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
+    bool readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     void evaluateSync(JSGlobalObject*);
 
     JSPromise* asyncCapability() const;
@@ -292,6 +296,7 @@ public:
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+    static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency);
 #endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -341,14 +346,11 @@ public:
 #endif
 
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
-    void putWellKnownVariable(JSGlobalObject*, JSModuleEnvironment*, const Identifier& name, ScopeOffset offsetInSourceTextModule, JSValue);
 
 protected:
     AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 #if USE(BUN_JSC_ADDITIONS)
-    void releaseLinkingData();
-    void fillPrelinkedRequestedModules();
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
 #endif
@@ -391,7 +393,6 @@ private:
     // Save the occurrence order since the module loader loads and runs the modules in this order.
     // http://www.ecma-international.org/ecma-262/6.0/#sec-moduleevaluation
     Vector<ModuleRequest> m_requestedModules;
-    bool m_didReleasePrelinkedRequests { false };
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleNamespaceObject> m_deferredNamespaceObject;
@@ -404,6 +405,9 @@ private:
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
     typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
+#if ENABLE(AOT)
+    Vector<Identifier> m_ambiguousExportNames;
+#endif
 
 protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;

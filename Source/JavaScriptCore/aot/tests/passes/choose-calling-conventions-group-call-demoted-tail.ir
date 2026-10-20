@@ -1,0 +1,44 @@
+# The call of a group keeps the mark of the demoted tail call that it is made from
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 2
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="marked"
+# CHECK: v2: number = CallGroup v0, v1 function={{*}} [isDemotedTailCall]
+# CHECK-NEXT: Return v2
+function f0 name="marked" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f2, f3, f4, f5, f6] [isDemotedTailCall]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="ordinary"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v2: number = CallGroup v0, v1 function=
+# CHECK-NOT: isDemotedTailCall
+# CHECK: Return v2
+function f1 name="ordinary" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f2, f3, f4, f5, f6]
+    Return v2
+}
+function f2 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f5 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f6 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}

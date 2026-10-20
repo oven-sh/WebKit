@@ -1,0 +1,33 @@
+# What reaches native code takes its built-in prototypes along and none of their members: an error that leaves the entry module, a closure, an array, a date and a string use no feature and ask for no locale
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: builtin-use ArrayPrototype [Read, Escaped] f0:v9
+# CHECK: builtin-use DatePrototype [Read, Escaped] f0:v
+# CHECK: builtin-use FunctionPrototype [{{*}}Escaped] f0:v9
+# ALL-NOT: builtin-use ArrayPrototypeFlat
+# ALL-NOT: builtin-use DatePrototypeToLocaleDateString
+# ALL-NOT: builtin-use StringPrototype
+# ALL-NOT: builtin-use NumberPrototype
+# ALL-NOT: feature
+# ALL-NOT: locale
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="keep" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = Integer integer=1
+    v5 = NewArray v4 contents=anything
+    v6 = PropGet v1 key="Date" [isFreeName]
+    v7 = Construct v6
+    v8 = String string="text"
+    v9 = Call v2, -, v3, v5, v7, v8
+    Return
+}
+function f1 name="empty" results=[{type=undefined}] {
+  b0():
+    Return
+}

@@ -1,0 +1,98 @@
+# A method found on a prototype that is not always locked, or on an instance that can never be tested pristine, is tested by identity, and the failing side calls the value that was read
+# FORM: Prepared
+# RUN: pass ResolveBuiltins InsertObjectCoercibleChecks PlaceTypeTests
+# CHECK: outcome: Unchanged
+# CHECK: outcome: Changed
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="methodOfUnlockedPrototype" parameters=[{type=Date}, {type=number}] results=[{type=anything}] {
+  b0(v0: Date, v1: number):
+    v2 = PropGet v0 key="setTime"
+    v3 = Call v2, v0, v1 calleeKey="setTime"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="methodOfUnlockedPrototype"
+# CHECK-NOT: IsPristine
+# CHECK: v2: anything = PropGet v0 key="setTime"
+# CHECK-NEXT: [[isSetTime]]: boolean = TypeTest v2 testedType=builtin(DatePrototypeSetTime)
+# CHECK-NEXT: Branch [[isSetTime]] -> taken
+# CHECK-NOT: IsPristine
+# CHECK-NOT: PropGet
+# CHECK: number = CallBuiltin v0, v1 overload=DatePrototypeSetTime/0
+# CHECK-NOT: PropGet
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v2, v0, v1 calleeKey="setTime"
+# CHECK-NOT: PropGet
+
+function f1 name="methodOfClassNeverPristine" parameters=[{type=Buffer}, {type=number}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: number):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="methodOfClassNeverPristine"
+# CHECK-NOT: IsPristine
+# CHECK: v2: anything = PropGet v0 key="readUInt8"
+# CHECK-NEXT: [[isReadUInt8]]: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
+# CHECK-NEXT: Branch [[isReadUInt8]] -> taken
+# CHECK-NOT: IsPristine
+# CHECK: int[0, 255] = CallBuiltin v0, v1 overload=BufferPrototypeReadUInt8/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v2, v0, v1 calleeKey="readUInt8"
+
+function f2 name="getterOfUnlockedPrototype" parameters=[{type=DisposableStack}] results=[{type=anything}] {
+  b0(v0: DisposableStack):
+    v1 = PropGet v0 key="disposed"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="getterOfUnlockedPrototype"
+# CHECK-NEXT: b0(v0: DisposableStack):
+# CHECK-NEXT: v1: anything = PropGet v0 key="disposed"
+# CHECK-NEXT: Return v1
+
+function f3 name="getterOfClassNeverPristine" parameters=[{type=Buffer}] results=[{type=anything}] {
+  b0(v0: Buffer):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="getterOfClassNeverPristine"
+# CHECK-NEXT: b0(v0: Buffer):
+# CHECK-NEXT: v1: anything = PropGet v0 key="length"
+# CHECK-NEXT: Return v1
+
+function f4 name="unmatchedOperands" parameters=[{type=Buffer}, {type=string}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: string):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="unmatchedOperands"
+# CHECK-NEXT: b0(v0: Buffer, v1: string):
+# CHECK-NEXT: v2: anything = PropGet v0 key="readUInt8"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="readUInt8"
+# CHECK-NEXT: Return v3
+
+function f5 name="callWithoutCalleeKey" parameters=[{type=Buffer}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Buffer, v1: number, v2: anything):
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f5 name="callWithoutCalleeKey"
+# CHECK-NEXT: b0(v0: Buffer, v1: number, v2: anything):
+# CHECK-NEXT: v3: anything = Call v2, v0, v1
+# CHECK-NEXT: Return v3
+
+function f6 name="nullableReceiver" parameters=[{type=undefined|Buffer}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|Buffer, v1: number):
+    v2 = PropGet v0 key="readUInt8"
+    v3 = Call v2, v0, v1 calleeKey="readUInt8"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="nullableReceiver"
+# CHECK: [[checked]]: Buffer = RequireObjectCoercible v0 name="readUInt8"
+# CHECK-NEXT: v2: anything = PropGet [[checked]] key="readUInt8"
+# CHECK-NEXT: boolean = TypeTest v2 testedType=builtin(BufferPrototypeReadUInt8)
+# CHECK: int[0, 255] = CallBuiltin [[checked]], v1 overload=BufferPrototypeReadUInt8/0
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call v2, [[checked]], v1 calleeKey="readUInt8"

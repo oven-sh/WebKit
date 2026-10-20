@@ -178,28 +178,6 @@ void PropertyTable::freeze()
     });
 }
 
-void PropertyTable::fix()
-{
-    forEachPropertyMutable([&](auto& entry) {
-        if (!PropertyName(entry.key()).isPrivateName()) {
-            unsigned attributes = entry.attributes() | static_cast<unsigned>(PropertyAttribute::DontDelete);
-            if (!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
-                attributes |= static_cast<unsigned>(PropertyAttribute::ReadOnly);
-            entry.setAttributes(attributes);
-        }
-        return IterationStatus::Continue;
-    });
-}
-
-void PropertyTable::didLock()
-{
-    forEachPropertyMutable([&](auto& entry) {
-        if (!PropertyName(entry.key()).isPrivateName())
-            entry.setAttributes(entry.attributes() | static_cast<unsigned>(PropertyAttribute::WouldBeFixed));
-        return IterationStatus::Continue;
-    });
-}
-
 bool PropertyTable::isSealed() const
 {
     bool result = true;

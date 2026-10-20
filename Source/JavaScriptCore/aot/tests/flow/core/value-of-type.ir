@@ -1,0 +1,24 @@
+# The value of a type as read: primitives, ranges and literals exactly, and the unknown object for every object part
+# RUN: flow-value join p0 p0 join p1 p1 join p2 p2 join p3 p3 join p4 p4
+# CHECK: join p0 p0: {unknown}
+# CHECK-NEXT: join p1 p1: {unknown}
+# CHECK-NEXT: join p2 p2: {unknown}
+# CHECK-NEXT: join p3 p3: {unknown}
+# CHECK-NEXT: join p4 p4: {unknown}
+# RUN(ANYTHING): flow-value join p5 p5 unknown
+# ANYTHING: join p5 p5: {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# ANYTHING-NEXT: unknown: {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# RUN(LITERALS): flow-value join p6 p6
+# LITERALS: join p6 p6: {"a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"j"|"k"|"l"|"m"|"n"|"o"|"p"}
+# RUN(PRIMITIVES): flow-value join p7 p7 join p8 p8 join p9 p9
+# PRIMITIVES: join p7 p7: {null|int[0, 3]|"a"}
+# PRIMITIVES-NEXT: join p8 p8: {undefined|unknown}
+# PRIMITIVES-NEXT: join p9 p9: {number|absent}
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="values" parameters=[{type=L0}, {type=Array<number>}, {type=function}, {type=object}, {type=builtin(MathMax)}, {type=anything}, {type="a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"j"|"k"|"l"|"m"|"n"|"o"|"p"}, {type=null|int[0, 3]|"a"}, {type=undefined|L0}, {type=number|absent}] results=[{type=undefined}] {
+  b0(v0: object ? L0, v1: Array<number>, v2: function, v3: object, v4: builtin(MathMax), v5: anything, v6: "a"|"b"|"c"|"d"|"e"|"f"|"g"|"h"|"i"|"j"|"k"|"l"|"m"|"n"|"o"|"p", v7: null|int[0, 3]|"a", v8: undefined|object ? L0, v9: number|absent):
+    Return
+}

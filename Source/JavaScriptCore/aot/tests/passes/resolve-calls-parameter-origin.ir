@@ -1,0 +1,106 @@
+# The test of a written parameter is at the parameter, in an inline frame of the callee, and its cause comes from the argument
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 8
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=17 kind=Parameter
+typesite w1 module=m0 position=28 kind=Parameter
+typesite w2 module=m0 position=60 kind=This
+
+function f0 name="written" parameters=[{type=number site=w0}, {type=string site=w1}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    Return
+}
+function f1 name="unwritten" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+function f2 name="method" flags=[HasThis] thisType={type=number site=w2} results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+
+# CHECK-LABEL: function f3 name="untyped-arguments"
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=40 module=m0}] {
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: [[first]]: number = Claim v1 castType=number site=w0 cause=UnknownObject @17:1
+# CHECK-NEXT: [[second]]: string = Claim v2 castType=string site=w1 cause=UnknownObject @28:1
+# CHECK-NEXT: CallDirect [[first]], [[second]] function=f0 @40
+function f3 name="untyped-arguments" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything):
+    v3 = Call v0, -, v1, v2 @40
+    Return v3
+}
+
+# CHECK-LABEL: function f4 name="argument-from-call"
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=55 module=m0}] {
+# CHECK: number = Claim v3 castType=number site=w0 cause=UnknownCallee @17:1
+# CHECK-NOT: Claim
+function f4 name="argument-from-call" parameters=[{type=f0}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: string):
+    v3 = Call v1 @50
+    v4 = Call v0, -, v3, v2 @55
+    Return v4
+}
+
+# CHECK-LABEL: function f5 name="argument-from-element"
+# CHECK: number = Claim v4 castType=number site=w0 cause=UnprovenContents @17:1
+# CHECK-NOT: Claim
+function f5 name="argument-from-element" parameters=[{type=f0}, {type=anything}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: anything, v3: string):
+    v4 = ElemGet v1, v2 @62
+    v5 = Call v0, -, v4, v3 @65
+    Return v5
+}
+
+# CHECK-LABEL: function f6 name="argument-of-another-type"
+# CHECK: number = Claim v1 castType=number site=w0 cause=MayFail @17:1
+# CHECK-NOT: Claim
+function f6 name="argument-of-another-type" parameters=[{type=f0}, {type=number|string}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: number|string, v2: string):
+    v3 = Call v0, -, v1, v2 @70
+    Return v3
+}
+
+# CHECK-LABEL: function f7 name="unwritten-parameter"
+# CHECK-NOT: inlineFrames=
+# CHECK: number = Claim v1 castType=number cause=AddedByPass @80
+# CHECK-NEXT: CallDirect {{*}} function=f1 @80
+function f7 name="unwritten-parameter" parameters=[{type=f1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f1, v1: anything):
+    v2 = Call v0, -, v1 @80
+    Return v2
+}
+
+# CHECK-LABEL: function f8 name="written-this"
+# CHECK: inlineFrames=[{}, {callee=f2 callPosition=95 module=m0}] {
+# CHECK: [[receiver]]: number = Claim v1 castType=number site=w2 cause=UnknownObject @60:1
+# CHECK-NEXT: CallDirect [[receiver]] function=f2 @95
+function f8 name="written-this" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f2, v1: anything):
+    v2 = Call v0, v1 @95
+    Return v2
+}
+
+# CHECK-LABEL: function f9 name="call-in-inline-frame"
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=5 module=m0}, {callee=f0 callPosition=33 parent=1 module=m0}] {
+# CHECK: number = Claim v1 castType=number site=w0 cause=UnknownObject @17:2
+# CHECK: CallDirect {{*}} function=f0 @33:1
+function f9 name="call-in-inline-frame" parameters=[{type=f0}, {type=anything}, {type=string}] results=[{type=anything}] inlineFrames=[{}, {callee=f1 callPosition=5 module=m0}] {
+  b0(v0: f0, v1: anything, v2: string):
+    v3 = Call v0, -, v1, v2 @33:1
+    Return v3
+}
+
+# CHECK-LABEL: function f10 name="tail-call"
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=90 isTailCall=true module=m0}] {
+# CHECK: [[tailArgument]]: number = Claim v1 castType=number site=w0 cause=UnknownObject @17:1
+# CHECK-NEXT: [[tailCall]]: anything = CallDirect [[tailArgument]], v2 function=f0 @90
+# CHECK-NEXT: ReturnCall [[tailCall]]
+function f10 name="tail-call" parameters=[{type=f0}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything, v2: string):
+    v3 = Call v0, -, v1, v2 @90
+    ReturnCall v3
+}

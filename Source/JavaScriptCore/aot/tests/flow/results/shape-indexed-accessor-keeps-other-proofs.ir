@@ -1,0 +1,54 @@
+# An accessor defined from a descriptor under an index key, or under a key nobody knows, costs the shape of that allocation class and no more: the cause is the definition, and what stays impossible is still listed
+# RUN: flow
+# CHECK: class [[indexedAccessor]] layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, {{*}}StoreOfOtherType]{{*}} cause=PropertyRedefined witness={function=f0 value=v15}
+# CHECK: class [[unknownKey]] layout=L2 {{*}}cause=PropertyRedefined witness={function=f0 value=v22}
+# CHECK: layout L0 flow={{*}}cause=PropertyRedefined witness={function=f0 value=v15}
+# CHECK: layout L2 flow={{*}}cause=PropertyRedefined witness={function=f0 value=v22}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="IndexedAccessor" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="NamedAccessor" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="UnknownKey" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="IndexedValue" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Untouched" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="AccessorDescriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="ValueDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="indexedAccessor" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="namedAccessor" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="unknownKey" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="indexedValue" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="untouched" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g1
+    PutModuleVariable v3 variable=g2
+    PutModuleVariable v4 variable=g3
+    PutModuleVariable v5 variable=g4
+    v11 = Builtin builtin=ObjectDefineProperty
+    v12 = NewClosure function=f1
+    v13 = Integer integer=0
+    v14 = NewObject -, v12 layout=L5 fields=[0]
+    v15 = Call v11, -, v1, v13, v14
+    v16 = String string="x"
+    v17 = NewObject -, v12 layout=L5 fields=[0]
+    v18 = Call v11, -, v2, v16, v17
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="key" [isFreeName]
+    v21 = NewObject -, v12 layout=L5 fields=[0]
+    v22 = Call v11, -, v3, v20, v21
+    v23 = NewObject -, v0 layout=L6 fields=[0]
+    v24 = Call v11, -, v4, v13, v23
+    Return
+}
+function f1 name="get" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

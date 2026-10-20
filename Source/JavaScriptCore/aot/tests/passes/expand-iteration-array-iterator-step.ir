@@ -1,0 +1,91 @@
+# The step of an array iterator that somebody holds is written out on the three fields of the iterator: a finished iterator stays finished, a typed array is validated and asked for its length, any other object is read under "length", and the kind decides what the step gives
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(LEFT): pass ExpandIteration
+# RUN(OTHER): pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+
+function f0 name="next" module=m1 role=Library parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = StepArrayIterator v0
+    v2 = ResultAt v1
+    v3 = ResultAt v1 index=1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    Return v3
+}
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="next"
+# CHECK: b0(v0: object):
+# CHECK-NEXT: [[position]]: anything = GetInternalField v0
+# CHECK-NEXT: [[finished]]: -1 = Integer integer=-1
+# CHECK-NEXT: [[isFinished]]: boolean = StrictEq [[position]], [[finished]]
+# CHECK-NEXT: Branch [[isFinished]] -> taken [[stays]](), notTaken [[steps]]()
+# CHECK: [[stays]]():
+# CHECK-NEXT: [[yes]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[after]]([[yes]], [[nothing]])
+# CHECK: [[steps]]():
+# CHECK-NEXT: [[field]]: anything = GetInternalField v0 index=1
+# CHECK-NEXT: [[iterated]]: object = Claim [[field]] castType=object cause=AddedByPass
+# CHECK-NEXT: [[isView]]: boolean = HasJSType [[iterated]] first=4 last=2
+# CHECK-NEXT: Branch [[isView]] -> taken [[view]](), notTaken [[list]]()
+# CHECK: [[view]]():
+# CHECK-NEXT: RequireAttachedTypedArray [[iterated]]
+# CHECK-NEXT: [[viewLength]]: {{*}} = GetTypedArrayLength [[iterated]]
+# CHECK-NEXT: Jump -> next [[merge]]([[viewLength]])
+# CHECK: [[list]]():
+# CHECK-NEXT: [[read]]: anything = PropGet [[iterated]] key="length"
+# CHECK-NEXT: [[listLength]]: {{*}} = ToLength [[read]]
+# CHECK-NEXT: Jump -> next [[merge]]([[listLength]])
+# LEFT-NOT: StepArrayIterator
+# LEFT-NOT: key="next"
+# LEFT-NOT: = Call
+
+function f1 name="order" module=m1 role=Library parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = StepArrayIterator v0
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+# OTHER-LABEL: function f1 name="order"
+# OTHER: [[inRange]]: boolean = Less [[position]], [[length]]
+# OTHER-NEXT: Branch [[inRange]] -> taken [[advance]](), notTaken [[finish]]()
+# OTHER: [[advance]]():
+# OTHER-NEXT: [[one]]: 1 = Integer integer=1
+# OTHER-NEXT: [[following]]: {{*}} = Add [[position]], [[one]]
+# OTHER-NEXT: PutInternalField v0, [[following]]
+# OTHER-NEXT: [[kind]]: anything = GetInternalField v0 index=2
+# OTHER-NEXT: [[keys]]: 0 = Integer
+# OTHER-NEXT: [[isKeys]]: boolean = StrictEq [[kind]], [[keys]]
+# OTHER-NEXT: Branch [[isKeys]] -> taken [[giveKey]](), notTaken [[readElement]]()
+# OTHER: [[finish]]():
+# OTHER-NEXT: [[finished]]: -1 = Integer integer=-1
+# OTHER-NEXT: PutInternalField v0, [[finished]]
+# OTHER-NEXT: [[yes]]: true = Boolean boolean=true
+# OTHER-NEXT: [[nothing]]: undefined = Undefined
+# OTHER-NEXT: Jump -> next [[after]]([[yes]], [[nothing]])
+# OTHER: [[giveKey]]():
+# OTHER-NEXT: [[no]]: false = Boolean
+# OTHER-NEXT: Jump -> next [[after]]([[no]], [[position]])
+# OTHER: [[readElement]]():
+# OTHER-NEXT: [[element]]: anything = ElemGet [[iterated]], [[position]]
+# OTHER-NEXT: [[entries]]: 2 = Integer integer=2
+# OTHER-NEXT: [[isEntries]]: boolean = StrictEq [[kind]], [[entries]]
+# OTHER-NEXT: Branch [[isEntries]] -> taken [[givePair]](), notTaken [[giveElement]]()
+# OTHER: [[givePair]]():
+# OTHER-NEXT: [[pair]]: {{*}} = NewArray [[position]], [[element]] contents=anything
+
+function f2 name="untouched" module=m1 role=Library parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = GetInternalField v0
+    Return v1
+}
+# OTHER-LABEL: function f2 name="untouched"
+# OTHER-NEXT: b0(v0: object):
+# OTHER-NEXT: v1: anything = GetInternalField v0
+# OTHER-NEXT: Return v1

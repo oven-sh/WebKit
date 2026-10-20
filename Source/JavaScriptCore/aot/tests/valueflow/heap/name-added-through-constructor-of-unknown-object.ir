@@ -1,0 +1,28 @@
+# unknown = somethingNoTableLists; unknown.constructor.extra = one; Array.extra(); Math.extra()
+# The constructors of the table are among what `constructor` of the unknown object gives, and they are handed out as the unknown object: what is stored through that value is found on them.
+# A built-in object that no such read leads to stays closed.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> {{*}}f1
+# CHECK-NOT: f0 v10 -> {{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = PropGet v1 key="constructor"
+    v3 = NewClosure function=f1
+    PropSet v2, v3 key="extra" mode=Strict
+    v5 = Builtin builtin=Array
+    v6 = PropGet v5 key="extra"
+    v7 = Call v6, v5
+    v8 = Builtin builtin=Math
+    v9 = PropGet v8 key="extra"
+    v10 = Call v9, v8
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

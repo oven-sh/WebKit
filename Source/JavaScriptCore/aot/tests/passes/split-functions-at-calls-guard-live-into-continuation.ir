@@ -1,0 +1,219 @@
+# A guard cannot be a parameter of another function. A block that needs a frame is cut after the last use of a guard that comes before its first operation that needs one, and a function is not cut where a guard of the entry part is used after that operation
+# FORM: Selected
+# RUN: pass SplitFunctionsAtCalls
+# STATISTIC: SplitFunctionsAtCallsChanges = 1
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SplitFunctionsAtCalls SplitFunctionsAtCalls
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
+
+function f0 name="guardUsedBeforeCall" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v5 = TypeTest v4 testedType=i32
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v6 = GetSlot v0, v3 key="y" receivers=[L0] level=Predicted
+    v7 = Call v1, -, v6
+    Return v7
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="guardUsedBeforeCall"
+# CHECK-NOT: = Call
+# CHECK: v6: number = GetSlot v0, v3 key="y"
+# CHECK-NEXT: Jump -> next [[leaves0]]()
+# CHECK: [[leaves0]]():
+# CHECK-NEXT: [[rest0]]: anything = CallDirect v1, v6 function=f7
+# CHECK-NEXT: ReturnCall [[rest0]]
+
+function f1 name="guardPassedToCutBlock" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v5 = TypeTest v4 testedType=i32
+    Branch v5 -> taken b2(), notTaken b3(v3)
+  b2():
+    Return v4
+  b3(v6):
+    v7 = GetSlot v0, v6 key="y" receivers=[L0] level=Predicted
+    v8 = Call v1, -, v7
+    Return v8
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="guardPassedToCutBlock"
+# CHECK-NOT: = Call
+# CHECK: b3(v6: guard):
+# CHECK-NEXT: v7: number = GetSlot v0, v6 key="y"
+# CHECK-NEXT: Jump -> next [[leaves1]]()
+# CHECK: [[leaves1]]():
+# CHECK-NEXT: [[rest1]]: anything = CallDirect v1, v7 function=f8
+# CHECK-NEXT: ReturnCall [[rest1]]
+
+function f2 name="operationsAfterLastUseMoveToContinuation" parameters=[{type=object}, {type=function}, {type=i32}] results=[{type=anything}] {
+  b0(v0: object, v1: function, v2: i32):
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Predicted
+    v6 = TypeTest v5 testedType=i32
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    v7 = BitOr v2, v2 form=Bits
+    v8 = GetSlot v0, v4 key="y" receivers=[L0] level=Predicted
+    v9 = BitAnd v2, v7 form=Bits
+    v10 = Call v1, -, v8, v9
+    Return v10
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="operationsAfterLastUseMoveToContinuation"
+# CHECK-NOT: BitAnd
+# CHECK: = BitOr v2, v2
+# CHECK-NEXT: v8: number = GetSlot v0, v4 key="y"
+# CHECK-NEXT: Jump -> next
+# CHECK-NOT: BitAnd
+# CHECK: [[rest2]]: anything = CallDirect v1, v2, v7, v8 function=f9
+# CHECK-NEXT: ReturnCall [[rest2]]
+# CHECK-NOT: BitAnd
+
+function f3 name="guardUsedAfterAllocation" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v5 = TypeTest v4 testedType=i32
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v6 = NewArray v4 contents=anything
+    v7 = GetSlot v0, v3 key="y" receivers=[L0] level=Predicted
+    v8 = Call v1, -, v6, v7
+    Return v8
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="guardUsedAfterAllocation"
+# CHECK-NOT: CallDirect
+# CHECK: b3():
+# CHECK-NEXT: = NewArray v4
+# CHECK-NEXT: = GetSlot v0, v3 key="y"
+# CHECK-NEXT: = Call v1, -, v6, v7
+# CHECK-NEXT: Return v8
+# CHECK-NOT: CallDirect
+
+function f4 name="guardUsedInBlockAfterAllocation" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v5 = TypeTest v4 testedType=i32
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v6 = GetSlot v0, v3 key="y" receivers=[L0] level=Predicted
+    v7 = NewArray v6 contents=anything
+    v8 = TypeTest v6 testedType=i32
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v10 = Call v1, -, v7, v9
+    Return v10
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="guardUsedInBlockAfterAllocation"
+# CHECK-NOT: CallDirect
+# CHECK: b3():
+# CHECK-NEXT: = GetSlot v0, v3 key="y"
+# CHECK-NEXT: = NewArray v6
+# CHECK: = Call v1, -, v7, v9
+# CHECK-NOT: CallDirect
+
+function f5 name="guardUsedBeforeCutOnly" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3):
+    v4 = GetSlot v0, v3 key="x" receivers=[L0] level=Predicted
+    v5 = GetSlot v0, v3 key="y" receivers=[L0] level=Predicted
+    v6 = TypeTest v4 testedType=i32
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v7 = Call v1, -, v5
+    Return v7
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f5 name="guardUsedBeforeCutOnly"
+# CHECK-NOT: = Call
+# CHECK: = GetSlot v0, v3 key="x"
+# CHECK-NEXT: = GetSlot v0, v3 key="y"
+# CHECK: [[rest5]]: anything = CallDirect v1, v5 function=f10
+# CHECK-NEXT: ReturnCall [[rest5]]
+
+function f6 name="guardCreatedAfterCut" parameters=[{type=object}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: function, v2: anything):
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v4 = Call v1
+    v5 = ShapeTest v0 layouts=[L0]
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = GetSlot v0, v6 key="x" receivers=[L0] level=Predicted
+    Return v7
+  b4():
+    Return v4
+}
+# CHECK-LABEL: function f6 name="guardCreatedAfterCut"
+# CHECK-NOT: ShapeTest
+# CHECK: [[rest6]]: anything = CallDirect v0, v1 function=f11
+# CHECK-NEXT: ReturnCall [[rest6]]
+# CHECK-NOT: ShapeTest
+
+# CHECK-LABEL: function f7 name="guardUsedBeforeCall" module=m0 role=Continuation{{*}}parameters=[{type=function}, {type=number}] results=[{type=anything}]{{*}}derivation={source=f0{{*}}} creator=Continuation{origin=f0}
+# CHECK-NOT: guard
+# CHECK-NOT: GetSlot
+# CHECK: = Call
+# CHECK-LABEL: function f8 name="guardPassedToCutBlock" module=m0 role=Continuation{{*}}parameters=[{type=function}, {type=number}] results=[{type=anything}]{{*}}derivation={source=f1{{*}}} creator=Continuation{origin=f1}
+# CHECK-NOT: guard
+# CHECK-NOT: GetSlot
+# CHECK: = Call
+# CHECK-LABEL: function f9 name="operationsAfterLastUseMoveToContinuation" module=m0 role=Continuation{{*}}derivation={source=f2{{*}}} creator=Continuation{origin=f2}
+# CHECK-NOT: guard
+# CHECK: = BitAnd
+# CHECK-NEXT: = Call
+# CHECK-LABEL: function f10 name="guardUsedBeforeCutOnly" module=m0 role=Continuation{{*}}parameters=[{type=function}, {type=number}] results=[{type=anything}]{{*}}derivation={source=f5{{*}}} creator=Continuation{origin=f5}
+# CHECK-NOT: guard
+# CHECK: = Call
+# CHECK-NOT: guard
+# CHECK-LABEL: function f11 name="guardCreatedAfterCut" module=m0 role=Continuation{{*}}parameters=[{type=object}, {type=function}] results=[{type=anything}]{{*}}derivation={source=f6{{*}}} creator=Continuation{origin=f6}
+# CHECK: b0([[object]]: object, [[callee]]: function):
+# CHECK: = Call [[callee]]
+# CHECK-NEXT: [[test]]: boolean = ShapeTest [[object]] layouts=[L0]
+# CHECK-NEXT: Branch [[test]] -> taken [[guarded]](| 0), notTaken
+# CHECK: [[guarded]]([[guard]]: guard):
+# CHECK-NEXT: = GetSlot [[object]], [[guard]] key="x"
+# CHECK-NOT: function f12

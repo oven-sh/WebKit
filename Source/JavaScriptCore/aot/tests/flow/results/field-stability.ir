@@ -1,0 +1,39 @@
+# Each of the three stability flags of a field is lost alone, to the operation that is its witness
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, LoseShape]
+# CHECK: field L0.0 "deleted" {{*}}cause=FieldDeleted witness={function=f0 value=v2}}{{*}} stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L0.1 "redefined" {{*}}cause=PropertyRedefined witness={function=f0 value=v4}}{{*}} stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}
+# CHECK: field L0.2 "retyped" {{*}}cause=StoreOfOtherType witness={function=f2 value=v2}}{{*}} stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: field L0.3 "kept"
+# CHECK-NOT: cause=
+# CHECK: stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Changed" fields=[{key="deleted" declared={type=number} flags=[IsRequired]}, {key="redefined" declared={type=number} flags=[IsRequired]}, {key="retyped" declared={type=number} flags=[IsRequired]}, {key="kept" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]
+    v2 = PropDelete v1 key="deleted" mode=Strict
+    v3 = NewClosure function=f1
+    DefineGetter v1, v3 key="redefined"
+    v5 = String string="text"
+    v6 = CallDirect v1, v5 function=f2
+    v7 = CallDirect v1, v0 function=f3
+    Return
+}
+function f1 name="redefined" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="storeText" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="retyped" mode=Strict
+    Return
+}
+function f3 name="storeInteger" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="kept" mode=Strict
+    Return
+}

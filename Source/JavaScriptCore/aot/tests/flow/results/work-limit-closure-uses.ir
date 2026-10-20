@@ -1,0 +1,120 @@
+# A closure that a function past the work limit creates or receives may be used in every way and called by anybody. The closures of the same function below the limit are only called, by known callers
+# OPTIONS: limit=MaxFlowWorkPerFunction:120
+# LOSS: MaxFlowWorkPerFunction f1
+# LOSS: MaxFlowInstanceValues f1
+# RUN: flow
+# CHECK: function f3 cause=ReachesNativeCode witness={function=f1
+# CHECK: function f4 callers=AllKnown executions=AtMostOnce closureUse=CalledOnly
+# CHECK: function f5 cause=ReachesNativeCode witness={function=f
+# CHECK: function f6 callers=AllKnown executions=AtMostOnce closureUse=CalledOnly
+# CHECK: class [[created]] closureFunction=f3 addedKeys=["prototype"]
+# CHECK: class [[kept]] closureFunction=f4 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, {{*}}locality=FrameLocal
+# CHECK: indirect - - -> f3 Host Repeatedly cycle
+# CHECK-NOT: -> f4
+# CHECK: indirect - - -> f5 Host Repeatedly cycle
+# CHECK-NOT: -> f6
+# CHECK: unseen-code LimitReached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="BusyBox" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f5
+    v3 = CallDirect v1, v2 function=f1
+    v4 = NewClosure function=f6
+    v5 = CallDirect v4 function=f2
+    Return
+}
+function f1 name="busy" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v0 key="x"
+    v5 = PropGet v0 key="x"
+    v6 = PropGet v0 key="x"
+    v7 = PropGet v0 key="x"
+    v8 = PropGet v0 key="x"
+    v9 = PropGet v0 key="x"
+    v10 = PropGet v0 key="x"
+    v11 = PropGet v0 key="x"
+    v12 = PropGet v0 key="x"
+    v13 = PropGet v0 key="x"
+    v14 = PropGet v0 key="x"
+    v15 = PropGet v0 key="x"
+    v16 = PropGet v0 key="x"
+    v17 = PropGet v0 key="x"
+    v18 = PropGet v0 key="x"
+    v19 = PropGet v0 key="x"
+    v20 = PropGet v0 key="x"
+    v21 = PropGet v0 key="x"
+    v22 = PropGet v0 key="x"
+    v23 = PropGet v0 key="x"
+    v24 = PropGet v0 key="x"
+    v25 = PropGet v0 key="x"
+    v26 = PropGet v0 key="x"
+    v27 = PropGet v0 key="x"
+    v28 = PropGet v0 key="x"
+    v29 = PropGet v0 key="x"
+    v30 = PropGet v0 key="x"
+    v31 = PropGet v0 key="x"
+    v32 = PropGet v0 key="x"
+    v33 = PropGet v0 key="x"
+    v34 = PropGet v0 key="x"
+    v35 = PropGet v0 key="x"
+    v36 = PropGet v0 key="x"
+    v37 = PropGet v0 key="x"
+    v38 = PropGet v0 key="x"
+    v39 = PropGet v0 key="x"
+    v40 = PropGet v0 key="x"
+    v41 = PropGet v0 key="x"
+    v42 = PropGet v0 key="x"
+    v43 = PropGet v0 key="x"
+    v44 = PropGet v0 key="x"
+    v45 = PropGet v0 key="x"
+    v46 = PropGet v0 key="x"
+    v47 = PropGet v0 key="x"
+    v48 = PropGet v0 key="x"
+    v49 = PropGet v0 key="x"
+    v50 = PropGet v0 key="x"
+    v51 = PropGet v0 key="x"
+    v52 = PropGet v0 key="x"
+    v53 = PropGet v0 key="x"
+    v54 = PropGet v0 key="x"
+    v55 = PropGet v0 key="x"
+    v56 = PropGet v0 key="x"
+    v57 = PropGet v0 key="x"
+    v58 = PropGet v0 key="x"
+    v59 = PropGet v0 key="x"
+    v60 = PropGet v0 key="x"
+    v61 = PropGet v0 key="x"
+    v62 = NewClosure function=f3
+    v63 = Call v62
+    v64 = Call v1
+    Return
+}
+function f2 name="idle" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Call v1
+    v3 = Call v0
+    Return
+}
+function f3 name="createdByBusy" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="createdByIdle" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="passedToBusy" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="passedToIdle" results=[{type=anything}] {
+  b0():
+    Return
+}

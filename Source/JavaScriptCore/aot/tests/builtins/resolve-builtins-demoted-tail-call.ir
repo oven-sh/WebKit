@@ -1,0 +1,94 @@
+# The call of a built-in is no tail call, so it carries the mark of the tail call it replaces, and the call that Function.prototype.call passes on gets it back
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(FORWARDED): pass ResolveBuiltins ResolveCalls
+# STATISTIC: ReturnCallsDemoted = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="parseInTailPosition" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    ReturnCall v2 requirement=Allowed
+}
+# CHECK-LABEL: function f0 name="parseInTailPosition"
+# CHECK-NOT: ReturnCall
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v2
+
+function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="parse"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0
+# CHECK-NOT: isDemotedTailCall
+
+function f2 name="markedParse" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0 [isDemotedTailCall]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="markedParse"
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 [isDemotedTailCall]
+
+function f3 name="mapInTailPosition" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function):
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = Call v2, v0, v1
+    ReturnCall v3 requirement=Allowed
+}
+# CHECK-LABEL: function f3 name="mapInTailPosition"
+# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v3
+
+function f4 name="map" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function):
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="map"
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
+# CHECK-NOT: isDemotedTailCall
+
+function f5 name="callInTailPosition" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4 requirement=Allowed
+}
+# CHECK-LABEL: function f5 name="callInTailPosition"
+# CHECK: v4: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 [isDemotedTailCall]
+# FORWARDED-LABEL: function f5 name="callInTailPosition"
+# FORWARDED-NOT: CallBuiltin
+# FORWARDED: v4: anything = Call v0, v1, v2 [isDemotedTailCall]
+# FORWARDED-NEXT: Return v4
+
+function f6 name="call" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# FORWARDED-LABEL: function f6 name="call"
+# FORWARDED-NOT: isDemotedTailCall
+# FORWARDED: v4: anything = Call v0, v1, v2
+# FORWARDED-NOT: isDemotedTailCall
+
+function f7 name="applyInTailPosition" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4 requirement=Allowed
+}
+# FORWARDED-LABEL: function f7 name="applyInTailPosition"
+# FORWARDED-NOT: CallBuiltin
+# FORWARDED: v4: anything = CallList v0, v1, v2 [isDemotedTailCall]
+# FORWARDED-NEXT: Return v4

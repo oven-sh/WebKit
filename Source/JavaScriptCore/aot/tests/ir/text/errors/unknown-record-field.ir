@@ -1,0 +1,5 @@
+# A field the record does not have
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+layout L0 baseKind=None

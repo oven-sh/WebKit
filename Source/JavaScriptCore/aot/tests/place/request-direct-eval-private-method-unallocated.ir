@@ -1,0 +1,42 @@
+# A private method and a private accessor that a direct eval can name are found by the brand of their class, also when no instance of the class is ever allocated
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="NeverConstructed" constructor=f2 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
+evalscope e0 flags=[IsInFunction] bindings=[{name="#run" kind=PrivateMethod layout=L0 field=0 operand=0 function=1}, {name="#size" kind=PrivateAccessor layout=L0 field=0 operand=0 function=2 setter=3}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClassToken layout=L0
+    v3 = NewClosure v2 function=f2
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = NewClosure function=f3
+    v7 = CallDirect v1, v2, v6 function=f1
+    Return
+}
+function f1 name="evaluates" parameters=[{type=anything}, {type=classtoken}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: classtoken, v2: anything):
+    v3 = Undefined
+    v4 = DirectEval v0, v3, -, v1, v2, v2, v2 evalScope=e0
+    Return v4
+}
+function f2 name="NeverConstructed" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything):
+    v2 = GetConstructPrototype v1 layout=L0
+    v3 = NewObject v2 layout=L0
+    PrivateDefine v3, v0, v0 layout=L0
+    Return v3
+}
+function f3 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+# CHECK: request 8 DirectEval module=m0 strict inFunction
+# CHECK-NEXT: binding name={{*}} kind=PrivateMethod depth=0 operand=2 function=3 setter=- privateKey=#"#"@L0
+# CHECK-NEXT: binding name={{*}} kind=PrivateAccessor depth=0 operand=2 function=4 setter=5 privateKey=#"#"@L0

@@ -1,0 +1,16 @@
+# A definition by key takes a constant key or a computed key, one of them
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: NotExactlyOneParameter 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+  b0(v0: object, v1: function):
+    DefineSetter v0, v1
+    Return
+}
+function f1 name="good" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+  b0(v0: object, v1: function):
+    DefineSetter v0, v1 key="x"
+    Return
+}

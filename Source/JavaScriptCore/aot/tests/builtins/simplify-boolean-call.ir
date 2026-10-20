@@ -1,0 +1,67 @@
+# Boolean called as a function converts its operand and returns it, so the call becomes the conversion
+# FORM: Prepared
+# RUN: pass ResolveBuiltins SimplifyBuiltinCalls FoldConstants
+# RUN(SIMPLIFIED): pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ofAnything" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Boolean
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="ofAnything"
+# CHECK-NOT: CallBuiltin
+# CHECK: [[converted]]: boolean = ToBoolean v0
+# CHECK-NEXT: v2: boolean = Upcast [[converted]] castType=boolean
+
+function f1 name="ofBoolean" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Builtin builtin=Boolean
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="ofBoolean"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: ToBoolean
+# CHECK: v2: boolean = Upcast v0 castType=boolean
+
+function f2 name="surplusArguments" parameters=[{type=string}, {type=number}, {type=object}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: object):
+    v3 = Builtin builtin=Boolean
+    v4 = Call v3, -, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f2 name="surplusArguments"
+# CHECK-NOT: CallBuiltin
+# CHECK: [[first]]: boolean = ToBoolean v0
+# CHECK-NEXT: v4: boolean = Upcast [[first]] castType=boolean
+
+function f3 name="noArgument" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Boolean
+    v1 = Call v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="noArgument"
+# CHECK-NOT: CallBuiltin
+# CHECK: false = Boolean
+
+function f4 name="constructionOfBooleanObject" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = Builtin builtin=Boolean
+    v2 = Construct v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="constructionOfBooleanObject"
+# CHECK-NOT: Upcast
+# CHECK: v2: Boolean = CallBuiltin -, v0 overload=Boolean/1
+
+function f5 name="unmatchedCallStays" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    v1 = CallBuiltin -, v0 overload=Boolean/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+# SIMPLIFIED-LABEL: function f5 name="unmatchedCallStays"
+# SIMPLIFIED-NOT: Upcast
+# SIMPLIFIED: v1: boolean = CallBuiltin -, v0 overload=Boolean/0 builtinCallForm=AnyReceiver

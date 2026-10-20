@@ -27,16 +27,19 @@
 #include "config.h"
 #include "BuiltinExecutables.h"
 
+#include "AOTRemovableFeature.h"
 #include "BuiltinNames.h"
 #include "JSCJSValueInlines.h"
 #include "JSFunction.h"
 #include "Parser.h"
 #include "SourceCharacters.h"
-#include "AOTFunction.h"
-#include "AOTProgramData.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(AOT)
+#include "AOTBuiltinModules.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -44,18 +47,16 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinExecutables);
 
-static NEVER_INLINE const char* textOfBuiltinFunctions()
+static const char* builtinSourceText()
 {
-    const char* text = s_JSCCombinedCode;
-#if !OS(WINDOWS)
-    asm volatile("" : "+r"(text));
-#endif
-    return text;
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(BuiltinSourceText, ReturnDefault, const char*)
+    return WTF::opaque(s_JSCCombinedCode);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 BuiltinExecutables::BuiltinExecutables(VM& vm)
     : m_vm(vm)
-    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ textOfBuiltinFunctions(), s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts))
+    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ builtinSourceText(), s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts, 0))
 {
 }
 
@@ -322,23 +323,10 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-std::span<const Latin1Character> BuiltinExecutables::sourceOf(unsigned index)
-{
-    switch (static_cast<BuiltinCodeIndex>(index)) {
-#define SOURCE_OF(name, functionName, overriddenName, length) \
-    case BuiltinCodeIndex::name: \
-        return { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) };
-    JSC_FOREACH_BUILTIN_CODE(SOURCE_OF)
-#undef SOURCE_OF
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
 bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
 {
 #if ENABLE(AOT)
-    return AOT::Typed::hasBuiltinFunction(m_vm, static_cast<uint32_t>(index));
+    return m_vm.hasCompiledCode() && AOT::hasBuiltinFunction(m_vm, static_cast<uint32_t>(index));
 #else
     UNUSED_PARAM(index);
     return false;
@@ -353,12 +341,11 @@ UnlinkedFunctionExecutable* BuiltinExecutables::executableFor(BuiltinCodeIndex i
         return name##Executable();
     JSC_FOREACH_BUILTIN_CODE(EXECUTABLE_FOR)
 #undef EXECUTABLE_FOR
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-NEVER_INLINE FunctionExecutable* BuiltinExecutables::linkFromText(BuiltinCodeIndex index, Intrinsic intrinsic)
+FunctionExecutable* BuiltinExecutables::linkFromText(BuiltinCodeIndex index, Intrinsic intrinsic)
 {
     int start = s_JSCBuiltinSourceStarts[static_cast<unsigned>(index)];
     int length = s_JSCBuiltinSourceMetadata[static_cast<unsigned>(index)].sourceLength;

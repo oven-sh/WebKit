@@ -1,0 +1,41 @@
+# A function is plain, an arrow function, a method or a bound function: an accessor and an initializer are methods, a constructor is plain, a generic entrypoint is described as the function it enters and a bound function as itself
+# FORM: Selected
+# RUN: pass NumberAndEncode
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f8 flow={baseState=None}
+layout L1 kind=Instance name="Button" predictedBase=L0 constructor=f9 flags=[HasHeritage] flow={baseState=Layout base=L0}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="declared" flags=[HasExplicitName] results=[{type=anything}]
+function f2 name="arrow" kind=Arrow results=[{type=anything}]
+function f3 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f4 name="getter" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f5 name="setter" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+function f6 name="initializer" kind=Initializer flags=[HasThis] thisType={type=object} results=[{type=anything}]
+function f7 name="unused" results=[{type=anything}]
+function f8 name="Widget" kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] results=[{type=anything}]
+function f9 name="Button" kind=DerivedConstructor flags=[HasNewTarget, HasExplicitName] results=[{type=anything}]
+function f10 name="arrow" kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2}
+function f11 name="declared" role=BoundFunction results=[{type=anything}] derivation={source=f1} creator=BoundFunction{target=f1 numberOfBoundArguments=1}
+
+# CHECK-NOT: callableKind
+# CHECK: f0 hasInferredName
+# A name is inferred unless the function was written with one.
+# CHECK-NEXT: f1
+# CHECK-NOT: callableKind
+# CHECK-NOT: hasInferredName
+# CHECK: f2 isSlim callableKind=Arrow hasInferredName
+# CHECK-NEXT: f3 isSlim callableKind=Method hasInferredName
+# CHECK-NEXT: f4 isSlim accessorKind=Getter callableKind=Method hasInferredName
+# CHECK-NEXT: f5 isSlim accessorKind=Setter callableKind=Method hasInferredName
+# CHECK-NEXT: f6 callableKind=Method hasInferredName
+# CHECK-NEXT: f7 isSlim hasInferredName
+# Only the constructor of a subclass is a derived constructor.
+# CHECK-NEXT: f8 closureStructure=4 takesNewTarget isConstructor classConstructedBy=L0
+# CHECK-NEXT: f9 closureStructure=4 takesNewTarget isConstructor isDerivedConstructor classConstructedBy=L1
+# CHECK-NEXT: f10 isSlim callableKind=Arrow hasInferredName
+# CHECK-NEXT: f11 isSlim callableKind=Bound hasInferredName

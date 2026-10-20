@@ -1,0 +1,47 @@
+enum IteratorResumeResult { Done Value }
+enum ForInStepResult { Done Key | engine Position }
+enum YieldResult { Sent Mode }
+
+family Class AsRead..Placed
+operation ResolveHeritage (heritage: Any/inspects+runs(Named(prototype))) -> natural(object | null) ; Allocates reads(NamedProperties) throws ; runtime = ResolveHeritage
+operation NewClass (layout: Layout, constructor: Callable/returns+definesName, heritage?: Any/retains(constructor)+becomesPrototype, prototypeParent?: Any/retains(constructor)+becomesPrototype, engine from Placed request?: Request) -> natural(same(constructor)) ; Allocates DefinesProperty reads(PrototypeLinks, MemberGuards[layout]) writes(PrototypeLinks, MemberGuards[layout]) ; runtime = NewClass
+operation GetClassPrototype (classObject: Callable/inspects, layout: Layout) -> natural(object) ; none ; runtime = GetClassPrototype
+operation DefineMethod (classObject: Callable/inspects+definesName, function: Callable/retains(classObject), computedKey?: PropertyKey/inspects, layout: Layout, side: ClassSide, methodKind: MethodKind, index: UInt32, key?: PropertyKey) -> none ; DefinesProperty ; exactlyOneOf = key, computedKey ; runtime = DefineMethod
+operation FinishClass (classObject: Callable/returns, layout: Layout) -> natural(same(classObject)) ; none
+operation NewClassToken (layout: Layout) -> natural(ClassToken) ; Allocates ; runtime = NewClassToken
+operation GetConstructPrototype (newTarget: Any/inspects+runs(Named(prototype)), layout: Layout) -> natural(object) ; Allocates reads(NamedProperties) throws ; runtime = GetConstructPrototype
+operation SuperConstruct (layout: Layout, parent: Any/calls, newTarget: Any/retains, arguments...: Any/retains, with CallStamp) [| engine keepsShape] -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall ; runtime = SuperConstruct
+operation SuperConstructList (layout: Layout, parent: Any/calls, newTarget: Any/retains, list: Array/Listed, with CallStamp) [| engine keepsShape] -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall ; interpreted = List ; runtime = SuperConstructList
+
+family PrivateAccess AsRead..Placed
+operation PrivateGet (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, with AccessStamp) -> unknown => declared(field) ; reads(ObjectFields, NamedProperties, ShapeWords) throws by Access ; access = Read ; receiver = object ; interpreted = Read ; accessClass = ByName ; runtime = PrivateGet
+operation PrivateSet (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, value: Any/retains(object), with AccessStamp) -> none ; DefinesProperty by Access ; access = Store ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = PrivateSet
+operation PrivateDefine (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, value: Declared/retains(object), with AccessStamp) -> none ; DefinesProperty by Access ; access = Define ; receiver = object ; stored = value ; interpreted = Store ; accessClass = ByName ; runtime = PrivateDefine
+operation PrivateHas (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, with AccessStamp) -> natural(boolean) ; reads(ObjectFields, NamedProperties, ShapeWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; runtime = PrivateHas ; branches = May
+
+family Iteration AsRead..AsRead
+operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration
+operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration
+operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion) -> none ; unknownCode suspends ; removedBy = ExpandIteration
+
+family ForIn AsRead..Placed
+operation ForInOpen (object: Any/retains(result)+runs(OwnKeys+PrototypeChain)) -> natural(Enumerator) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = GetPropertyEnumerator
+operation ForInStep (enumerator: Enumerator/inspects, object: Any/inspects+runs(OwnKeys+PrototypeChain), engine position?: Integer/inspects) -> results(ForInStepResult: natural(boolean), natural(string), natural(int[0, 8589934590])) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, NamedProperties, ObjectFields, PrototypeLinks, ArrayStorage, Elements) ; runtime = EnumeratorNext
+
+family Coroutine AsRead..Prepared
+operation Await (value: Any/retains+runs(Thenable)) -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame
+operation Yield (value: Any/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame
+operation InitialYield () -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame
+
+family Module AsRead..Placed
+operation ModuleNamespace (module: Module(Target), phase: ImportPhase) -> declared(module) ; unknownCode ; runtime = GetModuleNamespace
+operation ImportModule (module: Module(Target), referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; runtime = ImportModule
+operation RequireModule (module: Module(Target), referrer: Module(Referrer), specifier: String) -> unknown ; unknownCode ; runtime = RequireModule
+operation ResolveModule (module: Module(Referrer), referrer: Module(Referrer), specifier: String) [isURL] -> unknown ; unknownCode ; runtime = ResolveModule
+operation ThrowModuleFailure (failure: ModuleFailure) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowModuleFailure
+operation ImportDynamic (specifier: Any/Converted, options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; raises = LoadsModule ; runtime = ImportDynamic
+operation RequireDynamic (specifier: Any/Converted, referrer: Module(Referrer)) -> unknown ; unknownCode ; raises = LoadsModule ; runtime = RequireDynamic
+operation ResolveDynamic (specifier: Any/Converted, referrer: Module(Referrer)) [isURL] -> unknown ; unknownCode ; runtime = ResolveDynamic
+
+family Eval AsRead..Placed
+operation DirectEval (evalScope: EvalScope, text: Any/inspects, thisValue: Any/retains, newTarget?: Any/retains, environments...: EvalOperand/retains, engine from Placed request?: Request) -> unknown ; unknownCode ; raises = EvaluatesText ; boundTo = Frame ; runtime = DirectEval

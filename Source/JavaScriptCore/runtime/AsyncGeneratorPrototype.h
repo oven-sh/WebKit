@@ -31,8 +31,6 @@
 namespace JSC {
 
 JSC_DECLARE_HOST_FUNCTION(asyncGeneratorPrototypeNext);
-JSC_DECLARE_HOST_FUNCTION(asyncGeneratorPrototypeReturn);
-JSC_DECLARE_HOST_FUNCTION(asyncGeneratorPrototypeThrow);
 
 // %AsyncGeneratorPrototype% intrinsic.
 // https://tc39.github.io/ecma262/#sec-properties-of-generator-prototype

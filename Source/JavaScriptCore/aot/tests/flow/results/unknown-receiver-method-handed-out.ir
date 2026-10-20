@@ -1,0 +1,24 @@
+# A built-in function that the program hands to unknown code as a value may come back as any callee and run on any escaped object: Array.prototype.push then costs a plain escaped record the proof that it gets no property
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity,
+# NOWHERE-NOT: layout=L0 impossibleMutations=[{{*}}AddProperty
+# RUN(SINKS): flow-solve sinks
+# SINKS: nativeCode {{*}}ArrayPrototypePush
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="escapedRecord" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v1
+    v6 = Builtin builtin=ArrayPrototypePush
+    v7 = Call v4, -, v6
+    Return
+}

@@ -1,0 +1,41 @@
+# An escaped object is never stored to under the name of an appended field of its layout, and a store by name through an unknown receiver may be a store on it.
+# The name is a field, so no property is added, and the value is in no location that the type of the field is made from: the class may see a store of another type, and native code may read the field.
+# The layout beside it has the same objects and no such store
+# RUN: flow
+# STATISTIC: FlowAppendedFields = 2
+# CHECK: field L0.1 "late" type="text" flags=[IsAppendedByFlow] flow={{*}}cause=StoreOfOtherType
+# CHECK: field L1.1 "other" type="text" flags=[IsAppendedByFlow] flow={{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# RUN(STORED): flow
+# STORED: class {{*}} layout=L0 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, LoseShape]
+# RUN(NAMED): flow
+# NAMED: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# RUN(KEPT): flow
+# KEPT: class {{*}} layout=L1 impossibleMutations=[ReachUnknownJavaScript, {{*}}StoreOfOtherType, LoseShape]
+# RUN(NOWHERE): flow
+# NOWHERE-NOT: layout L0 flow={{*}}StoreOfOtherType
+# NOWHERE-NOT: field L0.1 {{*}}IsNeverStoredWithOtherType
+# NOWHERE-NOT: field L0.1 {{*}}reads=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredThroughUnknownReceiver" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="OnlyEscaped" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=5
+    v2 = String string="text"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = Call v4, -, v5
+    v7 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v7, v2 key="late" mode=Strict
+    v9 = NewObject -, v0 layout=L1 fields=[0]
+    v10 = Call v4, -, v9
+    v11 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v11, v2 key="other" mode=Strict
+    v13 = PropGet v3 key="input" [isFreeName]
+    PropSet v13, v1 key="late" mode=Strict
+    Return
+}

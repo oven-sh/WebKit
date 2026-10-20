@@ -1,0 +1,80 @@
+# What an operation may have written before it threw is not available in the handler
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+variable g1 name="written" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+
+function f0 name="unknownCallThrows" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = GetModuleVariable variable=g1
+    Return v4
+}
+# CHECK-LABEL: function f0 name="unknownCallThrows"
+# CHECK: = CatchValue
+# CHECK-NEXT: v4: anything = GetModuleVariable variable=g1
+
+function f1 name="castThrows" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Claim v0 castType=number
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = GetModuleVariable variable=g1
+    Return v4
+}
+# CHECK-LABEL: function f1 name="castThrows"
+# CHECK: = CatchValue
+# CHECK-NEXT: v4: anything = Upcast v1
+
+function f2 name="calleeWritesOnlyWhenItThrows" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g1
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = CallDirect v0 function=f3
+    Jump -> next b2()
+  b2():
+    v4 = StrictEq v1, v2
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetModuleVariable variable=g0
+    v7 = GetModuleVariable variable=g1
+    v8 = StrictEq v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f2 name="calleeWritesOnlyWhenItThrows"
+# CHECK: = CatchValue
+# CHECK-NEXT: v6: anything = Upcast v1
+# CHECK-NEXT: v7: anything = GetModuleVariable variable=g1
+
+function f3 name="writesThenThrows" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g1
+    Throw v0
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3 name="writesThenThrows"

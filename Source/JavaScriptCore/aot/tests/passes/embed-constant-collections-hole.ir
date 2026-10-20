@@ -1,0 +1,81 @@
+# A literal or a data record with a hole is not embedded
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 0
+# CHECK-NOT: table
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+data d0 root=Array{contents=string elements=[String{value="a"}, Hole, String{value="b"}]} module=m0
+data d1 root=Array{contents=Array<anything> elements=[Array{contents=anything elements=[String{value="k"}, Number{value=1}]}, Hole]} module=m0
+
+function f0 name="holeInListOfSet" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewArray v0, v1 contents=string holes=[1]
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f0 name="holeInListOfSet"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v0, v1 contents=string holes=[1]
+# CHECK-NEXT: = CallBuiltin -, v2 overload=Set/2
+# CHECK-NOT: FromData
+
+function f1 name="holeInListOfMap" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = String string="k"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v2 contents=Array<anything> holes=[1]
+    v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f1 name="holeInListOfMap"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v0, v1 contents=anything
+# CHECK-NEXT: = NewArray v2 contents=Array holes=[1]
+# CHECK-NEXT: = CallBuiltin -, v3 overload=Map/2
+# CHECK-NOT: FromData
+
+function f2 name="holeInPair" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = String string="k"
+    v1 = NewArray v0 contents=anything holes=[1]
+    v2 = NewArray v1 contents=Array<anything>
+    v3 = CallBuiltin -, v2 overload=Map/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f2 name="holeInPair"
+# CHECK-NOT: FromData
+# CHECK: = NewArray v0 contents=anything holes=[1]
+# CHECK-NEXT: = NewArray v1
+# CHECK-NEXT: = CallBuiltin -, v2 overload=Map/2
+# CHECK-NOT: FromData
+
+function f3 name="holeInRecordOfSet" results=[{type=Set<string>}] {
+  b0():
+    v0 = Data data=d0
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f3 name="holeInRecordOfSet"
+# CHECK-NOT: FromData
+# CHECK: = Data data=d0
+# CHECK-NEXT: = CallBuiltin -, v0 overload=Set/2
+# CHECK-NOT: FromData
+
+function f4 name="holeInRecordOfMap" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = Data data=d1
+    v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f4 name="holeInRecordOfMap"
+# CHECK-NOT: FromData
+# CHECK: = Data data=d1
+# CHECK-NEXT: = CallBuiltin -, v0 overload=Map/2
+# CHECK-NOT: FromData
+# CHECK: data d1
+# CHECK-NOT: data d2

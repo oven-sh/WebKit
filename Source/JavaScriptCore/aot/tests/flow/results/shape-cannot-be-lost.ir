@@ -1,0 +1,47 @@
+# A literal and an instance of a class that stay inside compiled code cannot lose their shape: no cause is recorded, and each allocation has the type of its layout
+# RUN: flow
+# RUN(APPLY): flow-apply
+# CHECK: class [[literal]] layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: class [[instance]] layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: class
+# CHECK: layout L0 flow={
+# CHECK-NOT: cause=
+# CHECK: field L0.0
+# CHECK: layout L1 flow={
+# CHECK-NOT: cause=
+# CHECK: field L1.0
+# CHECK: variable g0 type=L0 written=anything
+# CHECK: variable g1 type=L1 written=anything
+# APPLY-LABEL: function f0 name="main"
+# APPLY: : L0 = NewObject -, v0 layout=L0 fields=[0] allocationSite={{*}} [keepsShape]
+# APPLY-LABEL: function f1 name="Point"
+# APPLY: : L1 = NewObject {{*}} layout=L1 allocationSite={{*}} [keepsShape]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Point" constructor=f1 fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="literal" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="instance" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = Construct v5
+    PutModuleVariable v6 variable=g1
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = Integer integer=2
+    PropSet v2, v3 key="y" mode=Strict
+    Return v2
+}

@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "DeferGCInlines.h"
 #include "HeapInlines.h"
@@ -75,6 +76,7 @@ JITWorklist* JITWorklist::existingGlobalWorklistOrNull()
 
 NEVER_INLINE JITWorklist& JITWorklist::ensureGlobalWorklist()
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITWorklist::ensureGlobalWorklist);
     static std::once_flag once;
     std::call_once(
         once,
@@ -196,6 +198,7 @@ size_t JITWorklist::queueLength(const AbstractLocker&) const
 
 NEVER_INLINE size_t JITWorklist::totalOngoingCompilations() const
 {
+    JSC_REMOVABLE_DEFINITION(JIT, static_cast<size_t (JITWorklist::*)() const>(&JITWorklist::totalOngoingCompilations));
     Locker locker { *m_lock };
     return totalOngoingCompilations(locker);
 }
@@ -222,6 +225,7 @@ void JITWorklist::suspendAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
 NEVER_INLINE void JITWorklist::resumeAllThreads() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITWorklist::resumeAllThreads);
     for (auto& thread : m_threads)
         thread->m_rightToRun.unlock();
     m_suspensionLock.unlock();
@@ -303,6 +307,7 @@ void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
 
 NEVER_INLINE void JITWorklist::completeAllPlansForVM(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITWorklist::completeAllPlansForVM);
     if (!vm.numberOfActiveJITPlans())
         return;
 

@@ -1,0 +1,41 @@
+# The result of Math.min, Math.max and Math.abs on integers is the range that their range rule gives, and with a fractional operand it is the declared number
+# RUN: flow-solve nodes
+# CHECK: f0, v9) = {int[0, 9]}
+# CHECK-NEXT: f0, v10) = {int[5, 20]}
+# CHECK-NEXT: f0, v11) = {int[-3, 2]}
+# CHECK: f0, v13) = {int[0, 9]}
+# CHECK: f0, v15) = {int[5, 20]}
+# CHECK: f0, v17) = {int[0, 3]}
+# CHECK: f0, v19) = {number}
+# CHECK-NEXT: f0, v20) = {number}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = Integer integer=0
+    v4 = Integer integer=9
+    v5 = Integer integer=5
+    v6 = Integer integer=20
+    v7 = Integer integer=-3
+    v8 = Integer integer=2
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3, v5, v7)
+  b2():
+    Jump -> next b3(v4, v6, v8)
+  b3(v9, v10, v11):
+    v12 = Builtin builtin=MathMin
+    v13 = Call v12, -, v9, v10
+    v14 = Builtin builtin=MathMax
+    v15 = Call v14, -, v9, v10
+    v16 = Builtin builtin=MathAbs
+    v17 = Call v16, -, v11
+    v18 = Double number=0.5
+    v19 = Call v12, -, v9, v18
+    v20 = Call v16, -, v18
+    Return
+}

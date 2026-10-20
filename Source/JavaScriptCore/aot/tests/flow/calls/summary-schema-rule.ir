@@ -1,0 +1,40 @@
+# An operation without a rule of its own gets its edges from its schema row: a use per operand that may hold a reference, and a result by its result rule
+# RUN: flow-summary f0
+# CHECK: summary f0:
+# CHECK: l4 = v2
+# CHECK: l7 = v5
+# CHECK-NEXT: l8 = v6
+# CHECK-NEXT: l9 = v8
+# CHECK-NEXT: l10 = v9
+# CHECK: seed l8 TypeAsRead string
+# CHECK-NEXT: seed l9 TypeAsRead anything
+# CHECK: NaturalOperation#0 origin=v2 result=l4 operands=[l0, l1]
+# CHECK-NEXT: NaturalOperation#1 origin=v5 result=l7 operands=[l5, l6]
+# CHECK-NEXT: NaturalOperation#2 origin=v9 result=l10 operands=[l0]
+# CHECK-NOT: NaturalOperation
+# CHECK: OperandUse#1 origin=v2 operandIndex=0 operand=l0 {{*}}thrown=l3
+# CHECK-NEXT: OperandUse#2 origin=v2 operandIndex=1 operand=l1 {{*}}thrown=l3
+# CHECK-NOT: origin=v2
+# CHECK-NOT: origin=v5
+# CHECK: OperandUse#3 origin=v6 operandIndex=0 operand=l0 {{*}}thrown=l3
+# CHECK: OperandUse#7 origin=v6 operandIndex=4 operand=l0 {{*}}thrown=l3
+# CHECK-NEXT: OperandUse#8 origin=v7 operandIndex=0 operand=l0 {{*}}thrown=l3
+# CHECK-NEXT: OperandUse#9 origin=v9 operandIndex=0 operand=l0
+# CHECK-NOT: thrown
+# CHECK: waiters l0: NaturalOperation#0, NaturalOperation#2, OperandUse#1, OperandUse#3, OperandUse#5, OperandUse#7, OperandUse#8
+# CHECK-NOT: OperandUse#9
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="schemaRule" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    v5 = Add v3, v4
+    v6 = Strcat v0, v1, v0, v1, v0
+    v7 = ForInOpen v0
+    v8 = LinkTimeConstant constant=0
+    v9 = TypeTest v0 testedType=string
+    Return
+}

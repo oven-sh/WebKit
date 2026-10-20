@@ -1,0 +1,51 @@
+# Stepping the table of a map gives its keys and its values apart, stepping the table of a set gives its elements, and each result may be the undefined of the step that finds no entry
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {undefined|L0#
+# CHECK-NOT: L1#
+# CHECK: Variable(g1) = {undefined|L1#
+# CHECK-NOT: L0#
+# CHECK: Variable(g2) = {undefined|L2#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Key" fields=[{key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Value" fields=[{key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Element" fields=[{key="r" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="key" declared={type=anything} initialization=Uninitialized
+variable g1 name="value" declared={type=anything} initialization=Uninitialized
+variable g2 name="element" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="step" role=Library results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = Integer integer=0
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    v8 = PropGet v3 key="set"
+    v9 = Call v8, v3, v5, v7
+    v10 = CollectionTable v3
+    v11 = MapNext v3, v10, v1
+    v12 = ResultAt v11 index=2
+    PutModuleVariable v12 variable=g0
+    v14 = ResultAt v11 index=3
+    PutModuleVariable v14 variable=g1
+    v16 = Builtin builtin=Set
+    v17 = Construct v16
+    v18 = NewObject -, v0 layout=L2 fields=[0]
+    v19 = FinishObject v18
+    v20 = PropGet v17 key="add"
+    v21 = Call v20, v17, v19
+    v22 = CollectionTable v17
+    v23 = SetNext v17, v22, v1
+    v24 = ResultAt v23 index=2
+    PutModuleVariable v24 variable=g2
+    Return
+}

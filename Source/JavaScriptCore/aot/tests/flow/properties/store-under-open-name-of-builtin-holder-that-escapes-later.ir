@@ -1,0 +1,127 @@
+# Math is open to a name of the program's own. Once Math has reached native code it may be the object on which a setter was defined through the unknown object,
+# so the store that ran before is looked at again and finds that setter
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-links calls
+# CHECK: f11 v2 -> i{{*}} f1 Accessor
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=ObjectPrototype
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = String string="added"
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = Call v7, -, v3, v6, v5
+    v9 = CallDirect function=f3
+    Return
+}
+function f1 name="added" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="stored" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="before0" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f4
+    Return v0
+}
+function f4 name="before1" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f5
+    Return v0
+}
+function f5 name="before2" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f6
+    Return v0
+}
+function f6 name="before3" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f7
+    Return v0
+}
+function f7 name="before4" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f8
+    Return v0
+}
+function f8 name="before5" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f9
+    Return v0
+}
+function f9 name="before6" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f10
+    Return v0
+}
+function f10 name="before7" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f11
+    Return v0
+}
+function f11 name="stores" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Math
+    v1 = NewClosure function=f2
+    PropSet v0, v1 key="added" mode=Strict
+    v3 = CallDirect function=f12
+    Return v3
+}
+function f12 name="after0" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f13
+    Return v0
+}
+function f13 name="after1" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f14
+    Return v0
+}
+function f14 name="after2" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f15
+    Return v0
+}
+function f15 name="after3" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f16
+    Return v0
+}
+function f16 name="after4" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f17
+    Return v0
+}
+function f17 name="after5" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f18
+    Return v0
+}
+function f18 name="after6" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f19
+    Return v0
+}
+function f19 name="after7" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f20
+    Return v0
+}
+function f20 name="handsOver" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=Math
+    v3 = Call v1, -, v2
+    Return v3
+}

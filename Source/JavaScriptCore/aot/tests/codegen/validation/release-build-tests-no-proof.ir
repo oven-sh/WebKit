@@ -1,0 +1,29 @@
+# A release build has no operation that tests a proof
+# RUN: pipeline ApplyFlowResults
+# CHECK-LABEL: function f0 name="main"
+# CHECK: : 1 = AssumeType
+# CHECK-NOT: Validate
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropGet v2 key="toLocaleString"
+    v4 = Call v3, v2 calleeKey="toLocaleString"
+    v5 = Add v4, v0
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = Call v7, -, v5
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131083 thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+runtimefunction id=131083 function=f1

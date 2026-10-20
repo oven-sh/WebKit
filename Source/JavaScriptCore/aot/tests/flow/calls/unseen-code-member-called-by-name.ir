@@ -1,0 +1,17 @@
+# The function that unseen-code-member-called-by-a-protocol.ir stores under valueOf, called as a member by seen code: an event
+# RUN: flow-links unseen
+# CHECK: unseen RunsUnseenCode BunPlugin f0:v4
+# CHECK: unknown-javascript yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunPlugin
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropGet v2 key="valueOf"
+    v4 = Call v3, v2 calleeKey="valueOf"
+    Return
+}

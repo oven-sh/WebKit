@@ -1,0 +1,93 @@
+# An own property named like a method of the class becomes a field of the layout: the shape stays and the member of the prototype stays fixed
+# RUN: flow
+# CHECK: class [[hidden]] layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, {{*}}LoseShape]
+# CHECK: class [[extended]] layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, {{*}}LoseShape]
+# CHECK: layout L0 flow={
+# CHECK-NOT: cause=
+# CHECK: classFlow={{*}}namedMembers=[{key="run" function=f2 mutability=Fixed
+# CHECK: field L0.0 "run" type=1 flags=[IsAppendedByFlow]
+# CHECK: layout L1 flow={
+# CHECK-NOT: cause=
+# CHECK: classFlow={{*}}namedMembers=[{key="run" function=f4 mutability=Fixed
+# CHECK: field L1.0 "extra" type=1 flags=[IsAppendedByFlow]
+# CHECK: layout L2 flow={
+# CHECK: classFlow={{*}}namedMembers=[{key="run" function=f6
+# CHECK-NOT: mutability=Fixed
+# CHECK-NOT: field L2.0
+# CHECK: variable g0 type={{*}}1|f2 written=anything
+# CHECK: variable g1 type=
+# CHECK-NOT: 1|
+# CHECK: f4 written=anything
+# CHECK: variable g2 type={{*}}1|f6 written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Hidden" constructor=f1
+layout L1 kind=Instance name="Extended" constructor=f3
+layout L2 kind=Instance name="Overwritten" constructor=f5
+variable g0 name="fromHidden" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="fromExtended" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="fromOverwritten" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="run"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f6
+    DefineMethod v13, v14 layout=L2 key="run"
+    v16 = FinishClass v13 layout=L2
+    v17 = Construct v16
+    v18 = Integer integer=1
+    PropSet v5, v18 key="run" mode=Strict
+    PropSet v11, v18 key="extra" mode=Strict
+    v21 = PropGet v16 key="prototype"
+    PropSet v21, v18 key="run" mode=Strict
+    v23 = PropGet v5 key="run"
+    PutModuleVariable v23 variable=g0
+    v25 = PropGet v11 key="run"
+    PutModuleVariable v25 variable=g1
+    v27 = PropGet v17 key="run"
+    PutModuleVariable v27 variable=g2
+    Return
+}
+function f1 name="Hidden" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Extended" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="Overwritten" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f6 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

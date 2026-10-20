@@ -1,0 +1,17 @@
+# Where the whole program is open, unknown JavaScript names the global object, and from there every built-in. Native code calls each of them once for the program, in a statement of its own with unknown operands,
+# and a built-in that such a call runs in turn is one more statement: the work grows with the number of built-ins, not with the ways to reach one from another.
+# OPTIONS: admit=RuntimeCode
+# RUN: flow-solve sinks
+# RUN(STATEMENTS): flow-links statements
+# STATISTIC: FlowWorklistSteps <= 60000
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK: nativeCode {unknown, GlobalThis,
+# CHECK: unknownJavaScript {unknown, GlobalThis,
+# STATEMENTS: statement i0 - ArrayPrototypeJoin Call Host Repeatedly
+# STATEMENTS-NOT: statement i0 - ArrayPrototypeJoin Call Host Repeatedly

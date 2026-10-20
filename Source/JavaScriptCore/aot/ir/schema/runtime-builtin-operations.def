@@ -1,0 +1,129 @@
+runtime ArraySplice : EncodedJSValue (JSCell* array, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items) ; unknownCode
+runtime ArrayGrow : size_t (JSCell* array, uint32_t length) ; reads(all) writes(Elements, ArrayStorage, AllocatorState, RuntimeState) collects
+runtime AllocateStorage : void* (uint64_t size) ; RuntimeAllocates
+runtime ArrayUnshift : EncodedJSValue (JSCell* array, EncodedJSValue item) ; unknownCode
+runtime ArrayJoin : JSCell* (JSCell* array, JSCell* separator) ; RuntimeCreatesString
+runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
+runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
+runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
+runtime GrowNewArray : void (JSCell* array, uint64_t length) ; RuntimeGrowsArray
+runtime TruncateNewArray : JSCell* (JSCell* array, uint32_t length) ; RuntimeGrowsArray
+runtime NewArrayWithHoles : JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+
+runtime OwnPropertyKeys : JSCell* (EncodedJSValue object, uint32_t kind) ; unknownCode
+runtime HasOwnProperty, PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
+runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
+runtime GetOwnPropertyFields : void (EncodedJSValue object, EncodedJSValue property, EncodedJSValue* results) ; unknownCode
+runtime ObjectCreate : JSCell* (JSCell* prototype) ; reads(all) writes(PrototypeLinks, AllocatorState, RuntimeState) collects
+
+runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
+runtime ArraySpeciesCreate : EncodedJSValue (EncodedJSValue length, JSCell* array) ; unknownCode
+runtime ResumeGenerator : EncodedJSValue (EncodedJSValue generator, int32_t mode, EncodedJSValue value) ; unknownCode
+runtime IsGeneratorSuspendedAtStart : size_t (JSCell* generator) ; reads(all)
+runtime ToLength : EncodedJSValue (EncodedJSValue value) ; unknownCode
+runtime RequireBuiltinModule : EncodedJSValue (uint32_t id) ; unknownCode
+runtime NativeBinding : EncodedJSValue (uint32_t index) ; unknownCode
+runtime LinkTimeConstant : JSCell* (uint32_t constant) ; RuntimeCreatesConstant
+
+runtime NewBigInt64 : JSCell* (uint64_t bits, uint32_t isSigned) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime DateNow : double () ; reads(all) writes(ExternalState)
+runtime DateToISOString : JSCell* (double timeValue) ; RuntimeAllocates
+runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates
+runtime NewError : JSCell* (uint32_t errorKind, EncodedJSValue message, EncodedJSValue options) ; unknownCode
+runtime FormatDateTime : JSCell* (EncodedJSValue formatter, double timeValue) ; RuntimeAllocates
+runtime FormatNumber : JSCell* (EncodedJSValue formatter, double number) ; RuntimeAllocates
+
+runtime NumberToStringWithRadix : JSCell* (double value, int32_t radix) ; RuntimeAllocates
+runtime Int32ToStringWithRadix : JSCell* (int32_t value, int32_t radix) ; RuntimeAllocates
+runtime AppendNumberWithRadix : void (JSCell* builder, double value, int32_t radix) ; reads(all) writes(StringBuilderContents, AllocatorState, RuntimeState) throws collects
+runtime MathSin, MathSinh, MathCos, MathCosh, MathTan, MathTanh, MathASin, MathASinh, MathACos, MathACosh, MathATan, MathATanh : double (double x) ; none ; leaf
+runtime MathLog, MathLog10, MathLog2, MathCbrt, MathExp, MathExpm1, MathLog1p, MathF16Round : double (double x) ; none ; leaf
+runtime MathATan2 : double (double y, double x) ; none ; leaf
+runtime MathHypot : double (double x, double y) ; none ; leaf
+runtime MathHypot3 : double (double x, double y, double z) ; none ; leaf
+
+runtime ParseInt8 : double (const Latin1Character* characters, uint32_t length, int32_t radix) ; none ; leaf preserveMost
+runtime ParseInt16 : double (const char16_t* characters, uint32_t length, int32_t radix) ; none ; leaf preserveMost
+runtime StringToNumber8 : double (const Latin1Character* characters, uint32_t length) ; none ; leaf preserveMost
+runtime StringToNumber16 : double (const char16_t* characters, uint32_t length) ; none ; leaf preserveMost
+runtime StringFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, uint32_t start) ; none ; leaf preserveMost
+runtime StringFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, uint32_t start) ; none ; leaf preserveMost
+runtime StringReverseFindCharacter8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) ; none ; leaf preserveMost
+runtime StringReverseFindCharacter16 : size_t (const char16_t* characters, uint32_t length, uint32_t character, int32_t position) ; none ; leaf preserveMost
+runtime StringFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) ; none ; leaf preserveMost
+runtime StringFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, uint32_t start) ; none ; leaf preserveMost
+runtime StringReverseFind8 : size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position) ; none ; leaf preserveMost
+runtime StringReverseFind16 : size_t (const char16_t* characters, uint32_t length, const char16_t* other, uint32_t otherLength, int32_t position) ; none ; leaf preserveMost
+runtime StringUTF8Length8 : size_t (const Latin1Character* characters, uint32_t length) ; none ; leaf preserveMost
+runtime StringUTF8Length16 : size_t (const char16_t* characters, uint32_t length) ; none ; leaf preserveMost
+runtime CountSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t separator) ; none ; leaf preserveMost
+runtime CountSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t separator) ; none ; leaf preserveMost
+runtime FindSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t separator, uint32_t* positions, uint32_t wanted) ; none ; leaf preserveMost
+runtime FindSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t separator, uint32_t* positions, uint32_t wanted) ; none ; leaf preserveMost
+runtime StringImplsAreEqual : size_t (void* first, void* second) ; none ; leaf preserveMost
+runtime CompareStringImpls : int64_t (void* first, void* second) ; none ; leaf preserveMost
+runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; none ; leaf preserveMost
+runtime HashStringImpl : size_t (void* impl) ; none ; leaf preserveMost
+
+runtime FindLongSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted) ; reads(all) writes(RuntimeState)
+runtime FindLongSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted) ; reads(all) writes(RuntimeState)
+runtime CountLongSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text) ; reads(all)
+runtime CountLongSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t text) ; reads(all)
+runtime StringFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) ; reads(all)
+runtime StringReverseFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) ; reads(all)
+runtime StringSplitPrefix : size_t (JSCell* string, JSCell* separator, uint32_t count, uint32_t* bounds) ; RuntimeCreatesString
+runtime StringEqualsLiteral : size_t (JSCell* string, uint32_t text) ; reads(all)
+runtime StringEqualsLiteralInRegister : size_t (JSCell* string, uint64_t text) ; reads(all)
+runtime StringStartsWithLiteral, StringEndsWithLiteral : size_t (JSCell* string, uint32_t text) ; RuntimeCreatesString
+runtime StringIndexOfLiteral, StringLastIndexOfLiteral : size_t (JSCell* string, uint32_t text, int32_t position) ; RuntimeCreatesString
+runtime StringIndexOfCharacter : size_t (JSCell* string, uint32_t character, int32_t position) ; RuntimeCreatesString
+runtime StringsAreEqual : size_t (JSCell* first, JSCell* second) ; reads(all) writes(StringStorage, AllocatorState, RuntimeState) collects
+runtime StringTrim : JSCell* (JSCell* string, uint32_t ends) ; RuntimeCreatesString
+runtime StringLastIndexOf : size_t (JSCell* string, JSCell* other, int32_t position) ; RuntimeCreatesString
+runtime StringLocaleCompare : size_t (JSCell* string, JSCell* other) ; RuntimeCreatesString
+runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; RuntimeCreatesString
+runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
+runtime StringPad : JSCell* (JSCell* string, uint32_t length, JSCell* filler, uint32_t isAtStart) ; RuntimeCreatesString
+runtime ShortStringOfString : EncodedJSValue (EncodedJSValue string) ; reads(all)
+
+effects RuntimeMatchesRegExp = reads(all) writes(RegExpState, StringStorage, AllocatorState, RuntimeState) throws collects
+runtime RegExpExec : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpTest, RegExpFind : size_t (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
+runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
+runtime NewRegExpLiteral : JSCell* (uint32_t regExpRecord, uint32_t flags, uint32_t staticsOffset) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime SharedRegExpLiteral : JSCell* (uint32_t staticsOffset, uint32_t regExpRecord, uint32_t flags) ; RuntimeCreatesConstant
+runtime NewRegExp : JSCell* (JSCell* pattern, uint32_t flags) ; RuntimeCreatesString
+runtime RegExpFlags, RegExpSource : JSCell* (JSCell* regExp) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime StringReplaceString, StringReplaceAllString : JSCell* (JSCell* string, JSCell* search, JSCell* replacement) ; RuntimeCreatesString
+runtime StringReplaceRegExp, StringReplaceAllRegExp : JSCell* (JSCell* string, JSCell* regExp, EncodedJSValue replacement) ; unknownCode
+runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement) ; unknownCode
+runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
+runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
+runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode
+runtime RegExpExecPrefix : size_t (JSCell* regExp, JSCell* string, uint32_t count, uint32_t* bounds) ; unknownCode
+runtime StringMatchPrefix : size_t (JSCell* string, JSCell* regExp, uint32_t count, EncodedJSValue* elements) ; unknownCode
+
+runtime JSONSourceOpen : size_t (EncodedJSValue text, void* stackPointer) ; reads(all) writes(ParserState, StringStorage, AllocatorState, RuntimeState) collects
+runtime JSONSourceClose : size_t (const uint8_t* cursor) ; reads(all) writes(ParserState, RuntimeState)
+runtime JSONSourceAbandon : void () ; reads(all) writes(ParserState, RuntimeState)
+runtime JSONDecodeBytes : EncodedJSValue (EncodedJSValue value) ; RuntimeAllocates throws
+runtime JSONParseString, JSONParseKey, JSONParseValue : UGPRPair (const uint8_t* cursor) ; RuntimeAllocates
+runtime JSONParseNumber, JSONParseInteger : UGPRPair (const uint8_t* cursor) ; reads(all)
+runtime JSONFindMember : UGPRPair (const uint8_t* cursor, uint32_t name) ; reads(all)
+runtime JSONMemberRepeats : size_t (const uint8_t* valueStart, uint32_t name) ; reads(all)
+runtime JSONKeyRepeats : size_t (const uint8_t* keyStart, const uint8_t* valueStart) ; reads(all)
+runtime JSONObjectKey : uint64_t (uint64_t order, uint32_t shape, uint32_t field) ; reads(all) writes(RuntimeState)
+runtime JSONObjectFinish : size_t (JSCell* object, EncodedJSValue extra, uint64_t order) ; reads(all) writes(OrderWords, NamedProperties, AllocatorState, RuntimeState) collects
+runtime JSONParseExtraMembers : const uint8_t* (uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+runtime JSONAddExtraMember : void (uint32_t shape, JSCell* name, EncodedJSValue value, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+
+runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
+runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf
+runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf
+runtime JSONAppendDate : uint8_t* (uint8_t* cursor, double timeValue) ; writes(StringBuilderContents) ; leaf
+runtime JSONAppendValue : UGPRPair (JSCell* builder, uint8_t* cursor, EncodedJSValue value, uint32_t position) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects

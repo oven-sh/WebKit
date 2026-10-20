@@ -1,0 +1,68 @@
+# A static field is a variable: a read and a store by name on the class object go to the variable's node, a static method is a property, and a static field with a computed key is one more source of a name the class does not declare and of a method it may replace
+# RUN: flow-walk f0
+# RUN(NODES): flow-solve nodes
+# RUN(ENTRY): flow-solve nodes
+# CHECK: f0@i{{*}} v9 Get {"count"}
+# CHECK-NEXT: f1: Value own Proven f1 "count"
+# CHECK: f0@i{{*}} v12 Set {"count"}
+# CHECK-NEXT: f1: Value own Proven f1 "count"
+# CHECK: f0@i{{*}} v15 Get {"reset"}
+# CHECK-NEXT: f1: Value own Proven f1 "reset"
+# CHECK-NEXT: f1: Value own Predicted f1 *
+# CHECK: f0@i{{*}} v17 Get {"other"}
+# CHECK-NEXT: f1: Value own Predicted f1 *
+# CHECK: f1: Absent
+# NODES: Variable(g0) = {{*}}1{{*}}"two"}
+# NODES: Variable(g1) = {{*}}"computed"
+# NODES: Variable(g2) = {{*}}1{{*}}"two"
+# NODES: Variable(g3) = {{*}}1{{*}}"two"}
+# NODES: Variable(g4) = {{*}}f2}
+# NODES: Variable(g5) = {{*}}"computed"
+# NODES: Property(f1, "reset") = {f2}
+# ENTRY-NOT: Variable(g3) = {{*}}"computed"
+# ENTRY-NOT: Variable(g5) = {{*}}|1|
+# ENTRY-NOT: Property(f1, "count")
+# ENTRY-NOT: Property(f1, "other")
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}, {computedKey=0 variable=g1}] computedKeyCount=1
+variable g0 name="count" module=m0 declared={type=anything} owner=L0
+variable g1 module=m0 declared={type=anything} owner=L0
+variable g2 name="readByName" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="readOfVariable" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="readOfMethod" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="readOfOther" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key="reset"
+    v4 = Integer integer=1
+    PutModuleVariable v4 variable=g0
+    v6 = String string="computed"
+    PutModuleVariable v6 variable=g1
+    v8 = FinishClass v1 layout=L0
+    v9 = PropGet v8 key="count"
+    PutModuleVariable v9 variable=g2
+    v11 = String string="two"
+    PropSet v8, v11 key="count" mode=Strict
+    v13 = GetModuleVariable variable=g0
+    PutModuleVariable v13 variable=g3
+    v15 = PropGet v8 key="reset"
+    PutModuleVariable v15 variable=g4
+    v17 = PropGet v8 key="other"
+    PutModuleVariable v17 variable=g5
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="reset" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

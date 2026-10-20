@@ -1,0 +1,72 @@
+# The root of a constructor function is its this parameter, and Parent.call(this) is composed through the link that Function.prototype.call makes
+# RUN(CHILD): flow-construction events constructors layouts
+# RUN(CHILDFIELDS): flow-solve nodes
+# RUN(ORPHAN): flow-construction events constructors layouts
+# RUN(ORPHANFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Child" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Orphan" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+variable g0 name="Parent" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = Construct v0
+    v3 = NewClosure function=f2
+    v4 = Construct v3
+    v5 = NewClosure function=f3
+    v6 = Construct v5
+    Return
+}
+function f1 name="Parent" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x"
+    Return
+}
+function f2 name="Child" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="call"
+    v3 = Call v2, v1, v0
+    v4 = Integer integer=2
+    PropSet v0, v4 key="y"
+    Return
+}
+# CHILD: events f2 root v0 EntryParameter Tracked
+# CHILD-NEXT: b0:2 Call exact v3 operand 2
+# CHILD-NEXT: b0:4 Store exact "y" v5
+# CHILD-NEXT: b0:5 Exit
+# CHILD: construction f2@i{{*}} root v0: DoesNotLeak before-leak "x" "y" at-exit "x" "y" read-early initial-order "x" "y" stores OnlyInitialOrder
+# CHILD-NOT: construction f2@i{{*}}: Unknown
+# CHILD: layout L0: DoesNotLeak OnlyAtConstruction set [0] orders [0]
+# CHILD: layout L1: DoesNotLeak OnlyAtConstruction set [0, 1] orders [0, 1]
+# CHILDFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# CHILDFIELDS: DeclaredPart(L1#{{*}}, 1) = {2}
+function f3 name="Orphan" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Base" [isFreeName]
+    v3 = PropGet v2 key="call"
+    v4 = Call v3, v2, v0
+    v5 = Integer integer=2
+    PropSet v0, v5 key="y"
+    Return
+}
+# ORPHAN: events f3 root v0 EntryParameter Tracked
+# ORPHAN-NEXT: b0:3 Call exact v4 operand 2
+# ORPHAN-NEXT: b0:5 Store exact "y" v6
+# ORPHAN-NEXT: b0:6 Exit
+# ORPHAN: construction f3@i{{*}} root v0: Unknown at f3:v4 before-leak at-exit "y" read-early
+# ORPHAN-NOT: construction f3@i{{*}}: DoesNotLeak
+# ORPHAN: layout L2: Unknown at f3:v4 Unknown set [] orders
+# ORPHANFIELDS: DeclaredPart(L2#{{*}}, 1) = {undefined|2}
+function f4 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+runtimefunction id=12 function=f4

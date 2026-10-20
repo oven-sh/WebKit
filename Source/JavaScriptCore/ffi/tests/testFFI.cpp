@@ -42,6 +42,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 
 #include "ArrayBuffer.h"
+#include "CCallHelpers.h"
 #include "CallData.h"
 #include "CallFrameInlines.h"
 #include "CodeBlock.h"
@@ -53,6 +54,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FFIConversions.h"
 #include "FFIInvokeThunk.h"
 #include "FFISignature.h"
+#include "FFIStubEmitters.h"
+#include "FFIStubs.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
 #include "FunctionCodeBlock.h"
@@ -72,12 +75,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSLock.h"
 #include "JSString.h"
 #include "JSTypedArrays.h"
+#include "LinkBuffer.h"
 #include "MacroAssemblerCodeRef.h"
 #include "ObjectConstructor.h"
 #include "Protect.h"
 #include "PureNaN.h"
 #include "SourceCode.h"
 #include "Symbol.h"
+#include "ThunkGenerator.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayInlines.h"
 #include "VM.h"
@@ -86,6 +91,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <iterator>
 #include <limits>
 #include <wtf/MathExtras.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 #include <wtf/text/CString.h>
@@ -1515,6 +1521,18 @@ static void dumpSlots(std::span<const uint64_t> slots)
     dataLogLn();
 }
 
+static FFI::InvokeStubFunction invokeStub()
+{
+    static NeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
+    if (!code.get()) {
+        CCallHelpers jit;
+        FFI::emitInvokeStub(jit);
+        LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
+        code.get() = FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "FFI invoke stub"_s, "FFI invoke stub");
+    }
+    return reinterpret_cast<FFI::InvokeStubFunction>(code->code().taggedPtr());
+}
+
 static MacroAssemblerCodeRef<JITThunkPtrTag> invokeThunkIfJITIsEnabled(FFI::Signature& signature)
 {
     if (!Options::useJIT())
@@ -1529,7 +1547,7 @@ static void invoke(FFI::Signature& signature, const MacroAssemblerCodeRef<JITThu
     if (usesThunk && code)
         reinterpret_cast<FFI::InvokeThunkFunction>(code.code().taggedPtr())(target, slots);
     else
-        FFI::invokeWithoutJIT(signature, target, slots);
+        FFI::invokeThroughStub(invokeStub(), signature, target, slots);
 }
 
 template<typename R, typename... Arguments>
@@ -1579,7 +1597,7 @@ static void differentialCase(ASCIILiteral name, R (*function)(Arguments...), Vec
 
         switch (Options::useJIT() ? iteration % 3 : 0) {
         case 0:
-            FFI::invokeWithoutJIT(*signature, reinterpret_cast<void*>(function), slots);
+            FFI::invokeThroughStub(invokeStub(), *signature, reinterpret_cast<void*>(function), slots);
             break;
         case 1:
             cachedThunk(reinterpret_cast<void*>(function), slots);
@@ -1863,7 +1881,7 @@ static void canaryInvokeBody()
     if (s_canaryInvokeState.thunk)
         s_canaryInvokeState.thunk(s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
     else
-        FFI::invokeWithoutJIT(*s_canaryInvokeState.signature, s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
+        FFI::invokeThroughStub(invokeStub(), *s_canaryInvokeState.signature, s_canaryInvokeState.target, &s_canaryInvokeState.slots[0]);
 }
 
 static unsigned s_hostCanaryHits;
@@ -1967,10 +1985,10 @@ static void testCanaries()
         FFI_CHECK(!!zeroSignature);
         if (nineSignature && zeroSignature) {
             uint64_t nineSlotsWithoutJIT[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 0 };
-            FFI::invokeWithoutJIT(*nineSignature, reinterpret_cast<void*>(ffi_align_probe_9), nineSlotsWithoutJIT);
+            FFI::invokeThroughStub(invokeStub(), *nineSignature, reinterpret_cast<void*>(ffi_align_probe_9), nineSlotsWithoutJIT);
             FFI_CHECK_EQ(std::bit_cast<double>(nineSlotsWithoutJIT[9]), 1.0);
             uint64_t zeroSlotsWithoutJIT[1] = { 0 };
-            FFI::invokeWithoutJIT(*zeroSignature, reinterpret_cast<void*>(ffi_align_probe_0), zeroSlotsWithoutJIT);
+            FFI::invokeThroughStub(invokeStub(), *zeroSignature, reinterpret_cast<void*>(ffi_align_probe_0), zeroSlotsWithoutJIT);
             FFI_CHECK_EQ(std::bit_cast<double>(zeroSlotsWithoutJIT[0]), 1.0);
         }
         if (nineSignature && zeroSignature && Options::useJIT()) {
@@ -2470,8 +2488,11 @@ static void testFixtureTable()
 
 static int runAll()
 {
-    JSC::installCompilers();
     JSC::initialize();
+    if (!Options::useJIT()) {
+        dataLogLn("testFFI: JIT is disabled; skipping.");
+        return 0;
+    }
 
     s_vm = VM::create();
     {

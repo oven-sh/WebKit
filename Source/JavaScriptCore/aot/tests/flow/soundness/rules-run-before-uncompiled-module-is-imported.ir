@@ -1,0 +1,69 @@
+# Rules that ask whether unseen code can run, each run before an import of a module that the image does not hold as compiled code is reached: a read and a store through the unknown object,
+# calls of built-in members that change their receiver through it, with escaped inheritors, a call and a construction of an escaped callee and a built-in beside the unknown one, the global object
+# handed to native code, whose own statements write members. What each of them left out while no such code could run is there at the end, in every order
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-solve objects
+# CHECK: Math mutations=[ReachNativeCode, ReachUnknownJavaScript
+
+layout L0 name="holder"
+layout L1 name="stored"
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/late.js" displayPath="late.js" body=f2 requests=[{target=m2}]
+module m2 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m1
+entry module=m0
+function f0 name="main" module=m0 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"hostFunctionWithoutEntry" [isFreeName]
+    v2 = Builtin builtin=Math
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="sink" [isFreeName]
+    v5 = Call v4
+    v6 = PropGet v5 key="size"
+    v7 = NewArray contents=anything
+    v8 = Call v4, -, v7
+    v9 = NewObject layout=L1
+    v10 = PropGet v5 key="push"
+    v11 = Call v10, v5, v9 calleeKey="push"
+    v12 = PropGet v0 key="Map" [isFreeName]
+    v13 = Construct v12, v12
+    v14 = Call v4, -, v13
+    v15 = PropGet v5 key="set"
+    v16 = Call v15, v5, v9, v9 calleeKey="set"
+    v17 = NewClosure function=f4
+    v18 = Call v4, -, v17
+    v19 = NewObject layout=L0
+    PropSet v19, v5 key="callee" mode=Strict
+    PropSet v19, v17 key="callee" mode=Strict
+    PropSet v19, v15 key="callee" mode=Strict
+    v23 = PropGet v19 key="callee"
+    v24 = Call v23, -, v9
+    v25 = Construct v23, v23, v9
+    PropSet v5, v9 key="title" mode=Strict
+    v27 = Call v4, -, v0
+    v28 = PropGet v0 key="process" [isFreeName]
+    v29 = PropGet v28 key="title"
+    v30 = NewClosure function=f1
+    v31 = NewClosure function=f3
+    v32 = Call v30, -, v31
+    v33 = Call v30, -, v32
+    v34 = Call v33
+    Return v34
+}
+function f1 name="same" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="late" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="load" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+function f4 name="escaped" module=m0 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

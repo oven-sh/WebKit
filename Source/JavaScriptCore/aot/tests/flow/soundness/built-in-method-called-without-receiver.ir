@@ -1,0 +1,21 @@
+# A call without a receiver passes undefined as this: Object.prototype.toString answers a string, and valueOf, which takes no undefined, only throws
+# RUN: flow-solve nodes
+# CHECK: , f0, v1) = {string}
+# CHECK-NOT: , f0, v3) = {
+# CHECK: , f0, v4) = {opaque(Error)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototypeToString
+    v1 = Call v0
+    v2 = Builtin builtin=ObjectPrototypeValueOf
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Call v2
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v1
+}

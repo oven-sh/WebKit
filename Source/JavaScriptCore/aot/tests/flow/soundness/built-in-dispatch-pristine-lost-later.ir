@@ -1,0 +1,45 @@
+# Promise.resolve answers a pristine promise with that promise. A promise that gets an own constructor three calls later also takes the overload for a promise that is not pristine
+# RUN: flow-links builtins
+# RUN(NODES): flow-solve nodes
+# CHECK: builtin [[main]] v4 PromiseResolve/0 Call
+# CHECK-NEXT: builtin [[main]] v4 PromiseResolve/1 Call
+# CHECK: builtin [[main]] v6 PromiseResolve/0 Call
+# CHECK-NOT: v6 PromiseResolve/1
+# NODES: , f0, v3) = {Promise@f0:v3{{*}}}
+# NODES-NEXT: , f0, v4) = {unknown|Promise@f0:v3{{*}}}
+# NODES-NEXT: , f0, v5) = {Promise@f0:v5{{*}}}
+# NODES-NEXT: , f0, v6) = {Promise@f0:v5{{*}}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=PromiseResolve
+    v1 = Builtin builtin=Promise
+    v2 = Integer integer=1
+    v3 = Call v0, v1, v2
+    v4 = Call v0, v1, v3
+    v5 = Call v0, v1, v2
+    v6 = Call v0, v1, v5
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    v9 = Call v8
+    v10 = Call v9, -, v3
+    Return
+}
+function f1 name="stage1" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="stage2" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    Return v0
+}
+function f3 name="change" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="constructor" mode=Strict
+    Return
+}

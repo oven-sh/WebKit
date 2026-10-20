@@ -1,0 +1,44 @@
+# function Animal() {}  Animal.prototype.walk = function () { .. }, with Animal out of the compiler's sight.
+# The member that seen code assigns once is listed like a definition, so the read on a predicted instance is the closure of that function under the tests of the shape, of the prototype of the object and of the member.
+# A name under which seen code stores two functions is listed as no definition, and the read goes by name
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Animal" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce members=[{key="walk" function=f1}] namedMembers=[{key="walk" function=f1}, {key="walk"}, {key="sound" function=f1}, {key="sound" function=f2}, {key="sound"}]}
+function f0 name="Animal" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
+    Return
+}
+function f1 name="walk" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="sound" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="assigned-once" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = PropGet v0 key="walk"
+    v3 = Call v2, v0, v1 calleeKey="walk"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="assigned-once"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: f1 = NewClosure function=f1
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="walk"
+# CHECK: = IsMemberUnchanged layout=L0 key="walk"
+# CHECK: = HasLayoutPrototype v0
+function f4 name="assigned-twice" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = PropGet v0 key="sound"
+    v3 = Call v2, v0, v1 calleeKey="sound"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="assigned-twice"
+# CHECK-NEXT: b0(v0: object ~ L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="sound"
+# CHECK-NEXT: = Call {{*}}, v0, v1 calleeKey="sound"

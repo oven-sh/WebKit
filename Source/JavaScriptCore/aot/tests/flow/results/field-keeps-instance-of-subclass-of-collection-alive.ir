@@ -1,0 +1,33 @@
+# What an instance of a class of the program that extends Map holds as a map is in none of the nodes of the instance. So a field that holds such an instance counts as keeping alive
+# an object that somebody observes, here the target of a weak reference that is a value of the map
+# RUN: flow
+# CHECK: field L1.0 "keep" {{*}}mayKeepObservedObjectAlive=true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Bag" constructor=f1 flags=[HasHeritage]
+layout L1 name="HoldsBag" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Target" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4
+    v6 = Integer integer=1
+    v7 = NewObject -, v6 layout=L2 fields=[0]
+    v8 = PropGet v5 key="set"
+    v9 = Call v8, v5, v6, v7 calleeKey="set"
+    v10 = Builtin builtin=WeakRef
+    v11 = Construct v10, -, v7
+    v12 = NewObject -, v5 layout=L1 fields=[0]
+    Return
+}
+function f1 name="Bag" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}

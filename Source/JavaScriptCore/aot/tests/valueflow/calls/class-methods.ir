@@ -1,0 +1,62 @@
+# class A { m() {} static s() {} }  class B { m() {} }  new A().m(); A.s()
+# A method is found on the prototype object of the class of the instance, a static method on the class object. The method of another class under the same name is not found.
+# RUN: valueflow-solve calls
+# CHECK: f0 v15 -> f2
+# CHECK: f0 v17 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f4
+# UNREACHED: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" constructor=f4
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 side=Static index=1 key="s"
+    v6 = FinishClass v1 layout=L0
+    v7 = NewClosure function=f4
+    v8 = NewClass v7 layout=L1
+    v9 = NewClosure function=f5
+    DefineMethod v8, v9 layout=L1 key="m"
+    v11 = FinishClass v8 layout=L1
+    v12 = Undefined
+    v13 = Construct v6
+    v14 = PropGet v13 key="m"
+    v15 = Call v14, v13
+    v16 = PropGet v6 key="s"
+    v17 = Call v16, v6
+    Return
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="s" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f5 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

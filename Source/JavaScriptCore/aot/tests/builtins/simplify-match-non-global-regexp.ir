@@ -1,0 +1,56 @@
+# s.match(r) is r.exec(s) where the type of r lists the literals it may be and none of them is global
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="literalWithoutFlags" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a(b)"
+    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="literalWithoutFlags"
+# CHECK-NOT: StringPrototypeMatch
+# CHECK: v3:{{*}}= CallBuiltin v2, v0 overload=RegExpPrototypeExec/0
+# CHECK-NEXT: Return v3
+
+function f1 name="stickyLiteral" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a" regExpFlags=[Sticky]
+    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
+    Return v3
+}
+# CHECK-LABEL: function f1 name="stickyLiteral"
+# CHECK-NOT: StringPrototypeMatch
+# CHECK: v3:{{*}}= CallBuiltin v2, v0 overload=RegExpPrototypeExec/0
+
+function f2 name="globalLiteral" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewRegExp pattern="a" regExpFlags=[Global]
+    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="globalLiteral"
+# CHECK-NOT: RegExpPrototypeExec
+# CHECK: v3:{{*}}= CallBuiltin v0, v2 overload=StringPrototypeMatch/0
+
+function f3 name="regExpOfUnknownOrigin" parameters=[{type=string}, {type=RegExp<pristine[Storage, Names, AsCreated]>}] results=[{type=anything}] {
+  b0(v0: string, v1: RegExp<pristine[Storage, Names, AsCreated]>):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeMatch/0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="regExpOfUnknownOrigin"
+# CHECK-NOT: RegExpPrototypeExec
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeMatch/0
+
+function f4 name="literalThatMayHaveBeenCompiledAgain" parameters=[{type=string}, {type=RegExp<"a"[], pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: string, v1: RegExp<"a"[], pristine[Storage, Names]>):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeMatch/0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="literalThatMayHaveBeenCompiledAgain"
+# CHECK-NOT: RegExpPrototypeExec
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeMatch/0

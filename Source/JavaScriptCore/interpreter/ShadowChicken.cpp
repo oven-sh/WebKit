@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ShadowChicken.h"
 
-#include "AOTFunction.h"
 #include "CodeBlock.h"
 #include "ShadowChickenInlines.h"
 #include "VMTrapsInlines.h"
@@ -114,12 +113,6 @@ void ShadowChicken::log(VM& vm, CallFrame* callFrame, const Packet& packet)
 
 void ShadowChicken::update(VM& vm, CallFrame* callFrame)
 {
-#if ENABLE(AOT)
-    if (AOT::hasCode()) {
-        m_logCursor = m_log;
-        return;
-    }
-#endif
     if (ShadowChickenInternal::verbose) {
         dataLog("Running update on: ", *this, "\n");
         WTFReportBacktrace();
@@ -188,7 +181,7 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
             callFrame, vm, [&] (StackVisitor& visitor) -> IterationStatus {
                 if (visitor->isInlinedDFGFrame())
                     return IterationStatus::Continue;
-                if (visitor->isNativeCalleeFrame()) {
+                if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
                     // FIXME: Make shadow chicken work with Wasm.
                     // https://bugs.webkit.org/show_bug.cgi?id=165441
                     return IterationStatus::Continue;
@@ -313,7 +306,7 @@ void ShadowChicken::update(VM& vm, CallFrame* callFrame)
                 return IterationStatus::Continue;
             }
 
-            if (visitor->isNativeCalleeFrame()) {
+            if (visitor->isNativeCalleeFrame() || visitor->isCompiledFrame()) {
                 // FIXME: Make shadow chicken work with Wasm.
                 return IterationStatus::Continue;
             }

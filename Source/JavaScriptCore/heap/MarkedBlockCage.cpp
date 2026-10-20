@@ -6,408 +6,224 @@
 #include "config.h"
 #include "MarkedBlockCage.h"
 
+#include "AOTCellFormat.h"
 #include "AddressSpaceBudget.h"
 #include "MarkedBlock.h"
 #include "Options.h"
-#include <wtf/BitVector.h>
+#include "ReservedRangeHeap.h"
+#include <mutex>
+#include <optional>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/NotFound.h>
 #include <wtf/OSAllocator.h>
-
-#if OS(LINUX)
-#include <errno.h>
-#include <sys/mman.h>
-#elif OS(DARWIN)
-#include <mach/mach.h>
-#include <mach/mach_vm.h>
-#include <sys/mman.h>
-#endif
+#include <wtf/PageBlock.h>
+#include <wtf/Vector.h>
 
 namespace JSC {
 
-#if OS(LINUX)
-static constexpr bool isReservedWithoutAccess = true;
-#elif !OS(DARWIN)
-static constexpr bool isReservedWithoutAccess = false;
-#endif
-
-static std::atomic<size_t> s_totalCageSize { 0 };
-
-class MarkedBlockCageManager {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MarkedBlockCageManager);
-    WTF_MAKE_NONCOPYABLE(MarkedBlockCageManager);
-public:
-    static MarkedBlockCageManager* tryCreate(size_t size)
-    {
-        if (s_totalCageSize.fetch_add(size, std::memory_order_relaxed) + size <= addressSpaceToReserve() / addressSpaceDivisorForMarkedBlockCages) {
-            if (uintptr_t start = tryReserve(size))
-                return new MarkedBlockCageManager(start, size);
-        }
-        s_totalCageSize.fetch_sub(size, std::memory_order_relaxed);
-        return nullptr;
-    }
-
-    MarkedBlockCageManager(uintptr_t start, size_t size)
-    {
-        RELEASE_ASSERT(!(start & (MarkedBlockCage::maxSize - 1)), start, size);
-
-        m_start = start;
-        m_size = size;
-        m_blockCount = size / MarkedBlock::blockSize;
-        if (m_blockCount > reservedBlockCount) {
-            uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
-            m_firstBlockIndex = reservedBlockCount + random % (m_blockCount - reservedBlockCount);
-            m_firstWrappedBlock = m_blockCount - m_firstBlockIndex + 1;
-            m_blockCount -= reservedBlockCount - 1;
-        } else
-            m_blockCount = 1;
-    }
-
-    ~MarkedBlockCageManager()
-    {
-#if OS(DARWIN)
-        RELEASE_ASSERT(mach_vm_deallocate(mach_task_self(), m_start, m_size) == KERN_SUCCESS);
-#else
-        OSAllocator::releaseDecommitted(std::bit_cast<void*>(m_start), m_size, 0);
-#endif
-        s_totalCageSize.fetch_sub(m_size, std::memory_order_relaxed);
-    }
-
-    uintptr_t start() const { return m_start; }
-    size_t size() const { return m_size; }
-    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }
-
-    void* tryAllocateBlock()
-    {
-        Locker locker { m_lock };
-        size_t index = findBlock(m_committedFreeBlocks, m_firstCommittedFreeBlock);
-        if (index == notFound)
-            index = recommitFreeBlocks();
-        if (index != notFound) {
-            m_committedFreeBlocks.quickClear(index);
-            m_firstCommittedFreeBlock = index + 1;
-            return blockAt(index);
-        }
-        if (m_firstUnusedBlock == m_mappedBlockCount && !mapMoreBlocks())
-            return nullptr;
-        return blockAt(m_firstUnusedBlock++);
-    }
-
-    void freeBlock(void* block)
-    {
-        uintptr_t offset = std::bit_cast<uintptr_t>(block) - m_start;
-        size_t blockIndex = offset / MarkedBlock::blockSize;
-        size_t index = indexOf(blockIndex);
-
-        Locker locker { m_lock };
-        RELEASE_ASSERT(blockIndex && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
-        RELEASE_ASSERT(!m_committedFreeBlocks.get(index) && !m_decommittedFreeBlocks.get(index), offset);
-        addCommittedFreeBlocks(index, index + 1);
-    }
-
-    MarkedBlockCage::Indices usedIndices()
-    {
-        constexpr uint64_t indicesPerBlock = MarkedBlock::blockSize >> MarkedBlockCage::shift;
-        Locker locker { m_lock };
-        bool hasWrapped = m_firstUnusedBlock > m_firstWrappedBlock;
-        uint64_t first = (hasWrapped ? reservedBlockCount : m_firstBlockIndex) * indicesPerBlock;
-        uint64_t end = hasWrapped ? m_size >> MarkedBlockCage::shift : first + (m_firstUnusedBlock - 1) * indicesPerBlock;
-        return { m_start, static_cast<uint32_t>(first), static_cast<uint32_t>(std::min<uint64_t>(end - first, std::numeric_limits<uint32_t>::max())) };
-    }
-
-    void decommitFreeBlocks()
-    {
-        BitVector blocks;
-        size_t first;
-        {
-            Locker locker { m_lock };
-            first = findBlock(m_committedFreeBlocks, m_firstCommittedFreeBlock);
-            if (first == notFound)
-                return;
-            blocks = std::exchange(m_committedFreeBlocks, { });
-        }
-
-        for (size_t begin = first; begin != notFound;) {
-            size_t end = blocks.findBit(begin, false);
-            forEachRun(begin, end, [](void* address, size_t bytes) {
-                OSAllocator::decommit(address, bytes);
-            });
-            begin = findBlock(blocks, end);
-        }
-
-        Locker locker { m_lock };
-        m_decommittedFreeBlocks.merge(blocks);
-        m_firstDecommittedFreeBlock = std::min(m_firstDecommittedFreeBlock, first);
-    }
-
-private:
-    static constexpr size_t reservedBlockCount = (static_cast<size_t>(MarkedBlockCage::minIndex) << MarkedBlockCage::shift) / MarkedBlock::blockSize;
-    static constexpr size_t blocksPerCommit = MB / MarkedBlock::blockSize;
-    static constexpr size_t minBlocksPerMapping = 4 * MB / MarkedBlock::blockSize;
-    static constexpr size_t maxBlocksPerMapping = 32 * MB / MarkedBlock::blockSize;
-#if OS(LINUX)
-    static constexpr uintptr_t firstWindow = 2;
-    static constexpr uint32_t numberOfWindows = 3966;
-#endif
-
-    static uintptr_t tryReserve(size_t size)
-    {
-#if OS(DARWIN)
-        mach_vm_address_t address = 0;
-        if (mach_vm_map(mach_task_self(), &address, size, MarkedBlockCage::maxSize - 1, VM_FLAGS_ANYWHERE | OSAllocator::FastMallocPages, MEMORY_OBJECT_NULL, 0, false, VM_PROT_NONE, VM_PROT_NONE, VM_INHERIT_NONE) != KERN_SUCCESS)
-            return 0;
-        return address;
-#else
-        void* address = nullptr;
-#if OS(LINUX)
-        for (unsigned attempt = 0; attempt < 16 && !address; ++attempt) {
-            void* requestedAddress = std::bit_cast<void*>((firstWindow + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % numberOfWindows)) * MarkedBlockCage::maxSize);
-            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, requestedAddress, false);
-            if (!reserved)
-                return 0;
-            if (reserved == requestedAddress)
-                address = reserved;
-            else
-                OSAllocator::releaseDecommitted(reserved, size, 0);
-        }
-#endif
-        if (!address)
-            address = OSAllocator::tryReserveUncommittedAligned(size, MarkedBlockCage::maxSize, OSAllocator::FastMallocPages, nullptr, !isReservedWithoutAccess);
-#if OS(UNIX)
-        if (address)
-            RELEASE_ASSERT(!mprotect(address, isReservedWithoutAccess ? size : MarkedBlock::blockSize, PROT_NONE));
-#endif
-#if OS(LINUX) && defined(MADV_DOFORK)
-        if (address) {
-            while (madvise(address, size, MADV_DOFORK) == -1 && errno == EAGAIN) { }
-        }
-#endif
-        return reinterpret_cast<uintptr_t>(address);
-#endif
-    }
-
-    static bool tryMap(void* address, size_t size)
-    {
-#if OS(DARWIN)
-        return mmap(address, size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, OSAllocator::FastMallocPages, 0) != MAP_FAILED;
-#else
-#if OS(LINUX)
-        if (mprotect(address, size, PROT_READ | PROT_WRITE))
-            return false;
-#endif
-        OSAllocator::commit(address, size, true, false);
-        return true;
-#endif
-    }
-
-    void* blockAt(size_t index) const
-    {
-        size_t blockIndex = index < m_firstWrappedBlock ? m_firstBlockIndex + index - 1 : index - m_firstWrappedBlock + reservedBlockCount;
-        return std::bit_cast<void*>(m_start + blockIndex * MarkedBlock::blockSize);
-    }
-
-    size_t indexOf(size_t blockIndex) const
-    {
-        return blockIndex >= m_firstBlockIndex ? blockIndex - m_firstBlockIndex + 1 : blockIndex + m_firstWrappedBlock - reservedBlockCount;
-    }
-
-    size_t endOfRunFrom(size_t begin, size_t end) const
-    {
-        if (begin < m_firstWrappedBlock)
-            end = std::min(end, m_firstWrappedBlock);
-        return end;
-    }
-
-    template<typename Functor>
-    void forEachRun(size_t begin, size_t end, const Functor& functor) const
-    {
-        while (begin < end) {
-            size_t endOfRun = endOfRunFrom(begin, end);
-            functor(blockAt(begin), (endOfRun - begin) * MarkedBlock::blockSize);
-            begin = endOfRun;
-        }
-    }
-
-    static size_t findBlock(const BitVector& blocks, size_t start)
-    {
-        if (start >= blocks.size())
-            return notFound;
-        size_t index = blocks.findBit(start, true);
-        return index < blocks.size() ? index : notFound;
-    }
-
-    void addCommittedFreeBlocks(size_t begin, size_t end)
-    {
-        if (m_committedFreeBlocks.size() < end)
-            m_committedFreeBlocks.ensureSize(std::min(2 * m_firstUnusedBlock, m_blockCount));
-        for (size_t index = begin; index < end; ++index)
-            m_committedFreeBlocks.quickSet(index);
-        m_firstCommittedFreeBlock = std::min(m_firstCommittedFreeBlock, begin);
-    }
-
-    size_t recommitFreeBlocks()
-    {
-        size_t begin = findBlock(m_decommittedFreeBlocks, m_firstDecommittedFreeBlock);
-        if (begin == notFound)
-            return notFound;
-        size_t end = std::min(m_decommittedFreeBlocks.findBit(begin, false), begin + blocksPerCommit);
-        for (size_t index = begin; index < end; ++index)
-            m_decommittedFreeBlocks.quickClear(index);
-        m_firstDecommittedFreeBlock = end;
-        forEachRun(begin, end, [](void* address, size_t bytes) {
-            OSAllocator::commit(address, bytes, true, false);
-        });
-        addCommittedFreeBlocks(begin, end);
-        return begin;
-    }
-
-    bool mapMoreBlocks()
-    {
-        size_t count = std::min(std::clamp(m_mappedBlockCount / 4, minBlocksPerMapping, maxBlocksPerMapping), m_blockCount - m_mappedBlockCount);
-        count = endOfRunFrom(m_mappedBlockCount, m_mappedBlockCount + count) - m_mappedBlockCount;
-        if (!count || !tryMap(blockAt(m_mappedBlockCount), count * MarkedBlock::blockSize))
-            return false;
-        m_mappedBlockCount += count;
-        return true;
-    }
-
-    Lock m_lock;
-    uintptr_t m_start { 0 };
-    size_t m_size { 0 };
-    size_t m_blockCount { 0 };
-    size_t m_firstUnusedBlock { 1 };
-    size_t m_mappedBlockCount { 1 };
-    size_t m_firstBlockIndex { reservedBlockCount };
-    size_t m_firstWrappedBlock { std::numeric_limits<size_t>::max() };
-    BitVector m_committedFreeBlocks;
-    BitVector m_decommittedFreeBlocks;
-    size_t m_firstCommittedFreeBlock { 0 };
-    size_t m_firstDecommittedFreeBlock { 0 };
-};
-
 static_assert(1 << MarkedBlockCage::shift <= MarkedBlock::atomSize);
+static_assert(hasOneBitSet(MarkedBlockCage::maxSize));
+static_assert(!((static_cast<uint64_t>(MarkedBlockCage::minIndex) << MarkedBlockCage::shift) % MarkedBlock::blockSize));
 
-constinit thread_local MarkedBlockCage* MarkedBlockCage::s_current = nullptr;
-constinit thread_local uintptr_t MarkedBlockCage::s_currentBase = 0;
-#if OS(DARWIN)
-std::atomic<uintptr_t> MarkedBlockCage::s_singleCageBase { 0 };
+static constexpr size_t unusedPrefixSize = static_cast<size_t>(MarkedBlockCage::minIndex) << MarkedBlockCage::shift;
+static constexpr size_t smallestUsableSize = 4 * unusedPrefixSize;
+static constexpr size_t randomPrefixDivisor = 32;
+static constexpr size_t randomPrefixGranule = 64 * KB;
+static constexpr unsigned maxHalvingsOfFirstRange = 7;
 
-NEVER_INLINE uintptr_t MarkedBlockCage::currentBaseSlow()
+static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
+static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
+static_assert(unusedPrefixSize + smallestUsableSize / randomPrefixDivisor < smallestUsableSize);
+
+std::atomic<bool> MarkedBlockCage::s_isRequired { false };
+std::atomic<bool> MarkedBlockCage::s_hasAllocationsOutside { false };
+std::atomic<MarkedBlockCage::ExhaustionHandler> MarkedBlockCage::s_exhaustionHandler { nullptr };
+static Lock s_poolLock;
+static LazyNeverDestroyed<Vector<ReservedRangeHeap*>> s_freeRanges WTF_GUARDED_BY_LOCK(s_poolLock);
+static ReservedRangeHeap* s_firstRange WTF_GUARDED_BY_LOCK(s_poolLock);
+static size_t s_totalReservedSize WTF_GUARDED_BY_LOCK(s_poolLock);
+static std::once_flag s_initializeOnce;
+static std::optional<MarkedBlockCage::Error> s_initializationError;
+
+#if ENABLE(AOT)
+static void makeEmptyExtensionReadable(uintptr_t start)
 {
-    return s_currentBase;
+    static constexpr size_t largestPageSize = 64 * KB;
+    static_assert(!(AOT::offsetOfEmptyExtensionInCage % largestPageSize) && AOT::offsetOfEmptyExtensionInCage + largestPageSize <= unusedPrefixSize);
+    RELEASE_ASSERT(pageSize() <= largestPageSize);
+    void* page = std::bit_cast<void*>(start + AOT::offsetOfEmptyExtensionInCage);
+#if OS(UNIX) && !PLATFORM(PLAYSTATION)
+    OSAllocator::protect(page, pageSize(), true, false);
+#endif
+    OSAllocator::commit(page, pageSize(), false, false);
 }
 #endif
-std::atomic<bool> MarkedBlockCage::s_isRequired { false };
-std::atomic<bool> MarkedBlockCage::s_hasBlocksOutside { false };
-std::atomic<MarkedBlockCage::ExhaustionHandler> MarkedBlockCage::s_exhaustionHandler { nullptr };
-static MarkedBlockCageManager* s_firstManager;
-static std::atomic<bool> s_firstManagerIsClaimed { false };
 
-void MarkedBlockCage::initialize()
+static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize) WTF_REQUIRES_LOCK(s_poolLock)
 {
-    if (!Options::useAOT() || !Options::markedBlockCageSizeInMB())
-        return;
-    size_t size = static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB;
-    if (!hasOneBitSet(size) || size > maxSize) {
-        dataLogLn("markedBlockCageSizeInMB is not 0 or a power of two of at most ", maxSize / MB, ": ", Options::markedBlockCageSizeInMB());
-        exit(EXIT_FAILURE);
-    }
-    for (unsigned i = 0; i < 8 && !s_firstManager; ++i)
-        s_firstManager = MarkedBlockCageManager::tryCreate(size >> i);
-    RELEASE_ASSERT(s_firstManager, size);
-    g_jscConfig.markedBlockCageSize = s_firstManager->size();
-#if OS(DARWIN)
-    s_singleCageBase.store(s_firstManager->start(), std::memory_order_relaxed);
+    RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
+
+    size_t budget = addressSpaceToReserve() / addressSpaceDivisorForMarkedBlockCages;
+    size_t remaining = budget > s_totalReservedSize ? budget - s_totalReservedSize : 0;
+    if (minSize > remaining)
+        return nullptr;
+
+    uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
+    size_t prefixSize = unusedPrefixSize + random % (minSize / randomPrefixDivisor / randomPrefixGranule) * randomPrefixGranule;
+
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Cell Cage"_s,
+        .size = size,
+        .minSize = minSize,
+        .alignment = MarkedBlockCage::maxSize,
+        .unusedPrefixSize = prefixSize,
+        .addressSpaceBudget = remaining,
+        .usage = OSAllocator::FastMallocPages,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    if (!range)
+        return nullptr;
+
+    RELEASE_ASSERT(!(range->start() & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
+    s_totalReservedSize += range->size();
+#if ENABLE(AOT)
+    makeEmptyExtensionReadable(range->start());
 #endif
+    return range;
+}
+
+std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
+{
+    std::call_once(s_initializeOnce, [] {
+        RELEASE_ASSERT(!g_jscConfig.initializeHasBeenCalled);
+        if (!Options::useAOT() || !Options::markedBlockCageSizeInMB())
+            return;
+        size_t size = static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB;
+        if (!hasOneBitSet(size) || size > maxSize) {
+            s_initializationError = Error::InvalidSize;
+            return;
+        }
+
+        Locker locker { s_poolLock };
+        s_freeRanges.construct();
+        if (size < smallestUsableSize) {
+            g_jscConfig.markedBlockCageSize = size;
+            return;
+        }
+        s_firstRange = tryCreateRange(size, std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize));
+        if (!s_firstRange) {
+            s_initializationError = Error::ReservationFailed;
+            return;
+        }
+        s_freeRanges->append(s_firstRange);
+        g_jscConfig.markedBlockCageSize = s_firstRange->size();
+    });
+    if (s_initializationError)
+        return makeUnexpected(*s_initializationError);
+    return { };
+}
+
+MarkedBlockCage::MarkedBlockCage()
+{
+    if (!isEnabled())
+        return;
+
+    Locker locker { s_poolLock };
+    if (!s_firstRange)
+        return;
+
+    if (!s_freeRanges->isEmpty())
+        m_range = s_freeRanges->takeLast();
+    else
+        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize);
+    if (!m_range) {
+        m_range = s_firstRange;
+        m_sharesRange = true;
+    }
+    m_base = m_range->start();
+    m_size = m_range->size();
 }
 
 MarkedBlockCage::~MarkedBlockCage()
 {
-    if (s_current == this)
-        setCurrent(nullptr, 0);
-    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_relaxed);
-    if (manager != s_firstManager) {
-        delete manager;
+    if (!m_range || m_sharesRange)
         return;
-    }
-    if (m_hasClaimedFirstManager) {
-        manager->decommitFreeBlocks();
-        s_firstManagerIsClaimed.store(false, std::memory_order_release);
-    }
+
+    m_range->releaseFreeMemory();
+    Locker locker { s_poolLock };
+    s_freeRanges->append(m_range);
 }
 
-void MarkedBlockCage::makeCurrent()
+void* MarkedBlockCage::tryAllocateAligned(size_t alignment, size_t size)
 {
-    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_acquire);
-    setCurrent(this, manager ? manager->start() : 0);
+    if (!m_range)
+        return nullptr;
+    void* result = m_range->tryAllocateAligned(alignment, size);
+    if (result)
+        didAllocate(result, size);
+    return result;
 }
 
-void* MarkedBlockCage::tryAllocateBlock()
+void* MarkedBlockCage::tryAllocate(size_t size)
 {
-    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_acquire);
-    if (!manager) [[unlikely]] {
-        RELEASE_ASSERT(!s_current || s_current == this);
-        if (!s_firstManagerIsClaimed.exchange(true, std::memory_order_acq_rel)) {
-            manager = s_firstManager;
-            m_hasClaimedFirstManager = true;
-        } else if ((manager = MarkedBlockCageManager::tryCreate(g_jscConfig.markedBlockCageSize))) {
-#if OS(DARWIN)
-            s_singleCageBase.store(0, std::memory_order_relaxed);
-#endif
-        } else
-            manager = s_firstManager;
-        m_manager.store(manager, std::memory_order_release);
-        makeCurrent();
-    }
-    void* block = manager->tryAllocateBlock();
-#if ASAN_ENABLED
-    if (block)
-        __asan_unpoison_memory_region(block, MarkedBlock::blockSize);
-#endif
-    return block;
+    if (!m_range)
+        return nullptr;
+    void* result = m_range->tryAllocate(size);
+    if (result)
+        didAllocate(result, size);
+    return result;
 }
 
-void MarkedBlockCage::freeBlock(void* block)
+void* MarkedBlockCage::tryReallocate(void* pointer, size_t size)
 {
-#if ASAN_ENABLED
-    __asan_poison_memory_region(block, MarkedBlock::blockSize);
-#endif
-    m_manager.load(std::memory_order_relaxed)->freeBlock(block);
+    if (!m_range)
+        return nullptr;
+    void* result = m_range->tryReallocate(pointer, size);
+    if (result)
+        didAllocate(result, size);
+    return result;
 }
 
-bool MarkedBlockCage::owns(const void* pointer) const
+void MarkedBlockCage::free(void* pointer)
 {
-    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_relaxed);
-    return manager && manager->contains(pointer);
+    m_range->free(pointer);
+}
+
+void MarkedBlockCage::didAllocate(const void* pointer, size_t size)
+{
+    uintptr_t begin = std::bit_cast<uintptr_t>(pointer);
+    uintptr_t end = begin + size;
+
+    uintptr_t lowest = m_lowestAllocation.load(std::memory_order_relaxed);
+    while (begin < lowest && !m_lowestAllocation.compare_exchange_weak(lowest, begin, std::memory_order_relaxed)) { }
+
+    uintptr_t endOfHighest = m_endOfHighestAllocation.load(std::memory_order_relaxed);
+    while (end > endOfHighest && !m_endOfHighestAllocation.compare_exchange_weak(endOfHighest, end, std::memory_order_relaxed)) { }
 }
 
 MarkedBlockCage::Indices MarkedBlockCage::usedIndices() const
 {
-    MarkedBlockCageManager* manager = m_manager.load(std::memory_order_acquire);
-    return manager ? manager->usedIndices() : Indices { };
+    constexpr uintptr_t bytesPerIndex = 1 << shift;
+    uintptr_t lowest = m_lowestAllocation.load(std::memory_order_relaxed);
+    uintptr_t end = m_endOfHighestAllocation.load(std::memory_order_relaxed);
+    if (lowest >= end)
+        return { };
+    uint64_t count = (end - lowest + bytesPerIndex - 1) >> shift;
+    return { m_base, static_cast<uint32_t>((lowest - m_base) >> shift), static_cast<uint32_t>(std::min<uint64_t>(count, std::numeric_limits<uint32_t>::max())) };
 }
 
-void MarkedBlockCage::decommitFreeBlocks()
+std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::require()
 {
-    if (MarkedBlockCageManager* manager = s_current ? s_current->m_manager.load(std::memory_order_acquire) : nullptr)
-        manager->decommitFreeBlocks();
-}
-
-void MarkedBlockCage::require()
-{
-    if (!isEnabled()) {
-        dataLogLn("error: this executable can't run with BUN_JSC_markedBlockCageSizeInMB=0. Build it with --aot-huge-heap to run it without a heap limit.");
-        exit(EXIT_FAILURE);
-    }
+    if (!isEnabled())
+        return makeUnexpected(s_initializationError.value_or(Error::Disabled));
     s_isRequired.store(true, std::memory_order_relaxed);
-    if (s_hasBlocksOutside.load(std::memory_order_relaxed)) {
-        dataLogLn("error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=", Options::markedBlockCageSizeInMB(), ". Raise it, or build with --aot-huge-heap.");
-        exit(EXIT_FAILURE);
-    }
+    if (s_hasAllocationsOutside.load(std::memory_order_relaxed))
+        return makeUnexpected(Error::BlocksOutsideCage);
+    return { };
 }
 
 void MarkedBlockCage::logExhaustion()

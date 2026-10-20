@@ -1,0 +1,61 @@
+# The promise of Promise.all holds an array of what the given promises hold: a then callback reads it from there, an await of another call of the same async function is not disturbed, nothing reaches a sink and no unseen code can run
+# RUN(OTHER): flow-solve nodes
+# RUN(CALLBACK): flow-solve nodes
+# RUN(NOWHERE): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# RUN(UNSEEN): flow-links unseen
+# OTHER: , f2, v2) = {L0#[[user]]}
+# CALLBACK: , f4, parameter 0) = {Array@f1:v6
+# CALLBACK: , f4, v2) = {{*}}L0#[[user]]}
+# NOWHERE-NOT: , f4, v2) = {{*}}unknown
+# NOWHERE-NOT: DeclaredPart(L0#{{*}}unknown
+# SINKS-NOT: L0#
+# SINKS-NOT: Promise@f
+# SINKS-NOT: Array@f
+# SINKS-NOT: f3
+# SINKS-NOT: f4
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+function f1 name="useAll" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = Call v0
+    v3 = NewArray v1, v2 contents=anything
+    v4 = Builtin builtin=Promise
+    v5 = PropGet v4 key="all"
+    v6 = Call v5, v4, v3 calleeKey="all"
+    v7 = PropGet v6 key="then"
+    v8 = NewClosure function=f4
+    v9 = Call v7, v6, v8 calleeKey="then"
+    Return v9
+}
+function f2 name="awaitAnotherCall" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = Await v1
+    Return v2
+}
+function f3 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = String string="ann"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f4 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    Return v2
+}

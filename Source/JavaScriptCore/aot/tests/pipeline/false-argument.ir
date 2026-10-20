@@ -1,0 +1,38 @@
+# The only argument that reaches a written parameter does not fit: what is left of the call is the test of the argument, which always throws, at the position of the parameter. A call with an argument that fits has no test
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter
+typesite w1 module=m0 position=57 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Integer integer=4
+    v2 = Call v0, -, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = NewClosure function=f1
+    v7 = String string="4"
+    v8 = Call v6, -, v7
+    Return
+}
+function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+function f2 name="triple" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=3
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: site=w1
+# CHECK: [[text]]: "4" = String string="4"
+# CHECK-NEXT: never = Claim [[text]] castType=undefined|null|number site=w0 cause=MayFail @17
+# CHECK-NEXT: Unreachable

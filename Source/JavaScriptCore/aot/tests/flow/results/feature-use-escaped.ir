@@ -1,0 +1,24 @@
+# Nobody sees the arguments of a built-in that nativeCode holds, so each of its feature lines is used, also one with a condition that every call in the program refutes
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: builtin-use CompressionStream [Read, {{*}}Escaped] f0:v2
+# CHECK: builtin-use DecompressionStream [Read, Constructed] f0:v4
+# CHECK: feature 183 CompressionStream f0:v2
+# CHECK: feature 184 CompressionStream f0:v2
+# CHECK: feature 245 CompressionStream f0:v2
+# CHECK: feature 246 DecompressionStream f0:v4
+# ALL-NOT: feature 203 DecompressionStream
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = PropGet v0 key="CompressionStream" [isFreeName]
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="DecompressionStream" [isFreeName]
+    v5 = String string="gzip"
+    v6 = Construct v4, -, v5
+    Return
+}

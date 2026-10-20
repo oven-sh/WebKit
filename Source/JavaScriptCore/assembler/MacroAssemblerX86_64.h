@@ -30,9 +30,13 @@
 #if ENABLE(ASSEMBLER) && CPU(X86_64)
 
 #include "AbstractMacroAssembler.h"
+#include "CPUFeatureSet.h"
 #include "X86Assembler.h"
 #include <array>
+#include <span>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UnalignedAccess.h>
 
 #define REPATCH_OFFSET_CALL_R11 3
 
@@ -2721,16 +2725,18 @@ public:
 
     void moveWithoutClobberingFlags(TrustedImm64 imm, RegisterID dest)
     {
+        recordImmediate(imm);
         m_assembler.movq_i64r(imm.m_value, dest);
     }
 
     void move(TrustedImmPtr imm, RegisterID dest)
     {
-        move(TrustedImm64(imm.asIntptr()), dest);
+        move(TrustedImm64(imm), dest);
     }
 
     void move(TrustedImm64 imm, RegisterID dest)
     {
+        recordImmediate(imm);
         int64_t value = imm.m_value;
         if (!value)
             m_assembler.xorl_rr(dest, dest);
@@ -2879,13 +2885,9 @@ public:
     void signExtend32To64(TrustedImm32 imm, RegisterID dest)
     {
         if (!imm.m_value)
-#if USE(BUN_JSC_ADDITIONS)
             m_assembler.xorl_rr(dest, dest);
         else if (imm.m_value > 0)
             m_assembler.movl_i32r(imm.m_value, dest);
-#else
-            m_assembler.xorq_rr(dest, dest);
-#endif
         else
             m_assembler.mov_i32r(imm.m_value, dest);
     }
@@ -3297,11 +3299,7 @@ public:
     {
         if (mask.m_value == -1)
             m_assembler.testl_rr(reg, reg);
-#if USE(BUN_JSC_ADDITIONS)
         else if (!(mask.m_value & ~0xff)) {
-#else
-        else if (!(mask.m_value & ~0xff) && reg < X86Registers::esp) { // Using esp and greater as a byte register yields the upper half of the 16 bit registers ax, cx, dx and bx, e.g. esp, register 4, is actually ah.
-#endif
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else
@@ -4638,54 +4636,26 @@ public:
         return X86Assembler::patchableJumpSize();
     }
 
-    static bool supportsSSE4_1()
-    {
-        if (s_sse4_1CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_sse4_1CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsSSE4_1(CPUFeatureSet features) { return features.contains(CPUFeature::SSE4_1); }
+    bool supportsSSE4_1() const { return supportsSSE4_1(policy().features); }
 
-    static bool supportsFloatingPointRounding()
-    {
-        if (s_sse4_1CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_sse4_1CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsFloatingPointRounding(CPUFeatureSet features) { return features.contains(CPUFeature::SSE4_1); }
+    bool supportsFloatingPointRounding() const { return supportsFloatingPointRounding(policy().features); }
 
-    static bool supportsCountPopulation()
-    {
-        if (s_popcntCheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_popcntCheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsCountPopulation(CPUFeatureSet features) { return features.contains(CPUFeature::Popcnt); }
+    bool supportsCountPopulation() const { return supportsCountPopulation(policy().features); }
 
-    static bool supportsSSE3()
-    {
-        if (s_sse3CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_sse3CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsSSE3(CPUFeatureSet features) { return features.contains(CPUFeature::SSE3); }
+    bool supportsSSE3() const { return supportsSSE3(policy().features); }
 
-    static bool supportsSupplementalSSE3()
-    {
-        if (s_supplementalSSE3CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_supplementalSSE3CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsSupplementalSSE3(CPUFeatureSet features) { return features.contains(CPUFeature::SupplementalSSE3); }
+    bool supportsSupplementalSSE3() const { return supportsSupplementalSSE3(policy().features); }
 
-    static bool supportsAVX()
-    {
-        if (s_avxCheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_avxCheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsAVX(CPUFeatureSet features) { return features.contains(CPUFeature::AVX); }
+    bool supportsAVX() const { return supportsAVX(policy().features); }
 
-    static bool supportsAVX2()
-    {
-        if (s_avx2CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_avx2CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsAVX2(CPUFeatureSet features) { return features.contains(CPUFeature::AVX2); }
+    bool supportsAVX2() const { return supportsAVX2(policy().features); }
 
     void lfence()
     {
@@ -4751,19 +4721,11 @@ protected:
         m_assembler.cmovq_rr(cond, src, dest);
     }
 
-    static bool supportsLZCNT()
-    {
-        if (s_lzcntCheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_lzcntCheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsLZCNT(CPUFeatureSet features) { return features.contains(CPUFeature::LZCNT); }
+    bool supportsLZCNT() const { return supportsLZCNT(policy().features); }
 
-    static bool supportsBMI1()
-    {
-        if (s_bmi1CheckState == CPUIDCheckState::NotChecked)
-            collectCPUFeatures();
-        return s_bmi1CheckState == CPUIDCheckState::Set;
-    }
+    static constexpr bool supportsBMI1(CPUFeatureSet features) { return features.contains(CPUFeature::BMI1); }
+    bool supportsBMI1() const { return supportsBMI1(policy().features); }
 
     template<int sizeOfRegister>
     void ctzAfterBsf(RegisterID dst)
@@ -5007,6 +4969,7 @@ public:
 
     void load32(const void* address, RegisterID dest)
     {
+        recordPointer(address);
         if (dest == X86Registers::eax)
             m_assembler.movl_mEAX(address);
         else {
@@ -5047,6 +5010,7 @@ public:
 
     void store32(RegisterID source, void* address)
     {
+        recordPointer(address);
         if (source == X86Registers::eax)
             m_assembler.movl_EAXm(address);
         else {
@@ -5152,7 +5116,15 @@ public:
 
     void add64(Address a, RegisterID b, RegisterID dest)
     {
-        ASSERT(a.base != dest);
+        if (b == dest) {
+            add64(a, dest);
+            return;
+        }
+        if (a.base == dest) {
+            load64(a, dest);
+            add64(b, dest);
+            return;
+        }
         move(b, dest);
         add64(a, dest);
     }
@@ -5191,6 +5163,7 @@ public:
 
     void add64(TrustedImm64 imm, RegisterID dest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return add64(TrustedImm32(static_cast<int32_t>(imm.m_value)), dest);
         move(imm, scratchRegister());
@@ -5209,6 +5182,7 @@ public:
 
     void add64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
+        recordImmediate(imm);
         if (!imm.m_value) {
             move(src, dest);
             return;
@@ -5320,8 +5294,7 @@ public:
 
     void and64(TrustedImmPtr imm, RegisterID srcDest)
     {
-        static_assert(sizeof(void*) == sizeof(int64_t));
-        and64(TrustedImm64(std::bit_cast<int64_t>(imm.m_value)), srcDest);
+        and64(TrustedImm64(imm), srcDest);
     }
 
     void and64(TrustedImm64 imm, RegisterID srcDest)
@@ -5354,6 +5327,7 @@ public:
 
     void and64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return and64(TrustedImm32(static_cast<int32_t>(imm.m_value)), src, dest);
         if (isRepresentableAs<uint32_t>(imm.m_value))
@@ -5703,12 +5677,10 @@ public:
         m_assembler.imulq_rr(src2, dest);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     void mul64(TrustedImm32 imm, RegisterID src, RegisterID dest)
     {
         m_assembler.imulq_i32r(src, imm.m_value, dest);
     }
-#endif
     
     void x86RepeatMoveString64()
     {
@@ -5794,7 +5766,15 @@ public:
 
     void or64(Address op1, RegisterID op2, RegisterID dest)
     {
-        ASSERT(op1.base != dest);
+        if (op2 == dest) {
+            or64(op1, dest);
+            return;
+        }
+        if (op1.base == dest) {
+            load64(op1, dest);
+            or64(op2, dest);
+            return;
+        }
         move(op2, dest);
         or64(op1, dest);
     }
@@ -5816,6 +5796,7 @@ public:
 
     void or64(TrustedImm64 imm, RegisterID srcDest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value)) {
             or64(TrustedImm32(static_cast<int32_t>(imm.m_value)), srcDest);
             return;
@@ -5853,6 +5834,7 @@ public:
 
     void or64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return or64(TrustedImm32(static_cast<int32_t>(imm.m_value)), src, dest);
         if (src == dest)
@@ -5913,6 +5895,7 @@ public:
 
     void sub64(TrustedImm64 imm, RegisterID dest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return sub64(TrustedImm32(static_cast<int32_t>(imm.m_value)), dest);
         move(imm, scratchRegister());
@@ -5921,6 +5904,7 @@ public:
 
     void sub64(RegisterID src, TrustedImm64 imm, RegisterID dest)
     {
+        recordImmediate(imm);
         if (!imm.m_value) {
             move(src, dest);
             return;
@@ -6035,6 +6019,7 @@ public:
 
     void xor64(TrustedImm64 imm, RegisterID srcDest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return xor64(TrustedImm32(imm.m_value), srcDest);
         move(imm, scratchRegister());
@@ -6043,6 +6028,7 @@ public:
 
     void xor64(TrustedImm64 imm, RegisterID src, RegisterID dest)
     {
+        recordImmediate(imm);
         if (isRepresentableAs<int32_t>(imm.m_value))
             return xor64(TrustedImm32(static_cast<int32_t>(imm.m_value)), src, dest);
         if (src == dest)
@@ -6105,6 +6091,7 @@ public:
 
     void load64(const void* address, RegisterID dest)
     {
+        recordPointer(address);
         if (dest == X86Registers::eax)
             m_assembler.movq_mEAX(address);
         else {
@@ -6161,6 +6148,7 @@ public:
     
     void store64(RegisterID src, void* address)
     {
+        recordPointer(address);
         if (src == X86Registers::eax)
             m_assembler.movq_EAXm(address);
         else {
@@ -6181,6 +6169,8 @@ public:
 
     void store64(TrustedImm64 imm, void* address)
     {
+        recordImmediate(imm);
+        recordPointer(address);
         if (CAN_SIGN_EXTEND_32_64(imm.m_value)) {
             auto addressReg = scratchRegister();
             move(TrustedImmPtr(address), addressReg);
@@ -6197,6 +6187,7 @@ public:
 
     void store64(TrustedImm64 imm, Address address)
     {
+        recordImmediate(imm);
         if (CAN_SIGN_EXTEND_32_64(imm.m_value)) {
             store64(TrustedImm32(static_cast<int32_t>(imm.m_value)), address);
             return;
@@ -6387,6 +6378,7 @@ public:
 
     void move64ToDouble(TrustedImm64 imm, FPRegisterID dest)
     {
+        recordImmediate(imm);
         uint64_t value = static_cast<uint64_t>(imm.m_value);
 
         // 1. Zero
@@ -6718,6 +6710,7 @@ public:
 
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm64 right, RegisterID dest)
     {
+        recordImmediate(right);
         if (!right.m_value) {
             if (auto resultCondition = commuteCompareToZeroIntoTest(cond)) {
                 test64(*resultCondition, left, left, dest);
@@ -6907,6 +6900,12 @@ public:
         set32(x86Condition(cond), dest);
     }
 
+    void test64(ResultCondition cond, Address address, RegisterID mask, RegisterID dest)
+    {
+        m_assembler.testq_rm(mask, address.offset, address.base);
+        set32(x86Condition(cond), dest);
+    }
+
     Jump branchTest64(ResultCondition cond, AbsoluteAddress address, TrustedImm32 mask = TrustedImm32(-1))
     {
         load64(address.m_ptr, scratchRegister());
@@ -7093,6 +7092,30 @@ public:
             cmov(x86Condition(invert(cond)), elseCase, dest);
     }
     
+    void moveConditionallyTest64(ResultCondition cond, Address address, RegisterID mask, RegisterID src, RegisterID dest)
+    {
+        m_assembler.testq_rm(mask, address.offset, address.base);
+        cmov(x86Condition(cond), src, dest);
+    }
+
+    void moveConditionallyTest64(ResultCondition cond, Address address, RegisterID mask, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
+        ASSERT(isInvertible(cond));
+        ASSERT_WITH_MESSAGE(cond != Overflow, "TEST does not set the Overflow Flag.");
+
+        m_assembler.testq_rm(mask, address.offset, address.base);
+
+        if (thenCase != dest && elseCase != dest) {
+            move(elseCase, dest);
+            elseCase = dest;
+        }
+
+        if (elseCase == dest)
+            cmov(x86Condition(cond), thenCase, dest);
+        else
+            cmov(x86Condition(invert(cond)), elseCase, dest);
+    }
+
     void moveConditionallyTest64(ResultCondition cond, RegisterID testReg, TrustedImm32 mask, RegisterID src, RegisterID dest)
     {
         // if we are only interested in the low seven bits, this can be tested with a testb
@@ -7117,6 +7140,133 @@ public:
         else
             m_assembler.testq_i32r(mask.m_value, testReg);
 
+        if (thenCase != dest && elseCase != dest) {
+            move(elseCase, dest);
+            elseCase = dest;
+        }
+
+        if (elseCase == dest)
+            cmov(x86Condition(cond), thenCase, dest);
+        else
+            cmov(x86Condition(invert(cond)), elseCase, dest);
+    }
+
+    // compareOnFlags32 | 64(left, right) leaves the flags that branch32 | 64(cond, left, right) tests, for every RelationalCondition.
+    void compareOnFlags32(RegisterID left, RegisterID right)
+    {
+        m_assembler.cmpl_rr(right, left);
+    }
+
+    void compareOnFlags32(RegisterID left, TrustedImm32 right)
+    {
+        // test leaves the carry and overflow flags clear, as a subtraction of zero does.
+        if (!right.m_value)
+            m_assembler.testl_rr(left, left);
+        else
+            m_assembler.cmpl_ir(right.m_value, left);
+    }
+
+    void compareOnFlags32(RegisterID left, Address right)
+    {
+        m_assembler.cmpl_mr(right.offset, right.base, left);
+    }
+
+    void compareOnFlags32(Address left, RegisterID right)
+    {
+        m_assembler.cmpl_rm(right, left.offset, left.base);
+    }
+
+    void compareOnFlags32(Address left, TrustedImm32 right)
+    {
+        m_assembler.cmpl_im(right.m_value, left.offset, left.base);
+    }
+
+    void compareOnFlags32(BaseIndex left, TrustedImm32 right)
+    {
+        m_assembler.cmpl_im(right.m_value, left.offset, left.base, left.index, left.scale);
+    }
+
+    void compareOnFlags64(RegisterID left, RegisterID right)
+    {
+        m_assembler.cmpq_rr(right, left);
+    }
+
+    void compareOnFlags64(RegisterID left, TrustedImm32 right)
+    {
+        if (!right.m_value)
+            m_assembler.testq_rr(left, left);
+        else
+            m_assembler.cmpq_ir(right.m_value, left);
+    }
+
+    void compareOnFlags64(RegisterID left, Address right)
+    {
+        m_assembler.cmpq_mr(right.offset, right.base, left);
+    }
+
+    void compareOnFlags64(Address left, RegisterID right)
+    {
+        m_assembler.cmpq_rm(right, left.offset, left.base);
+    }
+
+    void compareOnFlags64(Address left, TrustedImm32 right)
+    {
+        m_assembler.cmpq_im(right.m_value, left.offset, left.base);
+    }
+
+    void compareOnFlags64(BaseIndex left, RegisterID right)
+    {
+        m_assembler.cmpq_rm(right, left.offset, left.base, left.index, left.scale);
+    }
+
+    // After testOnFlags32 | 64, Equal, NotEqual, LessThan and GreaterThanOrEqual mean Zero, NonZero, Signed and PositiveOrZero.
+    void testOnFlags32(RegisterID value, RegisterID mask)
+    {
+        m_assembler.testl_rr(value, mask);
+    }
+
+    void testOnFlags32(RegisterID value, TrustedImm32 mask)
+    {
+        if (mask.m_value == -1)
+            m_assembler.testl_rr(value, value);
+        else if (!(mask.m_value & ~0x7f)) // Bit 7 would become the sign flag of a byte test.
+            m_assembler.testb_i8r(mask.m_value, value);
+        else
+            m_assembler.testl_i32r(mask.m_value, value);
+    }
+
+    void testOnFlags64(RegisterID value, RegisterID mask)
+    {
+        m_assembler.testq_rr(value, mask);
+    }
+
+    void testOnFlags64(Address value, RegisterID mask)
+    {
+        m_assembler.testq_rm(mask, value.offset, value.base);
+    }
+
+    void testOnFlags64(RegisterID value, TrustedImm32 mask)
+    {
+        if (mask.m_value == -1)
+            m_assembler.testq_rr(value, value);
+        else if (!(mask.m_value & ~0x7f)) // Bit 7 would become the sign flag of a byte test.
+            m_assembler.testb_i8r(mask.m_value, value);
+        else
+            m_assembler.testq_i32r(mask.m_value, value);
+    }
+
+    Jump branchOnFlags(RelationalCondition cond)
+    {
+        return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    void moveConditionallyOnFlags64(RelationalCondition cond, RegisterID src, RegisterID dest)
+    {
+        cmov(x86Condition(cond), src, dest);
+    }
+
+    void moveConditionallyOnFlags64(RelationalCondition cond, RegisterID thenCase, RegisterID elseCase, RegisterID dest)
+    {
         if (thenCase != dest && elseCase != dest) {
             move(elseCase, dest);
             elseCase = dest;
@@ -7194,6 +7344,8 @@ public:
     DataLabelPtr moveWithPatch(TrustedImmPtr initialValue, RegisterID dest)
     {
         padBeforePatch();
+        recordImmediate(initialValue);
+        didEmitPatchablePointer();
         m_assembler.movq_i64r(initialValue.asIntptr(), dest);
         return DataLabelPtr(this);
     }
@@ -7201,6 +7353,7 @@ public:
     DataLabelPtr moveWithPatch(TrustedImm32 initialValue, RegisterID dest)
     {
         padBeforePatch();
+        didEmitPatchablePointer();
         m_assembler.movq_i64r(initialValue.m_value, dest);
         return DataLabelPtr(this);
     }
@@ -9914,6 +10067,7 @@ public:
     // Misc helper functions.
 
     static bool supportsFloat16() { return false; }
+    static constexpr bool supportsFloat16(CPUFeatureSet) { return false; }
 
     template<PtrTag resultTag, PtrTag locationTag>
     static CodePtr<resultTag> readCallTarget(CodeLocationCall<locationTag> call)
@@ -9991,25 +10145,162 @@ public:
         X86Assembler::repatchPointer(call.dataLabelPtrAtOffset(-REPATCH_OFFSET_CALL_R11).dataLocation(), destination.taggedPtr());
     }
 
+    Label movePCRelativeAddress(RegisterID dest, PCRelativeReach)
+    {
+        Label start = label();
+        m_assembler.leaq_rip(dest);
+        return start;
+    }
+
+    Label loadPCRelative64(RegisterID dest)
+    {
+        Label start = label();
+        m_assembler.movq_rip(dest);
+        return start;
+    }
+
+    Label moveInstanceAddress(RegisterID instance, RegisterID dest)
+    {
+        RELEASE_ASSERT(instance != X86Registers::esp && instance != X86Registers::r12);
+        Label start = label();
+        m_assembler.leaq_mr_disp32(0, instance, dest);
+        return start;
+    }
+
+    static constexpr unsigned relocationSize(RelocationKind kind)
+    {
+        switch (kind) {
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+            return 5;
+        case RelocationKind::ShortJump:
+        case RelocationKind::ShortConditionalJump:
+            return 2;
+        case RelocationKind::ConditionalJump:
+            return 6;
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::InstanceOffset:
+            return 7;
+        case RelocationKind::Distance32:
+            return 4;
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+            return 0;
+        }
+        RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    }
+
+    static constexpr int64_t relocationReach(RelocationKind kind)
+    {
+        switch (kind) {
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::Distance32:
+        case RelocationKind::InstanceOffset:
+            return nearJumpRange;
+        case RelocationKind::ShortJump:
+        case RelocationKind::ShortConditionalJump:
+            return X86JumpShortener::shortJumpReach;
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+            return 0;
+        }
+        RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    }
+
+    [[nodiscard]] static bool setRelocationDistance(RelocationKind kind, std::span<uint8_t> instructions, int64_t distance)
+    {
+        RELEASE_ASSERT(instructions.size() == relocationSize(kind));
+        // The CPU adds the displacement to the address of the next instruction.
+        auto displacement = checkedDifference<int64_t>(distance, instructions.size());
+        if (displacement.hasOverflowed())
+            return false;
+        switch (kind) {
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+            if (!isRepresentableAs<int32_t>(displacement.value()))
+                return false;
+            WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), static_cast<int32_t>(displacement.value()));
+            return true;
+        case RelocationKind::ShortJump:
+        case RelocationKind::ShortConditionalJump:
+            if (!isRepresentableAs<int8_t>(displacement.value()))
+                return false;
+            instructions.back() = static_cast<uint8_t>(static_cast<int8_t>(displacement.value()));
+            return true;
+        case RelocationKind::Distance32:
+            return addToDistance32(instructions, distance);
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+        case RelocationKind::InstanceOffset:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    [[nodiscard]] static bool applyRelocation(RelocationKind kind, std::span<uint8_t> code, size_t site, size_t target)
+    {
+        size_t size = relocationSize(kind);
+        RELEASE_ASSERT(size && size <= code.size() && site <= code.size() - size);
+        std::span<uint8_t> instructions = code.subspan(site, size);
+        if (kind == RelocationKind::InstanceOffset) {
+            if (!isRepresentableAs<int32_t>(target))
+                return false;
+            WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), static_cast<int32_t>(target));
+            return true;
+        }
+        RELEASE_ASSERT(target <= code.size());
+        return setRelocationDistance(kind, instructions, static_cast<int64_t>(target) - static_cast<int64_t>(site));
+    }
+
+    static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
+    {
+        RELEASE_ASSERT(instructions.size() == relocationSize(kind));
+        switch (kind) {
+        case RelocationKind::Distance32:
+            return;
+        case RelocationKind::Call:
+        case RelocationKind::Jump:
+        case RelocationKind::ConditionalJump:
+        case RelocationKind::AddressNear:
+        case RelocationKind::AddressFar:
+        case RelocationKind::Load64:
+        case RelocationKind::InstanceOffset:
+            WTF::unalignedStore<int32_t>(instructions.last(sizeof(int32_t)).data(), 0);
+            return;
+        case RelocationKind::ShortJump:
+        case RelocationKind::ShortConditionalJump:
+            instructions.back() = 0;
+            return;
+        case RelocationKind::ConditionalJumpThenNop:
+        case RelocationKind::TestBitJump:
+        case RelocationKind::TestBitJumpThenNop:
+        case RelocationKind::InvertedJumpThenJump:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     using CPUID = std::array<unsigned, 4>;
     static CPUID getCPUID(unsigned level);
     static CPUID getCPUIDEx(unsigned level, unsigned count);
-    JS_EXPORT_PRIVATE static void collectCPUFeatures();
-#if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE static void restrictToBuildTargetFeatures();
-    JS_EXPORT_PRIVATE static unsigned buildTargetFeatures();
-    JS_EXPORT_PRIVATE static bool setSupportsAVX(bool);
-#endif
-
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_sse3CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_supplementalSSE3CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_sse4_1CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_sse4_2CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_avxCheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_avx2CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_lzcntCheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_bmi1CheckState;
-    JS_EXPORT_PRIVATE static CPUIDCheckState s_popcntCheckState;
+    JS_EXPORT_PRIVATE static CPUFeatureSet collectCPUFeatures();
 
 private:
     // If lzcnt is not available, use this after BSR

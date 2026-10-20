@@ -1,0 +1,29 @@
+# Reading a member the table lists on import.meta or on the module object answers its declared kind of value and nothing unknown
+# RUN(NODES): flow-solve nodes
+# NODES: , f0, v1) = {{*}}string}
+# NODES-NEXT: , f0, v2) = {{*}}string}
+# NODES-NEXT: , f0, v3) = {{*}}boolean}
+# RUN(COMMONJS): flow-solve nodes
+# COMMONJS: , f1, v6) = {{*}}string}
+# COMMONJS-NEXT: , f1, v7) = {{*}}ModuleObjectExports@m1}
+# RUN(KNOWN): flow-solve nodes
+# KNOWN-NOT: , f0, v{{*}}unknown
+# KNOWN-NOT: , f1, v{{*}}unknown
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="/library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ImportMeta module=m0
+    v1 = PropGet v0 key="url"
+    v2 = PropGet v0 key="dir"
+    v3 = PropGet v0 key="main"
+    Return
+}
+function f1 name="library" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = PropGet v3 key="id"
+    v7 = PropGet v3 key="exports"
+    Return
+}

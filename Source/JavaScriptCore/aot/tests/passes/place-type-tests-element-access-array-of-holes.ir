@@ -1,0 +1,24 @@
+# An access to an array of holes that the function itself allocates predicts the storage that the allocation names, Contiguous where it names none, and tests for it: the array has its length from the start, so a store is a store inside the length. A literal starts empty and is filled by appending, which the form without a kind does inline: its accesses name no kind
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayOfHoles" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 999]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 999], v2: anything):
+    v3 = NewArrayLike v1, v0
+    ElemDefine v3, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="arrayOfHoles"
+# CHECK: = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK: PutArrayElement v3, v1, v2, {{*}} arrayStorage=Contiguous level=Predicted
+
+function f1 name="literal" parameters=[{type=int[0, 999]}] results=[{type=anything}] {
+  b0(v0: int[0, 999]):
+    v1 = NewArray contents=int[0, 999]
+    ElemSet v1, v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="literal"
+# CHECK-NOT: HasArrayStorage
+# CHECK: PutArrayElement v1, v0, v0, v1 level=Predicted

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JITExceptions.h"
 
-#include "AOTRuntime.h"
 #include "CallFrame.h"
 #include "CodeBlock.h"
 #include "Interpreter.h"
@@ -43,8 +42,6 @@ namespace JSC {
 void genericUnwind(VM& vm, CallFrame* callFrame)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (vm.deferredStackCapture.exception) [[unlikely]]
-        vm.finishDeferredStackCapture();
     CallFrame* topJSCallFrame = vm.topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = !topJSCallFrame || topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
@@ -87,13 +84,6 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
 #endif
     } else
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
-
-#if ENABLE(AOT)
-    if (handler.m_valid && handler.m_isAOT) {
-        dispatchAndCatchRoutine = catchRoutine;
-        catchRoutine = AOT::catchThunk();
-    }
-#endif
 
     ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(vm.topEntryFrame));
 

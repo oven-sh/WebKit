@@ -1,0 +1,77 @@
+# A function that a realm keeps as a link-time constant is an entry of the table, so a call of one is a call of a built-in and not of an unknown callee. The fast path of Array.from copies the elements of its operand to a new array, a promise holds what it is resolved with and an iterator helper keeps its operands in a slot: none of these objects reaches native code. A constructor that is not the realm's Promise selects the undeclared overload, which hands the value to unknown code
+# RUN: flow-links builtins unknown
+# RUN(CHECK2): flow-links builtins unknown
+# RUN(CHECK3): flow-links builtins unknown
+# RUN(CHECK4): flow-links builtins unknown
+# RUN(CHECK5): flow-links builtins unknown
+# CHECK: builtin [[copy]] v3 LinkTimeConstantArrayFromFastWithoutMapFn/0 Call
+# CHECK2: builtin [[resolve]] v3 LinkTimeConstantPromiseResolve/1 Call
+# CHECK3: builtin [[resolveWith]] v3 LinkTimeConstantPromiseResolve/2 Call
+# CHECK4: builtin [[wrap]] v2 LinkTimeConstantIteratorHelperCreate/0 Call
+# CHECK5-NOT: unknown-callee
+# RUN(OBJECTS): flow-solve nodes objects
+# RUN(OBJECTS2): flow-solve nodes objects
+# RUN(OBJECTS3): flow-solve nodes objects
+# RUN(OBJECTS4): flow-solve nodes objects
+# RUN(OBJECTS5): flow-solve nodes objects
+# OBJECTS: Variable(g0) = {{*}}L0#
+# OBJECTS2: L0#{{*}} mutations=[] uses=
+# OBJECTS3: L1#{{*}} mutations=[] uses=
+# OBJECTS4: L2#{{*}} mutations=[{{*}}ReachUnknownJavaScript
+# OBJECTS5: L3#{{*}} mutations=[] uses=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Copied" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Resolved" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ResolvedByOtherConstructor" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Wrapped" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="element" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewArray v1 contents=anything
+    v3 = CallDirect v2 function=f1
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v0 layout=L1 fields=[0]
+    v8 = CallDirect v7 function=f2
+    v9 = NewObject -, v0 layout=L2 fields=[0]
+    v10 = NewClosure function=f5
+    v11 = CallDirect v10, v9 function=f3
+    v12 = NewObject -, v0 layout=L3 fields=[0]
+    v13 = CallDirect v12 function=f4
+    Return
+}
+function f1 name="copy" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=LinkTimeConstantArrayFromFastWithoutMapFn
+    v2 = Builtin builtin=Array
+    v3 = Call v1, -, v2, v0
+    Return v3
+}
+function f2 name="resolve" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=LinkTimeConstantPromiseResolve
+    v2 = Builtin builtin=Promise
+    v3 = Call v1, -, v2, v0
+    Return v3
+}
+function f3 name="resolveWith" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=LinkTimeConstantPromiseResolve
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+function f4 name="wrap" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=LinkTimeConstantIteratorHelperCreate
+    v2 = Call v1, -, v0, v0
+    Return v2
+}
+function f5 name="OtherPromise" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

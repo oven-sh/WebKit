@@ -1,0 +1,77 @@
+# A sum over the results of a built-in in a function without types is added as numbers in its loop; a sum over the results of unknown code stays generic
+# RUN: pipeline Select
+# RUN(REPRESENTED): pipeline ChooseRepresentations
+# OPTIONS: check=VerifyEachPass disable=pass:InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v0 key="count" [isFreeName]
+    v4 = ToNumber v3
+    v5 = CallDirect v2, v4 function=f1
+    v6 = CallDirect v2, v4 function=f2
+    v7 = PropGet v0 key="sink" [isFreeName]
+    v8 = Call v7, -, v5, v6
+    Return
+}
+function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2, v2)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = PropGet v0 key="charCodeAt"
+    v9 = Call v8, v0, v4 calleeKey="charCodeAt"
+    v10 = Add v5, v9
+    v11 = Add v4, v3
+    Jump -> next b1(v11, v10)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="sumOfCodes"
+# CHECK: b1(v4: int|whole, v5: number):
+# CHECK-NEXT: LoopHint
+# CHECK-NOT: form=Generic
+# CHECK: : number = Add v5, {{*}}form=Numbers
+# CHECK-NOT: form=Generic
+# CHECK: Return v5
+# REPRESENTED-LABEL: function f1 name="sumOfCodes"
+# REPRESENTED: b1(v4: int|whole @Double, v5: number @Double):
+# REPRESENTED-NOT: Box
+# REPRESENTED: : number @Double = Add v5, {{*}}form=Numbers
+# REPRESENTED-NOT: Box
+# REPRESENTED: Return v5
+
+function f2 name="sumOfUnknownResults" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="measure" [isFreeName]
+    Jump -> next b1(v2, v2)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Call v5, -, v0, v6
+    v11 = Add v7, v10
+    v12 = Add v6, v3
+    Jump -> next b1(v12, v11)
+  b3():
+    Return v7
+}
+# CHECK-LABEL: function f2 name="sumOfUnknownResults"
+# CHECK: b1(v6: int|whole, v7: number|string|bigint):
+# CHECK-NEXT: LoopHint
+# CHECK: : number|string|bigint = Add v7, {{*}}form=Generic
+# REPRESENTED-LABEL: function f2 name="sumOfUnknownResults"
+# REPRESENTED: b1(v6: int|whole @Double, v7: number|string|bigint @JSValue):

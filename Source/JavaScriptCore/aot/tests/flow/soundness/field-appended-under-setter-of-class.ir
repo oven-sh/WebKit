@@ -1,0 +1,45 @@
+# A name stored on an escaped instance may become an own property, so flow appends a field. Under a setter without a getter on the class the name is not absent on the prototypes: a store runs the setter
+# RUN: flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="WithSetter" constructor=f1
+layout L1 kind=Instance name="WithoutSetter" constructor=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Setter key="x"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="sink" [isFreeName]
+    v12 = Call v11, -, v5, v9
+    v13 = Integer integer=1
+    PropSet v5, v13 key="x"
+    PropSet v9, v13 key="x"
+    Return
+}
+function f1 name="WithSetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="WithoutSetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+# CHECK-NOT: field L0.0 "x" {{*}}prototypeName=AbsentOnPrototypes
+# CHECK: field L1.0 "x" {{*}}prototypeName=AbsentOnPrototypes

@@ -1,0 +1,27 @@
+# A store into require.cache under a key nobody knows may replace the entry of every module
+# RUN: flow-order cache m1 cache m2
+# CHECK: cache m1 Unknown
+# CHECK-NEXT: cache m2 Unknown
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = RequireModule module=m1 referrer=m0 specifier="./first.cjs"
+    v7 = RequireModule module=m2 referrer=m0 specifier="./second.cjs"
+    v8 = PropGet v2 key="cache"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="k" [isFreeName]
+    ElemSet v8, v10, v6
+    Return
+}
+function f1 name="first" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f2 name="second" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}

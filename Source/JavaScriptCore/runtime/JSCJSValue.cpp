@@ -25,10 +25,8 @@
 
 #include "BigIntObject.h"
 #include "BooleanConstructor.h"
-#include "CodeBlock.h"
 #include "CustomGetterSetter.h"
 #include "GetterSetter.h"
-#include "InlineCallFrame.h"
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "NumberObject.h"
@@ -220,30 +218,6 @@ JSObject* JSValue::synthesizePrototype(JSGlobalObject* globalObject) const
     return throwNotAnObjectErrorForSynthesizePrototype(globalObject, *this);
 }
 
-JSObject* JSValue::synthesizePrototype(JSGlobalObject* globalObject, PropertyName propertyName, bool isForStore) const
-{
-    VM& vm = globalObject->vm();
-    if (!isUndefinedOrNull() || !vm.useImmutableIntrinsics || !vm.m_aotInstances.isEmpty()) [[likely]]
-        return synthesizePrototype(globalObject);
-    CallFrame* frame = vm.topCallFrame;
-    CodeBlock* codeBlock = frame && !frame->isNativeCalleeFrame() ? frame->codeBlock() : nullptr;
-    if (codeBlock) {
-        if (auto* inlined = frame->codeOrigin().inlineCallFrame())
-            codeBlock = inlined->baselineCodeBlock.get();
-    }
-    if (!codeBlock || codeBlock->source().provider()->provenance() != SourceProvenance::Static)
-        return synthesizePrototype(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ASCIILiteral what = isForStore ? "Cannot set properties of "_s : "Cannot read properties of "_s;
-    ASCIILiteral which = isNull() ? "null"_s : "undefined"_s;
-    UniquedStringImpl* name = propertyName.uid();
-    if (!name || name->isSymbol() || !name->length())
-        throwTypeError(globalObject, scope, makeString(what, which));
-    else
-        throwTypeError(globalObject, scope, makeString(what, which, isForStore ? " (setting '"_s : " (reading '"_s, StringView(name), "')"_s));
-    return nullptr;
-}
-
 // https://tc39.es/ecma262/#sec-ordinaryset
 bool JSValue::putToPrimitive(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
@@ -256,7 +230,7 @@ bool JSValue::putToPrimitive(JSGlobalObject* globalObject, PropertyName property
     if (isString() && propertyName.uid() == vm.propertyNames->length.impl())
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     // Check if there are any setters or getters in the prototype chain
-    JSObject* obj = synthesizePrototype(globalObject, propertyName, true);
+    JSObject* obj = synthesizePrototype(globalObject);
     EXCEPTION_ASSERT(!!scope.exception() == !obj);
     if (!obj) [[unlikely]]
         return false;
@@ -440,12 +414,6 @@ String JSValue::toWTFStringSlowCase(JSGlobalObject* globalObject) const
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isInt32())
         return vm.numericStrings.add(asInt32());
-#if USE(BUN_JSC_ADDITIONS)
-    if (isDouble()) {
-        if (auto int32Value = tryConvertToStrictInt32(asDouble()))
-            return vm.numericStrings.add(*int32Value);
-    }
-#endif
     if (isDouble())
         return vm.numericStrings.add(asDouble());
     if (isTrue())

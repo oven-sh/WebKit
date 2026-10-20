@@ -1,0 +1,42 @@
+# sink(console); either = flag ? console : input; either.log; console.warn; input.log = 1; input.warn = 1
+# What start-up locks goes by the sets at the end of the solve. `either` holds the unknown object, and console, which has escaped, is only a prediction beside it: the unknown source answers the read,
+# so nothing is locked for it, and the store through the unknown receiver counts for console.log. Whether the read looked at console before the unknown object came, or before console escaped,
+# depends on the order of the solve and decides nothing. console.warn is read from console itself: it is taken for a constant, start-up locks it, and the run time refuses the store.
+# RUN: flow
+# CHECK: builtin-location Console."log" Unknown
+# CHECK: builtin-location Console."warn" Constant
+# RUN(NODES): flow-solve nodes
+# NODES: Variable(g0) = {{*}}unknown
+# NODES-NEXT: Variable(g1) = {ConsoleWarn}
+# RUN(TABLES): tables constants
+# TABLES-NOT: constantBuiltinMember member=ConsoleLog
+# TABLES: constantBuiltinMember member=ConsoleWarn
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="log" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="warn" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Console
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = Call v2, -, v1
+    v4 = PropGet v0 key="input" [isFreeName]
+    v5 = PropGet v0 key="flag" [isFreeName]
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v4)
+  b3(v7):
+    v8 = PropGet v7 key="log"
+    PutModuleVariable v8 variable=g0
+    v10 = PropGet v1 key="warn"
+    PutModuleVariable v10 variable=g1
+    v12 = Integer integer=1
+    PropSet v4, v12 key="log" mode=Strict
+    PropSet v4, v12 key="warn" mode=Strict
+    Return
+}

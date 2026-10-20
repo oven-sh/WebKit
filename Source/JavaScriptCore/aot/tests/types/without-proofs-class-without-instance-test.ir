@@ -1,0 +1,14 @@
+# No test finds the instances of a class without an instance test, so a test asks for an object, and a class with an instance test stays
+# RUN: without-proofs
+# CHECK: t0 = object
+# CHECK-NEXT: t1 = undefined|object
+# CHECK-NEXT: t2 = object
+# CHECK-NEXT: t3 = object
+# CHECK-NEXT: t4 = int|object
+# CHECK-NEXT: t5 = object
+# CHECK-NEXT: t6 = Error
+# CHECK-NEXT: t7 = Array<int>|Map
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Object}, {type=undefined|TypeError}, {type=Arguments}, {type=Function}, {type=int|GeneratorFunction|Map}, {type=Array|Iterator}, {type=Error}, {type=Array<int, proven>|Map}] results=[{type=undefined}]

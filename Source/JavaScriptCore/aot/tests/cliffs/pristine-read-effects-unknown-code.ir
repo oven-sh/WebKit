@@ -1,0 +1,48 @@
+# A loop whose array read runs unknown code cannot rely on the test of the array in front of the loop, and the verifier refuses it
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: GuardNotAvailable 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badReadByKey" parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = Integer integer=0
+    v2 = Undefined
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b1(| 0), notTaken b4(v2)
+  b1(v4):
+    Jump -> next b2(v1, v2)
+  b2(v5, v6):
+    LoopHint
+    v8 = GetArrayLength v0, v4
+    v9 = Less v5, v8 form=Integers
+    Branch v9 -> taken b3(| 0), notTaken b4(v6)
+  b3(v10):
+    v11 = ElemGet v0, v10
+    v12 = Integer integer=1
+    v13 = Add v10, v12 form=Integers
+    Jump -> next b2(v13, v11)
+  b4(v14):
+    Return v14
+}
+function f1 name="goodReadUnderGuard" parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = Integer integer=0
+    v2 = Undefined
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b1(| 0), notTaken b4(v2)
+  b1(v4):
+    Jump -> next b2(v1, v2)
+  b2(v5, v6):
+    LoopHint
+    v8 = GetArrayLength v0, v4
+    v9 = Less v5, v8 form=Integers
+    Branch v9 -> taken b3(| 0), notTaken b4(v6)
+  b3(v10):
+    v11 = GetArrayElement v0, v10, v4 level=Predicted
+    v12 = Integer integer=1
+    v13 = Add v10, v12 form=Integers
+    Jump -> next b2(v13, v11)
+  b4(v14):
+    Return v14
+}

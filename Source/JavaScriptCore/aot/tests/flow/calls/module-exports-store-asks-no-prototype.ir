@@ -1,0 +1,55 @@
+# `module.exports = f` finds the data property that the module object has from the start, so no object further up is asked for a setter and the function stays with the program. After a deletion the store may be the one that creates the property, and a name that the table does not list may have a setter in the host: both hand the function to native code
+# RUN: flow-solve witnesses
+# CHECK-NOT: ReachNativeCode f1:
+# CHECK: ReachNativeCode f2:v8
+# CHECK-NOT: ReachNativeCode f1:
+# CHECK: ReachNativeCode f3:v7
+# CHECK-NOT: ReachNativeCode f1:
+# RUN(CALLERS): flow
+# CALLERS: function f4 callers=AllKnown
+# CALLERS-NOT: function f4 {{*}}cause=
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/replaced.cjs" displayPath="replaced.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="/deleted.cjs" displayPath="deleted.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
+module m3 path="/unlisted.cjs" displayPath="unlisted.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./replaced.cjs"
+    v1 = Call v0
+    v2 = RequireModule module=m2 referrer=m0 specifier="./deleted.cjs"
+    v3 = RequireModule module=m3 referrer=m0 specifier="./unlisted.cjs"
+    Return
+}
+function f1 name="replaced" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f4
+    PropSet v3, v6 key="exports" mode=Strict
+    Return
+}
+function f2 name="deleted" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f5
+    v7 = PropDelete v3 key="exports" mode=Strict
+    PropSet v3, v6 key="exports" mode=Strict
+    Return
+}
+function f3 name="unlisted" module=m3 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f6
+    PropSet v3, v6 key="custom" mode=Strict
+    Return
+}
+function f4 name="kept" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="afterDeletion" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="underUnlistedName" module=m3 results=[{type=anything}] {
+  b0():
+    Return
+}

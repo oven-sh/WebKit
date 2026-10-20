@@ -1,0 +1,47 @@
+# Two lookups of one name in the symbol registry give one key. A lookup of another name gives another key, and a lookup of an unknown string gives any symbol
+# RUN: flow-walk symbols
+# CHECK: f0@i{{*}} v8 Set {Symbol.for("a")}
+# CHECK: f0@i{{*}} v9 Get {Symbol.for("a")}
+# CHECK-NEXT: L0#[[record]]: Value own Proven L0#[[record]] Symbol.for("a")
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v12 Get {Symbol.for("b")}
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v16 Get {symbol*}
+# CHECK-NEXT: L0#[[record]]: Value own Proven L0#[[record]] Symbol.for("a")
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NOT: f0 v
+# RUN(NODES): flow-solve nodes
+# NODES: Local(i{{*}}, f0, v2) = {Symbol.for("a")}
+# NODES-NEXT: Local(i{{*}}, f0, v3) = {Symbol.for("a")}
+# NODES: Local(i{{*}}, f0, v9) = {undefined|"stored"}
+# NODES: Local(i{{*}}, f0, v12) = {undefined}
+# NODES: Local(i{{*}}, f0, v15) = {symbol}
+# NODES-NEXT: Local(i{{*}}, f0, v16) = {undefined|"stored"}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=SymbolFor
+    v1 = String string="a"
+    v2 = Call v0, -, v1
+    v3 = Call v0, -, v1
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = String string="stored"
+    v7 = String string="b"
+    ElemSet v5, v2, v6 mode=Strict
+    v9 = ElemGet v5, v3
+    v10 = Builtin builtin=MathRandom
+    v11 = Call v0, -, v7
+    v12 = ElemGet v5, v11
+    v13 = Call v10
+    v14 = ToString v13
+    v15 = Call v0, -, v14
+    v16 = ElemGet v5, v15
+    Return
+  b1() role=CatchHandler:
+    v17 = CatchValue
+    Return
+}

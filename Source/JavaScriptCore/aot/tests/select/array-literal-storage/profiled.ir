@@ -1,0 +1,51 @@
+# An empty array literal in a block that is not compact is created from its allocation profile, whatever is done with it
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# RUN: pass Select
+# STATISTIC: ArrayLiteralStorageGroups = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returned" results=[{type=Array<anything>}] {
+  b0():
+    v0 = NewArray contents=anything
+    Return v0
+}
+# CHECK-LABEL: function f0 name="returned"
+# CHECK: = NewArray contents=anything literalStorage=Profiled
+function f1 name="pushedTo" parameters=[{type=anything}] results=[{type=Array<anything>}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="pushedTo"
+# CHECK: = NewArray contents=anything literalStorage=Profiled
+function f2 name="storedInProperty" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = NewArray contents=anything
+    PropSet v0, v1 key="list"
+    Return
+}
+# CHECK-LABEL: function f2 name="storedInProperty"
+# CHECK: = NewArray contents=anything literalStorage=Profiled
+function f3 name="passedToCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray contents=anything
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="passedToCall"
+# CHECK: = NewArray contents=anything literalStorage=Profiled
+function f4 name="inLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewArray contents=anything
+    v4 = Call v0, -, v3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4 name="inLoop"
+# CHECK: = NewArray contents=anything literalStorage=Profiled

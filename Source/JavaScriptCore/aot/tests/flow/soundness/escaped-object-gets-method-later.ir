@@ -1,0 +1,69 @@
+# An object that has reached native code gets a property, a getter and another value in a field only in a function that is entered later: what is stored there reaches native code too and is called with unknown operands
+# RUN: flow-solve sinks nodes
+# RUN(CHECK2): flow-solve sinks nodes
+# RUN(CHECK3): flow-solve sinks nodes
+# RUN(CHECK4): flow-solve sinks nodes
+# CHECK: nativeCode {{*}}L0#[[object]]
+# CHECK2: , f5, parameter 0) = {{*}}unknown
+# CHECK3: , f6, parameter 0) = {{*}}unknown
+# CHECK4: , f7, parameter 0) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="callback" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Null
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v0 key="keep" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToObject v0
+    v2 = NewClosure function=f5
+    PropSet v1, v2 key="callback"
+    v4 = NewClosure function=f6
+    PropSet v1, v4 key="added"
+    v6 = NewClosure function=f7
+    DefineGetter v1, v6 key="computed"
+    Return
+}
+function f5 name="storedInField" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="storedInAddedProperty" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="getter" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

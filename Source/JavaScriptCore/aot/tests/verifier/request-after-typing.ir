@@ -1,0 +1,23 @@
+# typing resolves every request, so a verified program as read has none
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: RequestAfterTyping 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badClaimDeclared" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=anything}
+    Return v1
+}
+function f1 name="badClaimRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = ClaimRead v1, v0 source=Field{key="x"}
+    Return v2
+}
+function f2 name="goodResolved" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=number
+    Return v1
+}

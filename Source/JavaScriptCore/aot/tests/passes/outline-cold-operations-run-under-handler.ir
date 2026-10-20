@@ -1,0 +1,119 @@
+# A run of several operations that can throw, in a block with a handler, becomes one call in that block under that handler
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="underHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b4()
+  b1() frequency=Rare handler=b3():
+    v3 = String string="bad"
+    v4 = PropGet v1 key="logger"
+    v5 = PropGet v4 key="sink"
+    v6 = CallMethod v5, v3, v2 key="report"
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK: b1() frequency=Rare handler=b3():
+# CHECK-NEXT: [[result0]]: anything = CallDirect v1, v2 function=f4
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return [[result0]]
+# CHECK-NEXT: b3() role=CatchHandler:
+
+function f1 name="underHandlerWithArgument" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b4()
+  b1() frequency=Rare handler=b3(v1):
+    v3 = String string="bad"
+    v4 = PropGet v1 key="logger"
+    v5 = PropGet v4 key="sink"
+    v6 = CallMethod v5, v3, v2 key="report"
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3(v7) role=CatchHandler:
+    v8 = CatchValue
+    Return v7
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK: b1() frequency=Rare handler=b3(v1):
+# CHECK-NEXT: [[result1]]: anything = CallDirect v1, v2 function=f4
+# CHECK-NEXT: Jump -> next b2()
+
+function f2 name="withoutHandler" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1() frequency=Rare:
+    v3 = String string="bad"
+    v4 = PropGet v1 key="logger"
+    v5 = PropGet v4 key="sink"
+    v6 = CallMethod v5, v3, v2 key="report"
+    Return v6
+  b2() frequency=Rare:
+    v7 = String string="bad"
+    v8 = PropGet v1 key="logger"
+    v9 = PropGet v8 key="sink"
+    v10 = CallMethod v9, v7, v2 key="report"
+    Return v10
+  b3() frequency=Rare:
+    v11 = String string="bad"
+    v12 = PropGet v1 key="logger"
+    v13 = PropGet v12 key="sink"
+    v14 = CallMethod v13, v11, v2 key="report"
+    Return v14
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: CallMethod
+# CHECK-COUNT-3: anything = CallDirect v1, v2 function=f4
+# CHECK-NOT: CallMethod
+
+function f3 name="valueIsArgumentOfLaterHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare handler=b4(v1):
+    v3 = String string="bad"
+    v4 = PropGet v1 key="logger"
+    v5 = PropGet v4 key="sink"
+    v6 = CallMethod v5, v3, v2 key="report"
+    Jump -> next b2()
+  b2() frequency=Rare handler=b4(v5):
+    v7 = Call v6
+    Jump -> next b3()
+  b3():
+    Return v7
+  b4(v8) role=CatchHandler:
+    v9 = CatchValue
+    Return v8
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: function=f4
+# CHECK: b1() frequency=Rare handler=b4(v1):
+# CHECK: [[sink3]]: anything = PropGet {{*}} key="sink"
+# CHECK: b2() frequency=Rare handler=b4([[sink3]]):
+# CHECK-NOT: function=f4
+
+# CHECK-LABEL: function f4 {{*}}role=OutlinedBody
+# CHECK-NOT: handler=
+# CHECK: [[logger]]: anything = PropGet v0 key="logger"
+# CHECK-NEXT: [[sink]]: anything = PropGet [[logger]] key="sink"
+# CHECK-NEXT: [[report]]: anything = CallMethod [[sink]], {{*}}, v1 key="report"
+# CHECK-NEXT: Return [[report]]
+# CHECK-NOT: handler=

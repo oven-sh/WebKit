@@ -1,0 +1,163 @@
+# A throw whose catch handler never reads what was thrown is a jump: the handler's code moves to a block of its own, and the handler keeps its role and jumps there
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 6
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsBeforeThrow" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    Throw v2
+  b1() role=CatchHandler:
+    v3 = Call v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f0 name="callsBeforeThrow"
+# CHECK: b0(v0: function, v1: number) handler=b1():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body0]]()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body0]]()
+# CHECK-NEXT: [[body0]]():
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NEXT: Return v3
+# CHECK-NOT: Throw
+
+function f1 name="handlerHasParameters" parameters=[{type=function}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: string) handler=b1(v1, v2):
+    v3 = Call v0
+    Throw v3
+  b1(v4, v5) role=CatchHandler:
+    v6 = Call v0, -, v4, v5
+    Return v6
+}
+# CHECK-LABEL: function f1 name="handlerHasParameters"
+# CHECK: handler=b1(v1, v2):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body1]](v1, v2)
+# CHECK-NEXT: b1(v4: number, v5: string) role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body1]](v4, v5)
+# CHECK-NEXT: [[body1]]([[first]]: number, [[second]]: string):
+# CHECK-NEXT: = Call v0, -, [[first]], [[second]]
+
+function f2 name="twoThrowsIntoOneHandler" parameters=[{type=function}, {type=boolean}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: boolean, v2: number, v3: number):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b3(v2):
+    v4 = Call v0
+    Throw v4
+  b2() handler=b3(v3):
+    v5 = Call v0, -, v0
+    Throw v5
+  b3(v6) role=CatchHandler:
+    Return v6
+}
+# CHECK-LABEL: function f2 name="twoThrowsIntoOneHandler"
+# CHECK: b1() handler=b3(v2):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body2]](v2)
+# CHECK-NEXT: b2() handler=b3(v3):
+# CHECK-NEXT: = Call v0, -, v0
+# CHECK-NEXT: Jump -> next [[body2]](v3)
+# CHECK-NEXT: b3(v6: number) role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body2]](v6)
+# CHECK-NEXT: [[body2]]([[passed]]: number):
+# CHECK-NEXT: Return [[passed]]
+# CHECK-NEXT: }
+
+function f3 name="handlerIsCovered" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    Throw v1
+  b1() role=CatchHandler handler=b2():
+    v2 = Call v0, -, v0
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f3 name="handlerIsCovered"
+# CHECK: b0(v0: function) handler=b1():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body3]]()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body3]]()
+# CHECK: [[body3]]() handler=b2():
+# CHECK-NEXT: = Call v0, -, v0
+
+function f4 name="rareHandler" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    Throw v2
+  b1() role=CatchHandler frequency=Rare:
+    Return v1
+}
+# CHECK-LABEL: function f4 name="rareHandler"
+# CHECK: Jump -> next [[body4]]()
+# CHECK-NEXT: b1() role=CatchHandler frequency=Rare:
+# CHECK-NEXT: Jump -> next [[body4]]()
+# CHECK-NEXT: [[body4]]() frequency=Rare:
+# CHECK-NEXT: Return v1
+
+function f5 name="throwWithoutHandler" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Call v0
+    Throw v1
+}
+# CHECK-LABEL: function f5 name="throwWithoutHandler"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v1
+
+function f6 name="cleanupHandler" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    Throw v2
+  b1() role=CleanupHandler:
+    Return v1
+}
+# CHECK-LABEL: function f6 name="cleanupHandler"
+# CHECK: = Call v0
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b1() role=CleanupHandler:
+# CHECK-NEXT: Return v1
+
+function f7 name="coveredBlockReturns" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    Return v2
+  b1() role=CatchHandler:
+    Return v1
+}
+# CHECK-LABEL: function f7 name="coveredBlockReturns"
+# CHECK: = Call v0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Return v1
+
+function f8 name="parameterOfHandlerUsedInLaterBlocks" parameters=[{type=function}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: boolean) handler=b1(v1):
+    v3 = Call v0
+    Throw v3
+  b1(v4) role=CatchHandler:
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    v5 = Negate v4
+    Return v5
+}
+# CHECK-LABEL: function f8 name="parameterOfHandlerUsedInLaterBlocks"
+# CHECK: Jump -> next [[body8]](v1)
+# CHECK-NEXT: b1(v4: number) role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body8]](v4)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return [[passed8]]
+# CHECK-NEXT: b3():
+# CHECK-NEXT: = Negate [[passed8]]
+# CHECK: [[body8]]([[passed8]]: number):
+# CHECK-NEXT: Branch v2 -> taken b2(), notTaken b3()

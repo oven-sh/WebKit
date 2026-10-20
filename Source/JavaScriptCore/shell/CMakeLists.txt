@@ -1,4 +1,8 @@
-set(jsc_SOURCES ../jsc.cpp ../tools/JSDollarVMShell.cpp)
+list(TRANSFORM JavaScriptCore_AOT_PROGRAM_SOURCES PREPEND ../ OUTPUT_VARIABLE aotProgramSources)
+list(TRANSFORM JavaScriptCore_AOT_SHELL_SOURCES PREPEND ../ OUTPUT_VARIABLE aotShellSources)
+list(TRANSFORM JavaScriptCore_AOT_TEST_SOURCES PREPEND ../ OUTPUT_VARIABLE aotTestSources)
+
+set(jsc_SOURCES ../jsc.cpp ../tools/JSDollarVMShell.cpp ${aotShellSources} ${aotProgramSources})
 set(jsc_LIBRARIES ${CMAKE_DL_LIBS})
 set(jsc_FRAMEWORKS
     JavaScriptCore
@@ -50,7 +54,7 @@ endif ()
 # mya analyzes process corpses through Mach task APIs, so it only builds on
 # Apple platforms. Its sources do not compile elsewhere.
 if (APPLE)
-    set(mya_SOURCES ../mya/mya.cpp)
+    set(mya_SOURCES ../mya/mya.cpp ${aotProgramSources})
     set(mya_FRAMEWORKS
         JavaScriptCore
         WTF
@@ -81,7 +85,7 @@ if (USE_BUN_JSC_ADDITIONS)
     # through the framework it links.
     # FFI-SPEC-GAP: the target is gated on USE_BUN_JSC_ADDITIONS because
     # testFFI.cpp compiles to nothing (no main) without the feature.
-    set(testFFI_SOURCES ../ffi/tests/testFFI.cpp)
+    set(testFFI_SOURCES ../ffi/tests/testFFI.cpp ${aotProgramSources})
     set(testFFI_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testFFI_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testFFI_FRAMEWORKS ${jsc_FRAMEWORKS})
@@ -98,13 +102,31 @@ if (USE_BUN_JSC_ADDITIONS)
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testFFI)
+
+    # The tests of the AoT compiler (aot/tests/). Outside DEVELOPER_MODE for testFFI's reason: every lane builds and
+    # ships it. Its sources call functions of the library that are not JS_EXPORT_PRIVATE, so it links only against a
+    # static JavaScriptCore (ENABLE_STATIC_JSC=ON), which every lane and the development configuration build.
+    set(testaot_SOURCES ${aotTestSources})
+    set(testaot_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
+    set(testaot_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
+    set(testaot_FRAMEWORKS ${jsc_FRAMEWORKS})
+    set(testaot_LIBRARIES ${CMAKE_DL_LIBS})
+    if (WIN32)
+        list(APPEND testaot_LIBRARIES Winmm)
+    endif ()
+    if (USE_EXTERNAL_MIMALLOC)
+        list(APPEND testaot_SOURCES ExternalMimallocShims.cpp)
+        list(APPEND testaot_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+    endif ()
+
+    WEBKIT_EXECUTABLE_DECLARE(testaot)
 endif ()
 
 if (APPLE)
     WEBKIT_EXECUTABLE_DECLARE(mya)
 endif ()
 
-if (DEVELOPER_MODE)
+if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     set(testapi_SOURCES
         ../API/tests/CompareAndSwapTest.cpp
         ../API/tests/ExecutionTimeLimitTest.cpp
@@ -119,6 +141,7 @@ if (DEVELOPER_MODE)
         ../API/tests/TypedArrayCTest.cpp
         ../API/tests/VMManagerStopTheWorldTest.cpp
         ../API/tests/testapi.cpp
+        ${aotProgramSources}
     )
     set(testapi_C_SOURCES
         ../API/tests/CustomGlobalObjectClassTest.c
@@ -128,14 +151,14 @@ if (DEVELOPER_MODE)
     set(testapi_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testapi_FRAMEWORKS ${jsc_FRAMEWORKS})
 
-    set(testmasm_SOURCES ../assembler/testmasm.cpp)
+    set(testmasm_SOURCES ../assembler/testmasm.cpp ${aotProgramSources})
     set(testmasm_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testmasm_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testmasm_FRAMEWORKS ${jsc_FRAMEWORKS})
 
     # (testFFI is declared above, outside DEVELOPER_MODE; see the comment there.)
 
-    set(testRegExp_SOURCES ../testRegExp.cpp)
+    set(testRegExp_SOURCES ../testRegExp.cpp ${aotProgramSources})
     set(testRegExp_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testRegExp_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testRegExp_FRAMEWORKS ${jsc_FRAMEWORKS})
@@ -150,17 +173,55 @@ if (DEVELOPER_MODE)
         ../b3/testb3_7.cpp
         ../b3/testb3_8.cpp
         ../b3/testb3_bun.cpp
+        ../b3/testb3_bun_analyses.cpp
+        ../b3/testb3_bun_control_flow.cpp
+        ../b3/testb3_bun_counted_loops.cpp
+        ../b3/testb3_bun_fold_comparisons.cpp
+        ../b3/testb3_bun_heap_sets.cpp
+        ../b3/testb3_bun_hoisting.cpp
+        ../b3/testb3_bun_known_properties.cpp
+        ../b3/testb3_bun_loop_plans.cpp
+        ../b3/testb3_bun_loops.cpp
+        ../b3/testb3_bun_numbering.cpp
+        ../b3/testb3_bun_options.cpp
+        ../b3/testb3_bun_placement.cpp
+        ../b3/testb3_bun_policy.cpp
+        ../b3/testb3_bun_random.cpp
+        ../b3/testb3_bun_random_expressions.cpp
+        ../b3/testb3_bun_random_loops.cpp
+        ../b3/testb3_bun_random_patchpoints.cpp
+        ../b3/testb3_bun_random_statements.cpp
+        ../b3/testb3_bun_ranges.cpp
+        ../b3/testb3_bun_read_only_data.cpp
+        ../b3/testb3_bun_reductions.cpp
+        ../b3/testb3_bun_region_cloner.cpp
+        ../b3/testb3_bun_selection.cpp
+        ../b3/testb3_bun_selects.cpp
+        ../b3/testb3_bun_shared_steps.cpp
+        ../b3/testb3_bun_store_merging.cpp
+        ../b3/testb3_bun_strip_mining.cpp
+        ../b3/testb3_bun_thread_jumps.cpp
+        ../b3/testb3_bun_version_counted_loops.cpp
+        ../b3/testb3_bun_version_loops.cpp
+        ${aotProgramSources}
     )
     set(testb3_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testb3_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testb3_FRAMEWORKS ${jsc_FRAMEWORKS})
 
-    set(testair_SOURCES ../b3/air/testair.cpp)
+    set(testair_SOURCES ../b3/air/testair.cpp ${aotProgramSources})
     set(testair_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testair_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testair_FRAMEWORKS ${jsc_FRAMEWORKS})
 
-    set(testdfg_SOURCES ../dfg/testdfg.cpp)
+    if (USE_EXTERNAL_MIMALLOC)
+        list(APPEND testb3_SOURCES ExternalMimallocShims.cpp)
+        list(APPEND testb3_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+        list(APPEND testair_SOURCES ExternalMimallocShims.cpp)
+        list(APPEND testair_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+    endif ()
+
+    set(testdfg_SOURCES ../dfg/testdfg.cpp ${aotProgramSources})
     set(testdfg_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testdfg_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
     set(testdfg_FRAMEWORKS ${jsc_FRAMEWORKS})
@@ -179,6 +240,7 @@ if (DEVELOPER_MODE)
             ../corpse/tests/CorpseThreadTest.cpp
             ../corpse/tests/LibJSCToolsTestUtilities.cpp
             ../corpse/tests/testLibJSCTools.cpp
+            ${aotProgramSources}
         )
         set(testLibJSCTools_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
         set(testLibJSCTools_PRIVATE_INCLUDE_DIRECTORIES
@@ -205,6 +267,8 @@ if (DEVELOPER_MODE)
         ../wasm/debugger/tests/TestScripts.cpp
         ../wasm/debugger/tests/TestUtilities.cpp
         ../wasm/debugger/tests/UnaryTests.cpp
+
+        ${aotProgramSources}
     )
     set(testwasmdebugger_DEFINITIONS ${jsc_PRIVATE_DEFINITIONS})
     set(testwasmdebugger_PRIVATE_INCLUDE_DIRECTORIES
@@ -239,6 +303,7 @@ set_target_properties(jsc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (USE_BUN_JSC_ADDITIONS)
     WEBKIT_EXECUTABLE(testFFI)
+    WEBKIT_EXECUTABLE(testaot)
 endif ()
 
 if (SHOULD_INSTALL_JS_SHELL)
@@ -253,7 +318,7 @@ if (APPLE)
     endif ()
 endif ()
 
-if (DEVELOPER_MODE)
+if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     WEBKIT_EXECUTABLE(testapi)
     WEBKIT_EXECUTABLE(testRegExp)
     WEBKIT_EXECUTABLE(testmasm)

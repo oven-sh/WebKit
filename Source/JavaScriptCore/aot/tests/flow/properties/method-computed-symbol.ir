@@ -1,0 +1,69 @@
+# A method and a getter whose computed keys are well-known symbols read from Symbol are named members: nothing reaches unknown code and every other member stays proven
+# RUN: flow-walk f0
+# RUN(NODES): flow-solve nodes
+# RUN(UNNAMED): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# CHECK: f0@i{{*}} v17 Get {"next"}
+# CHECK-NEXT: L0#{{*}}: Value Proven f1.prototype "next"
+# CHECK-NEXT: f0@i{{*}} v18 Get {@@iterator}
+# CHECK-NEXT: L0#{{*}}: Value Proven f1.prototype @@iterator
+# CHECK-NEXT: f0@i{{*}} v19 Get {@@toStringTag}
+# CHECK-NEXT: L0#{{*}}: Getter Proven f1.prototype @@toStringTag
+# CHECK-NOT: Predicted
+# NODES: Property(f1.prototype, "next") = {f4}
+# NODES: Property(f1.prototype, @@iterator) = {{*}}f2}
+# NODES: Getter(f1.prototype, @@toStringTag) = {f3}
+# UNNAMED-NOT: SymbolProperties(f1
+# UNNAMED-NOT: StringProperties(f1
+# SINKS-NOT: f1
+# SINKS-NOT: , f2
+# SINKS-NOT: , f3
+# SINKS-NOT: , f4
+# SINKS-NOT: L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Cursor" constructor=f1 computedKeyCount=2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = Builtin builtin=Symbol
+    v3 = PropGet v2 key="iterator"
+    v4 = ToPropertyKey v3
+    v5 = NewClosure function=f2
+    DefineMethod v1, v5, v4 layout=L0
+    v7 = PropGet v2 key="toStringTag"
+    v8 = ToPropertyKey v7
+    v9 = NewClosure function=f3
+    DefineMethod v1, v9, v8 layout=L0 methodKind=Getter index=1
+    v11 = NewClosure function=f4
+    DefineMethod v1, v11 layout=L0 index=2 key="next"
+    v13 = FinishClass v1 layout=L0
+    v14 = Construct v13
+    v15 = PropGet v2 key="iterator"
+    v16 = PropGet v2 key="toStringTag"
+    v17 = PropGet v14 key="next"
+    v18 = ElemGet v14, v15
+    v19 = ElemGet v14, v16
+    Return
+}
+function f1 name="Cursor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="[Symbol.iterator]" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="[Symbol.toStringTag]" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="Cursor"
+    Return v1
+}
+function f4 name="next" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

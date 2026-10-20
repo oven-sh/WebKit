@@ -1,0 +1,35 @@
+# A saved frame holds no builder cursor: what was written is committed before the suspension and room is reserved again after the resume
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: RawPointerAcrossSuspension 1
+# DIAGNOSTIC: BuilderCursorUsedAfterMove 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="held-across-await" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: boolean, v1: undefined|Promise):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=16
+    v4 = JSONAppendBoolean v2, v3, v0
+    v5 = AwaitBySavingFrame v0, v1
+    v6 = JSONAppendBoolean v2, v4, v0
+    StringBuilderCommit v2, v6
+    v8 = StringBuilderFinish v2
+    v9 = ReturnAsyncResult v1, v8
+    Return v9
+}
+function f1 name="reserved-again-after-resume" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f1 promiseType=Promise promiseParameter=1} {
+  b0(v0: boolean, v1: undefined|Promise):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=8
+    v4 = JSONAppendBoolean v2, v3, v0
+    StringBuilderCommit v2, v4
+    v6 = AwaitBySavingFrame v0, v1
+    v7 = StringBuilderReserve v2 size=8
+    v8 = JSONAppendBoolean v2, v7, v0
+    StringBuilderCommit v2, v8
+    v10 = StringBuilderFinish v2
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+}
+function f2 name="held-across-await" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f0 promiseType=Promise promiseParameter=1}
+function f3 name="reserved-again-after-resume" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f1 promiseType=Promise promiseParameter=1}

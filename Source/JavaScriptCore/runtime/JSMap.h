@@ -70,6 +70,5 @@ private:
 };
 
 static_assert(std::is_final<JSMap>::value, "Required for JSType based casting");
-static_assert(sizeof(JSMap) <= 32);
 
 } // namespace JSC

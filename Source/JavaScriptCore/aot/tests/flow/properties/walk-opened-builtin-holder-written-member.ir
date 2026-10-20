@@ -1,0 +1,39 @@
+# The program replaces Function.prototype.toString, so the member is no constant: a conversion of a function to a primitive runs the replacement.
+# A native function that nobody has described opens Function.prototype, so the replacement is handed to unknown code, which calls it: `this` is the unknown object, which stands for the converted function.
+# RUN: flow-solve nodes
+# CHECK: , f3, parameter 0) = {{*}}unknown
+# RUN(CONVERTED): flow-solve sinks
+# CONVERTED: nativeCode {{*}}f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="text" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=FunctionPrototype
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="toString" mode=Sloppy
+    v4 = Undefined
+    v5 = Builtin builtin=String
+    v6 = Call v5, -, v0
+    PutModuleVariable v6 variable=g0
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key=@"nativeThatNobodyDescribed"
+    v10 = NewClosure function=f2
+    v11 = Call v9, -, v10
+    Return
+}
+function f1 name="converted" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="handedOver" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="replacement" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="text"
+    Return v1
+}

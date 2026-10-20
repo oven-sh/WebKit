@@ -31,6 +31,7 @@
 #include "IntlNumberFormat.h"
 
 #include "Error.h"
+#include "IntlFormatPatternCompiler.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
@@ -59,13 +60,13 @@ namespace IntlNumberFormatInternal {
 static constexpr bool verbose = false;
 }
 
-NEVER_INLINE void UNumberFormatterDeleter::operator()(UNumberFormatter* formatter)
+void UNumberFormatterDeleter::operator()(UNumberFormatter* formatter)
 {
     if (formatter)
         unumf_close(formatter);
 }
 
-NEVER_INLINE void UNumberRangeFormatterDeleter::operator()(UNumberRangeFormatter* formatter)
+void UNumberRangeFormatterDeleter::operator()(UNumberRangeFormatter* formatter)
 {
     if (formatter)
         unumrf_close(formatter);
@@ -577,6 +578,33 @@ UNumberRangeFormatter* IntlNumberFormat::createNumberRangeFormatterIfNecessary(J
     return m_numberRangeFormatter.get();
 }
 
+String IntlNumberFormat::tryFormatWithICU(double value) const
+{
+    Vector<char16_t, 32> buffer;
+    ASSERT(m_numberFormatter);
+    UErrorCode status = U_ZERO_ERROR;
+    auto formattedNumber = std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>>(unumf_openResult(&status));
+    if (U_FAILURE(status))
+        return { };
+    unumf_formatDouble(m_numberFormatter.get(), value, formattedNumber.get(), &status);
+    if (U_FAILURE(status))
+        return { };
+    status = callBufferProducingFunction(unumf_resultToString, formattedNumber.get(), buffer);
+    if (U_FAILURE(status))
+        return { };
+    return String(WTF::move(buffer));
+}
+
+const IntlFormatPattern* IntlNumberFormat::formatPattern() const
+{
+    if (!m_numberOfFormatsBeforeCompilingPattern)
+        return m_formatPattern.get();
+    if (--m_numberOfFormatsBeforeCompilingPattern)
+        return nullptr;
+    m_formatPattern = IntlFormatPatternCompiler().compile(*this);
+    return m_formatPattern.get();
+}
+
 // https://tc39.es/ecma402/#sec-formatnumber
 JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, double value) const
 {
@@ -585,19 +613,17 @@ JSValue IntlNumberFormat::format(JSGlobalObject* globalObject, double value) con
 
     value = purifyNaN(value);
 
-    Vector<char16_t, 32> buffer;
-    ASSERT(m_numberFormatter);
-    UErrorCode status = U_ZERO_ERROR;
-    auto formattedNumber = std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>>(unumf_openResult(&status));
-    if (U_FAILURE(status))
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        if (auto* pattern = formatPattern()) {
+            if (String text = pattern->tryFormatNumber(value); !text.isNull())
+                return jsString(vm, WTF::move(text));
+        }
+    }
+
+    String result = tryFormatWithICU(value);
+    if (result.isNull())
         return throwTypeError(globalObject, scope, "Failed to format a number."_s);
-    unumf_formatDouble(m_numberFormatter.get(), value, formattedNumber.get(), &status);
-    if (U_FAILURE(status))
-        return throwTypeError(globalObject, scope, "Failed to format a number."_s);
-    status = callBufferProducingFunction(unumf_resultToString, formattedNumber.get(), buffer);
-    if (U_FAILURE(status))
-        return throwTypeError(globalObject, scope, "Failed to format a number."_s);
-    return jsString(vm, String(WTF::move(buffer)));
+    return jsString(vm, WTF::move(result));
 }
 
 // https://tc39.es/ecma402/#sec-formatnumber

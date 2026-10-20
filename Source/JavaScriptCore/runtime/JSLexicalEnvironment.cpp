@@ -31,7 +31,6 @@
 
 #include "HeapAnalyzer.h"
 #include "JSCInlines.h"
-#include <wtf/BitVector.h>
 
 namespace JSC {
 
@@ -54,10 +53,6 @@ void JSLexicalEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 
     ConcurrentJSLocker locker(thisObject->symbolTable()->m_lock);
-#if ENABLE(AOT)
-    BitVector namedOffsets;
-    bool reportsUnnamedSlots = thisObject->vm().useImmutableIntrinsics;
-#endif
     SymbolTable::Map::iterator end = thisObject->symbolTable()->end(locker);
     for (SymbolTable::Map::iterator it = thisObject->symbolTable()->begin(locker); it != end; ++it) {
         SymbolTableEntry::Fast entry = it->value;
@@ -65,24 +60,11 @@ void JSLexicalEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         ScopeOffset offset = entry.scopeOffset();
         if (!thisObject->isValidScopeOffset(offset))
             continue;
-#if ENABLE(AOT)
-        if (reportsUnnamedSlots)
-            namedOffsets.set(offset.offset());
-#endif
 
         JSValue toValue = thisObject->variableAt(offset).get();
         if (toValue && toValue.isCell())
             analyzer.analyzeVariableNameEdge(thisObject, toValue.asCell(), it->key.get());
     }
-#if ENABLE(AOT)
-    for (unsigned i = 0; reportsUnnamedSlots && i < thisObject->symbolTable()->scopeSize(); ++i) {
-        if (namedOffsets.get(i))
-            continue;
-        JSValue toValue = thisObject->variableAt(ScopeOffset(i)).get();
-        if (toValue && toValue.isCell())
-            analyzer.analyzeIndexEdge(thisObject, toValue.asCell(), i);
-    }
-#endif
 }
 
 void JSLexicalEnvironment::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)

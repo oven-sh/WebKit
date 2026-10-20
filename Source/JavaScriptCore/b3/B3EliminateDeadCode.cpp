@@ -41,55 +41,30 @@ namespace JSC { namespace B3 {
 
 // FIXME: this pass currently only eliminates values and variables, it does not seem to eliminate dead blocks.
 
-#if USE(BUN_JSC_ADDITIONS)
-static ALWAYS_INLINE bool mustExecuteInPlace(Value* value, Opcode opcode)
-{
-    switch (opcode) {
-    case Load8Z:
-    case Load8S:
-    case Load16Z:
-    case Load16S:
-    case Load:
-        return static_cast<MemoryValue*>(value)->hasFence() || value->traps();
-    case Store8:
-    case Store16:
-    case Store:
-        return static_cast<MemoryValue*>(value)->range() || static_cast<MemoryValue*>(value)->hasFence() || value->traps();
-    case Patchpoint:
-        return static_cast<PatchpointValue*>(value)->effects.mustExecute();
-    case CCall:
-        return static_cast<CCallValue*>(value)->effects.mustExecute();
-    default:
-        return value->mustExecute();
-    }
-}
-#endif
+struct LiveValues {
+    enum class State : uint8_t { NotReached, Needed, PresumedDead, Live };
 
-#if USE(BUN_JSC_ADDITIONS)
-bool eliminateDeadCodeImpl(Procedure& proc, Vector<UpsilonValue*>* liveUpsilons)
-#else
-bool eliminateDeadCodeImpl(Procedure& proc)
-#endif
-{
-    bool changed = false;
-#if USE(BUN_JSC_ADDITIONS)
-    enum State : uint8_t { NotReached, Wanted, PassedAsDead, Live };
-    struct {
-        bool saw(Value* value) const { return states[value->index()] == Live; }
+    bool contains(Value* value) const { return states[value->index()] == State::Live; }
 
-        Vector<uint8_t, 1024> states;
-    } worklist;
-    worklist.states.fill(NotReached, proc.values().size());
-    uint8_t* states = worklist.states.mutableSpan().data();
+    Vector<State, 1024> states;
+    Vector<BasicBlock*, 64> blocksWithPossiblyDeadValues;
+};
+
+static LiveValues markLiveValues(Procedure& proc)
+{
+    using State = LiveValues::State;
+
+    LiveValues result;
+    result.states.fill(State::NotReached, proc.values().size());
+    State* states = result.states.mutableSpan().data();
     Vector<Value*, 64> stack;
     Vector<UpsilonValue*, 64> upsilons;
-    Vector<BasicBlock*, 64> blocksWithPossiblyDeadValues;
-    auto want = [&](Value* value) ALWAYS_INLINE_LAMBDA {
-        uint8_t& state = states[value->index()];
-        if (state == NotReached)
-            state = Wanted;
-        else if (state == PassedAsDead) {
-            state = Live;
+    auto markNeeded = [&](Value* value) ALWAYS_INLINE_LAMBDA {
+        State& state = states[value->index()];
+        if (state == State::NotReached)
+            state = State::Needed;
+        else if (state == State::PresumedDead) {
+            state = State::Live;
             stack.append(value);
         }
     };
@@ -101,81 +76,42 @@ bool eliminateDeadCodeImpl(Procedure& proc)
         Value* const* values = block->values().span().data();
         for (unsigned index = block->size(); index--;) {
             Value* value = values[index];
-            uint8_t& state = states[value->index()];
-            if (state != Wanted) {
+            State& state = states[value->index()];
+            if (state != State::Needed) {
                 Opcode opcode = value->opcode();
                 bool isLive = false;
                 if (opcode == Upsilon) {
-                    uint8_t phiState = states[static_cast<UpsilonValue*>(value)->phi()->index()];
-                    isLive = phiState == Wanted || phiState == Live;
+                    State phiState = states[static_cast<UpsilonValue*>(value)->phi()->index()];
+                    isLive = phiState == State::Needed || phiState == State::Live;
                     if (!isLive)
                         upsilons.append(static_cast<UpsilonValue*>(value));
-                    else if (liveUpsilons)
-                        liveUpsilons->append(static_cast<UpsilonValue*>(value));
                 } else if (opcode != Phi)
-                    isLive = mustExecuteInPlace(value, opcode);
+                    isLive = value->mustExecute();
                 if (!isLive) {
-                    state = PassedAsDead;
+                    state = State::PresumedDead;
                     mayContainDeadValues = true;
                     continue;
                 }
             }
-            state = Live;
+            state = State::Live;
             for (Value* child : value->children())
-                want(child);
+                markNeeded(child);
         }
         if (mayContainDeadValues)
-            blocksWithPossiblyDeadValues.append(block);
+            result.blocksWithPossiblyDeadValues.append(block);
     }
     for (;;) {
         while (!stack.isEmpty()) {
             for (Value* child : stack.takeLast()->children())
-                want(child);
-        }
-
-        bool didPush = false;
-        for (size_t upsilonIndex = 0; upsilonIndex < upsilons.size(); ++upsilonIndex) {
-            UpsilonValue* upsilon = upsilons[upsilonIndex];
-            uint8_t phiState = states[upsilon->phi()->index()];
-            if (phiState == Wanted || phiState == Live) {
-                want(upsilon);
-                if (liveUpsilons)
-                    liveUpsilons->append(upsilon);
-                upsilons[upsilonIndex--] = upsilons.last();
-                upsilons.takeLast();
-                didPush = true;
-            }
-        }
-        if (!didPush)
-            break;
-    }
-#else
-    GraphNodeWorklist<Value*, IndexSet<Value*>> worklist;
-    Vector<UpsilonValue*, 128> upsilons;
-    for (BasicBlock* block : proc) {
-        for (Value* value : *block) {
-            // We don't care about effects of SSA operations, since we model them more
-            // accurately than the effects() method does.
-            if (value->opcode() != Phi && value->opcode() != Upsilon) {
-                if (value->mustExecute())
-                    worklist.push(value);
-            }
-
-            if (UpsilonValue* upsilon = value->as<UpsilonValue>())
-                upsilons.append(upsilon);
-        }
-    }
-    for (;;) {
-        while (Value* value = worklist.pop()) {
-            for (Value* child : value->children())
-                worklist.push(child);
+                markNeeded(child);
         }
         
         bool didPush = false;
         for (size_t upsilonIndex = 0; upsilonIndex < upsilons.size(); ++upsilonIndex) {
             UpsilonValue* upsilon = upsilons[upsilonIndex];
-            if (worklist.saw(upsilon->phi())) {
-                worklist.push(upsilon);
+            State phiState = states[upsilon->phi()->index()];
+            if (phiState == State::Needed || phiState == State::Live) {
+                markNeeded(upsilon);
                 upsilons[upsilonIndex--] = upsilons.last();
                 upsilons.takeLast();
                 didPush = true;
@@ -184,29 +120,37 @@ bool eliminateDeadCodeImpl(Procedure& proc)
         if (!didPush)
             break;
     }
-#endif
+    return result;
+}
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (proc.variables().isEmpty()) {
-        for (BasicBlock* block : blocksWithPossiblyDeadValues | std::views::reverse) {
-            size_t sourceIndex = 0;
-            size_t targetIndex = 0;
-            size_t size = block->size();
-            Value** values = block->values().mutableSpan().data();
-            while (sourceIndex < size) {
-                Value* value = values[sourceIndex++];
-                if (states[value->index()] == Live)
-                    values[targetIndex++] = value;
-                else {
-                    proc.deleteValue(value);
-                    changed = true;
-                }
+static bool deleteDeadValues(Procedure& proc, const LiveValues& liveValues)
+{
+    bool changed = false;
+    for (BasicBlock* block : liveValues.blocksWithPossiblyDeadValues | std::views::reverse) {
+        size_t sourceIndex = 0;
+        size_t targetIndex = 0;
+        size_t size = block->size();
+        Value** values = block->values().mutableSpan().data();
+        while (sourceIndex < size) {
+            Value* value = values[sourceIndex++];
+            if (liveValues.contains(value))
+                values[targetIndex++] = value;
+            else {
+                proc.deleteValue(value);
+                changed = true;
             }
-            block->values().shrink(targetIndex);
         }
-        return changed;
+        block->values().shrink(targetIndex);
     }
-#endif
+    return changed;
+}
+
+bool eliminateDeadCodeImpl(Procedure& proc)
+{
+    bool changed = false;
+    LiveValues liveValues = markLiveValues(proc);
+    if (proc.variables().isEmpty())
+        return deleteDeadValues(proc, liveValues);
 
     IndexSet<Variable*> liveVariables;
     
@@ -215,7 +159,7 @@ bool eliminateDeadCodeImpl(Procedure& proc)
         size_t targetIndex = 0;
         while (sourceIndex < block->size()) {
             Value* value = block->at(sourceIndex++);
-            if (worklist.saw(value)) {
+            if (liveValues.contains(value)) {
                 if (VariableValue* variableValue = value->as<VariableValue>())
                     liveVariables.add(variableValue->variable());
                 block->at(targetIndex++) = value;

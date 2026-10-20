@@ -1,0 +1,45 @@
+# A use that applies transitively reaches every object the operand reaches through its contents, also around a cycle, and neither the prototype of its class nor an object that only points at it
+# RUN: flow-solve objects
+# CHECK: L2#[[c]] mutations={{*}} uses=[{{*}}ReadByUnknownKey, {{*}}Serialized
+# CHECK-NEXT: L1#[[b]] mutations={{*}} uses=[{{*}}ReadByUnknownKey, {{*}}Serialized
+# CHECK-NEXT: L3#[[pointsAtOperand]] mutations=[] uses=[]
+# CHECK-NEXT: L0#[[a]] mutations={{*}} uses=[{{*}}ReadByUnknownKey, {{*}}Serialized
+# CHECK: f1.prototype mutations=[BecomePrototype] uses=[]
+# RUN(LINKS): flow-links builtins
+# LINKS: builtin [[main]] v11 JSONStringify/0 Call
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1 fields=[{key="b" declared={type=anything}}]
+layout L1 name="B" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="C" fields=[{key="back" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="PointsAtOperand" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Undefined
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Construct v2
+    PropSet v6, v5 key="b" mode=Strict
+    PropSet v4, v6 key="back" mode=Strict
+    v9 = NewObject -, v6 layout=L3 fields=[0]
+    v10 = Builtin builtin=JSONStringify
+    v11 = Call v10, -, v6
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}

@@ -100,6 +100,11 @@ struct PatchCustom {
         return inst.args()[0].special()->isTerminal(inst);
     }
 
+    static bool needsFrame(Inst& inst)
+    {
+        return inst.args()[0].special()->needsFrame(inst);
+    }
+
     static bool hasNonArgEffects(Inst& inst)
     {
         return inst.args()[0].special()->hasNonArgEffects(inst);
@@ -191,6 +196,11 @@ struct CCallCustom : public CommonCustomBase<CCallCustom> {
         return false;
     }
 
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return true;
@@ -259,6 +269,11 @@ struct ShuffleCustom : public CommonCustomBase<ShuffleCustom> {
         return false;
     }
 
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return false;
@@ -297,6 +312,11 @@ struct EntrySwitchCustom : public CommonCustomBase<EntrySwitchCustom> {
     static bool isTerminal(Inst&)
     {
         return true;
+    }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
     }
     
     static bool hasNonArgNonControlEffects(Inst&)
@@ -345,7 +365,112 @@ struct WasmBoundsCheckCustom : public CommonCustomBase<WasmBoundsCheckCustom> {
     {
         return false;
     }
+
+    static bool needsFrame(Inst&)
+    {
+        return true;
+    }
     
+    static bool hasNonArgNonControlEffects(Inst&)
+    {
+        return true;
+    }
+
+    static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
+};
+
+struct EnterFrameCustom : public CommonCustomBase<EnterFrameCustom> {
+    static unsigned numberOfScratchRegisters(const Inst& inst)
+    {
+        return static_cast<unsigned>(inst.args()[0].value());
+    }
+
+    template<typename Func>
+    static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
+    {
+        functor(inst.args()[0], Arg::Use, GP, Width32);
+        unsigned endOfScratchRegisters = 1 + numberOfScratchRegisters(inst);
+        for (unsigned i = 1; i < inst.args().size(); ++i) {
+            Arg& arg = inst.args()[i];
+            Bank bank = arg.tmp().bank();
+            functor(arg, i < endOfScratchRegisters ? Arg::Scratch : Arg::Use, bank, conservativeWidthWithoutVectors(bank));
+        }
+    }
+
+    template<typename... Arguments>
+    static bool isValidFormStatic(Arguments...)
+    {
+        return false;
+    }
+
+    static bool isValidForm(Inst&);
+
+    static bool admitsStack(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool admitsExtendedOffsetAddr(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool isTerminal(Inst&)
+    {
+        return false;
+    }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
+    }
+
+    static bool hasNonArgNonControlEffects(Inst&)
+    {
+        return true;
+    }
+
+    static MacroAssembler::Jump generate(Inst&, CCallHelpers&, GenerationContext&);
+};
+
+struct LeaveFrameCustom : public CommonCustomBase<LeaveFrameCustom> {
+    template<typename Func>
+    static void forEachArg(Inst& inst, NOESCAPE const Func& functor)
+    {
+        for (Arg& arg : inst.args()) {
+            Bank bank = arg.tmp().bank();
+            functor(arg, Arg::Def, bank, conservativeWidthWithoutVectors(bank));
+        }
+    }
+
+    template<typename... Arguments>
+    static bool isValidFormStatic(Arguments...)
+    {
+        return false;
+    }
+
+    static bool isValidForm(Inst&);
+
+    static bool admitsStack(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool admitsExtendedOffsetAddr(Inst&, unsigned)
+    {
+        return false;
+    }
+
+    static bool isTerminal(Inst&)
+    {
+        return false;
+    }
+
+    static bool needsFrame(Inst&)
+    {
+        return false;
+    }
+
     static bool hasNonArgNonControlEffects(Inst&)
     {
         return true;

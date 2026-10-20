@@ -1,0 +1,69 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// AOTStubsPropertyRead.cpp
+v(GetById, CalledByCode, (), CallerFrameAxis | StubFrameAxis | OperandRegisterAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, AlternateReceivers, ByPolicy, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
+v(GetByIdAfterFrontProbe, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
+v(GetByIdHashed, CalledByCode, (), CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetById)
+v(InById, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, InById)
+
+// AOTStubsPropertyReadHandlers.cpp
+v(ReadSlot, Handler, (ById, ByIdPacked, ByVal, FreeName, FreeNameForTypeOf), FormAxis | CountAxis | CallerFrameAxis | StubFrameAxis, 0, 24, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlot)
+v(ReadSlotExit, InternalEntry, (ByIdMiss, ByIdUncached, ByValMiss, ByValUncached, FreeNameMiss, FreeNameUncached, FreeNameForTypeOfMiss, FreeNameForTypeOfUncached), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReadSlotExit)
+
+// AOTStubsPropertyCannot.cpp
+v(SlotCannot, InternalEntry, (ReadField, CallGetter, StoreField, CreateField, CallSetterStrict, CallSetterSloppy, GrowStorage), FormAxis | CallerFrameAxis | StubFrameAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SlotCannot)
+
+// AOTStubsPropertySiteCaches.cpp
+v(GetByIdAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdAtSite)
+v(PutByIdAtSite, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutByIdAtSite)
+
+// AOTStubsPropertyReadPairs.cpp
+v(GetByIdChain, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdChain)
+v(GetByIdPair, CalledByCode, (FirstResult, FirstReceiver, Other), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByIdPair)
+v(GetByIdIsTruthy, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdIsTruthy)
+v(GetByIdEqualsLiteral, CalledByCode, (), CountAxis, 1, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByIdEqualsLiteral)
+
+// AOTStubsPropertyCheckedReads.cpp
+v(GetByIdChecked, CalledByCode, (Number, Boolean, String, Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetByIdChecked)
+
+// AOTStubsPropertyMethodCalls.cpp
+v(FindMethodById, CalledByCode, (Callable, Cell), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindMethodById)
+v(FindMethodByIdAtSite, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindMethodByIdAtSite)
+v(CallMethodById, CalledByCode, (), CountAxis | ImmediateAxis, 0, N, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, CallMethodById)
+v(TryGetSuperById, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TryGetSuperById)
+
+// AOTStubsPropertyFreeNames.cpp
+v(GetFreeName, CalledByCode, (Read, TypeOf), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetFreeName)
+v(SetFreeName, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, SetFreeName)
+
+// AOTStubsPropertyInstanceOf.cpp
+v(InstanceOf, CalledByCode, (Constructor, Prototype), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InstanceOf)
+
+// AOTStubsPropertyStore.cpp
+v(PutById, CalledByCode, (Strict, Sloppy, Define), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
+v(PutByIdAfterFrontProbe, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
+v(PutByIdHashed, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutById)
+
+// AOTStubsPropertyStoreHandlers.cpp
+v(StoreSlot, Handler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName, SloppyById, SloppyByIdPacked, SloppyByVal, SloppyFreeName, DefineById, DefineByIdPacked, DefineByVal), FormAxis | CountAxis, 0, 24, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlot)
+v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByValMiss, StrictByValUncached, StrictFreeNameMiss, StrictFreeNameUncached, SloppyByIdMiss, SloppyByIdUncached, SloppyByValMiss, SloppyByValUncached, SloppyFreeNameMiss, SloppyFreeNameUncached, DefineByIdMiss, DefineByIdUncached, DefineByValMiss, DefineByValUncached), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlotExit)
+
+// AOTStubsPropertyExtraProperties.cpp
+v(GetExtraPropertyFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetExtraPropertyFrontEnd)
+v(PutExtraPropertyFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutExtraPropertyFrontEnd)
+AOT_STUB_FRONT_END(GetExtraProperty, GetExtraPropertyFrontEnd)
+AOT_STUB_FRONT_END(PutExtraProperty, PutExtraPropertyFrontEnd)
+
+// AOTStubsFieldCreation.cpp
+v(DidCreateField, CalledByCode, (One, OneOutOfLine, Run), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, OrderWords, ShapeWords, AllocatorState, RuntimeState) | writes(ObjectFields, OrderWords, AllocatorState), DidCreateField)
+
+// AOTStubsKeyedAccess.cpp
+v(GetByValCached, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(GetByValCachedCells, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValCached)
+v(InByValCached, CalledByCode, (In, HasOwn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, InByValCached)
+v(PutByValCached, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValCached)
+v(DefineByValCached, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, DefineByValCached)
+v(ToPropertyKey, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ToPropertyKey)

@@ -1,4 +1,4 @@
-//@ runDefault("--useRegExpJIT=0", "--validateRegExpFastMatcher=1")
+//@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 //@ runDefault("--useRegExpJIT=0")
 //@ runDefault
 //@ runDefault("--useExecutableAllocationFuzz=true", "--fireExecutableAllocationFuzzAtOrAfter=1")
@@ -18,6 +18,17 @@ const cases = [
     ["(?:x*){2,}y","","xxy",0,["xxy"]],
     ["(?=(?:x*)*y)x","","xxy",0,["x"]],
     ["(?!(?:x*)*z)x","","xxy",0,["x"]],
+    ["\\0*","","\0\0a",0,["\0\0"]],
+    ["\\0*","","a\0",0,[""]],
+    ["a*","","aa\0",0,["aa"]],
+    ["a*","","\0a",0,[""]],
+    ["\\0*a*","","\0\0aab",0,["\0\0aa"]],
+    ["\\0*a*","","aa\0",0,["aa"]],
+    ["a*\\0*b","","xaa\0\0b",1,["aa\0\0b"]],
+    ["a*\\0*b","","\0ab",1,["ab"]],
+    ["\\0*?a","","\0\0a",0,["\0\0a"]],
+    ["\\0+a","","a\0\0a",1,["\0\0a"]],
+    ["\\0{2}","","\0\0\0",0,["\0\0"]],
     ["a*ab","","aaab",0,["aaab"]],
     ["a*ab","i","aaab",0,["aaab"]],
     ["a*ab","","ab",0,["ab"]],
@@ -370,6 +381,28 @@ for (const [source, flags, subject, index, expected] of cases) {
     shouldBe(new RegExp("(?:a|b)*c").exec("ab".repeat(2000)), null, "a long run of iterations that fails");
     shouldBe(new RegExp("a?".repeat(1 << 18)).exec("x")[0], "", "a long row of optional characters");
     shouldBe(new RegExp("(?:" + "a?|".repeat(1 << 12) + "b)" + "c?".repeat(1 << 12) + "d").exec("bd")[0], "bd", "a wide alternation ahead of a long row");
+}
+
+{
+    const maxIndexCount = 0xffff;
+    const checkDistinctClasses = classCount => {
+        let source = "";
+        let subject = "";
+        for (let i = 0; i < classCount; ++i) {
+            const low = String.fromCharCode(0x100 + (i & 0xff));
+            const high = String.fromCharCode(0x1000 + (i >> 8));
+            source += "[" + low + high + "]";
+            subject += high;
+        }
+        const regexp = new RegExp(source);
+        const label = classCount + " distinct classes";
+        const result = regexp.exec("x" + subject);
+        shouldBe(result && [result.index, result[0].length], [1, classCount], label);
+        shouldBe(regexp.test(subject.slice(1)), false, label + ", a subject one character short");
+        shouldBe(regexp.test(subject.slice(0, -1) + "\u1000"), false, label + ", a member of the first class in the last position");
+    };
+    checkDistinctClasses(maxIndexCount);
+    checkDistinctClasses(maxIndexCount + 17);
 }
 
 let seed = typeof fuzzSeed === "number" ? 12345 + fuzzSeed * 7919 : 12345;

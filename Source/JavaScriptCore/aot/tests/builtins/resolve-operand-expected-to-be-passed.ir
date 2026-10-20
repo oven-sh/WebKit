@@ -1,0 +1,62 @@
+# An operand that may be undefined stands for a missing one. It is tested for what it is expected to be, so that the call behind the test knows whether the operand is there
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="expectedNumber" parameters=[{type=string}, {type=undefined|null|number predicted=number}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|number ~ number):
+    v2 = Builtin builtin=StringPrototypeCharCodeAt
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f0 name="expectedNumber"
+# CHECK: [[test0]]: boolean ~ true = TypeTest v1 testedType=number
+# CHECK: v3: number = CallBuiltin v0, [[passed0]] overload=StringPrototypeCharCodeAt/0
+# CHECK-NEXT: Return v3
+# CHECK: CallBuiltin v0, [[missing0]] overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+# CHECK: ([[passed0]]: number):
+# CHECK: ([[missing0]]: undefined|null) frequency=Unlikely:
+
+function f1 name="expectedNumberOrUndefined" parameters=[{type=string}, {type=undefined|null|number predicted=undefined|number}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|number ~ undefined|number):
+    v2 = Builtin builtin=StringPrototypeCharCodeAt
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f1 name="expectedNumberOrUndefined"
+# CHECK: TypeTest v1 testedType=undefined|number
+# CHECK: v3: number = CallBuiltin v0, [[passed1]] overload=StringPrototypeCharCodeAt/0
+# CHECK: ([[passed1]]: undefined|number):
+
+function f2 name="nothingExpected" parameters=[{type=string}, {type=undefined|null|number}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|number):
+    v2 = Builtin builtin=StringPrototypeCharCodeAt
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="nothingExpected"
+# CHECK-NOT: TypeTest
+# CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+
+function f3 name="expectedEnd" parameters=[{type=string}, {type=number}, {type=undefined|null|number predicted=number}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: undefined|null|number ~ number):
+    v3 = Builtin builtin=StringPrototypeSlice
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+# CHECK-LABEL: function f3 name="expectedEnd"
+# CHECK: TypeTest v2 testedType=number
+# CHECK: v4: string = CallBuiltin v0, v1, [[end3]] overload=StringPrototypeSlice/0
+# CHECK: ([[end3]]: number):
+
+function f4 name="expectedSeparator" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything predicted=string}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything ~ string):
+    v2 = Builtin builtin=ArrayPrototypeJoin
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="expectedSeparator"
+# CHECK: TypeTest v1 testedType=string
+# CHECK: v3: string = CallBuiltin v0, [[separator4]] overload=ArrayPrototypeJoin/0
+# CHECK: ([[separator4]]: string):

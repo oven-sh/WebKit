@@ -1,0 +1,187 @@
+# Array.prototype.filter as the library has it takes any receiver. It expects what the first overload of its entry accepts, so it tests once for an array with the built-in names
+# and then reads elements, makes the result and stores into it without a lookup. The same body behind no entry expects nothing
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=34 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = PropGet v1 key="filter"
+    v3 = PropGet v0 key="callback" [isFreeName]
+    v4 = Call v2, v1, v3 calleeKey="filter"
+    v5 = NewClosure function=f2
+    v6 = Call v5, v1, v3
+    v7 = Call v5, v1, v3
+    v8 = NewArray v4, v6, v7 contents=anything
+    Return v8
+}
+function f1 name="filter" kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 enclosingRuntimeFunction=34 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
+    Jump -> next b1()
+  b1():
+    v4 = CreateUnmappedArguments v1, v3, v2
+    v5 = Undefined
+    v6 = ToObject v0 message="Array.prototype.filter requires that |this| not be null or undefined"
+    v7 = PropGet v6 key="length"
+    v8 = ToLength v7
+    v9 = Predict v8 predicted=number
+    v10 = TypeTest v2 testedType=function
+    Branch v10 -> taken b2(| 0), notTaken b18(| 0)
+  b2(v11):
+    Jump -> next b3()
+  b3():
+    v12 = Integer integer=1
+    v13 = ElemGet v4, v12
+    v14 = Integer
+    v15 = ClaimDeclared v14 declared={type=number flags=[IsFromCompiler]}
+    v16 = ArraySpeciesCreate v15, v6
+    v17 = Integer
+    v18 = Predict v17 predicted=number
+    v19 = Integer
+    v20 = Predict v19 predicted=number
+    Jump -> next b4(v18, v20, v5)
+  b4(v21, v22, v23):
+    LoopHint
+    v25 = Less v22, v9
+    Branch v25 -> taken b5(| 0, 1), notTaken b16(| 0, 1)
+  b5(v26, v27):
+    Jump -> next b6()
+  b6():
+    v28 = ElemHas v6, v26
+    v29 = ToBoolean v28
+    Branch v29 -> taken b7(| 0), notTaken b13(| 0)
+  b7(v30):
+    Jump -> next b8()
+  b8():
+    v31 = ElemGet v6, v26
+    v32 = Predict v11 predicted=function
+    v33 = Call v32, v13, v31, v26, v6
+    v34 = ToBoolean v33
+    Branch v34 -> taken b9(| 0), notTaken b11(| 0)
+  b9(v35):
+    Jump -> next b10()
+  b10():
+    v36 = ClaimDeclared v16 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v36, v21, v31
+    v38 = Increment v21
+    v39 = ClaimDeclared v38 declared={type=anything predicted=number}
+    Jump -> next b12(v39)
+  b11(v40):
+    Jump -> next b12(v21)
+  b12(v41):
+    Jump -> next b15(v41, v31)
+  b13(v42):
+    Jump -> next b14()
+  b14():
+    Jump -> next b15(v21, v23)
+  b15(v43, v44):
+    v45 = Increment v26
+    v46 = ClaimDeclared v45 declared={type=anything predicted=number}
+    Jump -> next b4(v43, v46, v44)
+  b16(v47, v48):
+    Jump -> next b17()
+  b17():
+    Return v16
+  b18(v49):
+    Jump -> next b19()
+  b19():
+    v50 = ThrowNewError errorKind=TypeError message="Array.prototype.filter callback must be a function"
+    Unreachable
+}
+# CHECK-LABEL: function f1 name="filter"
+# CHECK: [[receiver]]: object = ToObject v0
+# CHECK: boolean = TypeTest [[receiver]] testedType=Array
+# CHECK: boolean = IsPristine [[array]] builtinClass=Array aspects=[Names]
+# CHECK: [[result]]: Array = NewArrayLike {{*}}, [[array]]
+# CHECK: LoopHint
+# CHECK: boolean = HasArrayElement [[array]], [[index]],
+# CHECK: [[element]]: anything = GetArrayElement [[array]], [[index]],
+# CHECK: PutArrayElement [[result]], {{*}}, [[element]],
+# CHECK: frequency=Unlikely:
+# CHECK: boolean = ElemHas [[receiver]],
+
+function f2 name="helper" kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
+    Jump -> next b1()
+  b1():
+    v4 = CreateUnmappedArguments v1, v3, v2
+    v5 = Undefined
+    v6 = ToObject v0 message="Array.prototype.filter requires that |this| not be null or undefined"
+    v7 = PropGet v6 key="length"
+    v8 = ToLength v7
+    v9 = Predict v8 predicted=number
+    v10 = TypeTest v2 testedType=function
+    Branch v10 -> taken b2(| 0), notTaken b18(| 0)
+  b2(v11):
+    Jump -> next b3()
+  b3():
+    v12 = Integer integer=1
+    v13 = ElemGet v4, v12
+    v14 = Integer
+    v15 = ClaimDeclared v14 declared={type=number flags=[IsFromCompiler]}
+    v16 = ArraySpeciesCreate v15, v6
+    v17 = Integer
+    v18 = Predict v17 predicted=number
+    v19 = Integer
+    v20 = Predict v19 predicted=number
+    Jump -> next b4(v18, v20, v5)
+  b4(v21, v22, v23):
+    LoopHint
+    v25 = Less v22, v9
+    Branch v25 -> taken b5(| 0, 1), notTaken b16(| 0, 1)
+  b5(v26, v27):
+    Jump -> next b6()
+  b6():
+    v28 = ElemHas v6, v26
+    v29 = ToBoolean v28
+    Branch v29 -> taken b7(| 0), notTaken b13(| 0)
+  b7(v30):
+    Jump -> next b8()
+  b8():
+    v31 = ElemGet v6, v26
+    v32 = Predict v11 predicted=function
+    v33 = Call v32, v13, v31, v26, v6
+    v34 = ToBoolean v33
+    Branch v34 -> taken b9(| 0), notTaken b11(| 0)
+  b9(v35):
+    Jump -> next b10()
+  b10():
+    v36 = ClaimDeclared v16 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v36, v21, v31
+    v38 = Increment v21
+    v39 = ClaimDeclared v38 declared={type=anything predicted=number}
+    Jump -> next b12(v39)
+  b11(v40):
+    Jump -> next b12(v21)
+  b12(v41):
+    Jump -> next b15(v41, v31)
+  b13(v42):
+    Jump -> next b14()
+  b14():
+    Jump -> next b15(v21, v23)
+  b15(v43, v44):
+    v45 = Increment v26
+    v46 = ClaimDeclared v45 declared={type=anything predicted=number}
+    Jump -> next b4(v43, v46, v44)
+  b16(v47, v48):
+    Jump -> next b17()
+  b17():
+    Return v16
+  b18(v49):
+    Jump -> next b19()
+  b19():
+    v50 = ThrowNewError errorKind=TypeError message="Array.prototype.filter callback must be a function"
+    Unreachable
+}
+# CHECK-LABEL: function f2 name="helper"
+# CHECK-NOT: testedType=Array
+# CHECK-NOT: NewArrayLike
+# CHECK-NOT: HasArrayElement
+# CHECK: [[object]]: object = ToObject v0
+# CHECK: anything = ArraySpeciesCreate {{*}}, [[object]]
+# CHECK: boolean = ElemHas [[object]],
+# CHECK-NOT: HasArrayElement
+# CHECK-LABEL: function f3

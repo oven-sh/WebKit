@@ -1,0 +1,160 @@
+# A switch on a known subject becomes a jump to its case, and the subject is passed where the case edge passed it as the case's value
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 6
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="knownInteger" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Switch v2 cases=[0, 1] -> case b3(| 0), case b4(| 0), otherwise b5()
+  b2():
+    v3 = Negate v1
+    Jump -> next b4(v3)
+  b3(v4):
+    Unreachable
+  b4(v5):
+    Return v5
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="knownInteger"
+# CHECK: = Integer integer=1
+# CHECK-NEXT: Jump -> next b4(v2)
+# CHECK: Jump -> next b4(v3)
+# CHECK: b4(v5: number):
+# CHECK-NEXT: Return v5
+# CHECK-NOT: Return v1
+
+function f1 name="argumentsComeBeforeSubject" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=0
+    Switch v2 cases=[0, 1] -> case b3(v1 | 0), case b4(), otherwise b4()
+  b2():
+    v3 = Negate v1
+    Jump -> next b3(v3, v1)
+  b3(v4, v5):
+    v6 = Sub v4, v5
+    Return v6
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="argumentsComeBeforeSubject"
+# CHECK: = Integer
+# CHECK-NEXT: Jump -> next b3(v1, v2)
+
+function f2 name="onlyPredecessor" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Unreachable
+  b2(v3):
+    v4 = Add v3, v0
+    Return v4
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="onlyPredecessor"
+# CHECK-NOT: Switch
+# CHECK: = Add v1, v0
+# CHECK-NEXT: Return v4
+# CHECK-NOT: Return v0
+
+function f3 name="knownIntegerIsNoCase" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=7
+    Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Unreachable
+  b2(v3):
+    Unreachable
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="knownIntegerIsNoCase"
+# CHECK-NOT: Switch
+# CHECK: Return v0
+
+function f4 name="knownString" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
+  b0(v0: boolean, v1: string):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="b"
+    SwitchString v2 strings=["a", "b"] -> case b3(| 0), case b4(| 0), otherwise b5()
+  b2():
+    v3 = Strcat v1, v1
+    Jump -> next b4(v3)
+  b3(v4):
+    Unreachable
+  b4(v5):
+    Return v5
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f4 name="knownString"
+# CHECK: = String string="b"
+# CHECK-NEXT: Jump -> next b4(v2)
+# CHECK-NOT: Return v1
+
+function f5 name="rangeLeavesOneCase" parameters=[{type=int[0, 1]}, {type=number}] results=[{type=number}] {
+  b0(v0: int[0, 1], v1: number):
+    Switch v0 cases=[0, 5] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Unreachable
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f5 name="rangeLeavesOneCase"
+# CHECK: Switch v0 cases=[0] -> case b1(| 0), otherwise b3()
+# CHECK-NEXT: b1(v2: 0):
+
+function f6 name="unknownSubject" parameters=[{type=i32}, {type=number}] results=[{type=number}] {
+  b0(v0: i32, v1: number):
+    Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f6 name="unknownSubject"
+# CHECK: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+# CHECK-NEXT: b1(v2: 0):
+# CHECK: b2(v3: 1):
+
+function f7 name="caseWithProofIntoBlockOfOtherwise" parameters=[{type=i32}, {type=number}] results=[{type=number}] {
+  b0(v0: i32, v1: number):
+    Switch v0 cases=[0] -> case b1(| 0), otherwise b1(v1)
+  b1(v2):
+    Return v2
+}
+# CHECK-LABEL: function f7 name="caseWithProofIntoBlockOfOtherwise"
+# CHECK: Switch v0 cases=[0] -> case b1(| 0), otherwise b1(v1)
+
+function f8 name="unknownString" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    SwitchString v0 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v1):
+    Return v1
+  b2(v2):
+    Return v2
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f8 name="unknownString"
+# CHECK: SwitchString v0 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
+# CHECK-NEXT: b1(v1: "a"):
+# CHECK: b2(v2: "b"):

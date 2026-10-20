@@ -1,0 +1,38 @@
+# A function that fails before it has a procedure leaves the rest of its batch to be compiled, and the build reports its diagnostic alone
+# FORM: Selected
+# OPTIONS: limit=InlineFramesPerFunction:1
+# RUN: generate-code
+# DIAGNOSTIC: LimitExceeded 1
+# LOSS: InlineFramesPerFunction x1 f1
+# CHECK: f0: size=
+# CHECK-NEXT: f1: no code
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: f3: size=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fiveCalls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Call v0
+    v3 = Call v0
+    v4 = Call v0
+    v5 = Call v0
+    Return v5
+}
+function f1 name="hasInlineFrame" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f3 callPosition=7 module=m0}] {
+  b0(v0: anything):
+    v1 = Call v0 @5
+    v2 = Call v1 @3:1
+    v3 = Call v0, -, v2 @9
+    Return v3
+}
+function f2 name="oneCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f3 name="callsArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0 @3
+    Return v1
+}

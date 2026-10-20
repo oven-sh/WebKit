@@ -1,0 +1,33 @@
+# Keys and values of a map are separate slots, so a key nobody knows does not widen the values
+# RUN: flow
+# STATISTIC: FlowProvenContentsSites = 2
+# CHECK: variable g0 type=Map<"k", true, proven,
+# CHECK: variable g1 type=undefined|true written=anything
+# CHECK: variable g2 type=Map<anything, false, proven,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="byName" declared={type=anything} initialization=Uninitialized
+variable g1 name="found" declared={type=anything} initialization=Uninitialized
+variable g2 name="byAnything" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    PutModuleVariable v1 variable=g0
+    v3 = String string="k"
+    v4 = Boolean boolean=true
+    v5 = PropGet v1 key="set"
+    v6 = Call v5, v1, v3, v4
+    v7 = PropGet v1 key="get"
+    v8 = Call v7, v1, v3
+    PutModuleVariable v8 variable=g1
+    v10 = Construct v0
+    PutModuleVariable v10 variable=g2
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="id" [isFreeName]
+    v14 = Boolean boolean=false
+    v15 = PropGet v10 key="set"
+    v16 = Call v15, v10, v13, v14
+    Return
+}

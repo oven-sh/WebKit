@@ -1,0 +1,107 @@
+# A store that nothing reads still keeps its value alive. Nobody can tell that the value was let go unless somebody sees when it, or something that it refers to, is collected:
+# the target of a weak reference or of a registry, whatever may be the unknown object, an instance of a built-in class that refers to more than flow sees. Such a field is not published as never read.
+# What the value refers to only by way of the one object that has the field does not count: that object keeps it alive without the field
+# RUN: flow
+# CHECK: field L0.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L1.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L2.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L3.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L4.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L5.0 "keep" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true mayKeepObservedObjectAlive=true
+# CHECK: field L6.0 "keep" {{*}}initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true
+# CHECK: field L7.0 "keep" {{*}}initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true
+# CHECK: field L8.0 "keep" {{*}}initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true
+# CHECK: field L9.0 "keep" {{*}}initialization=SetAtCreation reads=NeverRead isUnchangedDuringActivation=true
+# CHECK: field L11.0 "inner" {{*}}mayKeepObservedObjectAlive=true
+# CHECK: field L15.0 "keep" {{*}}reads=NeverRead
+# CHECK: field L17.0 "keep" {{*}}mayKeepObservedObjectAlive=true
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HoldsTargetOfWeakReference" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="HoldsTargetOfRegistry" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="HoldsHolderOfTarget" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="HoldsClosureOverTarget" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="HoldsUnknownValue" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="HoldsPromise" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="HoldsNumber" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="HoldsPlainObject" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L8 name="HoldsClosureWithoutCaptures" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L9 name="HoldsArrayOfPlainObjects" fields=[{key="keep" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="Target" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="HolderOfTarget" fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+layout L12 name="Registered" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+layout L13 name="Plain" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+layout L14 kind=Environment name="scope" fields=[{key="captured" declared={type=anything}}]
+layout L15 name="HoldsClosureOverItself" fields=[{key="keep" declared={type=anything}}, {key="data" declared={type=anything} flags=[IsRequired]}]
+layout L16 kind=Environment name="scopeOfOne" fields=[{key="captured" declared={type=anything}}]
+layout L17 name="HoldsClosureOverOneOfItsKind" fields=[{key="keep" declared={type=anything}}, {key="data" declared={type=anything} flags=[IsRequired]}]
+layout L18 kind=Environment name="scopeOfMany" fields=[{key="captured" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L10 fields=[0]
+    v2 = Builtin builtin=WeakRef
+    v3 = Construct v2, -, v1
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    v5 = NewObject -, v0 layout=L12 fields=[0]
+    v6 = NewClosure function=f1
+    v7 = Builtin builtin=FinalizationRegistry
+    v8 = Construct v7, -, v6
+    v9 = PropGet v8 key="register"
+    v10 = Call v9, v8, v5, v0 calleeKey="register"
+    v11 = NewObject -, v5 layout=L1 fields=[0]
+    v12 = NewObject -, v1 layout=L11 fields=[0]
+    v13 = NewObject -, v12 layout=L2 fields=[0]
+    v14 = NewObject -, v1 layout=L14 fields=[0]
+    v15 = NewClosure v14 function=f2
+    v16 = NewObject -, v15 layout=L3 fields=[0]
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="input" [isFreeName]
+    v19 = NewObject -, v18 layout=L4 fields=[0]
+    v20 = Builtin builtin=Promise
+    v21 = PropGet v20 key="resolve"
+    v22 = Call v21, v20, v0 calleeKey="resolve"
+    v23 = NewObject -, v22 layout=L5 fields=[0]
+    v24 = NewObject -, v0 layout=L6 fields=[0]
+    v25 = NewObject -, v0 layout=L13 fields=[0]
+    v26 = NewObject -, v25 layout=L7 fields=[0]
+    v27 = NewObject -, v6 layout=L8 fields=[0]
+    v28 = NewArray v25 contents=anything
+    v29 = NewObject -, v28 layout=L9 fields=[0]
+    v30 = NewObject -, v18 layout=L15 fields=[1]
+    v31 = NewObject -, v30 layout=L16 fields=[0]
+    v32 = NewClosure v31 function=f3
+    PropSet v30, v32 key="keep" mode=Strict
+    v34 = CallDirect v18 function=f4
+    v35 = CallDirect v18 function=f4
+    Return
+}
+function f1 name="cleanUp" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="readsCapture" kind=Arrow captures=[{type=env L14}] results=[{type=anything}] {
+  b0(v0: env L14):
+    v1 = GetEnvironmentField v0 layout=L14 field=0
+    Return v1
+}
+function f3 name="readsHolder" kind=Arrow captures=[{type=env L16}] results=[{type=anything}] {
+  b0(v0: env L16):
+    v1 = GetEnvironmentField v0 layout=L16 field=0
+    Return v1
+}
+function f4 name="makesMany" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L17 fields=[1]
+    v2 = NewObject -, v1 layout=L18 fields=[0]
+    v3 = NewClosure v2 function=f5
+    PropSet v1, v3 key="keep" mode=Strict
+    Return
+}
+function f5 name="readsOneOfMany" kind=Arrow captures=[{type=env L18}] results=[{type=anything}] {
+  b0(v0: env L18):
+    v1 = GetEnvironmentField v0 layout=L18 field=0
+    Return v1
+}

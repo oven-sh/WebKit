@@ -1,0 +1,138 @@
+# function apply(pair, f) { pair.x; pair.y; return f(pair) }   apply(new Pair(), keep)   apply(input, drop)
+# `keep` puts its argument into the object it returns, three calls down, `drop` does nothing with it. Flow follows the first call into the proven version of `apply`, and a pass may send it
+# into the generic version: the summary of the generic version joins every instance, so its first parameter is retained too, and as exactly as in the proven version,
+# because the generic version is computed after the callees of the tracked instances
+# RUN: flow
+# CHECK: function f1 callers=AllKnown genericVersion=f8
+# CHECK: function f1 parameter 0 uses=[Inspects, Retains] retainedIn=Result
+# CHECK: function f5 parameter 0 uses=[] retainedIn=UnknownMemory
+# CHECK: function f8 parameter 0 uses=[Inspects, Retains] retainedIn=Result
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Box" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewClosure function=f2
+    v3 = CallDirect v1, v2 function=f1
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="input" [isFreeName]
+    v6 = NewClosure function=f5
+    v7 = CallDirect v5, v6 function=f1
+    v8 = CallDirect function=f6
+    Return
+}
+function f1 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="y"
+    v4 = Call v1, -, v0
+    Return v4
+}
+function f2 name="keep" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+function f3 name="keepInner" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+function f4 name="box" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}
+function f5 name="drop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f6 name="padding" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Undefined
+    v3 = Undefined
+    v4 = Undefined
+    v5 = Undefined
+    v6 = Undefined
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = Undefined
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Undefined
+    v26 = Undefined
+    v27 = Undefined
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Undefined
+    v33 = Undefined
+    v34 = Undefined
+    v35 = Undefined
+    v36 = Undefined
+    v37 = Undefined
+    v38 = Undefined
+    v39 = Undefined
+    v40 = Undefined
+    v41 = Undefined
+    v42 = Undefined
+    v43 = Undefined
+    v44 = Undefined
+    v45 = Undefined
+    v46 = Undefined
+    v47 = Undefined
+    v48 = Undefined
+    v49 = Undefined
+    v50 = Undefined
+    v51 = Undefined
+    v52 = Undefined
+    v53 = Undefined
+    v54 = Undefined
+    v55 = Undefined
+    v56 = Undefined
+    v57 = Undefined
+    v58 = Undefined
+    v59 = Undefined
+    v60 = Undefined
+    v61 = Undefined
+    v62 = Undefined
+    v63 = Undefined
+    v64 = Undefined
+    v65 = Undefined
+    v66 = Undefined
+    v67 = Undefined
+    v68 = Undefined
+    v69 = Undefined
+    v70 = Undefined
+    v71 = Undefined
+    v72 = Undefined
+    v73 = Undefined
+    v74 = Undefined
+    v75 = Undefined
+    v76 = Undefined
+    v77 = Undefined
+    v78 = Undefined
+    v79 = Undefined
+    Return
+}

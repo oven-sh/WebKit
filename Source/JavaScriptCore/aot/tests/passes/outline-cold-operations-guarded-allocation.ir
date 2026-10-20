@@ -1,0 +1,118 @@
+# An allocation with a guard on it stays in its function: the guard lasts across unknown code while nothing else holds the object, and only the function that allocates it sees that
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: object):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b4(), case b7(), case b10(), case b13(), case b16(), otherwise b19()
+  b1() frequency=Rare:
+    v3 = NewArray v1, v1, v1, v1 contents=anything
+    v4 = IsPristine v3 builtinClass=Array aspects=[Storage]
+    TestAndBranch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5) frequency=Rare:
+    v6 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v8 = GetArrayElement v3, v6, v5 level=Predicted [keyIsIntegral]
+    Return v8
+  b3() frequency=Rare:
+    Return
+  b4() frequency=Rare:
+    v9 = NewArray v1, v1, v1, v1 contents=anything
+    v10 = IsPristine v9 builtinClass=Array aspects=[Storage]
+    TestAndBranch v10 -> taken b5(| 0), notTaken b6()
+  b5(v11) frequency=Rare:
+    v12 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v14 = GetArrayElement v9, v12, v11 level=Predicted [keyIsIntegral]
+    Return v14
+  b6() frequency=Rare:
+    Return
+  b7() frequency=Rare:
+    v15 = NewArray v1, v1, v1, v1 contents=anything
+    v16 = IsPristine v15 builtinClass=Array aspects=[Storage]
+    TestAndBranch v16 -> taken b8(| 0), notTaken b9()
+  b8(v17) frequency=Rare:
+    v18 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v20 = GetArrayElement v15, v18, v17 level=Predicted [keyIsIntegral]
+    Return v20
+  b9() frequency=Rare:
+    Return
+  b10() frequency=Rare:
+    v21 = NewArray v1, v1, v1, v1 contents=anything
+    v22 = IsPristine v21 builtinClass=Array aspects=[Storage]
+    TestAndBranch v22 -> taken b11(| 0), notTaken b12()
+  b11(v23) frequency=Rare:
+    v24 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v26 = GetArrayElement v21, v24, v23 level=Predicted [keyIsIntegral]
+    Return v26
+  b12() frequency=Rare:
+    Return
+  b13() frequency=Rare:
+    v27 = NewArray v1, v1, v1, v1 contents=anything
+    v28 = IsPristine v27 builtinClass=Array aspects=[Storage]
+    TestAndBranch v28 -> taken b14(| 0), notTaken b15()
+  b14(v29) frequency=Rare:
+    v30 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v32 = GetArrayElement v27, v30, v29 level=Predicted [keyIsIntegral]
+    Return v32
+  b15() frequency=Rare:
+    Return
+  b16() frequency=Rare:
+    v33 = NewArray v1, v1, v1, v1 contents=anything
+    v34 = IsPristine v33 builtinClass=Array aspects=[Storage]
+    TestAndBranch v34 -> taken b17(| 0), notTaken b18()
+  b17(v35) frequency=Rare:
+    v36 = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v38 = GetArrayElement v33, v36, v35 level=Predicted [keyIsIntegral]
+    Return v38
+  b18() frequency=Rare:
+    Return
+  b19():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = NewArray v1, v1, v1, v1 contents=anything
+# CHECK-NOT: CallDirect
+
+function f1 name="arraysWithoutGuard" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = NewArray v1, v1, v1, v1 contents=anything
+    Return v2
+  b2() frequency=Rare:
+    v3 = NewArray v1, v1, v1, v1 contents=anything
+    Return v3
+  b3() frequency=Rare:
+    v4 = NewArray v1, v1, v1, v1 contents=anything
+    Return v4
+  b4() frequency=Rare:
+    v5 = NewArray v1, v1, v1, v1 contents=anything
+    Return v5
+  b5() frequency=Rare:
+    v6 = NewArray v1, v1, v1, v1 contents=anything
+    Return v6
+  b6() frequency=Rare:
+    v7 = NewArray v1, v1, v1, v1 contents=anything
+    Return v7
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArray
+# CHECK-COUNT-6: = CallDirect v1 function=f2
+# CHECK-NOT: NewArray
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK: [[array]]:{{*}}= NewArray v0, v0, v0, v0 contents=anything
+# CHECK-NEXT: Return [[array]]

@@ -48,25 +48,21 @@ class PhaseInsertionSet;
 
 class BasicBlock {
     WTF_MAKE_NONCOPYABLE(BasicBlock);
-#if USE(BUN_JSC_ADDITIONS)
 public:
     static constexpr bool mayLiveInArena = true;
-    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : fastMalloc(size); }
-    void operator delete(void* room, Arena* arena)
+    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : SequesteredArenaMalloc::malloc(size); }
+    void operator delete(void* memory, Arena* arena)
     {
         if (!arena)
-            fastFree(room);
+            SequesteredArenaMalloc::free(memory);
     }
     void operator delete(BasicBlock* block, std::destroying_delete_t)
     {
         bool isInArena = block->m_isInArena;
         block->~BasicBlock();
         if (!isInArena)
-            fastFree(block);
+            SequesteredArenaMalloc::free(block);
     }
-#else
-    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(BasicBlock);
-#endif
 public:
     static const char* const dumpPrefix;
     static constexpr unsigned uninsertedIndex = UINT_MAX;
@@ -172,9 +168,7 @@ private:
     SuccessorList m_successors;
     PredecessorList m_predecessors;
     double m_frequency;
-#if USE(BUN_JSC_ADDITIONS)
     bool m_isInArena { false };
-#endif
 };
 
 class DeepBasicBlockDump {

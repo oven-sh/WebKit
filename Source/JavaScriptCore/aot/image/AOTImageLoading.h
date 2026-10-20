@@ -1,0 +1,23 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include "AOTWireEnums.h"
+#include "JSExportMacros.h"
+#include <array>
+#include <optional>
+#include <span>
+
+namespace JSC { namespace AOT {
+
+struct ImageFile {
+    intptr_t descriptor;
+    int64_t offset;
+};
+
+JS_EXPORT_PRIVATE Wire::ImageVerdict useImage(std::span<const uint8_t> image, std::optional<ImageFile>, const std::array<uint8_t, 16>& identity);
+
+} } // namespace JSC::AOT

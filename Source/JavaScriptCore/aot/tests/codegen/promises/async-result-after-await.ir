@@ -1,0 +1,46 @@
+# After an await the caller has the promise and usually waits on it, so the result goes straight to the stub, in fast code too. Before the first await the promise is fresh and the result is stored inline
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(IR): pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="beforeAwait" flags=[IsAsync] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="afterAwait" flags=[IsAsync] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Await v0
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Return v3
+}
+# IR-LABEL: function f4 name="beforeAwait" module=m0 role=CoroutineBody
+# IR-NOT: ReturnAsyncResult
+# IR: FulfillFreshPromise
+# IR-LABEL: function f5 name="afterAwait" module=m0 role=CoroutineBody
+# IR-NOT: FulfillFreshPromise
+# IR: = ReturnAsyncResult
+# CHECK: f4: size=
+# CHECK-NOT: stub ReturnAsyncResult
+# CHECK: stub WriteBarrier x1
+# CHECK: f5: size=
+# CHECK-NOT: stub WriteBarrier
+# CHECK: stub ReturnAsyncResult x1
+# CHECK-NOT: stub WriteBarrier
+# CHECK: f6: size=

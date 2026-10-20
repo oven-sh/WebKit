@@ -1,0 +1,43 @@
+# Native code constructs a function it was handed. A function of a module of the runtime has no prototype property until something is stored there, so the object inherits from Object.prototype as well as from what the module stores later
+# RUN: flow-solve nodes
+# CHECK: , f1, v1) = {{*}}ObjectPrototypeHasOwnProperty}
+# CHECK: PrototypeLink(L0#{{*}}) = {ObjectPrototype}
+# CHECK: , f2, v1) = {{*}}f4}
+# CHECK: PrototypeLink(L1#{{*}}) = {L2#{{*}}|ObjectPrototype}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=ModuleExports runtimeModule=BunSqlite body=f3
+entry module=m0
+layout L0 kind=Instance name="Bare" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Stored" constructor=f2 flags=[IsConstructorFunction]
+layout L2 name="PrototypeOfStored" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    v5 = NewClosure function=f4
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    PropSet v3, v6 key="prototype" mode=Strict
+    Return
+}
+function f1 name="Bare" module=m1 flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="hasOwnProperty"
+    Return
+}
+function f2 name="Stored" module=m1 flags=[HasThis] thisType={type=anything predicted=L1} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run"
+    Return
+}
+function f3 name="sqlite" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="run" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

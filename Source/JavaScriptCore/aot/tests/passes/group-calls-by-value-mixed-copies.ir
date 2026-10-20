@@ -1,0 +1,36 @@
+# Copies of one call have one access site, so a copy that cannot join a group keeps every copy out
+# FORM: Prepared
+# RUN: pass GroupCallsByValue
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenCopy" parameters=[{type=f1|f2|f3|f4|f5}] results=[{type=anything}] {
+  b0(v0: f1|f2|f3|f4|f5):
+    v1 = Call v0 accessSite=0 callees=[f1, f2, f3, f4, f5]
+    Return v1
+}
+function f1 name="first" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f2 name="second" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f3 name="third" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="fourth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f5 name="fifth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f6 name="unprovenCopy" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Call v0 accessSite=0 callees=[f1, f2, f3, f4, f5]
+    Return v1
+}

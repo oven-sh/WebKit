@@ -1,0 +1,29 @@
+# the receiver of a built-in call is never undefined or null where the overload refuses them: the read of the method has thrown before
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badUndefinedOrString" parameters=[{type=undefined|string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+    Return
+}
+function f1 name="badNullOrString" parameters=[{type=null|string}, {type=number}] results=[{type=undefined}] {
+  b0(v0: null|string, v1: number):
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSlice/0
+    Return
+}
+function f2 name="badUndefinedOrArray" parameters=[{type=undefined|Array<number>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|Array<number>, v1: number):
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
+    Return
+}
+function f3 name="goodAfterCheck" parameters=[{type=undefined|string}, {type=undefined|Array<number>}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|string, v1: undefined|Array<number>, v2: number):
+    v3 = RequireObjectCoercible v0 nullishAccess=Read name="slice"
+    v4 = CallBuiltin v3, v2 overload=StringPrototypeSlice/0
+    v5 = RequireObjectCoercible v1 nullishAccess=Read name="push"
+    v6 = CallBuiltin v5, v2 overload=ArrayPrototypePush/0
+    Return
+}

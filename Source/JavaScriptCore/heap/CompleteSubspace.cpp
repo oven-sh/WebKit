@@ -27,8 +27,10 @@
 #include "CompleteSubspace.h"
 
 #include "AllocatorInlines.h"
+#include "CollectorMechanism.h"
 #include "JSCellInlines.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "ResourceExhaustion.h"
 #include "SubspaceInlines.h"
@@ -122,7 +124,7 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 {
     constexpr unsigned maxNumberOfLargerCells = 16;
     constexpr unsigned maxBytesInLargerCells = 4 * KB;
-    if (!Options::useAOT() || directory.m_numberOfLargerCells >= maxNumberOfLargerCells || (directory.m_numberOfLargerCells + 1) * directory.m_cellSize > maxBytesInLargerCells)
+    if (!isEnabled(CollectorMechanism::LargerCells) || directory.m_numberOfLargerCells >= maxNumberOfLargerCells || (directory.m_numberOfLargerCells + 1) * directory.m_cellSize > maxBytesInLargerCells)
         return nullptr;
     size_t size = sizeOfLargerCells(directory.m_cellSize);
     if (!size)
@@ -137,8 +139,11 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     void* result = tryAllocateSlow(vm, size, deferralContext);
-    if (!result) [[unlikely]]
+    if (!result) [[unlikely]] {
+        if (failureMode == AllocationFailureMode::Assert)
+            MarkedBlockCage::logExhaustion();
         RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+    }
     return result;
 }
 
@@ -167,6 +172,8 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
 
     size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(size);
     PreciseAllocation* allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
+    if (!allocation && vm.heap.tryCollectForExhaustedCage(deferralContext)) [[unlikely]]
+        allocation = PreciseAllocation::tryCreate(vm.heap, size, this, m_space.m_preciseAllocations.size());
     if (!allocation)
         return nullptr;
     
@@ -223,7 +230,7 @@ void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* 
     }
 
     m_space.m_preciseAllocations[oldIndexInSpace] = allocation;
-    vm.heap.didAllocatePreciseAllocation(difference, *this);
+    vm.heap.didAllocate(difference);
     m_space.m_capacity += difference;
 
     m_preciseAllocations.append(allocation);

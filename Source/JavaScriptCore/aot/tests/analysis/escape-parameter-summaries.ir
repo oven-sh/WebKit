@@ -1,0 +1,105 @@
+# What a function does with an entry parameter: where it is retained, and whether what is read out of it is retained
+# FORM: Prepared
+# RUN: analyses parameter-summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="leaf" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
+layout L1 name="Counter" fields=[{key="count" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={members=[L1]}
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="storesInReceiver" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything):
+    PutSlot v0, -, v1 key="leaf" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+# CHECK-NEXT: v1 uses: [Retains]
+# CHECK-NEXT: v1 retained in: Operand 0
+function f1 name="storesInSecondParameter" parameters=[{type=anything}, {type=L0}] results=[{type=undefined}] {
+  b0(v0: anything, v1: L0):
+    PutSlot v1, -, v0 key="leaf" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Retains]
+# CHECK-NEXT: v0 retained in: Operand 1
+# CHECK-NEXT: v1 uses: [Inspects]
+# CHECK-NEXT: v1 retained in: UnknownMemory
+function f2 name="factory" parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Retains]
+# CHECK-NEXT: v0 retained in: Result
+function f3 name="storesInModuleVariable" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Retains]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f4 name="storesInObjectThatDies" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: []
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f5 name="storesInReceiverAndInResult" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: L0, v1: anything):
+    PutSlot v0, -, v1 key="leaf" receivers=[L0] level=Proven
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Return v3
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+# CHECK-NEXT: v1 uses: [Retains]
+# CHECK-NEXT: v1 retained in: UnknownMemory
+function f6 name="returnsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Returns]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f7 name="numberIsNoReference" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f8 name="keepsWhatItReads" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = GetSlot v0 key="leaf" receivers=[L0] level=Proven
+    PutModuleVariable v1 variable=g0
+    Return
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects RetainsContents]
+# CHECK-NEXT: v0 retained in: UnknownMemory
+function f9 name="readsNumber" parameters=[{type=L1}] results=[{type=number}] {
+  b0(v0: L1):
+    v1 = GetSlot v0 key="count" receivers=[L1] level=Proven
+    Return v1
+}
+# CHECK-LABEL: function f9
+# CHECK-NEXT: parameter-summaries:
+# CHECK-NEXT: v0 uses: [Inspects]
+# CHECK-NEXT: v0 retained in: UnknownMemory

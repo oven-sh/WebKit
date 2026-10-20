@@ -99,7 +99,7 @@ void initialize()
 #endif
 }
 
-NEVER_INLINE void verifyInitialization()
+void verifyInitialization()
 {
 #if !ENABLE(C_LOOP) && (CPU(ADDRESS64) && (CPU(ARM64) || CPU(X86_64)))
 

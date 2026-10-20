@@ -1,0 +1,38 @@
+# The function of the library behind an entry expects what the first overload of the entry accepts. A position that says what it expects keeps that
+# FORM: Prepared
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=32 function=f0
+runtimefunction id=45 function=f1
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = ToObject v0
+    Return v3
+}
+# CHECK-LABEL: function f0 name="every"
+# CHECK: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
+# CHECK-NEXT: v3: object ~ Array = ToObject v0
+
+function f1 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=45 thisType={type=anything predicted=string} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ string, v1: anything, v2: anything):
+    Return v0
+}
+# CHECK-LABEL: function f1 name="forEach"
+# CHECK: b0(v0: anything ~ string, v1: anything ~ function, v2: anything):
+
+function f2 name="nestedInLibraryFunction" role=Library flags=[HasThis] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+# CHECK-LABEL: function f2 name="nestedInLibraryFunction"
+# CHECK: b0(v0: anything, v1: anything):
+
+function f3 name="ofTheProgram" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+# CHECK-LABEL: function f3 name="ofTheProgram"
+# CHECK: b0(v0: anything, v1: anything):

@@ -1,0 +1,679 @@
+# A local array of flags or small integers that is filled before it is read and indexed inside its length becomes a typed array
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArraysNarrowed = 17
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lengthOnePastBound" parameters=[{type=int[0, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[0, 1000]):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = CallBuiltin -, v2 overload=Array/2
+    v4 = AssumeType v3 castType=Array<boolean|undefined, proven>
+    v5 = Boolean boolean=true
+    v6 = CallBuiltin v4, v5 overload=ArrayPrototypeFill/0
+    v7 = Integer integer=0
+    Jump -> next b1(v7)
+  b1(v8):
+    LoopHint
+    v10 = LessEq v8, v0
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    v12 = Boolean boolean=false
+    PutArrayElement v4, v11, v12, v3 level=Proven [keyIsIntegral]
+    v14 = Add v11, v1
+    Jump -> next b1(v14)
+  b3():
+    v15 = GetArrayElement v4, v7, v3 level=Proven [keyIsIntegral]
+    v16 = ToBoolean v15
+    Return v16
+}
+# CHECK-LABEL: function f0 name="lengthOnePastBound"
+# CHECK-NOT: URShift
+# CHECK: v3: Uint8Array = CallBuiltin -, v2 overload=Uint8Array/
+# CHECK-NOT: AssumeType
+# CHECK-NOT: ArrayPrototypeFill
+# CHECK: [[differs0]]: 1 = Integer integer=1
+# CHECK-NEXT: PutTypedArrayElement v3, v11, [[differs0]] typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK: [[byte0]]: {{*}} = GetTypedArrayElement v3, v7 typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK-NEXT: [[flag0]]: boolean = ToBoolean [[byte0]]
+# CHECK-NEXT: v15: boolean = LogicalNot [[flag0]]
+
+function f1 name="lengthWithExclusiveBound" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = Integer integer=1
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = Boolean boolean=true
+    PutArrayElement v3, v10, v11, v2 level=Proven [keyIsIntegral]
+    v13 = Add v10, v1
+    Jump -> next b1(v13)
+  b3():
+    v14 = GetArrayElement v3, v6, v2 level=Proven [keyIsIntegral]
+    v15 = ToBoolean v14
+    Return v15
+}
+# CHECK-LABEL: function f1 name="lengthWithExclusiveBound"
+# CHECK: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/
+# CHECK: [[differs1]]: 1 = Integer integer=1
+# CHECK-NEXT: PutTypedArrayElement v2, v10, [[differs1]] typedArrayType=2
+# CHECK: [[byte1]]: {{*}} = GetTypedArrayElement v2, v6 typedArrayType=2
+# CHECK-NEXT: v14: boolean = ToBoolean [[byte1]]
+# CHECK-NOT: LogicalNot
+
+function f2 name="numberLength" parameters=[{type=number}, {type=int[0, 1000]}] results=[{type=boolean}] {
+  b0(v0: number, v1: int[0, 1000]):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Less v1, v0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Boolean boolean=true
+    PutArrayElement v3, v1, v7, v2 level=Proven [keyIsIntegral]
+    Return v7
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f2 name="numberLength"
+# CHECK: [[valid2]]: {{*}} = URShift v0,
+# CHECK-NEXT: [[isValid2]]: boolean = StrictEq [[valid2]], v0
+# CHECK-NEXT: Branch [[isValid2]] -> taken [[narrow2]](), notTaken [[invalid2]]()
+# CHECK: PutTypedArrayElement v2, v1, {{*}} typedArrayType=2
+# CHECK: [[narrow2]]():
+# CHECK-NEXT: = CallBuiltin -, [[valid2]] overload=Uint8Array/
+# CHECK: [[invalid2]]() frequency=Rare:
+# CHECK-NEXT: = CallBuiltin -, v0 overload=Array/2
+# CHECK-NEXT: Unreachable
+
+function f3 name="boundReadFromLength" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = Integer integer=1
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = CallBuiltin v3 overload=ArrayPrototypeLength/0
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    v12 = Boolean boolean=true
+    PutArrayElement v3, v11, v12, v2 level=Proven [keyIsIntegral]
+    v14 = Add v11, v1
+    Jump -> next b1(v14)
+  b3():
+    v15 = Boolean boolean=false
+    Return v15
+}
+# CHECK-LABEL: function f3 name="boundReadFromLength"
+# CHECK: overload=Uint8Array/
+# CHECK-NOT: ArrayPrototypeLength
+# CHECK: v9: {{*}} = ToNumeric v0
+
+function f4 name="constantLengthTwoTests" parameters=[{type=i32}] results=[{type=boolean}] {
+  b0(v0: i32):
+    v1 = Integer integer=10
+    v2 = CallBuiltin -, v1 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    v7 = GreaterEq v0, v6
+    Branch v7 -> taken b1(), notTaken b3()
+  b1():
+    v8 = Less v0, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = GetArrayElement v3, v0, v2 level=Proven [keyIsIntegral]
+    v10 = ToBoolean v9
+    Return v10
+  b3():
+    Return v7
+}
+# CHECK-LABEL: function f4 name="constantLengthTwoTests"
+# CHECK: overload=Uint8Array/
+# CHECK: = GetTypedArrayElement v2, v0 typedArrayType=2
+
+function f5 name="readBeforeFill" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Integer integer=0
+    v5 = GetArrayElement v3, v4, v2 level=Proven [keyIsIntegral]
+    v6 = Boolean boolean=true
+    v7 = CallBuiltin v3, v6 overload=ArrayPrototypeFill/0
+    v8 = ToBoolean v5
+    Return v8
+}
+# CHECK-LABEL: function f5 name="readBeforeFill"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f6 name="fillInLoop" parameters=[{type=int[1, 1000]}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: boolean):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Boolean boolean=true
+    v6 = CallBuiltin v3, v5 overload=ArrayPrototypeFill/0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v7 = Integer integer=0
+    v8 = GetArrayElement v3, v7, v2 level=Proven [keyIsIntegral]
+    v9 = ToBoolean v8
+    Return v9
+}
+# CHECK-LABEL: function f6 name="fillInLoop"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f7 name="contentsAreAnything" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<anything, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    v7 = GetArrayElement v3, v6, v2 level=Proven [keyIsIntegral]
+    v8 = ToBoolean v7
+    Return v8
+}
+# CHECK-LABEL: function f7 name="contentsAreAnything"
+# CHECK: overload=Uint8Array/
+# CHECK: = GetTypedArrayElement v2, v6 typedArrayType=2
+
+function f8 name="indexNotProven" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = GetArrayElement v3, v1, v2 level=Proven [keyIsIntegral]
+    v7 = ToBoolean v6
+    Return v7
+}
+# CHECK-LABEL: function f8 name="indexNotProven"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f9 name="indexMayBeNegative" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Less v1, v0
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = GetArrayElement v3, v1, v2 level=Proven [keyIsIntegral]
+    v8 = ToBoolean v7
+    Return v8
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f9 name="indexMayBeNegative"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f10 name="fractionalIndex" parameters=[{type=int[1, 1000]}, {type=number}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: number):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    v7 = Less v1, v0
+    Branch v7 -> taken b1(), notTaken b3()
+  b1():
+    v8 = GreaterEq v1, v6
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = GetArrayElement v3, v1, v2 level=Proven
+    v10 = ToBoolean v9
+    Return v10
+  b3():
+    Return v7
+}
+# CHECK-LABEL: function f10 name="fractionalIndex"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f11 name="inclusiveBoundExactLength" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = Integer integer=1
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    Jump -> next b1(v6)
+  b1(v7):
+    LoopHint
+    v9 = LessEq v7, v0
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = Boolean boolean=true
+    PutArrayElement v3, v10, v11, v2 level=Proven [keyIsIntegral]
+    v13 = Add v10, v1
+    Jump -> next b1(v13)
+  b3():
+    v14 = GetArrayElement v3, v6, v2 level=Proven [keyIsIntegral]
+    v15 = ToBoolean v14
+    Return v15
+}
+# CHECK-LABEL: function f11 name="inclusiveBoundExactLength"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f12 name="aliasThroughBlockParameter" parameters=[{type=int[1, 1000]}] results=[{type=number}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = AssumeType v1 castType=Array<boolean|undefined, proven>
+    v3 = Boolean boolean=true
+    v4 = CallBuiltin v2, v3 overload=ArrayPrototypeFill/0
+    Jump -> next b1(v2)
+  b1(v5):
+    v6 = CallBuiltin v5 overload=ArrayPrototypeLength/0
+    Return v6
+}
+# CHECK-LABEL: function f12 name="aliasThroughBlockParameter"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f13 name="arrayReturned" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=anything}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    Return v3
+}
+# CHECK-LABEL: function f13 name="arrayReturned"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f14 name="escapes" parameters=[{type=int[1, 1000]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: anything):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = Integer integer=0
+    v7 = GetArrayElement v3, v6, v2 level=Proven [keyIsIntegral]
+    v8 = Call v1, -, v3
+    v9 = ToBoolean v7
+    Return v9
+}
+# CHECK-LABEL: function f14 name="escapes"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f15 name="partialFill" parameters=[{type=int[1, 1000]}, {type=i32}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: i32):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=true
+    v5 = Integer integer=1
+    v6 = CallBuiltin v3, v4, v5 overload=ArrayPrototypeFill/0
+    v7 = Integer integer=0
+    v8 = GetArrayElement v3, v7, v2 level=Proven [keyIsIntegral]
+    v9 = ToBoolean v8
+    Return v9
+}
+# CHECK-LABEL: function f15 name="partialFill"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f16 name="storedParameter" parameters=[{type=int[1, 1000]}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: boolean):
+    v2 = Integer integer=1
+    v3 = CallBuiltin -, v0 overload=Array/2
+    v4 = AssumeType v3 castType=Array<boolean|undefined, proven>
+    v5 = Boolean boolean=false
+    v6 = CallBuiltin v4, v5 overload=ArrayPrototypeFill/0
+    v7 = Integer integer=0
+    Jump -> next b1(v7)
+  b1(v8):
+    LoopHint
+    v10 = Less v8, v0
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    PutArrayElement v4, v11, v1, v3 level=Proven [keyIsIntegral]
+    v13 = Add v11, v2
+    Jump -> next b1(v13)
+  b3():
+    v14 = GetArrayElement v4, v7, v3 level=Proven [keyIsIntegral]
+    v15 = ToBoolean v14
+    Return v15
+}
+# CHECK-LABEL: function f16 name="storedParameter"
+# CHECK: overload=Uint8Array/
+# CHECK-NOT: LogicalNot
+# CHECK: [[byte16]]: {{*}} = ToNumber v1
+# CHECK-NEXT: PutTypedArrayElement v3, v11, [[byte16]] typedArrayType=2
+
+function f17 name="storedValueIsInverted" parameters=[{type=int[1, 1000]}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000], v1: boolean):
+    v2 = Integer integer=1
+    v3 = CallBuiltin -, v0 overload=Array/2
+    v4 = AssumeType v3 castType=Array<boolean|undefined, proven>
+    v5 = Boolean boolean=true
+    v6 = CallBuiltin v4, v5 overload=ArrayPrototypeFill/0
+    v7 = Integer integer=0
+    Jump -> next b1(v7)
+  b1(v8):
+    LoopHint
+    v10 = Less v8, v0
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    PutArrayElement v4, v11, v1, v3 level=Proven [keyIsIntegral]
+    v13 = Add v11, v2
+    Jump -> next b1(v13)
+  b3():
+    v14 = GetArrayElement v4, v7, v3 level=Proven [keyIsIntegral]
+    v15 = ToBoolean v14
+    Return v15
+}
+# CHECK-LABEL: function f17 name="storedValueIsInverted"
+# CHECK: overload=Uint8Array/
+# CHECK: [[inverted]]: {{*}} = LogicalNot v1
+# CHECK-NEXT: [[invertedByte]]: {{*}} = ToNumber [[inverted]]
+# CHECK-NEXT: PutTypedArrayElement v3, v11, [[invertedByte]] typedArrayType=2
+
+function f18 name="twoNumberLengthArrays" parameters=[{type=number}, {type=number}] results=[{type=boolean}] {
+  b0(v0: number, v1: number):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = AssumeType v2 castType=Array<boolean|undefined, proven>
+    v4 = Boolean boolean=false
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeFill/0
+    v6 = CallBuiltin -, v1 overload=Array/2
+    v7 = AssumeType v6 castType=Array<boolean|undefined, proven>
+    v8 = CallBuiltin v7, v4 overload=ArrayPrototypeFill/0
+    Return v4
+}
+# CHECK-LABEL: function f18 name="twoNumberLengthArrays"
+# CHECK-COUNT-2: overload=Uint8Array/
+# CHECK-NOT: overload=Uint8Array/
+
+function f19 name="constructionUnderHandler" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]) handler=b2():
+    v1 = CallBuiltin -, v0 overload=Array/2
+    Jump -> next b1()
+  b1():
+    v2 = AssumeType v1 castType=Array<boolean|undefined, proven>
+    v3 = Boolean boolean=true
+    v4 = CallBuiltin v2, v3 overload=ArrayPrototypeFill/0
+    v5 = Integer integer=0
+    v6 = GetArrayElement v2, v5, v1 level=Proven [keyIsIntegral]
+    v7 = ToBoolean v6
+    Return v7
+  b2() role=CatchHandler:
+    v8 = CatchValue
+    v9 = ToBoolean v8
+    Return v9
+}
+# CHECK-LABEL: function f19 name="constructionUnderHandler"
+# CHECK: b0(v0: int[1, 1000]) handler=b2():
+# CHECK-NEXT: v1: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/
+# CHECK: = GetTypedArrayElement v1, v5 typedArrayType=2
+
+function f20 name="sumLengthReadBound" parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = CallBuiltin -, v2 overload=Array/2
+    v4 = AssumeType v3 castType=Array<boolean|undefined, proven>
+    v5 = Boolean boolean=false
+    v6 = CallBuiltin v4, v5 overload=ArrayPrototypeFill/0
+    v7 = Integer integer=0
+    Jump -> next b1(v7)
+  b1(v8):
+    LoopHint
+    v10 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b3()
+  b2(v12):
+    v13 = Boolean boolean=true
+    PutArrayElement v4, v12, v13, v3 level=Proven [keyIsIntegral]
+    v15 = Add v12, v1
+    Jump -> next b1(v15)
+  b3():
+    v16 = Boolean boolean=false
+    Return v16
+}
+# CHECK-LABEL: function f20 name="sumLengthReadBound"
+# CHECK: [[valid20]]: {{*}} = URShift v2,
+# CHECK: v10: {{*}} = ToNumeric [[valid20]]
+# CHECK: PutTypedArrayElement v3, v12, {{*}} typedArrayType=2
+# CHECK: = CallBuiltin -, [[valid20]] overload=Uint8Array/
+
+function f21 name="sumLengthInclusiveBound" parameters=[{type=number}, {type=int[0, 1000]}] results=[{type=boolean}] {
+  b0(v0: number, v1: int[0, 1000]):
+    v2 = Integer integer=1
+    v3 = Add v0, v2
+    v4 = CallBuiltin -, v3 overload=Array/2
+    v5 = AssumeType v4 castType=Array<boolean|undefined, proven>
+    v6 = Boolean boolean=false
+    v7 = CallBuiltin v5, v6 overload=ArrayPrototypeFill/0
+    v8 = LessEq v1, v0
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    v9 = Boolean boolean=true
+    PutArrayElement v5, v1, v9, v4 level=Proven [keyIsIntegral]
+    Return v9
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f21 name="sumLengthInclusiveBound"
+# CHECK: [[valid21]]: {{*}} = URShift v3,
+# CHECK: PutTypedArrayElement v4, v1, {{*}} typedArrayType=2
+# CHECK: = CallBuiltin -, [[valid21]] overload=Uint8Array/
+
+function f22 name="indexFromUncheckedLength" parameters=[{type=number}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: number, v1: boolean):
+    v2 = Integer integer=0
+    v3 = Integer integer=3
+    Jump -> next b1(v2, v0)
+  b1(v4, v5):
+    LoopHint
+    v7 = Greater v5, v2
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Less v5, v3
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Mul v5, v3
+    Jump -> next b1(v5, v9)
+  b4():
+    v10 = CallBuiltin -, v5 overload=Array/2
+    v11 = AssumeType v10 castType=Array<boolean|undefined, proven>
+    v12 = Boolean boolean=false
+    v13 = CallBuiltin v11, v12 overload=ArrayPrototypeFill/0
+    v14 = Less v4, v5
+    Branch v14 -> taken b5(), notTaken b6()
+  b5():
+    v15 = Boolean boolean=true
+    PutArrayElement v11, v4, v15, v10 level=Proven
+    Return v15
+  b6():
+    Return v1
+}
+# CHECK-LABEL: function f22 name="indexFromUncheckedLength"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f23 name="accessesByKey" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Boolean boolean=false
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = Integer integer=0
+    v5 = Boolean boolean=true
+    ElemSet v1, v4, v5 mode=Strict
+    v7 = ElemGet v1, v4
+    v8 = ToBoolean v7
+    Return v8
+}
+# CHECK-LABEL: function f23 name="accessesByKey"
+# CHECK: overload=Uint8Array/
+# CHECK: PutTypedArrayElement v1, v4, {{*}} typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK: [[byte23]]: {{*}} = GetTypedArrayElement v1, v4 typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v7: boolean = ToBoolean [[byte23]]
+
+function f24 name="foldsArrayTests" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Boolean boolean=false
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = Integer integer=0
+    v5 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = HasArrayStorage v1 arrayStorage=Contiguous
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v1, v6, v8
+    v10 = GetArrayElement v1, v4, v9 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    v11 = ToBoolean v10
+    Return v11
+  b3():
+    v12 = ElemGet v1, v4
+    v13 = ToBoolean v12
+    Return v13
+}
+# CHECK-LABEL: function f24 name="foldsArrayTests"
+# CHECK: overload=Uint8Array/
+# CHECK-NOT: IsPristine
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b1(
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b2(
+# CHECK: v9: guard = AllGuards v6, v8
+# CHECK: = GetTypedArrayElement v1, v4 typedArrayType=2
+# CHECK-NOT: ElemGet
+
+function f25 name="storageTestCannotPass" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Boolean boolean=false
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = Integer integer=0
+    v5 = HasArrayStorage v1 arrayStorage=Int32
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v1, v6
+    v8 = GetArrayElement v1, v4, v7 arrayStorage=Int32 level=Proven [keyIsIntegral]
+    v9 = ToBoolean v8
+    Return v9
+  b2():
+    v10 = ElemGet v1, v4
+    v11 = ToBoolean v10
+    Return v11
+}
+# CHECK-LABEL: function f25 name="storageTestCannotPass"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f26 name="typeTestOnArray" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Boolean boolean=false
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = TypeTest v1 testedType=Array<anything>
+    Return v4
+}
+# CHECK-LABEL: function f26 name="typeTestOnArray"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+
+function f27 name="notFilled" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Integer integer=0
+    v3 = Boolean boolean=true
+    PutArrayElement v1, v2, v3, v1 level=Proven [keyIsIntegral]
+    v5 = GetArrayElement v1, v2, v1 level=Proven [keyIsIntegral]
+    v6 = ToBoolean v5
+    Return v6
+}
+# CHECK-LABEL: function f27 name="notFilled"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f28 name="mixedBooleanAndInteger" parameters=[{type=int[1, 1000]}] results=[{type=boolean}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Boolean boolean=false
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = Integer integer=0
+    PutArrayElement v1, v4, v4, v1 level=Proven [keyIsIntegral]
+    v6 = GetArrayElement v1, v4, v1 level=Proven [keyIsIntegral]
+    v7 = ToBoolean v6
+    Return v7
+}
+# CHECK-LABEL: function f28 name="mixedBooleanAndInteger"
+# CHECK: overload=Array/2
+# CHECK-NOT: Uint8Array
+# CHECK-NOT: TypedArrayElement
+
+function f29 name="uint8" parameters=[{type=int[1, 1000]}, {type=int[0, 255]}] results=[{type=anything}] {
+  b0(v0: int[1, 1000], v1: int[0, 255]):
+    v2 = CallBuiltin -, v0 overload=Array/2
+    v3 = Integer integer=0
+    v4 = CallBuiltin v2, v3 overload=ArrayPrototypeFill/0
+    PutArrayElement v2, v3, v1, v2 level=Proven [keyIsIntegral]
+    v6 = GetArrayElement v2, v3, v2 level=Proven [keyIsIntegral]
+    Return v6
+}
+# CHECK-LABEL: function f29 name="uint8"
+# CHECK: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/
+# CHECK-NOT: PrototypeFill
+# CHECK: PutTypedArrayElement v2, v3, v1 typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK-NEXT: v6: {{*}} = GetTypedArrayElement v2, v3 typedArrayType=2 level=Proven [keyIsIntegral]
+# CHECK-NEXT: Return v6
+
+function f30 name="filledWithOtherInteger" parameters=[{type=int[1, 1000]}] results=[{type=anything}] {
+  b0(v0: int[1, 1000]):
+    v1 = CallBuiltin -, v0 overload=Array/2
+    v2 = Integer integer=7
+    v3 = CallBuiltin v1, v2 overload=ArrayPrototypeFill/0
+    v4 = Integer integer=0
+    v5 = GetArrayElement v1, v4, v1 level=Proven [keyIsIntegral]
+    Return v5
+}
+# CHECK-LABEL: function f30 name="filledWithOtherInteger"
+# CHECK: v1: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/
+# CHECK-NOT: overload=ArrayPrototypeFill
+# CHECK: v3: {{*}} = CallBuiltin v1, v2 overload=
+# CHECK-NOT: overload=ArrayPrototypeFill
+# CHECK: v5: {{*}} = GetTypedArrayElement v1, v4 typedArrayType=2

@@ -2406,7 +2406,7 @@ private:
     LValue tryDoubleToInt32AsDouble(LValue value)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat(CPUFeatureSet::host())) {
             PatchpointValue* converted = m_out.patchpoint(Double);
             converted->append(value, ValueRep::SomeRegister);
             converted->setGenerator(
@@ -2425,7 +2425,7 @@ private:
     LValue tryDoubleToInt64AsDouble(LValue value)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat(CPUFeatureSet::host())) {
             PatchpointValue* converted = m_out.patchpoint(Double);
             converted->append(value, ValueRep::SomeRegister);
             converted->setGenerator(
@@ -19352,7 +19352,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(checkReplacementSensitiveStructure);
         LValue structureValue = decodeNonNullStructure(structureID);
-        LValue hasReplacementSensitiveStructure = m_out.testNonZero32(m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_hasImmutablePropertiesBits), m_out.load32(structureValue, m_heaps.Structure_bitField));
+        LValue hasReplacementSensitiveStructure = m_out.testNonZero32(m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_anyImmutablePropertiesBits), m_out.load32(structureValue, m_heaps.Structure_bitField));
         m_out.branch(hasReplacementSensitiveStructure, rarely(genericOrRecover), usually(checkInlineOrOutOfLineBlock));
 
         m_out.appendTo(checkInlineOrOutOfLineBlock);
@@ -20691,9 +20691,6 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue object = allocateObject<JSMap>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSMap_storage);
-#if ENABLE(AOT)
-        m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSMap_compactTable);
-#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);
@@ -20715,9 +20712,6 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue object = allocateObject<JSSet>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSSet_storage);
-#if ENABLE(AOT)
-        m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSSet_compactTable);
-#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);
@@ -25694,7 +25688,7 @@ IGNORE_CLANG_WARNINGS_END
     LValue doubleToInt32(LValue doubleValue)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(CPUFeatureSet::host())) {
             PatchpointValue* patchpoint = m_out.patchpoint(Int32);
             patchpoint->append(ConstrainedValue(doubleValue, B3::ValueRep::SomeRegister));
             patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {

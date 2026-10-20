@@ -1,0 +1,32 @@
+# An iterator operand is the IteratorOpen itself, never a block parameter
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: OperandMustBeDefinition 2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badResumed" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v2):
+    v3 = IteratorResume v2
+    Return
+}
+function f1 name="badClosed" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v2):
+    IteratorClose v2
+    Return
+}
+function f2 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    v2 = IteratorResume v1
+    IteratorClose v1
+    Return
+}

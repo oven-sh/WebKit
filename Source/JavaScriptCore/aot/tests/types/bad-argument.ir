@@ -1,0 +1,53 @@
+# A command on the types of f0 takes no argument: it reports the first word and runs nothing. Without an argument it asks for f0. A list of layouts is refused as a whole word.
+# FORM: Prepared
+# RUN(SUBSET): subset declared
+# RUN(UNION): union L0
+# RUN(WIDENING): union-widening 3
+# RUN(INTERSECT): intersect t0
+# RUN(CAST): cast t0 t1
+# RUN(CANONICAL): canonical -
+# RUN(PROOFS): without-proofs all
+# RUN(REP): rep Cell
+# RUN(MEMBERS): members L0
+# RUN(TRUTHY): truthy t0
+# RUN(NOFUNCTION): subset
+# RUN(RANGE): layout-set L4000000000
+# RUN(OVERFLOW): layout-set L4294967296
+# RUN(SIGN): layout-set L+0
+# RUN(COMMA): layout-set L0,
+# RUN(NOLIST): layout-set L0 ,
+# RUN(PREFIX): layout-set 0
+# RUN(FIRST): layout-set L0 sealed L1
+# SUBSET: error: bad argument declared
+# SUBSET-NOT: no function
+# UNION: error: bad argument L0
+# UNION-NOT: no function
+# WIDENING: error: bad argument 3
+# WIDENING-NOT: no function
+# INTERSECT: error: bad argument t0
+# INTERSECT-NOT: no function
+# CAST: error: bad argument t0
+# CAST-NOT: argument
+# CANONICAL: error: bad argument -
+# CANONICAL-NOT: no function
+# PROOFS: error: bad argument all
+# PROOFS-NOT: no function
+# REP: error: bad argument Cell
+# REP-NOT: no function
+# MEMBERS: error: bad argument L0
+# MEMBERS-NOT: members
+# TRUTHY: error: bad argument t0
+# TRUTHY-NOT: no function
+# NOFUNCTION-NOT: argument
+# NOFUNCTION: no function
+# RANGE: error: bad argument L4000000000
+# OVERFLOW: error: bad argument L4294967296
+# SIGN: error: bad argument L+0
+# COMMA: error: bad argument L0,
+# NOLIST: error: bad argument ,
+# PREFIX: error: bad argument 0
+# FIRST-NOT: set
+# FIRST: error: bad argument sealed
+# FIRST-NOT: argument
+
+layout L0

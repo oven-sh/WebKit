@@ -65,11 +65,7 @@ Value* InsertionSet::insertClone(size_t index, Value* value)
     return insertValue(index, m_procedure.clone(value));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 void InsertionSet::executeInsertions(BasicBlock* block)
-#else
-void InsertionSet::execute(BasicBlock* block)
-#endif
 {
     for (Insertion& insertion : m_insertions)
         insertion.element()->owner = block;

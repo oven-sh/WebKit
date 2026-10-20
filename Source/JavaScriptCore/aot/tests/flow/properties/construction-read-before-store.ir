@@ -1,0 +1,274 @@
+# A read of the object under construction that no store under the name can have reached finds no own property: it starts at the prototype, and it does not count as a read of the field. One possible store, a leak, a parent that stores the name, a built-in parent or a receiver that may be another object ends that
+# RUN(SAME): flow-construction events constructors
+# RUN(SAMENODES): flow-solve nodes
+# RUN(ONEPATH): flow-construction constructors
+# RUN(ONEPATHNODES): flow-solve nodes
+# RUN(LEAKED): flow-construction constructors
+# RUN(PARENTSTORES): flow-construction constructors
+# RUN(PARENTSTORESNODES): flow-solve nodes
+# RUN(PARENTSTORESOTHER): flow-construction constructors
+# RUN(PARENTSTORESOTHERNODES): flow-solve nodes
+# RUN(HELPER): flow-construction constructors
+# RUN(LOOP): flow-construction constructors
+# RUN(OTHEROBJECT): flow-construction events constructors
+# RUN(BUILTINPARENT): flow-construction constructors
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="SameName" constructor=f1
+layout L1 kind=Instance name="OnePath" constructor=f3
+layout L2 kind=Instance name="Leaked" constructor=f4
+layout L3 kind=Instance name="StoresName" constructor=f5
+layout L4 kind=Instance name="BelowStoresName" predictedBase=L3 constructor=f6 flags=[HasHeritage]
+layout L5 kind=Instance name="StoresOtherName" constructor=f7
+layout L6 kind=Instance name="BelowStoresOtherName" predictedBase=L5 constructor=f8 flags=[HasHeritage]
+layout L7 kind=Instance name="ReadsInHelper" constructor=f9
+layout L8 kind=Instance name="ReadsInLoop" constructor=f11
+layout L9 kind=Instance name="MaybeOtherObject" constructor=f12
+layout L10 kind=Instance name="BelowError" constructor=f13 flags=[HasHeritage]
+variable g0 name="BelowStoresName" module=m0 declared={type=function} initialization=Uninitialized
+variable g1 name="BelowStoresOtherName" module=m0 declared={type=function} initialization=Uninitialized
+variable g2 name="BelowError" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="run"
+    v6 = FinishClass v3 layout=L0
+    v7 = Construct v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f2
+    DefineMethod v9, v10 layout=L1 key="run"
+    v12 = FinishClass v9 layout=L1
+    v13 = Construct v12, -, v1
+    v14 = NewClosure function=f4
+    v15 = NewClass v14 layout=L2
+    v16 = NewClosure function=f2
+    DefineMethod v15, v16 layout=L2 key="run"
+    v18 = FinishClass v15 layout=L2
+    v19 = Construct v18
+    v20 = NewClosure function=f5
+    v21 = NewClass v20 layout=L3
+    v22 = FinishClass v21 layout=L3
+    v23 = NewClosure function=f6
+    v24 = ResolveHeritage v22
+    v25 = NewClass v23, v22, v24 layout=L4
+    v26 = NewClosure function=f2
+    DefineMethod v25, v26 layout=L4 key="run"
+    v28 = FinishClass v25 layout=L4
+    PutModuleVariable v28 variable=g0
+    v30 = Construct v28
+    v31 = NewClosure function=f7
+    v32 = NewClass v31 layout=L5
+    v33 = FinishClass v32 layout=L5
+    v34 = NewClosure function=f8
+    v35 = ResolveHeritage v33
+    v36 = NewClass v34, v33, v35 layout=L6
+    v37 = NewClosure function=f2
+    DefineMethod v36, v37 layout=L6 key="run"
+    v39 = FinishClass v36 layout=L6
+    PutModuleVariable v39 variable=g1
+    v41 = Construct v39, -, v1
+    v42 = NewClosure function=f9
+    v43 = NewClass v42 layout=L7
+    v44 = NewClosure function=f2
+    DefineMethod v43, v44 layout=L7 key="run"
+    v46 = NewClosure function=f10
+    DefineMethod v43, v46 layout=L7 index=1 key="bindAll"
+    v48 = FinishClass v43 layout=L7
+    v49 = Construct v48
+    v50 = NewClosure function=f11
+    v51 = NewClass v50 layout=L8
+    v52 = NewClosure function=f2
+    DefineMethod v51, v52 layout=L8 key="run"
+    v54 = FinishClass v51 layout=L8
+    v55 = Construct v54, -, v1
+    v56 = NewClosure function=f12
+    v57 = NewClass v56 layout=L9
+    v58 = NewClosure function=f2
+    DefineMethod v57, v58 layout=L9 key="run"
+    v60 = FinishClass v57 layout=L9
+    v61 = Construct v60, -, v7
+    v62 = PropGet v0 key="Error" [isFreeName]
+    v63 = NewClosure function=f13
+    v64 = ResolveHeritage v62
+    v65 = NewClass v63, v62, v64 layout=L10
+    v66 = NewClosure function=f2
+    DefineMethod v65, v66 layout=L10 key="run"
+    v68 = FinishClass v65 layout=L10
+    PutModuleVariable v68 variable=g2
+    v70 = Construct v68
+    Return
+}
+function f1 name="SameName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = PropGet v2 key="run"
+    v4 = NewClosure v3 function=f14
+    PropSet v2, v4 key="run"
+    Return v2
+}
+# SAME: events f1 root v2 Allocation Tracked
+# SAME-NEXT: b0:2 Read exact "run" v3
+# SAME-NEXT: b0:4 Store exact "run" v5
+# SAME-NEXT: b0:5 Exit
+# SAME: construction f1@i{{*}} root v2: DoesNotLeak before-leak "run" at-exit "run" read-early initial-order "run" stores OnlyInitialOrder reads-from-prototype v3
+# SAMENODES: Local(i{{*}}, f1, v3) = {f2}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="OnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    PropSet v3, v5 key="run"
+    Jump -> next b2()
+  b2():
+    v7 = PropGet v3 key="run"
+    v8 = NewClosure v7 function=f14
+    PropSet v3, v8 key="run"
+    Return v3
+}
+# ONEPATH: construction f3@i{{*}} root v3: DoesNotLeak before-leak at-exit "run" read-early "run"
+# ONEPATH-NOT: construction f3@i{{*}} reads-from-prototype
+# ONEPATHNODES: Local(i{{*}}, f3, v7) = {1|f2|f14{{*}}}
+function f4 name="Leaked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = PropGet v2 key="run"
+    v7 = NewClosure v6 function=f14
+    PropSet v2, v7 key="run"
+    Return v2
+}
+# Whoever has the object may put an accessor above it, so the store after the leak proves nothing either.
+# LEAKED: construction f4@i{{*}} root v2: Unknown at f4:v5 before-leak at-exit read-early "run"
+# LEAKED-NOT: construction f4@i{{*}} reads-from-prototype
+function f5 name="StoresName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    v3 = Integer integer=1
+    PropSet v2, v3 key="run"
+    Return v2
+}
+function f6 name="BelowStoresName" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L4
+    v4 = PropGet v3 key="run"
+    v5 = NewClosure v4 function=f14
+    PropSet v3, v5 key="run"
+    Return v3
+}
+# PARENTSTORES: construction f6@i{{*}} root v3: DoesNotLeak before-leak "run" at-exit "run" read-early initial-order
+# PARENTSTORES-NOT: construction f6@i{{*}} reads-from-prototype
+# PARENTSTORESNODES: Local(i{{*}}, f6, v4) = {1|f14{{*}}}
+function f7 name="StoresOtherName" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L5
+    v3 = NewObject v2 layout=L5
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="options"
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f8 name="BelowStoresOtherName" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g1
+    v3 = GetSuperBase v2 homeKind=Object
+    v4 = SuperConstruct v3, v0, v1 layout=L6
+    v5 = PropGet v4 key="run"
+    v6 = NewClosure v5 function=f14
+    PropSet v4, v6 key="run"
+    Return v4
+}
+# PARENTSTORESOTHER: construction f8@i{{*}} root v4: DoesNotLeak before-leak "run" at-exit "run" read-early initial-order{{*}} reads-from-prototype v5
+# PARENTSTORESOTHERNODES: Local(i{{*}}, f8, v5) = {f2}
+function f9 name="ReadsInHelper" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7
+    v3 = PropGet v2 key="bindAll"
+    v4 = Call v3, v2 calleeKey="bindAll"
+    Return v2
+}
+function f10 name="bindAll" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="run"
+    v2 = NewClosure v1 function=f14
+    PropSet v0, v2 key="run"
+    Return
+}
+# HELPER: construction f9@i{{*}} root v2: DoesNotLeak before-leak at-exit "run" read-early "run" {{*}} reads-from-prototype v3
+# HELPER-NOT: reads-from-prototype v3 v
+function f11 name="ReadsInLoop" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L8
+    v3 = NewObject v2 layout=L8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = PropGet v3 key="run"
+    v6 = NewClosure v5 function=f14
+    PropSet v3, v6 key="run"
+    v8 = ToBoolean v1
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# LOOP: construction f11@i{{*}} root v3: DoesNotLeak before-leak at-exit "run" read-early "run"
+# LOOP-NOT: construction f11@i{{*}} reads-from-prototype
+function f12 name="MaybeOtherObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L9
+    v3 = NewObject v2 layout=L9
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v3)
+  b3(v5):
+    v6 = PropGet v5 key="run"
+    v7 = NewClosure v6 function=f14
+    PropSet v3, v7 key="run"
+    Return v3
+}
+# OTHEROBJECT: events f12 root v3 Allocation Tracked
+# OTHEROBJECT-NEXT: b3:0 Read "run" v6
+# OTHEROBJECT: construction f12@i{{*}} root v3: DoesNotLeak before-leak at-exit "run" read-early "run"
+# OTHEROBJECT-NOT: construction f12@i{{*}} reads-from-prototype
+function f13 name="BelowError" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L10
+    v4 = PropGet v3 key="run"
+    v5 = NewClosure v4 function=f14
+    PropSet v3, v5 key="run"
+    Return v3
+}
+# BUILTINPARENT: construction f13@i{{*}} root v3:
+# BUILTINPARENT-NOT: construction f13@i{{*}} reads-from-prototype
+function f14 name="wrapper" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

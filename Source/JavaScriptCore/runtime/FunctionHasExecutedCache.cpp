@@ -26,6 +26,7 @@
 #include "config.h"
 #include "FunctionHasExecutedCache.h"
 
+#include "AOTRemovableFeature.h"
 #include <limits.h>
 
 namespace JSC {
@@ -50,8 +51,9 @@ bool FunctionHasExecutedCache::hasExecutedAtOffset(SourceID id, unsigned offset)
     return hasExecuted;
 }
 
-NEVER_INLINE void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end)
+void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, unsigned start, unsigned end)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     RangeMap& map = m_rangeMap.add(id, RangeMap { }).iterator->value;
     FunctionRange range;
     range.m_start = start;
@@ -59,10 +61,12 @@ NEVER_INLINE void FunctionHasExecutedCache::insertUnexecutedRange(SourceID id, u
     // Only insert unexecuted ranges once for a given sourceID because we may run into a situation where an executable executes, then is GCed, and then is allocated again,
     // and tries to reinsert itself, claiming it has never run, but this is false because it indeed already executed.
     map.add(range, false);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
-NEVER_INLINE void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
+void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, unsigned start, unsigned end)
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     // FIXME: We should never have an instance where we return here, but currently do in some situations. Find out why.
     auto iterator = m_rangeMap.find(id);
     if (iterator == m_rangeMap.end())
@@ -74,6 +78,7 @@ NEVER_INLINE void FunctionHasExecutedCache::removeUnexecutedRange(SourceID id, u
     range.m_start = start;
     range.m_end = end;
     map.set(range, true);
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 Vector<std::tuple<bool, unsigned, unsigned>> FunctionHasExecutedCache::getFunctionRanges(SourceID id)

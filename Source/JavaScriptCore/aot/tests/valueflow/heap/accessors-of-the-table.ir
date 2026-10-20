@@ -1,0 +1,27 @@
+# list = [one]; size = list.length; list[0](size)
+# A data property of the table is read as its entry says: the array does not escape, so what it holds is entered by the call alone, with the arguments of the call.
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> f1
+# CHECK-NOT: unknown
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewArray v0 contents=anything
+    v2 = PropGet v1 key="length"
+    v3 = Integer integer=0
+    v4 = ElemGet v1, v3
+    v5 = Integer integer=0
+    v6 = Call v4, -, v2
+    Return
+}
+function f1 name="one" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="missing"
+    v2 = Call v1, v0
+    Return
+}

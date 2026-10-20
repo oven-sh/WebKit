@@ -50,7 +50,7 @@ public:
 
     JS_EXPORT_PRIVATE void clear();
 
-    JS_EXPORT_PRIVATE Structure* emptyObjectStructureForPrototype(JSGlobalObject*, JSObject*, unsigned inlineCapacity, bool makePolyProtoStructure = false, FunctionExecutable* = nullptr, bool isGuarded = false);
+    JS_EXPORT_PRIVATE Structure* emptyObjectStructureForPrototype(JSGlobalObject*, JSObject*, unsigned inlineCapacity, bool makePolyProtoStructure = false, FunctionExecutable* = nullptr);
     JS_EXPORT_PRIVATE Structure* emptyStructureForPrototypeFromBaseStructure(JSGlobalObject*, JSObject*, Structure*, ShouldCacheStructure = ShouldCacheStructure::Yes);
     JS_EXPORT_PRIVATE Structure* emptyObjectStructureConcurrently(JSObject* prototype, unsigned inlineCapacity);
 

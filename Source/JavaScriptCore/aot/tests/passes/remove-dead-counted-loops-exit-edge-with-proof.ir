@@ -1,0 +1,87 @@
+# A loop whose exit edge passes what the test proved fills a parameter of the exit block, so it stays
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveDeadCountedLoops
+# STATISTIC: RemoveDeadCountedLoopsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="exitEdgePassesCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3(v8):
+    Return
+}
+# CHECK-LABEL: function f0 name="exitEdgePassesCounter"
+# CHECK: Jump -> next b1(v1)
+# CHECK: LoopHint
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+
+function f1 name="exitEdgePassesBound" parameters=[{type=int[0, 100]}] results=[{type=number}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3(| 1)
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3(v8):
+    Return v8
+}
+# CHECK-LABEL: function f1 name="exitEdgePassesBound"
+# CHECK: Jump -> next b1(v1)
+# CHECK: LoopHint
+# CHECK: Branch v4 -> taken b2(| 0), notTaken b3(| 1)
+
+function f2 name="exitEdgePassesNothing" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+  b0(v0: int[0, 100]):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2 name="exitEdgePassesNothing"
+# CHECK: Jump -> next b3()
+# CHECK-NOT: LoopHint
+
+function f3 name="enteringEdgePassesProof" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: int[0, 100], v1: anything):
+    v2 = Integer integer=0
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(v2 | 0), notTaken b4()
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v4, v0
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = Integer integer=1
+    v10 = Add v8, v9
+    Jump -> next b1(v10, v5)
+  b3():
+    Return
+  b4():
+    Return
+}
+# CHECK-LABEL: function f3 name="enteringEdgePassesProof"
+# CHECK: Branch v3 -> taken b3(), notTaken b4()
+# CHECK-NOT: LoopHint

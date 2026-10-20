@@ -1,0 +1,189 @@
+# An access that holds only while a test holds: the planner places the tests the access plan asks for, the slot operation names the guard, and the access by name stays in the rarer copy
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Loose" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Stable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L2 name="Extensible" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L3 name="Freezable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype, LoseShape]}
+
+function f0 name="predicted-receiver" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="predicted-receiver"
+# CHECK-NEXT: b0(v0: object ~ L0):
+# CHECK-NEXT: [[hasShape]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[hasShape]] -> taken [[passed]](| 0), notTaken [[failed]]()
+# CHECK-NEXT: [[fast]]():
+# CHECK-NEXT: v1: number = GetSlot v0, [[guard]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: [[generic]]() frequency=Unlikely:
+# CHECK-NEXT: [[byName]]: anything{{*}}= PropGet v0 key="x"
+# CHECK-NEXT: Return [[byName]]
+# CHECK-NEXT: [[passed]]([[guard]]: guard):
+# CHECK-NEXT: Jump -> next [[fast]]()
+# CHECK-NEXT: [[failed]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[generic]]()
+# CHECK-NEXT: }
+function f1 name="unknown-value-with-a-prediction" parameters=[{type=anything predicted=L0}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="unknown-value-with-a-prediction"
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: [[isObject]]: boolean{{*}}= TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[objects]](| 0), notTaken {{*}}(| 0)
+# CHECK: v1: number = GetSlot [[object]], [[objectGuard]] key="x" receivers=[L0] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK: [[objects]]([[object]]: object ~ L0):
+# CHECK-NEXT: [[objectHasShape]]: boolean = ShapeTest [[object]] layouts=[L0]
+# CHECK-NEXT: Branch [[objectHasShape]] -> taken [[objectPassed]](| 0), notTaken {{*}}()
+# CHECK: [[objectPassed]]([[objectGuard]]: guard):
+function f2 name="layout-keeping-its-shape" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="layout-keeping-its-shape"
+# CHECK-NEXT: b0(v0: object ~ L1):
+# CHECK-NEXT: [[isStable]]: boolean{{*}}= TypeTest v0 testedType=L1
+# CHECK-NEXT: Branch [[isStable]] -> taken [[stableObjects]](| 0), notTaken {{*}}(| 0)
+# CHECK-NOT: ShapeTest
+# CHECK: v1: number = GetSlot [[stable]]{{*}} key="x" receivers=[L1] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NOT: ShapeTest
+# CHECK: [[stableObjects]]([[stable]]: L1):
+# CHECK-NEXT: = BelongsToInstance [[stable]]
+# CHECK-NOT: ShapeTest
+function f3 name="proven-receiver-slot-may-be-empty" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="z"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="proven-receiver-slot-may-be-empty"
+# CHECK-NEXT: b0(v0: L1):
+# CHECK-NEXT: [[isFilled]]: boolean = IsSlotFilled v0 key="z" receivers=[L1] level=Predicted
+# CHECK-NEXT: Branch [[isFilled]] -> taken [[filled]](| 0), notTaken {{*}}()
+# CHECK-NOT: Test
+# CHECK: v1: number = GetSlot v0, [[filledGuard]] key="z" receivers=[L1] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="z"
+# CHECK-NOT: Test
+# CHECK: [[filled]]([[filledGuard]]: guard):
+function f4 name="two-reads-in-a-row" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    Return v2
+}
+# CHECK-LABEL: function f4 name="two-reads-in-a-row"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK-NOT: ShapeTest
+# CHECK: = GetSlot v0, [[sharedGuard]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: = GetSlot v0, [[sharedGuard]] key="y" receivers=[L0] level=Predicted
+# CHECK-NOT: ShapeTest
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: = PropGet v0 key="y"
+function f5 name="absent-member-of-an-extensible-object" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = PropGet v0 key="missing"
+    Return v1
+}
+# CHECK-LABEL: function f5 name="absent-member-of-an-extensible-object"
+# CHECK-NEXT: b0(v0: L2):
+# CHECK-NEXT: [[hasNoExtra]]: boolean = HasNoExtraProperties v0
+# CHECK-NEXT: Branch [[hasNoExtra]] -> taken {{*}}(| 0), notTaken {{*}}()
+# CHECK: v1: undefined = Undefined
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="missing"
+function f6 name="no-prediction" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f6 name="no-prediction"
+# CHECK-NEXT: b0(v0: object):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f7 name="no-object-in-the-type" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="no-object-in-the-type"
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f8 name="rare-block" parameters=[{type=object predicted=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = PropGet v0 key="x"
+    Return v2
+  b2():
+    Return
+}
+# CHECK-LABEL: function f8 name="rare-block"
+# CHECK-NOT: ShapeTest
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v2
+# CHECK-NOT: ShapeTest
+function f9 name="store-to-possibly-frozen-object" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
+  b0(v0: L3, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f9 name="store-to-possibly-frozen-object"
+# CHECK-NEXT: b0(v0: L3, v1: number):
+# CHECK-NEXT: [[isNotFrozen]]: boolean = IsNotFrozen v0
+# CHECK-NEXT: Branch [[isNotFrozen]] -> taken [[notFrozen]](| 0), notTaken {{*}}()
+# CHECK: PutSlot v0, [[notFrozenGuard]], v1 key="x" receivers=[L3] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK: [[notFrozen]]([[notFrozenGuard]]: guard):
+function f10 name="stored-value-may-not-fit" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f10 name="stored-value-may-not-fit"
+# CHECK-NEXT: b0(v0: L1, v1: anything):
+# CHECK-NEXT: [[fits]]: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[fits]] -> taken [[fitting]](| 0), notTaken {{*}}(| 0)
+# CHECK: PutSlot v0, -, [[number]] key="x" receivers=[L1] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, {{*}} key="x"
+# CHECK: [[fitting]]([[number]]: number):
+function f11 name="store-to-possibly-moved-out-slot" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    PropSet v0, v1 key="z"
+    Return
+}
+# CHECK-LABEL: function f11 name="store-to-possibly-moved-out-slot"
+# CHECK-NEXT: b0(v0: L1, v1: number):
+# CHECK-NEXT: [[hasNoOthers]]: boolean = HasNoExtraProperties v0
+# CHECK: PutSlotOrAdd v0, [[hasNoOthersGuard]], v1 key="z" receivers=[L1] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="z"
+# CHECK: ([[hasNoOthersGuard]]: guard):
+function f12 name="stored-value-never-fits" parameters=[{type=L1}, {type=string}] results=[{type=anything}] {
+  b0(v0: L1, v1: string):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f12 name="stored-value-never-fits"
+# CHECK-NEXT: b0(v0: L1, v1: string):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }

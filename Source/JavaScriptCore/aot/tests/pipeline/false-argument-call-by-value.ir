@@ -1,0 +1,26 @@
+# The only argument that reaches a written parameter does not fit, and the call stays a call by value: the summary of the dead body is `none`, the call is kept for the test in the entrypoint of its callee, and the entrypoint has that test
+# FORM: AsRead
+# OPTIONS: disable=pass:ResolveCalls,pass:InlineCalls
+# RUN: pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="4"
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call{{*}} callees=[f1]
+# CHECK: Unreachable
+# CHECK: name="double"{{*}}role=GenericEntrypoint
+# CHECK: = Claim {{*}} castType=undefined|null|number site=w0

@@ -1,0 +1,73 @@
+# A small function that stores its parameter into an object it creates has one instance per call site, in a module of the program and in a library module alike
+# RUN: flow-solve instances nodes
+# RUN(SECOND): flow-solve instances nodes
+# RUN(THIRD): flow-solve instances nodes
+# RUN(FOURTH): flow-solve instances nodes
+# RUN(ONE): flow-solve instances nodes
+# RUN(SHARED): flow-solve instances
+# CHECK: [[instance]] f1 at f0:v4
+# CHECK: , f0, v1) = {L0#[[a]]}
+# CHECK: , f0, v4) = {L2#[[box]]@[[instance]]}
+# CHECK: DeclaredPart(L2#[[box]]@[[instance]], 0) = {L0#[[a]]}
+# SECOND: [[instance]] f1 at f0:v5
+# SECOND: , f0, v2) = {L1#[[b]]}
+# SECOND: , f0, v5) = {L2#[[box]]@[[instance]]}
+# SECOND: DeclaredPart(L2#[[box]]@[[instance]], 0) = {L1#[[b]]}
+# THIRD: [[instance]] f2 at f0:v7
+# THIRD: , f0, v1) = {L0#[[a]]}
+# THIRD: , f0, v7) = {L3#[[box]]@[[instance]]}
+# THIRD: DeclaredPart(L3#[[box]]@[[instance]], 0) = {L0#[[a]]}
+# FOURTH: [[instance]] f2 at f0:v8
+# FOURTH: , f0, v2) = {L1#[[b]]}
+# FOURTH: , f0, v8) = {L3#[[box]]@[[instance]]}
+# FOURTH: DeclaredPart(L3#[[box]]@[[instance]], 0) = {L1#[[b]]}
+# ONE: [[instance]] f3 Proven
+# ONE: , f0, v1) = {L0#[[a]]}
+# ONE-NEXT: , f0, v2) = {L1#[[b]]}
+# ONE: ([[instance]], f3, parameter 0) = {L0#[[a]]|L1#[[b]]}
+# SHARED-NOT: f1 Proven
+# SHARED-NOT: f1 Generic
+# SHARED-NOT: f2 Proven
+# SHARED-NOT: f2 Generic
+# SHARED-NOT: f3 at
+# SHARED-NOT: f3 Generic
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Box" fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="LibraryBox" fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v1
+    v8 = Call v6, -, v2
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v1
+    v11 = Call v9, -, v2
+    Return
+}
+function f1 name="box" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    Return v1
+}
+function f2 name="libraryBox" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    Return v1
+}
+function f3 name="passesNothingOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = StrictEq v0, v1
+    Return v2
+}

@@ -1,0 +1,49 @@
+# Inside a cycle a proof is carried over a gap of at most MaxClonedBytesPerStretch bytes, and a use past it gets its own test
+# FORM: Prepared
+# OPTIONS: limit=MaxClonedBytesPerStretch:64
+# RUN(F0): test-placement function=f0 site=v7:v8
+# RUN(F1): test-placement function=f1 site=v3:v7 site=v6:v7
+# LOSS: MaxClonedBytesPerStretch x1
+# STATISTIC: MaxClonedBytesPerStretchHits >= 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
+layout L1 name="Filler" fields=[{key="z" declared={type=number}}]
+
+function f0 name="largeOuterLoop" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject layout=L1
+    v5 = NewObject layout=L1
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = PropGet v0 key="x"
+    Branch v1 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b1(), notTaken b4()
+  b4():
+    v8 = ShapeTest v0 layouts=[L0]
+    Return v7
+}
+# F0: stretch 0: test ShapeTest v0 layouts=[L0] on b1.0; uses v7; cloned 8
+# F0-NOT: stretch
+
+function f1 name="wideGapInsideLoop" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="x"
+    v4 = NewObject layout=L1
+    v5 = NewObject layout=L1
+    v6 = PropGet v0 key="y"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    v7 = ShapeTest v0 layouts=[L0]
+    Return v6
+}
+# F1: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; test ShapeTest v0 layouts=[L0] before v6; uses v3 v6; cloned 8
+# F1-NOT: stretch

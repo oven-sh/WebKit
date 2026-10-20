@@ -1,0 +1,50 @@
+# A getter that a built-in defines on an instance of a built-in class adds a property to it, so the instance stops counting as pristine and a built-in that reads the name runs the getter. A promise nothing is defined on keeps its record empty
+# RUN: flow-solve objects
+# RUN(LINKS): flow-links calls
+# RUN(OTHER): flow-links calls
+# RUN(REACHED): flow
+# CHECK: Promise@f0:v2{{*}} mutations=[{{*}}AddProperty
+# CHECK: Promise@f0:v12{{*}} mutations=[{{*}}AddProperty
+# CHECK: Promise@f0:v19{{*}} mutations=[] uses
+# LINKS: f0 v10 -> {{*}} f1 Accessor
+# OTHER: f0 v17 -> {{*}} f2 Accessor
+# REACHED-NOT: reachability=Unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Call v1, v0
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="constructor"
+    v5 = NewClosure function=f1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v3, -, v2, v4, v7
+    v9 = Undefined
+    v10 = Call v1, v0, v2
+    v11 = Undefined
+    v12 = Call v1, v0
+    v13 = Builtin builtin=ObjectPrototype__defineGetter__
+    v14 = NewClosure function=f2
+    v15 = Call v13, v12, v4, v14
+    v16 = Undefined
+    v17 = Call v1, v0, v12
+    v18 = Undefined
+    v19 = Call v1, v0
+    v20 = Call v1, v0, v19
+    Return
+}
+function f1 name="get" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    Return v1
+}
+function f2 name="read" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Promise
+    Return v1
+}

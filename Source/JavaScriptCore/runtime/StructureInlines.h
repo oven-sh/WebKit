@@ -53,7 +53,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
     ASSERT(vm.structureStructure);
     switch (previous->variant()) {
     case StructureVariant::Normal: {
-        auto* result = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, previous->variant(), previous);
+        auto* result = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, previous->variant(), previous);
         result->finishCreation(vm, previous, deferred);
         return result;
     }
@@ -83,18 +83,7 @@ void Structure::forEachPropertyConcurrently(NOESCAPE const Functor& functor)
     UncheckedKeyHashSet<UniquedStringImpl*> seenProperties;
 
     for (auto* structure : structures) {
-        if (!structure->m_transitionPropertyName) {
-            int number = 0;
-            for (UniquedStringImpl* name : structure->namesIfNumbered()) {
-                PropertyOffset offset = offsetForPropertyNumber(number++, structure->m_inlineCapacity);
-                if (!seenProperties.add(name).isNewEntry)
-                    continue;
-                if (!functor(PropertyTableEntry(name, offset, 0)))
-                    return;
-            }
-            continue;
-        }
-        if (seenProperties.contains(structure->m_transitionPropertyName.get()))
+        if (!structure->m_transitionPropertyName || seenProperties.contains(structure->m_transitionPropertyName.get()))
             continue;
 
         seenProperties.add(structure->m_transitionPropertyName.get());
@@ -214,12 +203,6 @@ inline bool Structure::isValid(JSGlobalObject* globalObject, StructureChain* cac
 inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset)
 {
     ASSERT(isValidOffset(offset));
-#if USE(BUN_JSC_ADDITIONS)
-    if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
-        setIsReplacedSilently(true);
-        return;
-    }
-#endif
     firePropertyReplacementWatchpointSet(vm, offset, "Did cache property replacement");
 }
 
@@ -248,11 +231,39 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
     rareData()->cacheSpecialProperty(globalObject, vm, this, value, key, slot);
 }
 
+inline ImmutablePropertyNames* Structure::listedImmutablePropertyNames() const
+{
+    return hasListedImmutableProperties() ? rareData()->immutablePropertyNames() : nullptr;
+}
+
 inline unsigned Structure::dictionaryPropertyCount() const
 {
     ASSERT(isDictionary());
     PropertyTable* table = m_propertyTableUnsafe.get();
     return table ? table->size() : std::numeric_limits<unsigned>::max();
+}
+
+ALWAYS_INLINE void Structure::didAddProperty(PropertyName propertyName, unsigned attributes)
+{
+    VM& vm = this->vm();
+    if (attributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
+        setIsQuickPropertyAccessAllowedForEnumeration(false);
+    if (attributes & PropertyAttribute::ReadOnly)
+        setContainsReadOnlyProperties();
+    if (attributes & PropertyAttribute::DontEnum)
+        setHasNonEnumerableProperties(true);
+    if (attributes & PropertyAttribute::DontDelete) {
+        setHasNonConfigurableProperties(true);
+        if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
+            setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
+    }
+    if (propertyName == vm.propertyNames->underscoreProto)
+        setHasUnderscoreProtoPropertyExcludingOriginalProto(true);
+    else if (propertyName == vm.propertyNames->then)
+        setHasSpecialProperties(true);
+
+    m_propertyHash = m_propertyHash ^ propertyName.uid()->existingSymbolAwareHash();
+    m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(propertyName.uid()));
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
@@ -275,37 +286,17 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    if (attributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
-        setIsQuickPropertyAccessAllowedForEnumeration(false);
-    if (attributes & PropertyAttribute::ReadOnly)
-        setContainsReadOnlyProperties();
-    if (attributes & PropertyAttribute::DontEnum)
-        setHasNonEnumerableProperties(true);
-    if (attributes & PropertyAttribute::DontDelete) {
-        setHasNonConfigurableProperties(true);
-        if (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
-            setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
-    }
-    if (propertyName == vm.propertyNames->underscoreProto)
-        setHasUnderscoreProtoPropertyExcludingOriginalProto(true);
-    else if (propertyName == vm.propertyNames->then)
-        setHasSpecialProperties(true);
+    didAddProperty(propertyName, attributes);
 
     auto rep = propertyName.uid();
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
-
-    m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
-    m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attribute, result] = table->add(vm, PropertyTableEntry(rep, newOffset, attributes));
     ASSERT_UNUSED(result, result);
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
-#if USE(BUN_JSC_ADDITIONS)
-    clearPropertyNameIDInSlot(newOffset);
-#endif
     
     func(locker, newOffset, newMaxOffset);
     
@@ -407,9 +398,7 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
 template<typename Func>
 inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    RELEASE_ASSERT(!hasImmutableShape());
-#endif
+    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
     return add<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
@@ -426,6 +415,7 @@ inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, Propert
 template<typename Func>
 ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned newAttributes, NOESCAPE const Func& func) -> decltype(auto)
 {
+    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
 
@@ -441,35 +431,15 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT(!JSC::isValidOffset(get(vm, propertyName)));
 
     checkConsistency();
-    if (newAttributes & PropertyAttribute::DontEnum || propertyName.isSymbol())
-        setIsQuickPropertyAccessAllowedForEnumeration(false);
-    if (newAttributes & PropertyAttribute::ReadOnly)
-        setContainsReadOnlyProperties();
-    if (newAttributes & PropertyAttribute::DontEnum)
-        setHasNonEnumerableProperties(true);
-    if (newAttributes & PropertyAttribute::DontDelete) {
-        setHasNonConfigurableProperties(true);
-        if (newAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
-            setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
-    }
-    if (propertyName == vm.propertyNames->underscoreProto)
-        setHasUnderscoreProtoPropertyExcludingOriginalProto(true);
-    else if (propertyName == vm.propertyNames->then)
-        setHasSpecialProperties(true);
+    didAddProperty(propertyName, newAttributes);
 
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
-
-    m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
-    m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
 
     auto [offset, attributes, result] = table->addAfterFind(vm, PropertyTableEntry(rep, newOffset, newAttributes), WTF::move(findResult));
     ASSERT_UNUSED(result, result);
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
-#if USE(BUN_JSC_ADDITIONS)
-    clearPropertyNameIDInSlot(newOffset);
-#endif
 
     func(locker, newOffset, newMaxOffset);
 
@@ -487,10 +457,8 @@ inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, Proper
 
 ALWAYS_INLINE void Structure::setPrototypeWithoutTransition(VM& vm, JSValue prototype)
 {
+    RELEASE_ASSERT(!isCompiledStructure() && typeInfo().type() != SlimClosureType);
     ASSERT(isValidPrototype(prototype));
-#if USE(BUN_JSC_ADDITIONS)
-    RELEASE_ASSERT(!hasImmutableShape());
-#endif
     m_prototype.set(vm, this, prototype);
 }
 
@@ -612,7 +580,10 @@ ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructure(Str
 ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructureConcurrently(Structure* structure, UniquedStringImpl* uid, unsigned attributes, PropertyOffset& offset)
 {
     ConcurrentJSLocker locker(structure->m_lock);
-    return addPropertyTransitionToExistingStructureImpl(structure, uid, attributes, offset);
+    Structure* result = addPropertyTransitionToExistingStructureImpl(structure, uid, attributes, offset);
+    if (result && !result->isCacheableTransitionFrom(structure))
+        return nullptr;
+    return result;
 }
 
 ALWAYS_INLINE StructureTransitionTable::Hash::Key StructureTransitionTable::Hash::createKeyFromStructure(Structure* structure)
@@ -646,11 +617,67 @@ inline Structure* StructureTransitionTable::get(PointerKey rep, unsigned attribu
     return map()->get(StructureTransitionTable::Hash::createKey(rep, attributes, transitionKind));
 }
 
+template<typename Functor>
+inline void StructureTransitionTable::forEach(NOESCAPE const Functor& functor) const
+{
+    if (isUsingSingleSlot()) {
+        if (Structure* transition = trySingleTransition())
+            functor(transition);
+        return;
+    }
+    map()->forEach([&](Structure* transition) {
+        functor(transition);
+        return IterationStatus::Continue;
+    });
+}
+
 inline void StructureTransitionTable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     if (auto* transition = trySingleTransition()) {
         if (!vm.heap.isMarked(transition))
             m_data = UsingSingleSlotFlag;
+    }
+}
+
+template<typename Visitor>
+ALWAYS_INLINE void Structure::visitFields(Structure* thisObject, Visitor& visitor)
+{
+    ConcurrentJSLocker locker(thisObject->m_lock);
+    
+    visitor.append(thisObject->m_realm);
+    if constexpr (requires { visitor.markingVersion(); })
+        thisObject->m_markingStamp = markingStampFor(visitor.markingVersion());
+    if (!thisObject->isObject()) {
+        // We do not need to clear JSPropertyNameEnumerator since it is never cached for non-object Structure.
+        // We do not have code clearing JSPropertyNameEnumerator since this function can be called concurrently.
+        thisObject->m_cachedPrototypeChain.clear();
+#if ASSERT_ENABLED
+        if (auto* rareData = thisObject->tryRareData())
+            ASSERT(!rareData->cachedPropertyNameEnumerator());
+#endif
+    } else {
+        visitor.append(thisObject->m_prototype);
+        visitor.append(thisObject->m_cachedPrototypeChain);
+    }
+    visitor.append(thisObject->m_previousOrRareData);
+
+    bool isAnalyzingHeap = false;
+    if constexpr (requires { visitor.isAnalyzingHeap(); })
+        isAnalyzingHeap = visitor.isAnalyzingHeap();
+
+    if (thisObject->isPinnedPropertyTable() || thisObject->protectPropertyTableWhileTransitioning()) {
+        // NOTE: This can interleave in pin(), in which case it may see a null property table.
+        // That's fine, because then the barrier will fire and we will scan this again.
+        visitor.append(thisObject->m_propertyTableUnsafe);
+    } else if (isAnalyzingHeap)
+        visitor.append(thisObject->m_propertyTableUnsafe);
+    else if (thisObject->m_propertyTableUnsafe)
+        thisObject->m_propertyTableUnsafe.clear();
+
+    // Mark only in non Full collection. In full collection, we handle it as a weak-link.
+    if (visitor.collectionScope() != CollectionScope::Full) {
+        if (auto* transition = thisObject->m_transitionTable.trySingleTransition())
+            visitor.appendUnbarriered(transition);
     }
 }
 
@@ -662,6 +689,10 @@ inline void Structure::finishCreation(VM& vm, const Structure* previous, Deferre
         if (previousRareData->hasSharedPolyProtoWatchpoint()) {
             ensureRareData(vm);
             rareData()->setSharedPolyProtoWatchpoint(previousRareData->copySharedPolyProtoWatchpoint());
+        }
+        if (ImmutablePropertyNames* names = previousRareData->immutablePropertyNames()) [[unlikely]] {
+            ensureRareData(vm);
+            rareData()->setImmutablePropertyNames(*names);
         }
     }
     previous->fireStructureTransitionWatchpoint(deferred);

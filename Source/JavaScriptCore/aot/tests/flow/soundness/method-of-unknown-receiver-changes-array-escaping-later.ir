@@ -1,0 +1,49 @@
+# A method that changes its receiver is called on a receiver nobody knows, and an array reaches native code only in a function that is entered later: the unknown receiver may be that array, so the array gets what the method stores
+# RUN: flow-solve nodes
+# CHECK: Position(Array@f4:v2, 0) = {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Stored" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = PropGet v1 key="fill"
+    v6 = Call v5, v1, v4 calleeKey="fill"
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = NewArray v1 contents=anything
+    v3 = PropGet v0 key="keep" [isFreeName]
+    v4 = Call v3, -, v2
+    v5 = Integer integer=0
+    v6 = ElemGet v2, v5
+    Return v6
+}

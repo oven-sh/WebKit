@@ -1,0 +1,33 @@
+# numbers = new Float64Array(2); numbers[1] = { valueOf: one }; list = []; list[1] = { valueOf: two }
+# A typed array keeps a number, so a store of an object runs the conversion that the object names. An array keeps the object.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Held" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Float64Array
+    v1 = Integer integer=2
+    v2 = Construct v0, -, v1
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Integer integer=1
+    ElemSet v2, v5, v4 mode=Strict
+    v7 = NewArray contents=anything
+    v8 = NewClosure function=f2
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    ElemSet v7, v5, v9 mode=Strict
+    Return
+}
+function f1 name="one" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="two" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

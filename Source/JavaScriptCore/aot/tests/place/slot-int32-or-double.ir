@@ -1,0 +1,78 @@
+# A number slot that is predicted to hold int32s takes 4 bytes in an object with two such slots or more. An always filled slot that is stored a double takes 8
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses disable=flow:NarrowedTypes
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="TwoPredicted" fields=[{key="first" declared={type=number predicted=i32} flags=[IsRequired]}, {key="second" declared={type=number predicted=i32}}, {key="integer" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="OnePredicted" fields=[{key="single" declared={type=number predicted=i32} flags=[IsRequired]}]
+layout L2 kind=Environment name="scope" fields=[{key="left" declared={type=number predicted=i32}}, {key="right" declared={type=number predicted=i32}}]
+layout L3 name="StoredDoubles" fields=[{key="fraction" declared={type=number predicted=i32} flags=[IsRequired]}, {key="whole" declared={type=number predicted=i32} flags=[IsRequired]}, {key="tally" declared={type=number predicted=i32} flags=[IsRequired]}, {key="maybeFraction" declared={type=number predicted=i32}}, {key="filler0" declared={type=i32} flags=[IsRequired]}, {key="filler1" declared={type=i32} flags=[IsRequired]}]
+layout L4 name="TwoPredictedOneCommon" fields=[{key="common" declared={type=number predicted=i32} flags=[IsRequired]}, {key="other" declared={type=number predicted=i32} flags=[IsRequired]}, {key="filler" declared={type=i32} flags=[IsRequired]}]
+layout L5 name="OnePredictedAndCommon" fields=[{key="common" declared={type=number predicted=i32} flags=[IsRequired]}]
+layout L6 name="NotPredicted" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 2]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3, v3, v3 layout=L0 fields=[0, 1, 2]
+    v7 = FinishObject v6
+    v8 = NewObject -, v3 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = NewObject -, v3, v3 layout=L2 fields=[0, 1]
+    v11 = NewClosure v10 function=f1
+    v12 = NewObject -, v2, v3, v3, v3, v3 layout=L3 fields=[0, 1, 2, 4, 5]
+    v13 = FinishObject v12
+    v14 = NewObject -, v2, v3, v3, v2, v3, v3 layout=L3 fields=[0, 1, 2, 3, 4, 5]
+    v15 = FinishObject v14
+    v16 = NewObject -, v3, v3, v3 layout=L4 fields=[0, 1, 2]
+    v17 = FinishObject v16
+    PutModuleVariable v17 variable=g0
+    v19 = NewObject -, v3 layout=L5 fields=[0]
+    v20 = FinishObject v19
+    PutModuleVariable v20 variable=g0
+    v22 = GetModuleVariable variable=g0
+    v23 = PropGet v22 key="common"
+    v24 = NewObject -, v3, v3 layout=L6 fields=[0, 1]
+    v25 = FinishObject v24
+    Return
+}
+function f1 name="closure" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    v2 = GetEnvironmentField v0 layout=L2 field=1
+    v3 = Add v1, v2
+    Return v3
+}
+# The cells of L0, L3 and L4 are full, so no slot is widened into free bytes.
+# CHECK: L0 CompiledObject size=32 extension=24
+# CHECK-NEXT: "first" Int32OrDouble @20 double@8
+# CHECK-NEXT: "second" Int32OrDouble @24 double@16
+# CHECK-NEXT: "integer" Int32 @28
+# CHECK-NEXT: extension Cell32 @16
+# CHECK-NEXT: L1 CompiledObject size=32 fields=1
+# CHECK-NEXT: "single" Double @16
+# CHECK-NEXT: L2 Environment
+# CHECK-NEXT: "left" Double @
+# CHECK-NEXT: "right" Double @
+# CHECK-NEXT: L3 CompiledObject size=48 extension=32
+# CHECK-NEXT: "fraction" Double @
+# CHECK-NEXT: "whole" Int32OrDouble @
+# CHECK-NEXT: "tally" Int32OrDouble @
+# CHECK-NEXT: "maybeFraction" Int32OrDouble @
+# What L5 does with the field that is read through L4|L5 does not change the slot of L4.
+# CHECK: L4 CompiledObject size=32 extension=24
+# CHECK-NEXT: "common" Int32OrDouble @
+# CHECK-NEXT: "other" Int32OrDouble @
+# CHECK: L5 CompiledObject size=32 fields=1
+# CHECK-NEXT: "common" Double @16
+# CHECK-NEXT: L6 CompiledObject size=32 fields=2
+# CHECK-NEXT: "x" Double @
+# CHECK-NEXT: "y" Double @

@@ -629,7 +629,6 @@ const ObjectType = constexpr ObjectType
 const FinalObjectType = constexpr FinalObjectType
 const JSFunctionType = constexpr JSFunctionType
 const InternalFunctionType = constexpr InternalFunctionType
-const SlimClosureType = constexpr SlimClosureType
 const ArrayType = constexpr ArrayType
 const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
@@ -715,6 +714,13 @@ macro crash()
         cloopCrash
     else
         call _llint_crash
+    end
+end
+
+# offlineasm puts the ARM64 veneers of a part of a section in front of the next section directive, so a part ends in a jump.
+macro endSectionPart()
+    if not C_LOOP
+        jmp _llint_crash
     end
 end
 
@@ -1414,12 +1420,6 @@ macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, s
 end
 
 macro skipIfIsRememberedOrInEden(cell, slowPath)
-    if not C_LOOP
-        loadp CodeBlock[cfr], t7
-        loadp CodeBlock::m_vm[t7], t7
-        loadi VM::heap + Heap::m_barrierThreshold[t7], t7
-        bba JSCell::m_cellState[cell], t7, .done
-    end
     memfence
     bba JSCell::m_cellState[cell], BlackThreshold, .done
     slowPath()
@@ -2033,34 +2033,6 @@ if not C_LOOP
             # stp, not stnp: for regions this small the non-temporal hint measures slower.
             emit "stp xzr, xzr, [x1], #16" # address is a1, thus x1
             bpa a0, address, .zeroFillLoop
-        elsif X86_64
-            move a0, a3
-            subp address, a3
-            bpb a3, 1024, .zeroFillShort
-            move a0, scratch
-            urshiftp 3, a3
-            move address, a0
-            move 0, r0
-            emit "rep stosq"
-            move scratch, a0
-            jmp .zeroFillDone
-        .zeroFillShort:
-            move 0, scratch
-            bpb a3, 64, .zeroFillLoop
-            emit "pxor %xmm0, %xmm0"
-        .zeroFillBlockLoop:
-            emit "movups %xmm0, (%rsi)"
-            emit "movups %xmm0, 16(%rsi)"
-            emit "movups %xmm0, 32(%rsi)"
-            emit "movups %xmm0, 48(%rsi)"
-            addp 64, address
-            subp 64, a3
-            bpaeq a3, 64, .zeroFillBlockLoop
-            bpbeq a0, address, .zeroFillDone
-        .zeroFillLoop:
-            storep scratch, [address]
-            addp PtrSize, address
-            bpa a0, address, .zeroFillLoop
         else
             move 0, scratch
         .zeroFillLoop:
@@ -2227,6 +2199,7 @@ end)
 
 end // not C_LOOP
 
+endSectionPart()
 section "bytecode"
 
 global _llintBytecodePCRangeStart
@@ -2330,6 +2303,10 @@ end
 
 include LowLevelInterpreter64
 
+if AOT
+    include LowLevelInterpreterAOT
+end
+
 
 
 # Value-representation-agnostic code.
@@ -2361,9 +2338,7 @@ slowPathOp(spread)
 slowPathOp(strcat)
 slowPathOp(throw_static_error)
 slowPathOp(typeof)
-if C_LOOP
-    slowPathOp(typeof_is_object)
-end
+slowPathOp(typeof_is_object)
 slowPathOp(unreachable)
 slowPathOp(new_promise)
 slowPathOp(new_generator)
@@ -2384,9 +2359,7 @@ llintSlowPathOp(create_lexical_environment)
 llintSlowPathOp(create_direct_arguments)
 llintSlowPathOp(create_scoped_arguments)
 llintSlowPathOp(create_cloned_arguments)
-if C_LOOP
-    llintSlowPathOp(new_array)
-end
+llintSlowPathOp(new_array)
 llintSlowPathOp(new_array_with_size)
 llintSlowPathOp(new_async_func)
 llintSlowPathOp(new_async_func_exp)
@@ -2396,9 +2369,7 @@ llintSlowPathOp(new_func)
 llintSlowPathOp(new_func_exp)
 llintSlowPathOp(new_generator_func)
 llintSlowPathOp(new_generator_func_exp)
-if C_LOOP
-    llintSlowPathOp(new_object)
-end
+llintSlowPathOp(new_object)
 llintSlowPathOp(new_reg_exp)
 llintSlowPathOp(put_getter_by_id)
 llintSlowPathOp(put_getter_by_val)
@@ -2743,6 +2714,7 @@ llintOp(op_super_sampler_end, OpSuperSamplerEnd, macro (unused, unused, dispatch
     dispatch()
 end)
 
+endSectionPart()
 section "trampolines"
 
 op(llint_native_call_trampoline, macro ()
@@ -2811,7 +2783,7 @@ end
 
 # t0 is callee
 # t2 is CallLinkInfo*
-macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, notFunctionCase, slowCase)
+macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, slowCase)
     btqnz t0, NotCellMask, slowCase
     bbneq JSCell::m_type[t0], JSFunctionType, .notJSFunction
     loadp JSFunction::m_executableOrRareData[t0], t5
@@ -2828,19 +2800,8 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
 .notJSFunction:
-    bbneq JSCell::m_type[t0], InternalFunctionType, notFunctionCase
+    bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
     jmp internalFunctionTrampoline
-end
-
-macro callSlimClosure(slowCase)
-    loadb JSCell::m_type[t0], t5
-    subi SlimClosureType, t5
-    bia t5, 1, slowCase
-    leap _g_aotSlimClosureEntrypoint, t1
-    loadp [t1], t1
-    move 0, t0
-    storep t0, CodeBlock - PrologueStackPointerDelta[sp]
-    jmp t1, JSEntryPtrTag
 end
 
 # t0 is callee
@@ -2858,9 +2819,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
-.notFunction:
-    callSlimClosure(.slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2868,7 +2827,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_construct_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase, .slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2876,9 +2835,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_tail_call_trampoline, macro ()
-    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
-.notFunction:
-    callSlimClosure(.slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2936,6 +2893,7 @@ op(llint_polymorphic_closure_call_trampoline, macro ()
     linkFor(_llint_polymorphic_call)
 end)
 
+endSectionPart()
 section "bytecode"
 
 if JIT
@@ -3092,6 +3050,7 @@ macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     orh type, (constexpr (BinaryArithProfileFixedVector::Storage::offsetOfData())) + BinaryArithProfile::m_bits[scratch2, scratch1, 2]
 end
 
+endSectionPart()
 section "webassembly"
 
 if WEBASSEMBLY
@@ -3186,6 +3145,7 @@ entry(llint_webassembly, macro()
 end)
 end
 
+endSectionPart()
 section "trampolines"
 
 include? LowLevelInterpreterAdditions

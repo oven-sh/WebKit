@@ -1,0 +1,80 @@
+# An entrypoint that only calls functions with a stack check leaves the check to them
+# FORM: Selected
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksCoveredByCallers = 1
+# STATISTIC: StackChecksDeferredToCallee = 2
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v1, v2, v3, v4
+    Return v7
+}
+
+function f1 name="closureAndCall" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f2 name="callsItself" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f3 name="alsoCallsItself" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f4 name="closureNeverCalledByValue" results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f5 name="closureAndCall" role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+  b0(v0: f1, v1: anything):
+    v2 = CallDirect function=f1
+    ReturnCall v2
+}
+
+function f6 name="callsItself" role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+  b0(v0: f2, v1: anything):
+    v2 = CallDirect function=f2
+    ReturnCall v2
+}
+
+function f7 name="alsoCallsItself" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
+  b0(v0: f3, v1: anything, v2: anything):
+    v3 = Call v2
+    v4 = CallDirect function=f3
+    ReturnCall v4
+}
+
+function f8 name="closureNeverCalledByValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+  b0(v0: f4, v1: anything):
+    v2 = CallDirect function=f4
+    ReturnCall v2
+}
+# CHECK: f0 stack check: Required
+# CHECK-NEXT: f1 stack check: Required
+# CHECK-NEXT: f2 stack check: Required
+# CHECK-NEXT: f3 stack check: Required
+# CHECK-NEXT: f4 stack check: CoveredByCallers
+# CHECK-NEXT: f5 stack check: DeferredToCallee
+# CHECK-NEXT: f6 stack check: DeferredToCallee
+# CHECK-NEXT: f7 stack check: Required
+# CHECK-NEXT: f8 stack check: Required
+# CHECK-NEXT: outcome: Unchanged

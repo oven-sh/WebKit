@@ -175,6 +175,18 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSCellButterfly* thisObject, Visitor& visitor)
+    {
+        if (!hasContiguous(thisObject->indexingType())) {
+            ASSERT(hasDouble(thisObject->indexingType()) || hasInt32(thisObject->indexingType()));
+            return;
+        }
+
+        Butterfly* butterfly = thisObject->toButterfly();
+        visitor.appendValuesHidden(butterfly->contiguous().data(), butterfly->publicLength());
+    }
+
     void LEGACY_NODELETE copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 
     template<typename, SubspaceAccess>

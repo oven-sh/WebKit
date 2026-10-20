@@ -1,0 +1,82 @@
+# An allocation class with several reasons to lose its shape reports the cause with the lowest enumerator, and of two operations with one cause the first
+# RUN: flow
+# RUN(TWICE): flow
+# RUN(SOLVE): flow-solve objects witnesses
+# CHECK: class [[mixed]] layout=L1 {{*}}cause=UnknownBase witness={function=f0 value=v4}
+# CHECK: layout L1 flow={{*}}cause=UnknownBase witness={function=f0 value=v4}
+# TWICE: class [[passedTwice]] layout=L2 {{*}}cause=ReachesUnknownJavaScript witness={function=f0 value=v21}
+# TWICE: layout L2 flow={{*}}cause=ReachesUnknownJavaScript witness={function=f0 value=v21}
+# SOLVE: [[frozen]] L3#{{*}} mutations=[ChangeIntegrity]
+# SOLVE: [[untouched]] L4#{{*}} mutations=[]
+# SOLVE: [[stored]] L5#{{*}} mutations=[StoreAfterCreation]
+# SOLVE: [[frozen]] ChangeIntegrity f0:v25
+# SOLVE-NOT: [[untouched]] ChangeIntegrity
+# SOLVE-NOT: [[untouched]] StoreAfterCreation
+# SOLVE: [[stored]] StoreAfterCreation f0:v29
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Mixed" predictedBase=L0 constructor=f2 flags=[HasHeritage]
+layout L2 name="PassedTwice" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Frozen" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Untouched" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Stored" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="Mixed" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="otherBase" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v2)
+  b3(v6):
+    v7 = NewClosure function=f2
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L1
+    v10 = FinishClass v9 layout=L1
+    PutModuleVariable v10 variable=g0
+    v12 = Construct v10
+    v13 = NewClosure function=f3
+    DefineGetter v12, v13 key="0"
+    v15 = PropGet v3 key="text" [isFreeName]
+    v16 = Builtin builtin=Function
+    v17 = Construct v16, -, v15
+    v18 = Call v17, -, v12
+    v19 = Integer integer=1
+    v20 = NewObject -, v19 layout=L2 fields=[0]
+    v21 = Call v17, -, v20
+    v22 = Call v17, -, v20
+    v23 = NewObject -, v19 layout=L3 fields=[0]
+    v24 = Builtin builtin=ObjectFreeze
+    v25 = Call v24, -, v23
+    v26 = Call v24, -, v23
+    v27 = NewObject -, v19 layout=L4 fields=[0]
+    v28 = NewObject -, v19 layout=L5 fields=[0]
+    PropSet v28, v19 key="x" mode=Strict
+    PropSet v28, v19 key="x" mode=Strict
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Mixed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L1
+    Return v3
+}
+function f3 name="first" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

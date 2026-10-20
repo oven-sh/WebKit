@@ -1,0 +1,271 @@
+# After a call the guarded copy compares the shape epoch with the value saved at the head of the stretch and goes on under a renewed guard
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(READS): pass PlaceTypeTests
+# STATISTIC: EpochTestsInserted = 7
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="acrossOneCall" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f8
+    v3 = PropGet v0 key="b"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="acrossOneCall"
+# CHECK: b0(v0: object ~ L0):
+# CHECK-NEXT: = GetShapeEpoch
+# CHECK-NEXT: [[saved0]]: int = GetShapeEpoch
+# CHECK-NEXT: [[test0]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken [[failed0]]()
+# CHECK-NEXT: [[fast0]]():
+# CHECK-NEXT: v1: number = GetSlot v0, [[guard0]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: v2: anything = CallDirect function=f8
+# CHECK-NEXT: [[current0]]: boolean = IsShapeEpochCurrent [[saved0]], [[guard0]]
+# CHECK-NEXT: Branch [[current0]] -> taken [[renewed0]](| 0), notTaken [[moved0]]()
+# CHECK-NEXT: [[rest0]]():
+# CHECK-NEXT: v3: number = GetSlot v0, [[newGuard0]] key="b" receivers=[L0] level=Predicted
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[copy0]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="a"
+# CHECK-NEXT: = CallDirect function=f8
+# CHECK-NEXT: Jump -> next [[copyOfRest0]]()
+# CHECK-NEXT: [[copyOfRest0]]() frequency=Unlikely:
+# CHECK-NEXT: [[generic0]]:{{*}}= PropGet v0 key="b"
+# CHECK-NEXT: Return [[generic0]]
+# CHECK-NEXT: [[passed0]]([[guard0]]: guard):
+# CHECK-NEXT: Jump -> next [[fast0]]()
+# CHECK-NEXT: [[failed0]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy0]]()
+# CHECK-NEXT: [[renewed0]]([[newGuard0]]: guard):
+# CHECK-NEXT: = GetShapeEpoch
+# CHECK-NEXT: Jump -> next [[rest0]]()
+# CHECK-NEXT: [[moved0]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copyOfRest0]]()
+# CHECK-NEXT: }
+# READS-LABEL: function f0 name="acrossOneCall"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f1 name="acrossThreeCalls" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f8
+    v3 = CallDirect function=f8
+    v4 = CallDirect function=f8
+    v5 = PropGet v0 key="b"
+    Return v5
+}
+# CHECK-LABEL: function f1 name="acrossThreeCalls"
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: v2: anything = CallDirect function=f8
+# CHECK-NEXT: v3: anything = CallDirect function=f8
+# CHECK-NEXT: v4: anything = CallDirect function=f8
+# CHECK-NEXT: = IsShapeEpochCurrent
+# CHECK-NOT: IsShapeEpochCurrent
+# READS-LABEL: function f1 name="acrossThreeCalls"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f2 name="twoReceivers" parameters=[{type=object predicted=L0}, {type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: object ~ L0):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v1 key="a"
+    v4 = CallDirect function=f8
+    v5 = PropGet v0 key="b"
+    v6 = PropGet v1 key="b"
+    Return v6
+}
+# CHECK-LABEL: function f2 name="twoReceivers"
+# CHECK: = GetShapeEpoch
+# CHECK-NEXT: [[saved2]]: int = GetShapeEpoch
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: v2: number = GetSlot v0, [[guardA2]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: = ShapeTest v1 layouts=[L0]
+# CHECK: v3: number = GetSlot v1, [[guardB2]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: v4: anything = CallDirect function=f8
+# CHECK-NEXT: [[both2]]: guard = AllGuards [[guardA2]], [[guardB2]]
+# CHECK-NEXT: [[current2]]: boolean = IsShapeEpochCurrent [[saved2]], [[both2]]
+# CHECK-NEXT: Branch [[current2]] -> taken [[renewed2]](| 0), notTaken
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: v5: number = GetSlot v0, [[newGuardA2]] key="b" receivers=[L0] level=Predicted
+# CHECK-NEXT: v6: number = GetSlot v1, [[newGuardB2]] key="b" receivers=[L0] level=Predicted
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: [[renewed2]]([[newGuardA2]]: guard):
+# CHECK-NEXT: [[newGuardB2]]: guard = AllGuards [[newGuardA2]]
+# CHECK-NOT: IsShapeEpochCurrent
+# READS-LABEL: function f2 name="twoReceivers"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f3 name="nothingUsedAfterCall" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f8
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nothingUsedAfterCall"
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: v1: number = GetSlot v0,
+# CHECK-NOT: IsShapeEpochCurrent
+# READS-LABEL: function f3 name="nothingUsedAfterCall"
+# READS-NOT: = GetShapeEpoch
+
+function f4 name="storageIsNotRenewed" parameters=[{type=anything predicted=Array<number, Contiguous>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number, Contiguous>, v1: i32):
+    v2 = ElemGet v0, v1
+    v3 = CallDirect function=f8
+    v4 = ElemGet v0, v1
+    Return v4
+}
+# CHECK-LABEL: function f4 name="storageIsNotRenewed"
+# CHECK: v3: anything = CallDirect function=f8
+# CHECK-NEXT: [[current4]]: boolean = IsShapeEpochCurrent [[saved4]], [[pristine4]]
+# CHECK-NEXT: Branch [[current4]] -> taken [[renewed4]](| 0), notTaken
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: [[isPristine4]]: boolean = IsPristine [[array4]] builtinClass=Array
+# CHECK-NEXT: Branch [[isPristine4]] -> taken [[pristinePassed4]](| 0), notTaken
+# CHECK: [[pristinePassed4]]([[pristine4]]: guard):
+# CHECK-NEXT: = HasArrayStorage [[array4]] arrayStorage=Contiguous
+# CHECK: [[renewed4]]({{*}}: guard):
+# CHECK-NEXT: = GetShapeEpoch
+# CHECK-NEXT: = HasArrayStorage [[array4]] arrayStorage=Contiguous
+# CHECK-NOT: HasArrayStorage
+# READS-LABEL: function f4 name="storageIsNotRenewed"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f5 name="mergeOfFreshAndStale" parameters=[{type=object predicted=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean):
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect function=f8
+    Jump -> next b2()
+  b2():
+    v4 = PropGet v0 key="b"
+    Return v4
+}
+# CHECK-LABEL: function f5 name="mergeOfFreshAndStale"
+# CHECK: = GetShapeEpoch
+# CHECK-NEXT: [[saved5]]: int = GetShapeEpoch
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: b1():
+# CHECK-NEXT: v3: anything = CallDirect function=f8
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[current5]]: boolean = IsShapeEpochCurrent [[saved5]], [[guard5]]
+# CHECK-NEXT: Branch [[current5]] -> taken [[renewed5]](| 0), notTaken
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: v2: number = GetSlot v0, [[guard5]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK: v4: number = GetSlot v0, [[newGuard5]] key="b" receivers=[L0] level=Predicted
+# CHECK: [[renewed5]]([[newGuard5]]: guard):
+# READS-LABEL: function f5 name="mergeOfFreshAndStale"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f6 name="testBetweenCallAndRenewal" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="a"
+    v2 = CallDirect function=f9
+    v3 = PropGet v2 key="b"
+    v4 = PropGet v0 key="b"
+    Return v4
+}
+# CHECK-LABEL: function f6 name="testBetweenCallAndRenewal"
+# CHECK: = GetShapeEpoch
+# CHECK-NEXT: [[saved6]]: int = GetShapeEpoch
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: v1: number = GetSlot v0, [[guard6]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: v2: object ~ L0 = CallDirect function=f9
+# CHECK-NEXT: = ShapeTest v2 layouts=[L0]
+# CHECK: v3: number = GetSlot v2, {{*}} key="b" receivers=[L0] level=Predicted
+# CHECK-NEXT: = IsShapeEpochCurrent [[saved6]], [[guard6]]
+# CHECK-NOT: IsShapeEpochCurrent
+# READS-LABEL: function f6 name="testBetweenCallAndRenewal"
+# READS-COUNT-3: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f7 name="entryUnderHandler" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0) handler=b1():
+    v1 = PropGet v0 key="a"
+    Jump -> next b4()
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    Jump -> next b4()
+  b3():
+    Return v2
+  b4():
+    v5 = CallDirect function=f8
+    v6 = PropGet v0 key="b"
+    Return v6
+}
+# CHECK-LABEL: function f7 name="entryUnderHandler"
+# CHECK: b0(v0: object ~ L0) handler=b1():
+# CHECK-NEXT: = GetShapeEpoch
+# CHECK: b1() role=CatchHandler:
+# CHECK-NEXT: v2: anything = CatchValue
+# CHECK-NEXT: = GetShapeEpoch
+# CHECK-NEXT: v3: boolean = ShapeTest v0 layouts=[L0]
+# CHECK: b2(v4: guard):
+# CHECK: [[savedInHandler7]]: int = GetShapeEpoch
+# CHECK-NEXT: Jump -> next b4([[guardInHandler7]], [[savedInHandler7]])
+# CHECK: b4([[guard7]]: guard, [[saved7]]: int):
+# CHECK-NEXT: v5: anything = CallDirect function=f8
+# CHECK-NEXT: = IsShapeEpochCurrent [[saved7]], [[guard7]]
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: v1: number = GetSlot v0, [[tested7]] key="a" receivers=[L0] level=Predicted
+# CHECK-NEXT: Jump -> next b4([[tested7]], [[savedAtHead7]])
+# CHECK: [[savedAtHead7]]: int = GetShapeEpoch
+# READS-LABEL: function f7 name="entryUnderHandler"
+# READS-COUNT-5: = GetShapeEpoch
+# READS-NOT: = GetShapeEpoch
+
+function f8 name="unknown" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+function f9 name="unknownObject" results=[{type=object predicted=L0}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = Call v1
+    v3 = Claim v2 castType=object
+    Return v3
+}
+
+function f10 name="acrossSuspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object predicted=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 promiseType=Promise promiseParameter=1} {
+  b0(v0: object ~ L0):
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f11
+    Return v1
+}
+function f11 name="acrossSuspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=object predicted=L0}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 promiseType=Promise promiseParameter=1} {
+  b0(v0: object ~ L0, v1: Promise):
+    v2 = PropGet v0 key="a"
+    v3 = AwaitBySavingFrame v2, v1
+    v4 = PropGet v0 key="b"
+    v5 = ReturnAsyncResult v1, v4
+    Return v5
+}
+# CHECK-LABEL: function f11 name="acrossSuspension"
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: = AwaitBySavingFrame
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK-NOT: AwaitBySavingFrame
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK-NOT: ShapeTest
+# READS-LABEL: function f11 name="acrossSuspension"
+# READS-NOT: = GetShapeEpoch

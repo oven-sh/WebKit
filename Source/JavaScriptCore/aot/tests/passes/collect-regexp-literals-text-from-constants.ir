@@ -1,0 +1,128 @@
+# The text of a pattern that the program puts together from constants is a candidate: what the only store to a variable stores, concatenations of such texts, and the result of a function called with them.
+# No such candidate: a variable that is stored twice (flow names the one text it saw copied there), a parameter of the function that creates the expression.
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# DIAGNOSTIC: RegExpWithoutCode 2
+# CHECK: regexp requests: 6
+# CHECK-NEXT: 0 candidate "a+" flags=- sites=f6:v2
+# CHECK-NEXT: 1 candidate "[0-9]+\\.[0-9]+" flags=- sites=f1:v2
+# CHECK-NEXT: 2 candidate "^[0-9]+\\.[0-9]+|[a-z]+$" flags=- sites=f2:v7
+# CHECK-NEXT: 3 candidate "(?:[a-z]+)?" flags=i sites=f3:v4
+# CHECK-NEXT: 4 candidate "(?:(?:[a-z]+)?)?x" flags=- sites=f4:v2
+# CHECK-NEXT: 5 candidate "(?:[0-9]+)?" flags=- sites=f8:v3
+# CHECK-NEXT: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="digits" module=m0 declared={type=anything}
+variable g1 name="number" module=m0 declared={type=anything}
+variable g2 name="word" module=m0 declared={type=anything}
+variable g3 name="nested" module=m0 declared={type=anything}
+variable g4 name="storedTwice" module=m0 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = String string="[0-9]+"
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = String string="\\."
+    v7 = Strcat v5, v6, v5
+    PutModuleVariable v7 variable=g1
+    v9 = String string="[a-z]+"
+    PutModuleVariable v9 variable=g2
+    v11 = GetModuleVariable variable=g2
+    v12 = CallDirect v11 function=f5
+    v13 = CallDirect v12 function=f5
+    v14 = String string="x"
+    v15 = Strcat v13, v14
+    PutModuleVariable v15 variable=g3
+    v17 = String string="a+"
+    PutModuleVariable v17 variable=g4
+    v19 = Strcat v17, v2
+    PutModuleVariable v19 variable=g4
+    v21 = CallDirect function=f1
+    v22 = CallDirect function=f2
+    v23 = CallDirect function=f3
+    v24 = CallDirect function=f4
+    v25 = CallDirect function=f6
+    v26 = CallDirect v2 function=f7
+    v27 = CallDirect function=f8
+    Return
+}
+
+function f1 name="variableOfConcatenation" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f2 name="concatenationOfVariables" results=[{type=anything}] {
+  b0():
+    v0 = String string="^"
+    v1 = GetModuleVariable variable=g1
+    v2 = String string="|"
+    v3 = GetModuleVariable variable=g2
+    v4 = String string="$"
+    v5 = Strcat v0, v1, v2, v3, v4
+    v6 = Builtin builtin=RegExp
+    v7 = Construct v6, -, v5
+    Return v7
+}
+
+function f3 name="resultOfFunction" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CallDirect v0 function=f5
+    v2 = String string="i"
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v1, v2
+    Return v4
+}
+
+function f4 name="variableOfResults" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f5 name="optional" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="(?:"
+    v2 = String string=")?"
+    v3 = Strcat v1, v0, v2
+    Return v3
+}
+
+function f6 name="variableStoredTwice" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g4
+    v1 = Builtin builtin=RegExp
+    v2 = Construct v1, -, v0
+    Return v2
+}
+
+function f7 name="ownParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="b+"
+    v2 = Strcat v1, v0
+    v3 = Builtin builtin=RegExp
+    v4 = Construct v3, -, v2
+    Return v4
+}
+
+function f8 name="secondCallOfFunction" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect v0 function=f5
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v1
+    Return v3
+}

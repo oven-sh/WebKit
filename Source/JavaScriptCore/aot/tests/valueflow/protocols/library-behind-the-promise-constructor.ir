@@ -1,0 +1,33 @@
+# new Promise(resolve => resolve(1))
+# The construction is applied by rule. The constructor of the library is reached with it (runtimefunction 0), Promise.try is not (95).
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=0 function=f2
+runtimefunction id=95 function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = NewClosure function=f1
+    v2 = Construct v0, -, v1
+    Return
+}
+function f1 name="executor" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = Call v0, -, v1
+    Return
+}
+function f2 name="Promise" role=Library flags=[HasThis, HasNewTarget] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}
+function f3 name="try" role=Library flags=[HasThis] enclosingRuntimeFunction=95 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

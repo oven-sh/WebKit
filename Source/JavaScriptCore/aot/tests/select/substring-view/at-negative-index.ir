@@ -1,0 +1,25 @@
+# at() counts a negative index from the end of the string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="at-negative-index" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = Integer integer=-1
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
+    v3 = String string="/"
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# CHECK-NOT: StringPrototypeAt
+# CHECK: [[length]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: [[range]]: {{*}} = StringRange [[length]], v1 method=SingleRelativeIndex
+# CHECK-NEXT: [[from]]: {{*}} = ResultAt [[range]]
+# CHECK-NEXT: [[to]]: {{*}} = ResultAt [[range]] index=1
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: [[unit]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, [[from]], [[to]], [[zero]]
+# CHECK-NEXT: [[codeUnit]]: 47 = Integer integer=47
+# CHECK-NEXT: [[result]]: boolean = StrictEq [[unit]], [[codeUnit]]
+# CHECK-NEXT: Return [[result]]
+# CHECK-NOT: StringPrototypeAt

@@ -1,0 +1,64 @@
+# What is predicted of the contents of a container is the prediction of a value read from it and never its type; without it a read of proven contents has no prediction
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v8: undefined|object ~ undefined|L0
+# CHECK-NEXT: v9: undefined|object
+# CHECK-NEXT: v10: undefined|object ~ undefined|L0
+# CHECK: v12: undefined|string ~ undefined|"a"
+# CHECK-NEXT: v13: undefined|object ~ undefined|L0
+# CHECK: v15: undefined|object ~ undefined|L0
+# CHECK-NEXT: v16: anything ~ L0
+# CHECK-NEXT: v17: anything ~ undefined|L0
+# CHECK-NEXT: v18: anything ~ object
+# CHECK: function f1
+# CHECK: v5: undefined|object ~ undefined|L0
+# CHECK-NEXT: v6: undefined|object ~ undefined|L0
+# CHECK-NEXT: v7: undefined|object ~ undefined|L0
+# CHECK-NEXT: v8: Array<object> ~ Array<L0>
+# CHECK-NEXT: v9: undefined|object
+# CHECK: function f2
+# CHECK-NEXT: v0: Array<object, proven> ~ Array<object ~ L0, proven>
+# CHECK: v3: undefined|object ~ undefined|L0
+# CHECK-NEXT: v4: Array<object, proven> ~ Array<object ~ L0, proven>
+# CHECK-NEXT: v5: undefined|object ~ undefined|L0
+# CHECK: function f3
+# CHECK: v2: undefined|object ~ undefined|L0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Dog"
+function f0 name="reads" flags=[IsAsync] parameters=[{type=Array<object ~ L0, proven, pristine[Storage, Names]>}, {type=Array<object, proven>}, {type=i32}, {type=Map<string ~ "a", object ~ L0, proven>}, {type=Set<object ~ L0, proven>}, {type=Promise<object ~ L0, proven>}, {type=Array<object ~ L0>}, {type=Promise<object, proven>}] results=[{type=anything}] {
+  b0(v0: Array<object ~ L0, proven, pristine[Storage, Names]>, v1: Array<object, proven>, v2: i32, v3: Map<string ~ "a", object ~ L0, proven>, v4: Set<object ~ L0, proven>, v5: Promise<object ~ L0, proven>, v6: Array<object ~ L0>, v7: Promise<object, proven>):
+    v8 = ElemGet v0, v2
+    v9 = ElemGet v1, v2
+    v10 = GetArrayElement v0, v2
+    v11 = MapNext v3, v3, v2
+    v12 = ResultAt v11 index=2
+    v13 = ResultAt v11 index=3
+    v14 = SetNext v4, v4, v2
+    v15 = ResultAt v14 index=2
+    v16 = Await v5
+    v17 = ElemGet v6, v2
+    v18 = Await v7
+    Return v8
+}
+function f1 name="calls" parameters=[{type=Map<string, object ~ L0, proven>}, {type=string}, {type=Array<object ~ L0, proven>}, {type=i32}, {type=Map<string, object, proven>}] results=[{type=anything}] {
+  b0(v0: Map<string, object ~ L0, proven>, v1: string, v2: Array<object ~ L0, proven>, v3: i32, v4: Map<string, object, proven>):
+    v5 = CallBuiltin v0, v1 overload=MapPrototypeGet/0
+    v6 = CallBuiltin v2, v3 overload=ArrayPrototypeAt/0
+    v7 = CallBuiltin v2 overload=ArrayPrototypePop/0
+    v8 = CallBuiltin v2 overload=ArrayPrototypeSlice/0
+    v9 = CallBuiltin v4, v1 overload=MapPrototypeGet/0
+    Return v5
+}
+function f2 name="predictedContainer" parameters=[{type=Array<object, proven> predicted=Array<L0>}, {type=i32}, {type=Array<object, proven>}] results=[{type=anything}] {
+  b0(v0: Array<object, proven> ~ Array<L0>, v1: i32, v2: Array<object, proven>):
+    v3 = ElemGet v0, v1
+    v4 = Predict v2 predicted=Array<L0>
+    v5 = ElemGet v4, v1
+    Return v3
+}
+function f3 name="writtenContainer" parameters=[{type=Array<object, proven> written=Array<L0>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<object, proven> ? Array<L0>, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}

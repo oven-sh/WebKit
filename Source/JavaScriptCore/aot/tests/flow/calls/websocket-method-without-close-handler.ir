@@ -1,0 +1,28 @@
+# A server without a close handler: close() and send() of its websocket call no function of the program and no unknown code
+# RUN: flow-links calls unseen
+# CHECK-NOT: f1 v{{*}} -> {{*}} BuiltinCallback
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="websocket" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Handlers" fields=[{key="message" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Builtin builtin=BunServe
+    v4 = Builtin builtin=Bun
+    v5 = Call v3, v4, v2
+    Return
+}
+function f1 name="message" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="close"
+    v3 = Call v2, v0 calleeKey="close"
+    v4 = String string="text"
+    v5 = PropGet v0 key="send"
+    v6 = Call v5, v0, v4 calleeKey="send"
+    Return
+}

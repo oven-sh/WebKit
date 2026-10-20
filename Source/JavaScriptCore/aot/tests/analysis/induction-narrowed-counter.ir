@@ -1,0 +1,70 @@
+# A counter is followed through the copies that the edges of a type test pass on
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="narrowedOnBothEdges" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b6()
+  b2():
+    v5 = TypeTest v2 testedType=number
+    Branch v5 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v6):
+    Jump -> next b5(v6)
+  b4(v7):
+    Jump -> next b5(v7)
+  b5(v8):
+    v9 = Increment v8
+    Jump -> next b1(v9)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v9] tests [b1 v2 Less v0 Invariant BeforeStep entry Unknown exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f1 name="narrowedCopyIsComparedAndStepped" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = TypeTest v2 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b4()
+  b2(v5):
+    v6 = Less v5, v0
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = ToNumeric v5
+    v8 = Increment v7
+    Jump -> next b1(v8)
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +1 Increasing stepped [v8] tests [b2 v2 Less v0 Invariant BeforeStep entry Unknown exits AlsoElsewhere]
+# CHECK-NEXT: loop b1 counter: none
+
+function f2 name="convertedWithoutTest" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: number, v1: anything):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = ToNumeric v2
+    v6 = Increment v5
+    Jump -> next b1(v6)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: loop b1 counter: none

@@ -1,0 +1,112 @@
+# A value read from a container is tested for what is predicted of the container's contents, also where a pass creates the read; without a prediction the access stays as general as the proven contents allow
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration SimplifyControlFlow ThreadJumps FoldConstants SimplifyControlFlow EliminateDeadCode SimplifyCasts InsertObjectCoercibleChecks ResolveAccesses PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stable" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype, LoseShape]}
+layout L1 name="Loose" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="predictedElement" parameters=[{type=Array<object ~ L0, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<object ~ L0, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="predictedElement"
+# CHECK: v2: undefined|object ~ undefined|L0 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+# CHECK-NEXT: [[isStable0]]: boolean = TypeTest v2 testedType=L0
+# CHECK-NEXT: Branch [[isStable0]] -> taken [[stableBlock0]](| 0), notTaken
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: = ShapeTest
+# CHECK: v3: number = GetSlot [[stable0]], {{*}} key="x" receivers=[L0] level=Predicted
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet v2 key="x"
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: = ShapeTest
+# CHECK: [[stableBlock0]]([[stable0]]: L0):
+
+function f1 name="elementWithoutPrediction" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="elementWithoutPrediction"
+# CHECK: v2: undefined|object = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
+# CHECK-NOT: Test
+# CHECK-NOT: GetSlot
+# CHECK: v3: anything = PropGet {{*}} key="x"
+# CHECK-NOT: Test
+# CHECK-NOT: GetSlot
+
+function f2 name="predictedLooseElement" parameters=[{type=Array<object ~ L1, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<object ~ L1, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = PropGet v2 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="predictedLooseElement"
+# CHECK: v2: undefined|object ~ undefined|L1 = GetArrayElement v0, v1
+# CHECK: v3: number = GetSlot [[loose2]], [[guard2]] key="x" receivers=[L1] level=Predicted
+# CHECK: [[hasShape2]]: boolean = ShapeTest [[loose2]] layouts=[L1]
+# CHECK-NEXT: Branch [[hasShape2]] -> taken [[shapeBlock2]](| 0), notTaken
+# CHECK: [[shapeBlock2]]([[guard2]]: guard):
+
+function f3 name="predictedRow" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = ElemGet v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="predictedRow"
+# CHECK: [[row3]]: Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]> = RequireObjectCoercible v2
+# CHECK-NEXT: [[isDouble3]]: boolean = HasArrayStorage [[row3]] arrayStorage=Double
+# CHECK-NEXT: Branch [[isDouble3]] -> taken [[doubleBlock3]](| 0), notTaken
+# CHECK-NOT: HasArrayStorage
+# CHECK: v3: undefined|number = GetArrayElement [[row3]], v1, [[guard3]] arrayStorage=Double level=Predicted
+# CHECK-NOT: HasArrayStorage
+# CHECK: [[doubleBlock3]]([[guard3]]: guard):
+
+function f4 name="rowWithoutPrediction" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    v3 = ElemGet v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="rowWithoutPrediction"
+# CHECK-NOT: HasArrayStorage
+# CHECK: v3: undefined|number = GetArrayElement {{*}}, v1 level=Proven
+# CHECK-NOT: HasArrayStorage
+
+function f5 name="forOf" parameters=[{type=Array<object ~ L0, proven, Contiguous, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array<object ~ L0, proven, Contiguous, pristine[Storage, Names]>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b6(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b5():
+    v6 = PropGet v5 key="x"
+    v7 = ToBoolean v6
+    Branch v7 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v1
+    Return
+  b5() role=IterationCleanup subject=v1:
+    v9 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v9
+  b6():
+    Return
+}
+# CHECK-LABEL: function f5 name="forOf"
+# CHECK: [[element5]]: undefined|object ~ undefined|L0 = GetArrayElement v0, {{*}} arrayStorage=Contiguous level=Proven
+# CHECK: [[isStable5]]: boolean = TypeTest [[element5]] testedType=L0
+# CHECK-NEXT: Branch [[isStable5]] -> taken [[stableBlock5]](| 0), notTaken
+# CHECK: [[stableBlock5]]([[stable5]]: L0):
+# CHECK: : number = GetSlot [[stable5]], {{*}} key="x" receivers=[L0] level=Predicted

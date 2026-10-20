@@ -1,0 +1,186 @@
+# `next` of an iterator is replaced after the loop has called the first one: the loop calls both
+# The function that does it is found under the key "undefined", which a field read before its store yields only once the refinement of the construction is withdrawn, after everything else has come to rest
+# RUN: flow-links calls
+# RUN(NODES): flow-solve nodes
+# CHECK: f5 v6 -> [[first]] f6 Protocol Repeatedly cycle
+# CHECK: f0 v35 -> [[install]] f4 Call Once
+# CHECK: f5 v6 -> [[second]] f2 Protocol Repeatedly cycle
+# NODES: , f5, result 0) = {undefined|1|"late"}
+
+layout L0 kind=Instance name="Leak" module=m0 position=211 constructor=f8 fields=[{key="k" declared={type=anything predicted="a"}}]
+layout L1 module=m0 position=290 fields=[{key="done" declared={type=anything predicted=boolean} flags=[IsRequired]}, {key="value" declared={type=anything predicted=string} flags=[IsRequired]}]
+layout L2 module=m0 position=17 fields=[{key="next" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+layout L3 module=m0 position=83
+layout L4 module=m0 position=462 fields=[{key="a" declared={type=anything predicted=function} flags=[IsRequired]}, {key="undefined" declared={type=anything predicted=function} flags=[IsRequired]}]
+layout L5 module=m0 position=35 fields=[{key="done" declared={type=anything predicted=boolean} flags=[IsRequired]}, {key="value" declared={type=anything predicted=number} flags=[IsRequired]}]
+variable g0 name="probe" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="next" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="iterator" module=m0 declared={type=anything|absent predicted=L2} flags=[IsImmutable]
+variable g3 name="iterable" module=m0 declared={type=anything|absent predicted=L3} flags=[IsImmutable]
+variable g4 name="leaked" module=m0 declared={type=anything|absent predicted=string}
+variable g5 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f4 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f5 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = NewObject layout=L2 @19
+    v7 = NewClosure function=f6 @19
+    v8 = ClaimDeclared v7 declared={type=anything predicted=function} @19
+    PropDefine v6, v8 key="next" @19
+    v10 = FinishObject v6 @17
+    v11 = Predict v10 predicted=L2 @6
+    PutModuleVariable v11 variable=g2 @6
+    v13 = NewObject layout=L3 @85
+    v14 = NewClosure function=f7 @85
+    v15 = Builtin builtin=SymbolIterator @85
+    SetFunctionName v14, v15 @85
+    PropDefine v13, v14 key=@@iterator @85
+    v18 = FinishObject v13 @83
+    v19 = Predict v18 predicted=L3 @72
+    PutModuleVariable v19 variable=g3 @72
+    v21 = String string="a" @164
+    v22 = Predict v21 predicted=string @155
+    PutModuleVariable v22 variable=g4 @155
+    v24 = NewClosure function=f8 @205
+    v25 = NewClass v24 layout=L0 @205
+    PutModuleVariable v25 variable=g5 @205
+    v27 = FinishClass v25 layout=L0 @205
+    v28 = ClaimDeclared v27 declared={type=anything predicted=function} @205
+    v29 = ClaimDeclared v27 declared={type=anything predicted=function} @205
+    v30 = Predict v1 predicted=function @467
+    v31 = Predict v3 predicted=function @487
+    v32 = NewObject -, v30, v31 layout=L4 fields=[0, 1] @462
+    v33 = FinishObject v32 @462
+    v34 = Predict v33 predicted=L4 @452
+    v35 = Predict v5 predicted=function @498
+    v36 = Call v35 calleeName="use" @498
+    v37 = Construct v29 calleeName="Leak" @509
+    v38 = GetModuleVariable variable=g4 @525
+    v39 = CheckInitialized v38 name="leaked" @525
+    v40 = ElemGet v34, v39 @517
+    v41 = Call v40, v34 @525
+    v42 = Call v35 calleeName="use" @536
+    v43 = Undefined @536
+    Return v43 @536
+}
+function f1 name="probe" module=m0 position=169 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @169
+  b1():
+    v1 = GetModuleVariable variable=g4 @189
+    v2 = CheckInitialized v1 name="leaked" @189
+    v3 = PropGet v0 key="k" @198
+    v4 = ClaimDeclared v3 declared={type=anything predicted=string} @189
+    PutModuleVariable v4 variable=g4 @189
+    v6 = Undefined @189
+    Return v6 @189
+}
+function f2 name="next" module=m0 position=265 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=L1}] {
+  b0():
+    Jump -> next b1() @265
+  b1():
+    v0 = Data data=d0 @290
+    v1 = ClaimDeclared v0 declared={type=anything predicted=L1} @290
+    Return v1 @290
+}
+function f3 name="nothing" module=m0 position=129 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @129
+  b1():
+    v0 = Undefined @129
+    Return v0 @129
+}
+function f4 name="install" module=m0 position=323 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @323
+  b1():
+    v0 = GetModuleVariable variable=g2 @344
+    v1 = CheckInitialized v0 name="iterator" @344
+    v2 = GetModuleVariable variable=g1 @360
+    v3 = Predict v2 predicted=function @360
+    v4 = ClaimDeclared v3 declared={type=anything predicted=function} @344
+    PropSet v1, v4 key="next" @344
+    v6 = Undefined @344
+    Return v6 @344
+}
+function f5 name="use" module=m0 position=368 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=undefined|number}] {
+  b0():
+    Jump -> next b1() @368
+  b1():
+    v0 = Undefined @385
+    v1 = GetModuleVariable variable=g3 @411
+    v2 = CheckInitialized v1 name="iterable" @411
+    v3 = IteratorOpen v2 @395
+    Jump -> next b2(v0) @395
+  b2(v4):
+    LoopHint @395
+    v6 = IteratorResume v3 @395
+    v7 = ResultAt v6 @395
+    v8 = ResultAt v6 index=1 @395
+    Branch v7 -> taken b3(), notTaken b4() @395
+  b3():
+    v9 = Predict v4 predicted=undefined|number @438
+    Return v9 @438
+  b4():
+    Jump -> next b5() @395
+  b5() handler=b7():
+    v10 = Predict v8 predicted=number @406
+    Jump -> next b6() @421
+  b6() handler=b7():
+    Jump -> next b2(v10) @421
+  b7() role=IterationCleanup subject=v3:
+    v11 = CatchException @395
+    IteratorClose v3 completion=Throw @395
+    Rethrow v11 @395
+}
+function f6 name="next" module=m0 position=19 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=L5}] {
+  b0():
+    Jump -> next b1() @19
+  b1():
+    v0 = Data data=d1 @35
+    v1 = ClaimDeclared v0 declared={type=anything predicted=L5} @35
+    Return v1 @35
+}
+function f7 module=m0 position=85 kind=Method thisType={type=anything} results=[{type=anything predicted=L2}] {
+  b0():
+    Jump -> next b1() @85
+  b1():
+    v0 = GetModuleVariable variable=g2 @114
+    v1 = CheckInitialized v0 name="iterator" @114
+    v2 = ClaimDeclared v1 declared={type=anything predicted=L2} @114
+    Return v2 @114
+}
+function f8 name="Leak" module=m0 position=218 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @218
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @205
+    v2 = NewObject v1 layout=L0 @205
+    v3 = GetModuleVariable variable=g0 @234
+    v4 = Predict v3 predicted=function @234
+    v5 = Predict v2 predicted=L0 @240
+    v6 = Call v4, -, v5 calleeName="probe" @234
+    v7 = Predict v2 predicted=L0 @247
+    v8 = String string="a" @256
+    v9 = ClaimDeclared v8 declared={type=anything predicted=string} @247
+    PropSet v7, v9 key="k" @247
+    v11 = Undefined @247
+    v12 = TypeTest v11 testedType=object @247
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @247
+  b2(v13):
+    Jump -> next b4(v13) @247
+  b3(v14):
+    Jump -> next b4(v2) @247
+  b4(v15):
+    Return v15 @247
+}
+data d0 root=Object{layout=L1 members=[{key="done" value=Boolean{value=true}}, {key="value" value=String{value="late"}}]} module=m0
+data d1 root=Object{layout=L5 members=[{key="done" value=Boolean{value=true}}, {key="value" value=Number{value=1}}]} module=m0
+entry module=m0

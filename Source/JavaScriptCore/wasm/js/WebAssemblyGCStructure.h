@@ -47,8 +47,6 @@ class WebAssemblyGCStructure final : public Structure {
 public:
     friend class Structure;
 
-    ~WebAssemblyGCStructure();
-
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
@@ -58,6 +56,7 @@ public:
     const Wasm::RTT& rtt() const LIFETIME_BOUND { return m_rtt; }
 
     static WebAssemblyGCStructure* create(VM&, const TypeInfo&, const ClassInfo*, Ref<const Wasm::RTT>&&);
+    static void destroy(JSCell*);
 
     static constexpr ptrdiff_t offsetOfRTT() { return OBJECT_OFFSETOF(WebAssemblyGCStructure, m_rtt); }
 
@@ -72,7 +71,6 @@ private:
 
     void finishCreation(VM&);
 
-    alignas(AOTFields) [[maybe_unused]] std::byte m_aotFieldsStorage[sizeof(AOTFields)];
     const Ref<const Wasm::RTT> m_rtt;
     std::array<WriteBarrierStructureID, inlinedDisplaySize> m_inlinedDisplay { };
 };

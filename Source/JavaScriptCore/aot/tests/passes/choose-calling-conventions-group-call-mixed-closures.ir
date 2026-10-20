@@ -1,0 +1,95 @@
+# The call of a group knows where the closures keep their word only when all members have closures of one form
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass only-passes=GroupCallsByValue,ChooseCallingConventions
+# STATISTIC: GroupCalls = 2
+# CHECK-COUNT-5: closures=AllSlim
+# CHECK-COUNT-5: closures=Unknown
+# CHECK-NOT: closures=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Made" constructor=f6 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = NewClosure function=f8
+    v8 = NewClosure function=f9
+    v9 = NewClosure function=f10
+    v10 = CallDirect v0 function=f11
+    v11 = CallDirect v1 function=f11
+    v12 = CallDirect v2 function=f11
+    v13 = CallDirect v3 function=f11
+    v14 = CallDirect v4 function=f11
+    v15 = CallDirect v5 function=f12
+    v16 = CallDirect v6 function=f12
+    v17 = CallDirect v7 function=f12
+    v18 = CallDirect v8 function=f12
+    v19 = CallDirect v9 function=f12
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = Call v21, -, v5
+    Return
+}
+function f1 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="second" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="third" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="fourth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="fifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="constructsObjectsAndReachesUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="seventh" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f8 name="eighth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f9 name="ninth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f10 name="tenth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f11 name="callsClosuresThatAreOnlyCalled"
+# CHECK: = CallGroup v0, v1 function=
+function f11 name="callsClosuresThatAreOnlyCalled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="callsFullClosureToo"
+# CHECK: = CallGroup v0, v1 function=
+function f12 name="callsFullClosureToo" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1
+    Return v2
+}

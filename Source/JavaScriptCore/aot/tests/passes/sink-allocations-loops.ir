@@ -1,0 +1,260 @@
+# Virtual objects in loops: built before the loop, dying in each iteration, tracked across the back edge
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 4
+# STATISTIC: AllocationsSunk = 6
+# STATISTIC: AllocationsMergedAtJoins = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="Holder" fields=[{key="item" declared={type=anything}}]
+layout L2 kind=Environment name="scope" fields=[{key="value" declared={type=anything}}]
+
+function f0 name="passedOnInsideLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="y" receivers=[L0]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Call v0
+    v6 = ToBoolean v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Call v0, -, v2
+    Jump -> next b1()
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="passedOnInsideLoop"
+# CHECK: b0(
+# CHECK-NEXT: [[cell0]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next b1([[cell0]])
+# CHECK-NOT: NewObject
+# CHECK-NOT: BitAnd
+# CHECK-NOT: Switch
+# CHECK: b2([[inLoop0]]:
+# CHECK-NEXT: = Call v0, -, [[inLoop0]]
+
+function f1 name="passedOnAfterLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="y" receivers=[L0]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = PropGet v2 key="x" receivers=[L0]
+    v6 = Call v5
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    v8 = ToBoolean v1
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v0, -, v2
+    Return v9
+  b4():
+    Return v6
+}
+# CHECK-LABEL: function f1 name="passedOnAfterLoop"
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1(v0, v1)
+# CHECK: b1([[x1]]: anything, [[y1]]: anything):
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: Branch v7 -> taken b1([[x1]], [[y1]]), notTaken b2(
+# CHECK: b3():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell1]]
+# CHECK-NOT: NewObject
+
+function f2 name="passedOnInsideInnerLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    PropDefine v4, v1 key="y" receivers=[L0]
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = Call v0
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v0, -, v4
+    Jump -> next b2()
+  b4():
+    v10 = ToBoolean v3
+    Branch v10 -> taken b1(), notTaken b5()
+  b5():
+    Return v7
+}
+# CHECK-LABEL: function f2 name="passedOnInsideInnerLoop"
+# CHECK: b1():
+# CHECK: [[cell2]]:{{*}}= NewObject -, v3, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next b2([[cell2]])
+# CHECK-NOT: NewObject
+# CHECK-NOT: BitAnd
+# CHECK-NOT: Switch
+
+function f3 name="passedOnInItsOwnIteration" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = ToBoolean v3
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = CallDirect v4 function=f7
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v7 = GetEnvironmentField v4 layout=L2 field=0
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b5()
+  b5():
+    Return v7
+}
+# CHECK-LABEL: function f3 name="passedOnInItsOwnIteration"
+# CHECK: b1():
+# CHECK-NOT: NewObject
+# CHECK: b2([[value3]]: anything):
+# CHECK-NEXT: [[cell3]]:{{*}}= NewObject -, [[value3]] layout=L2 fields=[0]
+# CHECK-NEXT: = CallDirect [[cell3]] function=f7
+# CHECK-NEXT: = GetEnvironmentField [[cell3]] layout=L2
+# CHECK: b3({{*}}: anything):
+# CHECK-NOT: NewObject
+# CHECK-NOT: GetEnvironmentField
+
+function f4 name="diesInEachIteration" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v5 = PropGet v4 key="x" receivers=[L0]
+    v6 = Call v0, -, v5
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(v6), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f4 name="diesInEachIteration"
+# CHECK-NOT: NewObject
+# CHECK: b1(v2: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: anything = Upcast v2 castType=anything
+# CHECK-NOT: NewObject
+
+function f5 name="earlierInstanceIsHeldAcrossBackEdge" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PropDefine v2, v4 key="item" receivers=[L1]
+    v6 = Call v0
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    v8 = PropGet v2 key="item" receivers=[L1]
+    v9 = PropGet v8 key="x"
+    Return v9
+}
+# CHECK-LABEL: function f5 name="earlierInstanceIsHeldAcrossBackEdge"
+# CHECK-NOT: layout=L1
+# CHECK: LoopHint
+# CHECK-NEXT: v4:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NOT: PropDefine
+# CHECK-NOT: layout=L1
+# CHECK: = PropGet v8 key="x"
+
+function f6 name="joinPassesItselfAround" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b3(v4)
+  b3(v5):
+    LoopHint
+    v7 = PropGet v5 key="x" receivers=[L0]
+    v8 = Call v0, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b3(v5), notTaken b4()
+  b4():
+    Return v7
+}
+# CHECK-LABEL: function f6 name="joinPassesItselfAround"
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b3({{*}}v0)
+# CHECK: Jump -> next b3({{*}}v1)
+# CHECK: b3({{*}}[[x6]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: anything = Upcast [[x6]] castType=anything
+# CHECK: Branch v9 -> taken b3({{*}}[[x6]]), notTaken b4()
+# CHECK-NOT: NewObject
+
+function f7 name="readsScope" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    Return
+}
+
+function f8 name="literalsReplacedByCallResultInLoop" parameters=[{type=anything}, {type=i32}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32, v2: anything, v3: anything):
+    Switch v1 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v4 = NewObject -, v2, v3 layout=L0 fields=[1, 0] [keepsShape]
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewObject -, v3 layout=L0 fields=[0] [keepsShape]
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = Integer integer=0
+    Jump -> next b4(v6, v7)
+  b4(v8, v9):
+    LoopHint
+    v11 = Integer integer=3
+    v12 = Less v9, v11
+    Branch v12 -> taken b5(), notTaken b6()
+  b5():
+    v13 = CallDirect function=f9
+    v14 = Integer integer=1
+    v15 = Add v9, v14
+    Jump -> next b4(v13, v15)
+  b6():
+    v16 = AssumeType v8 castType=L0
+    v17 = ToBoolean v0
+    Branch v17 -> taken b7(), notTaken b8()
+  b7():
+    v18 = Call v0
+    Jump -> next b8()
+  b8():
+    v19 = Call v0, -, v16
+    Return
+}
+# CHECK-LABEL: function f8 name="literalsReplacedByCallResultInLoop"
+# CHECK: b1():
+# CHECK-NOT: NewObject
+# CHECK: b4({{*}}[[tag8]]: i32, [[carried8]]: L0, 
+# CHECK: b5():
+# CHECK-NEXT: v13: L0 = CallDirect function=f9
+# CHECK: Jump -> next b4({{*}}, v13, 
+# CHECK: Switch [[tag8]] cases=[1, 2] -> case
+# CHECK-COUNT-2: = NewObject
+# CHECK-NOT: = NewObject
+
+function f9 name="make" results=[{type=L0}] {
+  b0():
+    v0 = NewObject layout=L0 [keepsShape]
+    Return v0
+}
+# CHECK-LABEL: function f9 name="make"

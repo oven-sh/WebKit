@@ -1,0 +1,91 @@
+# a module record follows the rules of its kind: lists, interoperation, body, links and exports, one bad module for each rule
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 47
+
+variable g0 name="a" module=m0 declared={type=anything}
+data d0 root=Null
+module m0 path="main" displayPath="main" body=f0 requests=[{target=m1}, {target=m7}, {target=m9}] exports=[{name="a" variable=g0}, {name="i" kind=Indirect module=m7 importName="x"}, {name="n" kind=Namespace module=m1}] requiredNames=[{module=m1 name="a"}]
+module m1 path="goodCommonJs" displayPath="goodCommonJs" kind=CommonJs exportRule=CommonJs body=f1 syntheticExports=[{name="a" variable=g0}]
+module m2 path="goodCommonJsIgnoringAnnotation" displayPath="goodCommonJsIgnoringAnnotation" kind=CommonJs exportRule=CommonJsIgnoringAnnotation requireResult=ModuleExports body=f2
+module m3 path="goodData" displayPath="goodData" kind=Data data=d0
+module m4 path="goodDataWithBody" displayPath="goodDataWithBody" kind=Data body=f3 exports=[{name="a" variable=g0}]
+module m5 path="goodRuntimeSource" displayPath="goodRuntimeSource" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f4
+module m6 path="goodRuntime" displayPath="goodRuntime" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi
+module m7 path="goodUncompiledCode" displayPath="goodUncompiledCode" kind=External referrer=m0
+module m8 path="goodHostValue" displayPath="goodHostValue" kind=External exportRule=RuntimeModule externalKind=HostValue referrer=m0 syntheticExports=[{name="a"}]
+module m9 path="goodAwait" displayPath="goodAwait" flags=[HasTopLevelAwait] body=f5
+module m10 path="goodWithoutBody" displayPath="goodWithoutBody"
+module m11 path="badSyntheticExportsOnSourceText" displayPath="badSyntheticExportsOnSourceText" syntheticExports=[{name="a" variable=g0}]
+module m12 path="badExportsOnCommonJs" displayPath="badExportsOnCommonJs" kind=CommonJs exportRule=CommonJs body=f6 exports=[{name="a" variable=g0}]
+module m13 path="badRequestsOnCommonJs" displayPath="badRequestsOnCommonJs" kind=CommonJs exportRule=CommonJs body=f7 requests=[{target=m0}]
+module m14 path="badRequiredNamesOnData" displayPath="badRequiredNamesOnData" kind=Data requiredNames=[{module=m0 name="a"}]
+module m15 path="badExportRuleOnSourceText" displayPath="badExportRuleOnSourceText" exportRule=CommonJs
+module m16 path="badRequireResultOnSourceText" displayPath="badRequireResultOnSourceText" requireResult=ModuleExports
+module m17 path="badExportRuleOnData" displayPath="badExportRuleOnData" kind=Data exportRule=CommonJs
+module m18 path="badCommonJsWithoutExportRule" displayPath="badCommonJsWithoutExportRule" kind=CommonJs body=f8
+module m19 path="badExportRuleOnRuntime" displayPath="badExportRuleOnRuntime" kind=Runtime exportRule=CommonJs runtimeModule=BunFfi
+module m20 path="badExportRuleOnRuntimeSource" displayPath="badExportRuleOnRuntimeSource" kind=RuntimeSource runtimeModule=BunSqlite body=f9
+module m21 path="badExportRuleOnUncompiledCode" displayPath="badExportRuleOnUncompiledCode" kind=External exportRule=CommonJs referrer=m0
+module m22 path="badSyntheticExportsOnUncompiledCode" displayPath="badSyntheticExportsOnUncompiledCode" kind=External referrer=m0 syntheticExports=[{name="a"}]
+module m23 path="badHostValueWithoutExportRule" displayPath="badHostValueWithoutExportRule" kind=External externalKind=HostValue referrer=m0
+module m24 path="badAwaitOverSynchronousBody" displayPath="badAwaitOverSynchronousBody" flags=[HasTopLevelAwait] body=f10
+module m25 path="badAsyncBodyWithoutAwait" displayPath="badAsyncBodyWithoutAwait" body=f11
+module m26 path="badAwaitWithoutBody" displayPath="badAwaitWithoutBody" flags=[HasTopLevelAwait]
+module m27 path="badCommonJsWithoutBody" displayPath="badCommonJsWithoutBody" kind=CommonJs exportRule=CommonJs
+module m28 path="badRuntimeSourceWithoutBody" displayPath="badRuntimeSourceWithoutBody" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite
+module m29 path="badCommonJsBodyWithFourParameters" displayPath="badCommonJsBodyWithFourParameters" kind=CommonJs exportRule=CommonJs body=f12
+module m30 path="badCommonJsBodyWithoutThis" displayPath="badCommonJsBodyWithoutThis" kind=CommonJs exportRule=CommonJs body=f13
+module m31 path="badCommonJsBodyWithTypedParameter" displayPath="badCommonJsBodyWithTypedParameter" kind=CommonJs exportRule=CommonJs body=f14
+module m32 path="badSourceTextBodyWithParameter" displayPath="badSourceTextBodyWithParameter" body=f15
+module m33 path="badBodyWithCapture" displayPath="badBodyWithCapture" body=f16
+module m34 path="badBodyWithTypedResult" displayPath="badBodyWithTypedResult" body=f17
+module m35 path="badBodyWithTwoResults" displayPath="badBodyWithTwoResults" body=f18
+module m36 path="badDataWithAsyncBody" displayPath="badDataWithAsyncBody" kind=Data flags=[HasTopLevelAwait] body=f19
+module m37 path="badDataWithGeneratorBody" displayPath="badDataWithGeneratorBody" kind=Data body=f20
+module m38 path="badRuntimeSourceWithGeneratorBody" displayPath="badRuntimeSourceWithGeneratorBody" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f21
+module m39 path="badRuntimeWithBody" displayPath="badRuntimeWithBody" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi body=f22
+module m40 path="badExternalWithBody" displayPath="badExternalWithBody" kind=External referrer=m0 body=f23
+module m41 path="badRuntimeWithoutRuntimeModule" displayPath="badRuntimeWithoutRuntimeModule" kind=Runtime exportRule=RuntimeModule
+module m42 path="badRuntimeModuleOnSourceText" displayPath="badRuntimeModuleOnSourceText" runtimeModule=BunFfi
+module m43 path="badExternalWithoutReferrer" displayPath="badExternalWithoutReferrer" kind=External
+module m44 path="badReferrerOnSourceText" displayPath="badReferrerOnSourceText" referrer=m0
+module m45 path="badDataOnSourceText" displayPath="badDataOnSourceText" data=d0
+module m46 path="badDataOnCommonJs" displayPath="badDataOnCommonJs" kind=CommonJs exportRule=CommonJs body=f24 data=d0
+module m47 path="badVariableExportWithModule" displayPath="badVariableExportWithModule" exports=[{name="a" variable=g0 module=m0}]
+module m48 path="badVariableExportWithoutVariable" displayPath="badVariableExportWithoutVariable" exports=[{name="a"}]
+module m49 path="badVariableExportWithImportName" displayPath="badVariableExportWithImportName" exports=[{name="a" variable=g0 importName="x"}]
+module m50 path="badNamespaceExportWithVariable" displayPath="badNamespaceExportWithVariable" exports=[{name="a" kind=Namespace variable=g0 module=m0}]
+module m51 path="badNamespaceExportWithoutModule" displayPath="badNamespaceExportWithoutModule" exports=[{name="a" kind=Namespace}]
+module m52 path="badNamespaceExportWithImportName" displayPath="badNamespaceExportWithImportName" exports=[{name="a" kind=Namespace module=m0 importName="x"}]
+module m53 path="badIndirectExportWithoutImportName" displayPath="badIndirectExportWithoutImportName" exports=[{name="a" kind=Indirect module=m7}]
+module m54 path="badIndirectExportWithoutModule" displayPath="badIndirectExportWithoutModule" exports=[{name="a" kind=Indirect importName="x"}]
+module m55 path="badIndirectExportWithVariable" displayPath="badIndirectExportWithVariable" exports=[{name="a" kind=Indirect variable=g0 module=m7 importName="x"}]
+module m56 path="badIndirectExportOfCompiledModule" displayPath="badIndirectExportOfCompiledModule" exports=[{name="a" kind=Indirect module=m0 importName="x"}]
+module m57 path="badIndirectExportOfHostValue" displayPath="badIndirectExportOfHostValue" exports=[{name="a" kind=Indirect module=m8 importName="x"}]
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}]
+function f1 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f2 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f3 name="" results=[{type=anything}]
+function f4 name="" results=[{type=anything}]
+function f5 name="" kind=Module flags=[IsAsync] results=[{type=anything}]
+function f6 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f7 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f8 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f9 name="" results=[{type=anything}]
+function f10 name="" kind=Module results=[{type=anything}]
+function f11 name="" kind=Module flags=[IsAsync] results=[{type=anything}]
+function f12 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f13 name="" kind=CommonJsModule parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
+function f14 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=string}] results=[{type=anything}]
+function f15 name="" kind=Module parameters=[{type=anything}] results=[{type=anything}]
+function f16 name="" kind=Module captures=[{type=anything}] results=[{type=anything}]
+function f17 name="" kind=Module results=[{type=undefined}]
+function f18 name="" kind=Module results=[{type=anything}, {type=anything}]
+function f19 name="" flags=[IsAsync] results=[{type=anything}]
+function f20 name="" flags=[IsGenerator, TakesCallee] results=[{type=anything}]
+function f21 name="" flags=[IsGenerator, TakesCallee] results=[{type=anything}]
+function f22 name="" results=[{type=anything}]
+function f23 name="" results=[{type=anything}]
+function f24 name="" kind=CommonJsModule flags=[HasThis] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]

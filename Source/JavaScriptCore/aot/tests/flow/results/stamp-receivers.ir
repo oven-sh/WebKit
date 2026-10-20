@@ -1,0 +1,67 @@
+# The receivers stamp of an access lists the layouts of all objects that reach the receiver and is complete, whether or not their classes keep their shape
+# RUN: flow-apply
+# RUN(FLOW): flow
+# FLOW: class {{*}} layout=L2 {{*}}cause=[[cause]]
+# FLOW: access [[read]] function=f1 kind=Read
+# FLOW-NOT: loss
+# FLOW: access [[store]] function=f1 kind=Store
+# FLOW-NOT: loss
+# FLOW: access [[losable]] function=f2 kind=Read loss cause=[[cause]]
+# FLOW: access [[single]] function=f3 kind=Read
+# FLOW-NOT: loss
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Circle" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Square" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Note" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewClosure function=f4
+    DefineGetter v3, v4 key="0"
+    v6 = CallDirect v1 function=f1
+    v7 = CallDirect v2 function=f1
+    v8 = CallDirect v1 function=f2
+    v9 = CallDirect v3 function=f2
+    v10 = CallDirect v1 function=f3
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v1: L0 = NewObject -, v0 layout=L0 {{*}}[keepsShape]
+# CHECK: v2: L1 = NewObject -, v0 layout=L1 {{*}}[keepsShape]
+# CHECK: v3: object ~ L2 = NewObject -, v0 layout=L2
+# CHECK-NOT: keepsShape
+function f1 name="bothKeepTheirShape" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    PropSet v0, v1 key="size" mode=Strict
+    Return v1
+}
+# CHECK-LABEL: function f1 name="bothKeepTheirShape"
+# CHECK: b0(v0: L0|L1):
+# CHECK: = PropGet v0 key="size" accessSite={{*}} receivers=[L0, L1]
+# CHECK: PropSet v0, {{*}} key="size" accessSite={{*}} receivers=[L0, L1]
+function f2 name="oneCanLoseItsShape" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="oneCanLoseItsShape"
+# CHECK: b0(v0: object ~ L0|L2):
+# CHECK: = PropGet v0 key="size" accessSite={{*}} receivers=[L0, L2]
+function f3 name="oneReceiver" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="size"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="oneReceiver"
+# CHECK: b0(v0: L0):
+# CHECK: = PropGet v0 key="size" accessSite={{*}} receivers=[L0]
+function f4 name="first" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

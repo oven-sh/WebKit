@@ -1,0 +1,47 @@
+# The SuperConstruct of a class two levels below the base takes only the objects of its own class from the constructor of its parent, which also constructs the parent's own objects
+# RUN: flow-apply
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" predictedBase=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="C" predictedBase=L1 constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = Construct v6
+    v12 = Construct v10
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+# CHECK-LABEL: function f2 name="B"
+# CHECK: : L1|L2 = SuperConstruct {{*}} layout=L1 {{*}}[keepsShape]
+function f3 name="C" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="C"
+# CHECK: : L2 = SuperConstruct {{*}} layout=L2 {{*}}[keepsShape]

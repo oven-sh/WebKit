@@ -1,0 +1,58 @@
+# A call of a built-in enters the realm's function object, which may be native even where the compiler also has a compiled implementation, and native code cannot call a cell of a frame.
+# So a closure handed to any built-in call goes to the heap, like one whose property is read and one passed to an unknown callee
+# FORM: Prepared
+# OPTIONS: report=Allocations
+# RUN: frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="calledByCompiledBuiltin" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = NewClosure function=f4
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeForEach/0
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Heap
+
+function f1 name="calledByNativeBuiltin" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = NewClosure function=f4
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/1
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1: Heap
+
+function f2 name="propertyIsRead" parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    v1 = NewClosure function=f4
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeForEach/0
+    v3 = PropGet v1 key="name"
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v1: Heap
+
+function f3 name="passedToUnknownCallee" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Call v0, -, v1
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v1: Heap
+
+function f4 name="visitor" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f5 name="receiverMatchesNoOverload" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeForEach/0 builtinCallForm=AnyReceiver
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v1: Heap

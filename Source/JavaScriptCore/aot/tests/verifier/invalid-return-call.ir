@@ -1,0 +1,128 @@
+# ReturnCall returns the result of a call that ends its block, in a function that can leave its frame to the callee
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidReturnCall 17
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+function f1 name="goodCallList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = CallList v0, -, v1
+    ReturnCall v2
+}
+function f2 name="goodCallDirect" results=[{type=number}] {
+  b0():
+    v0 = CallDirect function=f3
+    ReturnCall v0
+}
+function f3 name="callee" results=[{type=number}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="goodValueWithoutEffectsAfterCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Undefined
+    ReturnCall v1
+}
+function f5 name="badEffectsAfterCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = PropGet v0 key="x"
+    ReturnCall v1
+}
+function f6 name="badCallInOtherBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    ReturnCall v1
+}
+function f7 name="badParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    ReturnCall v0
+}
+function f8 name="badRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    ReturnCall v1
+}
+function f9 name="badConstruct" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Construct v0
+    ReturnCall v1
+}
+function f10 name="badConstructList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = ConstructList v0, -, v1
+    ReturnCall v2
+}
+function f11 name="badCallBuiltin" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathAbs/0
+    ReturnCall v1
+}
+function f12 name="badSecondUse" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = TypeOf v1
+    ReturnCall v1
+}
+function f13 name="badUnderHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    v1 = Call v0
+    ReturnCall v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+function f14 name="badTwoResults" parameters=[{type=anything}] results=[{type=anything}, {type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+function f15 name="badInAsyncFunction" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+function f16 name="badResultOutsideDeclaredType" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+function f17 name="badUnresolvedCast" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=anything}}]
+}
+function f18 name="badClaim" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=number} resolution=Claim}]
+}
+function f19 name="badNothingNarrows" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=number} resolution=Nothing}]
+}
+function f20 name="badUpcastNarrows" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=number} resolution=Upcast}]
+}
+function f21 name="badPredictionNarrows" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=number} resolution=Prediction}]
+}
+function f22 name="goodCasts" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=anything} resolution=Nothing}, {declared={type=number} resolution=Assume}, {declared={type=number|string} resolution=Upcast}, {declared={type=number} resolution=Prediction}]
+}

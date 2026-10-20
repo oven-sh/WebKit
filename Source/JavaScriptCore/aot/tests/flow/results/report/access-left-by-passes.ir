@@ -1,0 +1,42 @@
+# As access-left-for-dispatch-limit.ir with an arm for each of the three callees. Flow lost nothing and no limit is in the way, and the call of a module body that runs once is left as it is all the same: the report says that a pass left it
+# RUN: flow-report
+# OPTIONS: report=Flow limit=MaxDispatchCases:3
+# CHECK: access m0:10 Call Unknown cause=LeftByPasses witness f0 copies=1 function=f0
+# CHECK-NOT: LimitReached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName] @1
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f3
+    Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b4(v3)
+  b2():
+    Jump -> next b4(v4)
+  b3():
+    Jump -> next b4(v5)
+  b4(v6):
+    v7 = Call v6 @10
+    Return v7
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    Return v0
+}

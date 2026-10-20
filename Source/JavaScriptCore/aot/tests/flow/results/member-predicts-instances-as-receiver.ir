@@ -1,0 +1,78 @@
+# A member of a class that has escaped may be called on anything, so flow says nothing about its receiver. It is expected to be called on an instance of the class
+# or of a class below it: the method of a class, and the function that seen code assigns once to the prototype object of a constructor function.
+# A function that is no member and a member without `this` get no prediction, and a class that is never allocated is no receiver
+# RUN: flow-apply
+# CHECK: function f3 name="walk"{{*}} thisType={type=anything predicted=L0}
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK: function f4 name="run"{{*}} thisType={type=anything predicted=L1|L2}
+# CHECK: function f5 name="free"{{*}} thisType={type=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Function" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Class" constructor=f2
+layout L2 kind=Instance name="Below" predictedBase=L1 constructor=f6 flags=[HasHeritage]
+layout L3 kind=Instance name="NeverMade" predictedBase=L1 constructor=f7 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = PropGet v4 key="prototype"
+    v6 = NewClosure function=f3
+    PropSet v5, v6 key="walk" mode=Strict
+    v8 = NewClosure function=f2
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="run"
+    v12 = FinishClass v9 layout=L1
+    v13 = ResolveHeritage v12
+    v14 = NewClosure function=f6
+    v15 = NewClass v14, v12, v13 layout=L2
+    v16 = FinishClass v15 layout=L2
+    v17 = NewClosure function=f7
+    v18 = NewClass v17, v12, v13 layout=L3
+    v19 = FinishClass v18 layout=L3
+    v20 = NewClosure function=f5
+    v21 = Call v3, -, v4, v12, v16, v20
+    v22 = Construct v4
+    v23 = Construct v12
+    v24 = Construct v16
+    Return
+}
+function f1 name="Function" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="walk" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="free" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f7 name="NeverMade" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}

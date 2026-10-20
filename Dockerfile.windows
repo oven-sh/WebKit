@@ -437,7 +437,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     "-DCMAKE_CXX_FLAGS_DEBUG=/FS /O0 /Ob0" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
@@ -469,6 +469,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output/ && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/builtins/verified-overloads.txt /output/Source/JavaScriptCore/aot/builtins && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     { cp -rL $WEBKIT_OUT_DIR/WTF/DerivedSources/* /output/include/wtf/ 2>/dev/null || true; } && \
     cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf/* /output/include/wtf/ && \
     cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/* /output/include/bmalloc/ && \

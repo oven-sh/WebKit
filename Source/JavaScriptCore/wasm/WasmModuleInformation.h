@@ -45,6 +45,7 @@ namespace Wasm {
 
 struct ModuleDebugInfo;
 struct FunctionDebugInfo;
+struct ModuleInImage;
 
 struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> {
 
@@ -223,7 +224,7 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     mutable Atomic<bool> m_usesModernExceptions { false };
 
     Vector<FunctionData> functions;
-    bool isMissingInterpreterMetadata { false };
+    const ModuleInImage* moduleWithSkippedFunctions { nullptr };
     Lock interpreterMetadataLock;
 
     Vector<Export> exports;

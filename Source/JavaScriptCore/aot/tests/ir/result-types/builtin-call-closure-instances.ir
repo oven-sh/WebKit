@@ -1,0 +1,23 @@
+# An instance of a class that has closure instances may be a compiled closure, so bind returns a function and not an instance of a class. A class whose instances are all cells of the engine stays a class
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v2: function
+# CHECK-NEXT: v3: boolean
+# CHECK-NEXT: v4: true
+# CHECK-NEXT: v5: undefined
+# CHECK-NEXT: v6: Map
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bind" parameters=[{type=function}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: function, v1: anything):
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+    v3 = TypeTest v2 testedType=f1
+    v4 = TypeTest v2 testedType=function
+    v5 = Undefined
+    v6 = CallBuiltin -, v5 overload=Map/1
+    Return
+}
+function f1 name="target" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

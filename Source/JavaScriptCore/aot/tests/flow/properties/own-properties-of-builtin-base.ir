@@ -1,0 +1,94 @@
+# What the constructor of a built-in base class defines on the instance comes before the prototype of the compiled class. The table lists the names that an error is made with: one of them read on an instance may be anything, and any other name is found where the class has it. It lists length for an array, which is read through its entry and never through a getter of the class, and nothing for a map, whose methods are found alone
+# RUN: flow-solve nodes
+# RUN(FOUNDALONE): flow-solve nodes
+# CHECK: , f0, v27) = {{*}}string{{*}}unknown}
+# CHECK: , f0, v28) = {{*}}unknown}
+# CHECK: , f0, v29) = {f5}
+# CHECK: , f0, v31) = {int[0, 4294967295]}
+# CHECK: , f0, v33) = {f7}
+# CHECK: , f0, v34) = {undefined}
+# FOUNDALONE-NOT: , f0, v33) = {{*}}unknown
+# FOUNDALONE-NOT: , f0, v34) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage]
+layout L1 kind=Instance name="Stack" constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Registry" constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Error" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = ResolveHeritage v1
+    v4 = NewClass v2, v1, v3 layout=L0
+    v5 = NewClosure function=f4
+    DefineMethod v4, v5 layout=L0 methodKind=Getter key="message"
+    v7 = NewClosure function=f5
+    DefineMethod v4, v7 layout=L0 index=1 key="describe"
+    v9 = FinishClass v4 layout=L0
+    v10 = PropGet v0 key="Array" [isFreeName]
+    v11 = NewClosure function=f2
+    v12 = ResolveHeritage v10
+    v13 = NewClass v11, v10, v12 layout=L1
+    v14 = NewClosure function=f6
+    DefineMethod v13, v14 layout=L1 methodKind=Getter key="length"
+    v16 = FinishClass v13 layout=L1
+    v17 = PropGet v0 key="Map" [isFreeName]
+    v18 = NewClosure function=f3
+    v19 = ResolveHeritage v17
+    v20 = NewClass v18, v17, v19 layout=L2
+    v21 = NewClosure function=f7
+    DefineMethod v20, v21 layout=L2 key="lookup"
+    v23 = FinishClass v20 layout=L2
+    v24 = String string="given"
+    v25 = Construct v9, -, v24
+    v26 = Undefined
+    v27 = PropGet v25 key="message"
+    v28 = PropGet v25 key="cause"
+    v29 = PropGet v25 key="describe"
+    v30 = Construct v16
+    v31 = PropGet v30 key="length"
+    v32 = Construct v23
+    v33 = PropGet v32 key="lookup"
+    v34 = PropGet v32 key="cause"
+    Return
+}
+function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 name="Stack" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f4 name="message" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="from getter"
+    Return v1
+}
+function f5 name="describe" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f6 name="length" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=42
+    Return v1
+}
+function f7 name="lookup" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}

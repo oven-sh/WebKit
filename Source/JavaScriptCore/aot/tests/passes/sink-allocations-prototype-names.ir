@@ -1,0 +1,138 @@
+# Whether a name can be found on a prototype decides what an access by name does to a field that is not stored
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 2
+# STATISTIC: AllocationsSunk = 3
+# STATISTIC: StoresFoldedIntoAllocations = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="t" declared={type=anything} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 kind=Instance name="Holder" constructor=f11 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="s" declared={type=anything} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="t" declared={type=anything} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None}
+layout L2 kind=Instance name="Closed" constructor=f12 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f10}] namedMembers=[{key="m" function=f10}]}
+
+function f0 name="missingNameReadsUndefined" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="q" receivers=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f0 name="missingNameReadsUndefined"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: [[missing0]]: undefined = Undefined
+# CHECK-NEXT: v2: anything = Upcast [[missing0]] castType=anything
+
+function f1 name="nameOnObjectPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="toString" receivers=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="nameOnObjectPrototype"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: = PropGet v1 key="toString"
+
+function f2 name="missingNameOnOpenClass" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = PropGet v1 key="q" receivers=[L1]
+    Return v2
+}
+# CHECK-LABEL: function f2 name="missingNameOnOpenClass"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: = PropGet v1 key="q"
+
+function f3 name="storeCreatesField" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="t" mode=Strict receivers=[L0]
+    v3 = Call v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f3 name="storeCreatesField"
+# CHECK-NOT: PropSet
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+
+function f4 name="storeOfNameAbsentOnPrototypes" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v1, v0 key="t" mode=Strict receivers=[L1]
+    v3 = Call v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f4 name="storeOfNameAbsentOnPrototypes"
+# CHECK-NOT: PropSet
+# CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 2]
+
+function f5 name="storeMayCallSetter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PropSet v1, v0 key="s" mode=Strict receivers=[L1]
+    v3 = Call v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f5 name="storeMayCallSetter"
+# CHECK: v1:{{*}}= NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: PropSet v1, v0 key="s"
+
+function f6 name="definitionAsksNobody" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PropDefine v1, v0 key="s" receivers=[L1]
+    v3 = Call v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="definitionAsksNobody"
+# CHECK-NOT: PropDefine
+# CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+
+function f7 name="lengthOfPair" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L(EntriesPair) fields=[0, 1]
+    v3 = PropGet v2 key="length"
+    Return v3
+}
+# CHECK-LABEL: function f7 name="lengthOfPair"
+# CHECK: v2:{{*}}= NewObject
+# CHECK-NEXT: = PropGet v2 key="length"
+
+function f8 name="missingNameOnClosedClass" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="q" receivers=[L2]
+    Return v2
+}
+# CHECK-LABEL: function f8 name="missingNameOnClosedClass"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: [[missing8]]: undefined = Undefined
+# CHECK-NEXT: v2: anything = Upcast [[missing8]] castType=anything
+
+function f9 name="nameOnClassPrototype" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="m" receivers=[L2]
+    Return v2
+}
+# CHECK-LABEL: function f9 name="nameOnClassPrototype"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: = PropGet v1 key="m"
+
+function f10 name="m" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+
+function f11 name="Holder" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    Return v3
+}
+
+function f12 name="Closed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2, v1 layout=L2 fields=[0]
+    Return v3
+}

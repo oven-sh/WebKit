@@ -26,7 +26,6 @@
 #pragma once
 
 #include "Structure.h"
-#include <wtf/BitSet.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -66,8 +65,6 @@ public:
     static constexpr uint32_t getterCacheSecondaryMask = getterCacheSecondarySize - 1;
 
     static constexpr uint16_t invalidEpoch = 0;
-    static constexpr uint16_t permanentEpoch = 1;
-    static constexpr uint16_t firstEpoch = 2;
     static constexpr PropertyOffset maxOffset = UINT16_MAX;
 
     struct LoadEntry {
@@ -109,11 +106,8 @@ public:
         static constexpr ptrdiff_t offsetOfEpoch() { return OBJECT_OFFSETOF(StoreEntry, m_epoch); }
         static constexpr ptrdiff_t offsetOfOffset() { return OBJECT_OFFSETOF(StoreEntry, m_offset); }
         static constexpr ptrdiff_t offsetOfReallocating() { return OBJECT_OFFSETOF(StoreEntry, m_reallocating); }
-        static constexpr uint8_t reallocates = 1;
-        static constexpr uint8_t allocatesInitialOutOfLineStorage = 2;
-        static constexpr uint8_t addsLazyClosure = 4;
 
-        void init(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t epoch, uint16_t offset, uint8_t reallocating)
+        void init(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t epoch, uint16_t offset, bool reallocating)
         {
             m_uid = uid;
             m_oldStructureID = oldStructureID;
@@ -222,81 +216,27 @@ public:
     }
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
-    JS_EXPORT_PRIVATE void removeDeadEntries(Heap&, CollectionScope);
-
-    bool isLiveLoad(const LoadEntry& entry) const { return entry.m_epoch == m_epoch || entry.m_epoch == permanentEpoch; }
-
-    LoadEntry& evictForLoad(StructureID structureID, UniquedStringImpl* uid)
-    {
-        uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
-        auto& entry = m_loadCachePrimaryEntries[primaryIndex];
-        if (isLiveLoad(entry)) {
-            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
-            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenLoadCacheSecondaryEntries.set(secondaryIndex);
-        }
-        m_writtenLoadCachePrimaryEntries.set(primaryIndex);
-        return entry;
-    }
-
-    static constexpr unsigned numberOfNameFilterBits = 32768;
-    static_assert(hasOneBitSet(numberOfNameFilterBits));
-
-    bool mayHaveEntryForName(const StringImpl& name) const
-    {
-        unsigned bit = name.hash() & (numberOfNameFilterBits - 1);
-        return m_nameFilter[bit / 64] >> (bit % 64) & 1;
-    }
-
-    static constexpr unsigned numberOfObjectFilterBits = 16384;
-    static_assert(hasOneBitSet(numberOfObjectFilterBits));
-    static unsigned objectFilterBit(const void* object)
-    {
-        uintptr_t bits = std::bit_cast<uintptr_t>(object) >> 4;
-        return (bits ^ bits >> 14) & (numberOfObjectFilterBits - 1);
-    }
-
-    bool mayHaveEntryThroughObject(const void* object) const
-    {
-        unsigned bit = objectFilterBit(object);
-        return m_objectFilter[bit / 64] >> (bit % 64) & 1;
-    }
-
-    uint16_t epochForName(const StringImpl& name, StructureID structureID)
-    {
-        unsigned bit = name.hash() & (numberOfNameFilterBits - 1);
-        m_nameFilter[bit / 64] |= 1ull << (bit % 64);
-        recordPrototypesOf(structureID);
-        return m_epoch;
-    }
-
-    uint16_t epochForAnyName(StructureID structureID)
-    {
-        m_nameFilter.fill(~0ull);
-        recordPrototypesOf(structureID);
-        return m_epoch;
-    }
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        evictForLoad(structureID, uid).initAsMiss(structureID, uid, epochForName(*uid, structureID));
+        uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
+        auto& entry = m_loadCachePrimaryEntries[primaryIndex];
+        if (entry.m_epoch == m_epoch) {
+            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
+            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
+        }
+        m_loadCachePrimaryEntries[primaryIndex].initAsMiss(structureID, uid, m_epoch);
     }
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        evictForLoad(structureID, uid).initAsHit(structureID, uid, ownProperty ? m_epoch : epochForName(*uid, structureID), holder, offset, ownProperty);
-    }
-
-    void initAsPermanentMiss(StructureID structureID, UniquedStringImpl* uid)
-    {
-        m_hasPermanentEntries = true;
-        evictForLoad(structureID, uid).initAsMiss(structureID, uid, permanentEpoch);
-    }
-
-    void initAsPermanentHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset)
-    {
-        m_hasPermanentEntries = true;
-        evictForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, false);
+        uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
+        auto& entry = m_loadCachePrimaryEntries[primaryIndex];
+        if (entry.m_epoch == m_epoch) {
+            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
+            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
+        }
+        m_loadCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
     }
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
@@ -306,23 +246,19 @@ public:
         if (entry.m_epoch == m_epoch) {
             uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & getterCacheSecondaryMask;
             m_getterCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenGetterCacheSecondaryEntries.set(secondaryIndex);
         }
-        m_writtenGetterCachePrimaryEntries.set(primaryIndex);
-        m_getterCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, ownProperty ? m_epoch : epochForName(*uid, structureID), holder, offset, ownProperty);
+        m_getterCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
     }
 
-    void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, uint8_t reallocating)
+    void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, bool reallocating)
     {
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(oldStructureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
             uint32_t secondaryIndex = MegamorphicCache::storeCacheSecondaryHash(entry.m_oldStructureID, entry.m_uid.get()) & storeCacheSecondaryMask;
             m_storeCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenStoreCacheSecondaryEntries.set(secondaryIndex);
         }
-        m_writtenStoreCachePrimaryEntries.set(primaryIndex);
-        m_storeCachePrimaryEntries[primaryIndex].init(oldStructureID, newStructureID, uid, epochForName(*uid, oldStructureID), offset, reallocating);
+        m_storeCachePrimaryEntries[primaryIndex].init(oldStructureID, newStructureID, uid, m_epoch, offset, reallocating);
     }
 
     void initAsReplace(StructureID structureID, UniquedStringImpl* uid, uint16_t offset)
@@ -332,9 +268,7 @@ public:
         if (entry.m_epoch == m_epoch) {
             uint32_t secondaryIndex = MegamorphicCache::storeCacheSecondaryHash(entry.m_oldStructureID, entry.m_uid.get()) & storeCacheSecondaryMask;
             m_storeCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenStoreCacheSecondaryEntries.set(secondaryIndex);
         }
-        m_writtenStoreCachePrimaryEntries.set(primaryIndex);
         m_storeCachePrimaryEntries[primaryIndex].init(structureID, structureID, uid, m_epoch, offset, false);
     }
 
@@ -345,10 +279,8 @@ public:
         if (entry.m_epoch == m_epoch) {
             uint32_t secondaryIndex = MegamorphicCache::hasCacheSecondaryHash(entry.m_structureID, entry.m_uid.get()) & hasCacheSecondaryMask;
             m_hasCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenHasCacheSecondaryEntries.set(secondaryIndex);
         }
-        m_writtenHasCachePrimaryEntries.set(primaryIndex);
-        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForName(*uid, structureID), true);
+        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, m_epoch, true);
     }
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
@@ -358,55 +290,21 @@ public:
         if (entry.m_epoch == m_epoch) {
             uint32_t secondaryIndex = MegamorphicCache::hasCacheSecondaryHash(entry.m_structureID, entry.m_uid.get()) & hasCacheSecondaryMask;
             m_hasCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-            m_writtenHasCacheSecondaryEntries.set(secondaryIndex);
         }
-        m_writtenHasCachePrimaryEntries.set(primaryIndex);
-        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, epochForName(*uid, structureID), false);
+        m_hasCachePrimaryEntries[primaryIndex].init(structureID, uid, m_epoch, false);
     }
 
     uint16_t epoch() const { return m_epoch; }
 
-    const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
-    {
-        for (auto* entry : { &m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask], &m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask] }) {
-            if (entry->m_structureID == structureID && entry->m_uid.get() == uid && isLiveLoad(*entry))
-                return entry;
-        }
-        return nullptr;
-    }
-
-    const StoreEntry* findStore(StructureID structureID, UniquedStringImpl* uid) const
-    {
-        for (auto* entry : { &m_storeCachePrimaryEntries[storeCachePrimaryHash(structureID, uid) & storeCachePrimaryMask], &m_storeCacheSecondaryEntries[storeCacheSecondaryHash(structureID, uid) & storeCacheSecondaryMask] }) {
-            if (entry->m_oldStructureID == structureID && entry->m_uid.get() == uid && entry->m_epoch == m_epoch)
-                return entry;
-        }
-        return nullptr;
-    }
-
-    const GetterEntry* findGetter(StructureID structureID, UniquedStringImpl* uid) const
-    {
-        for (auto* entry : { &m_getterCachePrimaryEntries[primaryHash(structureID, uid) & getterCachePrimaryMask], &m_getterCacheSecondaryEntries[secondaryHash(structureID, uid) & getterCacheSecondaryMask] }) {
-            if (entry->m_structureID == structureID && entry->m_uid.get() == uid && entry->m_epoch == m_epoch)
-                return entry;
-        }
-        return nullptr;
-    }
-
-    bool bumpEpoch()
+    void bumpEpoch()
     {
         ++m_epoch;
-        m_nameFilter.fill(0);
-        m_objectFilter.fill(0);
-        if (m_epoch != invalidEpoch) [[likely]]
-            return false;
-        clearEntries();
-        return true;
+        if (m_epoch == invalidEpoch) [[unlikely]]
+            clearEntries();
     }
 
 private:
     JS_EXPORT_PRIVATE void LEGACY_NODELETE clearEntries();
-    JS_EXPORT_PRIVATE void LEGACY_NODELETE recordPrototypesOf(StructureID);
 
     std::array<LoadEntry, loadCachePrimarySize> m_loadCachePrimaryEntries { };
     std::array<LoadEntry, loadCacheSecondarySize> m_loadCacheSecondaryEntries { };
@@ -416,18 +314,7 @@ private:
     std::array<HasEntry, hasCacheSecondarySize> m_hasCacheSecondaryEntries { };
     std::array<GetterEntry, getterCachePrimarySize> m_getterCachePrimaryEntries { };
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
-    WTF::BitSet<loadCachePrimarySize> m_writtenLoadCachePrimaryEntries;
-    WTF::BitSet<loadCacheSecondarySize> m_writtenLoadCacheSecondaryEntries;
-    WTF::BitSet<storeCachePrimarySize> m_writtenStoreCachePrimaryEntries;
-    WTF::BitSet<storeCacheSecondarySize> m_writtenStoreCacheSecondaryEntries;
-    WTF::BitSet<hasCachePrimarySize> m_writtenHasCachePrimaryEntries;
-    WTF::BitSet<hasCacheSecondarySize> m_writtenHasCacheSecondaryEntries;
-    WTF::BitSet<getterCachePrimarySize> m_writtenGetterCachePrimaryEntries;
-    WTF::BitSet<getterCacheSecondarySize> m_writtenGetterCacheSecondaryEntries;
-    uint16_t m_epoch { firstEpoch };
-    bool m_hasPermanentEntries { false };
-    std::array<uint64_t, numberOfNameFilterBits / 64> m_nameFilter { };
-    std::array<uint64_t, numberOfObjectFilterBits / 64> m_objectFilter { };
+    uint16_t m_epoch { 1 };
 };
 
 } // namespace JSC

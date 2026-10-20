@@ -1,0 +1,102 @@
+# Rules on numbers and lengths are compares, patterns and formats are shared regexp literals, and a rule the builder cannot write is one call of a helper with the text of the rule
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
+# RUN(POSITION): derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
+# STATISTIC: ValidatorsCreated = 6
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=number validation=[{shape=Primitive{primitive=Number} type=number rules=[Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=9.5}, MultipleOf{divisor=2}, Message{text="bad"}]}]
+expectedresult x1 type=string validation=[{shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Format{format=Uuid}]}]
+expectedresult x2 type=Array<number> validation=[{shape=Array{element=1} type=Array<number> rules=[MinimumLength{length=1}, MaximumLength{length=3}]}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x3 type=string validation=[{shape=Primitive{} type=string rules=[Format{format=Url}, Template{head="id-" parts=[{placeholder=Number text="-"}, {text="!"}]}, Minimum{bound=1}, Pattern{source="("}]}]
+expectedresult x4 type=number validation=[{shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=3}, Minimum{bound=1}]}]
+expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:a)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}]}]
+
+# CHECK: function {{*}}expectedResult=x0}
+# CHECK: ([[number0]]: number):
+# CHECK: [[difference0]]: number = Sub [[number0]], [[number0]]
+# CHECK: = TypeTest [[number0]] testedType=int|whole
+# CHECK: [[minimum0]]: 1 =
+# CHECK-NEXT: = GreaterEq [[number0]], [[minimum0]]
+# CHECK: [[maximum0]]: 9 =
+# CHECK-NEXT: = LessEq [[number0]], [[maximum0]]
+# CHECK: [[above0]]:{{*}}= Double number=0.5
+# CHECK-NEXT: = Greater [[number0]], [[above0]]
+# CHECK: [[below0]]:{{*}}= Double number=9.5
+# CHECK-NEXT: = Less [[number0]], [[below0]]
+# CHECK: [[divisor0]]: 2 =
+# CHECK-NEXT: [[remainder0]]: number = Mod [[number0]], [[divisor0]]
+# CHECK-NEXT: [[none0]]: 0 = Integer
+# CHECK-NEXT: [[isMultiple0]]: boolean = StrictEq [[remainder0]], [[none0]]
+# CHECK-NEXT: Branch [[isMultiple0]] -> taken [[accepted0]](), notTaken
+# CHECK: [[accepted0]]():
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: = Results [[one0]], [[number0]]
+# CHECK-NOT: "bad"
+# CHECK-NOT: CallBuiltin
+
+# CHECK: function {{*}}expectedResult=x1}
+# CHECK: ([[string1]]: string):
+# CHECK-NEXT: [[length1]]:{{*}}= GetStringLength [[string1]]
+# CHECK-NEXT: [[minimumLength1]]: 1 = Integer integer=1
+# CHECK-NEXT: = GreaterEq [[length1]], [[minimumLength1]]
+# CHECK: [[lengthAgain1]]:{{*}}= GetStringLength [[string1]]
+# CHECK-NEXT: [[maximumLength1]]: 8 = Integer integer=8
+# CHECK-NEXT: = LessEq [[lengthAgain1]], [[maximumLength1]]
+# CHECK: [[pattern1]]:{{*}}= SharedRegExpLiteral pattern="^a" @
+# CHECK-NEXT: = CallBuiltin [[pattern1]], [[string1]] overload=RegExpPrototypeTest/0
+# CHECK: [[format1]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$" @
+# CHECK-NEXT: = CallBuiltin [[format1]], [[string1]] overload=RegExpPrototypeTest/0
+# CHECK-NOT: CompilerHelpersHoldsRule
+# POSITION: function {{*}}expectedResult=x1}
+# POSITION: = SharedRegExpLiteral pattern="^a" @[[positionOfFirstLiteral]]
+# POSITION-NOT: = SharedRegExpLiteral {{*}} @[[positionOfFirstLiteral]]
+# POSITION: function {{*}}expectedResult=x2}
+
+# CHECK: function {{*}}expectedResult=x2}
+# CHECK: ([[array2]]: Array):
+# CHECK-NEXT: = IsPristine [[array2]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NOT: NewArray
+# CHECK: [[length2]]:{{*}}= GetArrayLength [[array2]],
+# CHECK-NEXT: [[minimumLength2]]: 1 = Integer integer=1
+# CHECK-NEXT: = GreaterEq [[length2]], [[minimumLength2]]
+# CHECK-NOT: NewArray
+# CHECK: [[maximumLength2]]: 3 = Integer integer=3
+# CHECK-NEXT: = LessEq [[length2]], [[maximumLength2]]
+# CHECK: = NewArray contents=number
+# CHECK-NOT: CompilerHelpersHoldsRule
+
+# CHECK: function {{*}}expectedResult=x3}
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK: ([[string3]]: string):
+# CHECK-NEXT: [[url3]]:{{*}}= String string="{\"rule\":\"Format\",\"format\":\"url\",\"source\":\"\"}"
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[url3]] overload=CompilerHelpersHoldsRule/0
+# CHECK: [[template3]]:{{*}}= String string="{\"rule\":\"Template\",\"texts\":[\"id-\",\"-\",\"!\"],\"placeholders\":\"ns\"}"
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[template3]] overload=CompilerHelpersHoldsRule/0
+# CHECK: [[minimum3]]:{{*}}= String string="{\"rule\":\"Minimum\",\"bound\":1}"
+# CHECK-NEXT: = CallBuiltin -, [[string3]], [[minimum3]] overload=CompilerHelpersHoldsRule/0
+# CHECK: [[invalid3]]:{{*}}= String string="{\"rule\":\"Pattern\",\"source\":\"(\"}"
+# CHECK-NEXT: [[holds3]]: boolean = CallBuiltin -, [[string3]], [[invalid3]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NEXT: Branch [[holds3]] -> taken
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK-NOT: GreaterEq
+
+# CHECK: function {{*}}expectedResult=x4}
+# CHECK: [[isAbsent4]]: boolean = TypeTest v0 testedType=undefined
+# CHECK-NEXT: Branch [[isAbsent4]] -> taken [[absent4]](| 0), notTaken [[given4]](| 0)
+# CHECK: [[merged4]]([[value4]]:{{*}}):
+# CHECK-NEXT: = TypeTest [[value4]] testedType=number
+# CHECK: [[absent4]]({{*}}: undefined):
+# CHECK-NEXT: [[default4]]: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next [[merged4]]([[default4]])
+# CHECK-NEXT: [[given4]]([[defined4]]:{{*}}):
+# CHECK-NEXT: Jump -> next [[merged4]]([[defined4]])
+# CHECK: ([[number4]]: number):
+# CHECK: = GreaterEq [[number4]],
+
+# CHECK: function {{*}}expectedResult=x5}
+# CHECK-NOT: SharedRegExpLiteral
+# CHECK: ([[string5]]: string):
+# CHECK-NEXT: [[deep5]]:{{*}}= String string="{\"rule\":\"Pattern\",\"source\":\"(?:(?:(?:
+# CHECK-NEXT: = CallBuiltin -, [[string5]], [[deep5]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NOT: SharedRegExpLiteral

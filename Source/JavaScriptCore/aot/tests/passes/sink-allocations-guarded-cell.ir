@@ -1,0 +1,368 @@
+# Guards of an object that is sunk: tests of a virtual object fold, a kept access names a guard of the cell that was built
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 6
+# STATISTIC: AllocationsSunk = 7
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="guardIsTheAllocation" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v2 variable=g0
+    v4 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="guardIsTheAllocation"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell0]]:{{*}}= NewObject -, v0, v0
+# CHECK-NEXT: [[guard0]]: guard = AllGuards [[cell0]]
+# CHECK-NEXT: PutModuleVariable [[cell0]] variable=g0
+# CHECK-NEXT: = GetSlot [[cell0]], [[guard0]] key="x"
+
+function f1 name="twoBuildsMeet" parameters=[{type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 2]):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b4()
+  b1():
+    PutModuleVariable v2 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v2 variable=g0
+    Jump -> next b3()
+  b3():
+    v5 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    Return v5
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f1 name="twoBuildsMeet"
+# CHECK: b1():
+# CHECK-NEXT: [[first1]]:{{*}}= NewObject
+# CHECK-NEXT: [[firstGuard1]]: guard = AllGuards [[first1]]
+# CHECK: Jump -> next b3([[first1]], [[firstGuard1]])
+# CHECK: b2():
+# CHECK-NEXT: [[second1]]:{{*}}= NewObject
+# CHECK-NEXT: [[secondGuard1]]: guard = AllGuards [[second1]]
+# CHECK: Jump -> next b3([[second1]], [[secondGuard1]])
+# CHECK: b3([[cell1]]:{{*}}, [[guard1]]: guard):
+# CHECK-NEXT: = GetSlot [[cell1]], [[guard1]] key="x"
+
+function f2 name="shapeTest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlotOrUndefined v1, v3 key="x" receivers=[L0] level=Predicted
+    Return v4
+  b2():
+    v5 = Call v0, -, v1
+    Return v5
+}
+# CHECK-LABEL: function f2 name="shapeTest"
+# CHECK-NOT: NewObject
+# CHECK-NOT: ShapeTest
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NEXT: v4: anything = Upcast v0 castType=anything
+
+function f3 name="slotFilled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = IsSlotFilled v1, v1 key="y" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = AllGuards v1, v3
+    v5 = GetSlot v1, v4 key="y" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    v6 = Call v0, -, v1
+    Return v6
+}
+# CHECK-LABEL: function f3 name="slotFilled"
+# CHECK-NOT: NewObject
+# CHECK-NOT: IsSlotFilled
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NOT: AllGuards
+# CHECK: v5: anything = Upcast v0 castType=anything
+
+function f4 name="noExtraProperties" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = HasNoExtraProperties v1, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Call v0, -, v1
+    Return v5
+}
+# CHECK-LABEL: function f4 name="noExtraProperties"
+# CHECK-NOT: NewObject
+# CHECK-NOT: HasNoExtraProperties
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+
+function f5 name="notFrozen" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = IsNotFrozen v2, v2
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v2, v4
+    PutSlot v2, v5, v1 key="x" receivers=[L0] level=Proven
+    v7 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    Return v7
+  b2():
+    v8 = Call v0, -, v2
+    Return v8
+}
+# CHECK-LABEL: function f5 name="notFrozen"
+# CHECK-NOT: NewObject
+# CHECK-NOT: IsNotFrozen
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NOT: PutSlot
+# CHECK: v7: anything = Upcast v1 castType=anything
+
+function f6 name="keyOrder" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[1, 0]
+    v2 = HasKeyOrder v1, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Call v0, -, v1
+    Return v4
+  b2():
+    v5 = HasKeyOrder v1, v1 layout=L0 fields=[1, 0]
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    Return v0
+  b4():
+    v7 = Call v0, -, v1
+    Return v7
+}
+# CHECK-LABEL: function f6 name="keyOrder"
+# CHECK-NOT: NewObject
+# CHECK-NOT: HasKeyOrder
+# CHECK: Jump -> next b2()
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: Return v0
+
+function f7 name="shapeEpoch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = GetShapeEpoch
+    v3 = Call v0
+    v4 = IsShapeEpochCurrent v2, v1
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = GetSlotOrUndefined v1, v5 key="x" receivers=[L0] level=Predicted
+    Return v6
+  b2():
+    v7 = Call v0, -, v1
+    Return v7
+}
+# CHECK-LABEL: function f7 name="shapeEpoch"
+# CHECK-NOT: NewObject
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NEXT: v6: anything = Upcast v0 castType=anything
+
+function f8 name="arrayStorageIsLeftToRun" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewArray v0 contents=number
+    v2 = Integer integer=0
+    v3 = HasArrayStorage v1 arrayStorage=Double
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v1, v4
+    v6 = GetArrayElement v1, v2, v5 arrayStorage=Double level=Predicted [keyIsIntegral]
+    Return v6
+  b2():
+    v7 = ElemGet v1, v2
+    Return v7
+}
+# CHECK-LABEL: function f8 name="arrayStorageIsLeftToRun"
+# CHECK: v1:{{*}}= NewArray v0
+# CHECK: v3: boolean = HasArrayStorage v1
+# CHECK: Branch v3 -> taken b1(| 0), notTaken b2()
+# CHECK: = GetArrayElement v1, v2, v5
+
+function f9 name="notThenableIsLeftToRun" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = IsNotThenable v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v1 key="x" receivers=[L0]
+    Return v3
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f9 name="notThenableIsLeftToRun"
+# CHECK: v1:{{*}}= NewObject -, v0, v0
+# CHECK-NEXT: v2: boolean = IsNotThenable v1
+# CHECK-NEXT: Branch v2
+
+function f10 name="guardOfKeptTestBelowMergePoint" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: boolean):
+    v3 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b6()
+  b1():
+    v4 = Call v0, -, v3
+    v5 = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    v7 = GetArrayLength v3, v6
+    Return v7
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f10 name="guardOfKeptTestBelowMergePoint"
+# CHECK-NOT: NewArray
+# CHECK: b1():
+# CHECK-NEXT: [[cell10]]: Array = NewArray
+# CHECK: [[test10]]: boolean = IsPristine [[cell10]]
+# CHECK-NEXT: Branch [[test10]] -> taken b2(| 0), notTaken b6()
+# CHECK: b2(v6: guard):
+# CHECK: Jump -> next b5([[cell10]])
+# CHECK: Jump -> next b5([[cell10]])
+# CHECK: b5([[merged10]]: Array):
+# CHECK-NEXT: = GetArrayLength [[merged10]], v6
+
+function f11 name="keptTestInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray contents=anything
+    Branch v1 -> taken b1(), notTaken b6()
+  b1():
+    LoopHint
+    v4 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetArrayLength v2, v5
+    v7 = Call v0, -, v2, v6
+    Jump -> next b4()
+  b3():
+    v8 = Call v0, -, v2
+    Jump -> next b4()
+  b4():
+    v9 = Call v0
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b5()
+  b5():
+    Return v2
+  b6():
+    Return v0
+}
+# CHECK-LABEL: function f11 name="keptTestInLoop"
+# CHECK-NOT: NewArray
+# CHECK: b1([[cell11]]: Array):
+# CHECK: [[test11]]: boolean = IsPristine [[cell11]]
+# CHECK-NEXT: Branch [[test11]] -> taken b2([[cell11]] | 0), notTaken b3([[cell11]])
+# CHECK: b2([[tested11]]: Array, v5: guard):
+# CHECK-NEXT: = GetArrayLength [[tested11]], v5
+# CHECK: b6():
+# CHECK-NEXT: Return v0
+# CHECK: [[built11]]: Array = NewArray
+# CHECK-NEXT: Jump -> next b1([[built11]])
+
+function f12 name="twoCellsMeetBeforeKeptTest" parameters=[{type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 2]):
+    v2 = NewArray contents=anything
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b4()
+  b1():
+    v3 = Call v0, -, v2
+    Jump -> next b3()
+  b2():
+    v4 = Call v0, -, v2, v2
+    Jump -> next b3()
+  b3():
+    v5 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+    Branch v5 -> taken b5(| 0), notTaken b4()
+  b4():
+    Return v0
+  b5(v6):
+    v7 = GetArrayLength v2, v6
+    Return v7
+}
+# CHECK-LABEL: function f12 name="twoCellsMeetBeforeKeptTest"
+# CHECK: b1():
+# CHECK-NEXT: [[first12]]: Array = NewArray
+# CHECK: Jump -> next b3([[first12]])
+# CHECK: b2():
+# CHECK-NEXT: [[second12]]: Array = NewArray
+# CHECK: Jump -> next b3([[second12]])
+# CHECK: b3([[cell12]]: Array):
+# CHECK-NEXT: [[test12]]: boolean = IsPristine [[cell12]]
+# CHECK-NEXT: Branch [[test12]] -> taken b5(| 0), notTaken b4()
+# CHECK: b5(v6: guard):
+# CHECK-NEXT: = GetArrayLength [[cell12]], v6
+
+function f13 name="shapeCaseBuildsSubject" parameters=[{type=anything}, {type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: anything):
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Switch v2 cases=[0, 1] -> case b1(), case b3(), otherwise b4()
+  b1():
+    SwitchOnShape v3 layoutSets=[[L0]] -> case b2(v3 | 0), otherwise b4()
+  b2(v4, v5):
+    v6 = GetSlotOrUndefined v3, v5 key="x" receivers=[L0] level=Predicted
+    PutModuleVariable v3 variable=g0
+    v8 = Call v0, -, v4, v6
+    Return v8
+  b3():
+    SwitchOnShape v3 layoutSets=[[L0]] -> case b2(v1 | 0), otherwise b4()
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f13 name="shapeCaseBuildsSubject"
+# CHECK-NOT: SwitchOnShape
+# CHECK: Jump -> next b2(v1, 
+# CHECK-NOT: SwitchOnShape
+# CHECK: [[built13]]:{{*}}= NewObject -, v0, v0
+# CHECK-NEXT: [[guard13]]: guard = AllGuards [[built13]]
+# CHECK: Jump -> next b2([[built13]], 
+
+function f14 name="shapeCaseBuildsSubjectAtLoopHead" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    SwitchOnShape v2 layoutSets=[[L0]] -> case b2(| 0), otherwise b3()
+  b2(v3):
+    LoopHint
+    v5 = GetSlotOrUndefined v2, v3 key="x" receivers=[L0] level=Predicted
+    PutModuleVariable v2 variable=g0
+    v7 = ToBoolean v5
+    Branch v7 -> taken b2(v3), notTaken b3()
+  b3():
+    Return v0
+}
+# CHECK-LABEL: function f14 name="shapeCaseBuildsSubjectAtLoopHead"
+# CHECK-NOT: SwitchOnShape
+# CHECK: b2([[cell14]]: object, [[guard14]]: guard):
+# CHECK: = GetSlotOrUndefined [[cell14]], [[guard14]] key="x"
+# CHECK-NEXT: PutModuleVariable [[cell14]] variable=g0
+# CHECK: Branch v7 -> taken b2([[cell14]], [[guard14]]), notTaken b3()
+# CHECK: [[built14]]:{{*}}= NewObject -, v0, v0
+# CHECK-NEXT: [[made14]]: guard = AllGuards [[built14]]
+# CHECK-NEXT: Jump -> next b2([[built14]], [[made14]])

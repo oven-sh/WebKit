@@ -1,0 +1,137 @@
+# Generic versions may add a share of the size of the reached code. A candidate that does not fit is passed over, and a smaller one behind it gets its version
+# OPTIONS: limit=MaxGenericVersionGrowthPercent:5
+# RUN: flow
+# RUN(ALL): flow
+# LOSS: MaxGenericVersionGrowthPercent x1 f1
+# STATISTIC: FlowGenericVersions = 1
+# CHECK: function f1 cause=ReachesNativeCode witness={function=f0 value=v6}
+# CHECK: function f2 genericVersion=[[generic]] cause=ReachesNativeCode witness={function=f0 value=v9}
+# CHECK: function f1 parameter 0 type=anything predicted={{*}}L0
+# CHECK: function f2 parameter 0 type=L0 written=anything
+# CHECK: function [[generic]] role=GenericVersion of f2
+# ALL-NOT: function f1 genericVersion=
+# ALL-NOT: function f1 parameter 0 type=L0
+# ALL-NOT: role=GenericVersion of f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Wide" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}, {key="e" declared={type=anything} flags=[IsRequired]}, {key="f" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = CallDirect v1 function=f1
+    v5 = NewClosure function=f1
+    v6 = Call v3, -, v5
+    v7 = CallDirect v1 function=f2
+    v8 = NewClosure function=f2
+    v9 = Call v3, -, v8
+    v10 = CallDirect function=f3
+    Return
+}
+function f1 name="large" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="b"
+    v3 = PropGet v0 key="c"
+    v4 = PropGet v0 key="d"
+    v5 = PropGet v0 key="e"
+    v6 = PropGet v0 key="f"
+    Return
+}
+function f2 name="small" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="b"
+    Return
+}
+function f3 name="padding" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Undefined
+    v3 = Undefined
+    v4 = Undefined
+    v5 = Undefined
+    v6 = Undefined
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = Undefined
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Undefined
+    v26 = Undefined
+    v27 = Undefined
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Undefined
+    v33 = Undefined
+    v34 = Undefined
+    v35 = Undefined
+    v36 = Undefined
+    v37 = Undefined
+    v38 = Undefined
+    v39 = Undefined
+    v40 = Undefined
+    v41 = Undefined
+    v42 = Undefined
+    v43 = Undefined
+    v44 = Undefined
+    v45 = Undefined
+    v46 = Undefined
+    v47 = Undefined
+    v48 = Undefined
+    v49 = Undefined
+    v50 = Undefined
+    v51 = Undefined
+    v52 = Undefined
+    v53 = Undefined
+    v54 = Undefined
+    v55 = Undefined
+    v56 = Undefined
+    v57 = Undefined
+    v58 = Undefined
+    v59 = Undefined
+    v60 = Undefined
+    v61 = Undefined
+    v62 = Undefined
+    v63 = Undefined
+    v64 = Undefined
+    v65 = Undefined
+    v66 = Undefined
+    v67 = Undefined
+    v68 = Undefined
+    v69 = Undefined
+    v70 = Undefined
+    v71 = Undefined
+    v72 = Undefined
+    v73 = Undefined
+    v74 = Undefined
+    v75 = Undefined
+    v76 = Undefined
+    v77 = Undefined
+    v78 = Undefined
+    v79 = Undefined
+    v80 = Undefined
+    v81 = Undefined
+    v82 = Undefined
+    v83 = Undefined
+    Return
+}

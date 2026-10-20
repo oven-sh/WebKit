@@ -1,0 +1,22 @@
+# A binding of a direct eval that lies deeper than its record can say is a diagnostic that names the limit and the site, and the deepest binding the record can say is none
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place requests
+# DIAGNOSTIC: LimitExceeded 1
+# LOSS: MaxEvalBindingDepth x1 f0 v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="g" module=m0 declared={type=anything} initialization=Undefined
+evalscope e0 mode=Strict bindings=[{name="g" depth=16777215 variable=g0}]
+evalscope e1 mode=Strict bindings=[{name="g" depth=16777216 variable=g0}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="g"
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    v3 = DirectEval v0, v1 evalScope=e1
+    Return
+}
+
+# CHECK-NOT: request

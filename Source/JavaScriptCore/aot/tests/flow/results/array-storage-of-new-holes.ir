@@ -1,0 +1,42 @@
+# An array that is created with a length and nothing in it has the storage that holds any value, whatever is stored in it later: its creator has no place for the elements of its site, so the readers predict that storage. A literal is given the elements, and native code that copies an array copies its storage
+# RUN: flow
+# CHECK: variable g0 type=Array<1, proven{{*}}> predicted=Array<1, proven, Contiguous
+# CHECK: variable g1 type=Array<undefined|1, proven{{*}}> predicted=Array<undefined|1, proven, Contiguous
+# CHECK: variable g2 type=Array<1, proven{{*}}> predicted=Array<1, proven, Int32
+# CHECK: variable g3 type=Array<1, proven{{*}}> predicted=Array<1, proven, Int32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+variable g0 name="constructed" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="bySpecies" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="literal" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="copied" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer
+    v2 = Builtin builtin=Array
+    v3 = Construct v2, -, v0
+    ElemSet v3, v1, v0
+    PutModuleVariable v3 variable=g0
+    v6 = NewArray v0 contents=anything
+    PutModuleVariable v6 variable=g2
+    v8 = CallDirect v6 function=f1
+    PutModuleVariable v8 variable=g1
+    v10 = PropGet v6 key="slice"
+    v11 = Call v10, v6, v1 calleeKey="slice"
+    PutModuleVariable v11 variable=g3
+    Return
+}
+function f1 name="copyFirst" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToObject v0
+    v2 = Integer integer=1
+    v3 = ArraySpeciesCreate v2, v1
+    v4 = Integer
+    v5 = ElemGet v1, v4
+    v6 = ClaimDeclared v3 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v6, v4, v5
+    Return v3
+}

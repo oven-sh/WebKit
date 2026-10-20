@@ -1,0 +1,168 @@
+# A virtual array has the kind of storage that its literal is allocated with, where that kind is certain
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="contentsAskForContiguous" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = HasArrayStorage v3 arrayStorage=Contiguous
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v3, v2, v6 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    Return v7
+  b2():
+    v8 = Call v0, -, v3
+    Return v8
+}
+# CHECK-LABEL: function f0 name="contentsAskForContiguous"
+# CHECK-NOT: NewArray
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: = Call
+# CHECK: Switch v2 cases=[0, 1] -> case [[join0]](v0), case [[join0]](v1), otherwise
+
+function f1 name="anotherKindIsExpected" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32):
+    v3 = NewArray v0, v1 contents=anything
+    v4 = HasArrayStorage v3 arrayStorage=Int32
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = Call v0, -, v3
+    Return v6
+  b2():
+    v7 = ElemGet v3, v2
+    Return v7
+}
+# CHECK-LABEL: function f1 name="anotherKindIsExpected"
+# CHECK-NOT: NewArray
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: = Call
+# CHECK: Switch v2 cases=[0, 1] -> case [[join1]](v0), case [[join1]](v1), otherwise
+
+function f2 name="builtWhileTheProofIsReliedOn" parameters=[{type=anything}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32, v3: boolean):
+    v4 = NewArray v0, v1 contents=anything
+    v5 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b4()
+  b1(v6):
+    v7 = AllGuards v4, v6
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    PutModuleVariable v4 variable=g0
+    v9 = GetArrayElement v4, v2, v7 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    Return v9
+  b3():
+    v10 = GetArrayElement v4, v2, v7 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    Return v10
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="builtWhileTheProofIsReliedOn"
+# CHECK-NOT: HasArrayStorage
+# CHECK: b2():
+# CHECK-NEXT: [[cell2]]:{{*}}= NewArray v0, v1 contents=anything
+# CHECK-NEXT: [[guard2]]: guard = AllGuards [[cell2]]
+# CHECK: PutModuleVariable [[cell2]] variable=g0
+# CHECK: = GetArrayElement [[cell2]], v2, {{*}} arrayStorage=Contiguous
+# CHECK: b3():
+# CHECK-NOT: NewArray
+# CHECK: Switch v2 cases=[0, 1]
+
+function f3 name="holeIsFilledBeforeTheArrayIsBuilt" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32):
+    v3 = NewArray v0 contents=anything holes=[1]
+    v4 = HasArrayStorage v3 arrayStorage=Contiguous
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = AllGuards v3, v5
+    v7 = Integer integer=1
+    PutArrayElement v3, v7, v1, v6 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    PutModuleVariable v3 variable=g0
+    Return v0
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f3 name="holeIsFilledBeforeTheArrayIsBuilt"
+# CHECK-NOT: HasArrayStorage
+# CHECK: [[cell3]]:{{*}}= NewArray v0, v1 contents=anything
+# CHECK: PutModuleVariable [[cell3]] variable=g0
+
+function f4 name="integersMayNotFitTheirKind" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32, v2: i32):
+    v3 = NewArray v0, v1 contents=i32
+    v4 = HasArrayStorage v3 arrayStorage=Int32
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v3, v2, v6 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    Return v7
+  b2():
+    v8 = ElemGet v3, v2
+    Return v8
+}
+# CHECK-LABEL: function f4 name="integersMayNotFitTheirKind"
+# CHECK: v3:{{*}}= NewArray v0, v1 contents=i32
+# CHECK-NEXT: v4: boolean = HasArrayStorage v3 arrayStorage=Int32
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
+
+function f5 name="fractionIsStoredAmongIntegers" parameters=[{type=i32}, {type=i32}, {type=number}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32, v2: number):
+    v3 = NewArray v0, v1 contents=i32
+    v4 = Integer integer=1
+    ElemSet v3, v4, v2 mode=Strict
+    v6 = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7):
+    v8 = HasArrayStorage v3 arrayStorage=Int32
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = AllGuards v7, v9
+    v11 = GetArrayElement v3, v4, v10 arrayStorage=Int32 level=Predicted [keyIsIntegral]
+    Return v11
+  b3():
+    v12 = ElemGet v3, v4
+    Return v12
+}
+# CHECK-LABEL: function f5 name="fractionIsStoredAmongIntegers"
+# CHECK: = NewArray
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Int32
+# CHECK-NEXT: Branch
+
+function f6 name="holeAmongIntegersMayBeFilled" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = NewArray v0 contents=i32 holes=[1]
+    v3 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = AllGuards v2, v4
+    v6 = GetArrayElement v2, v1, v5 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    Return v6
+  b2():
+    v7 = ElemGet v2, v1
+    Return v7
+}
+# CHECK-LABEL: function f6 name="holeAmongIntegersMayBeFilled"
+# CHECK: v2:{{*}}= NewArray v0 contents=i32 holes=[1]
+# CHECK-NEXT: v3: boolean = HasArrayStorage v2 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+
+function f7 name="emptyLiteralTakesTheKindOfItsSite" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = NewArray contents=anything
+    v2 = HasArrayStorage v1 arrayStorage=Contiguous
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = AllGuards v1, v3
+    v5 = GetArrayElement v1, v0, v4 arrayStorage=Contiguous level=Predicted [keyIsIntegral]
+    Return v5
+  b2():
+    v6 = ElemGet v1, v0
+    Return v6
+}
+# CHECK-LABEL: function f7 name="emptyLiteralTakesTheKindOfItsSite"
+# CHECK: v1:{{*}}= NewArray contents=anything
+# CHECK-NEXT: v2: boolean = HasArrayStorage v1 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()

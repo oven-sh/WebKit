@@ -1,0 +1,48 @@
+# The element slot of a set is its contents and not an indexed property: a read by index finds nothing of what was added, a store by index adds no element, and an array finds its element by index
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {undefined}
+# CHECK: Variable(g1) = {undefined|L1#1}
+# CHECK: Variable(g2) = {undefined|L2#3}
+# CHECK: DeclaredPart(Array@f0:v13, 0) = {L1#1}
+# CHECK: DeclaredPart(Set@f0:v2{{*}}, 0) = {L0#0}
+# CHECK: IndexedProperties(Set@f0:v17{{*}}) = {L2#3}
+# RUN(ALL): flow-solve nodes
+# ALL-NOT: Variable(g0) = {{*}}L0#0
+# ALL-NOT: DeclaredPart(Set@f0:v17
+# ALL-NOT: IndexedProperties(Set@f0:v2{{*}}L0#0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Member" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Element" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="StoredByIndex" fields=[{key="z" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="fromSet" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="fromArray" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="fromIndexOfSet" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Set" [isFreeName]
+    v2 = Construct v1
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = PropGet v2 key="add"
+    v7 = Call v6, v2, v5
+    v8 = Integer integer=0
+    v9 = ElemGet v2, v8
+    PutModuleVariable v9 variable=g0
+    v11 = NewObject -, v3 layout=L1 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewArray contents=anything
+    AppendElement v13, v12
+    v15 = ElemGet v13, v8
+    PutModuleVariable v15 variable=g1
+    v17 = Construct v1
+    v18 = NewObject -, v3 layout=L2 fields=[0]
+    v19 = FinishObject v18
+    ElemSet v17, v8, v19
+    v21 = ElemGet v17, v8
+    PutModuleVariable v21 variable=g2
+    Return
+}

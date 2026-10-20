@@ -1,0 +1,30 @@
+# A generic entrypoint takes the closure, this and boxed arguments, reads the captures, tests the written types and jumps to its target
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0 GenericEntrypoint:f1
+# STATISTIC: GenericEntrypoints = 2
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=This
+layout L0 kind=Instance name="Class"
+function f0 name="typed" captures=[{type=number}, {type=string}] parameters=[{type=number site=w0}, {type=string site=w1}] results=[{type=anything}] {
+  b0(v0: number, v1: string, v2: number, v3: string):
+    Return
+}
+function f1 name="method" kind=Method flags=[HasThis] thisType={type=object written=L0 site=w2} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+# CHECK: name="typed" module=m0 role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
+# CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[first]]: anything, [[second]]: anything):
+# CHECK-NEXT: [[firstCapture]]: number = GetCapture [[closure]] function=f0
+# CHECK-NEXT: [[secondCapture]]: string = GetCapture [[closure]] function=f0 index=1
+# CHECK-NEXT: [[number]]: number = Claim [[first]] castType=number site=w0
+# CHECK-NEXT: [[string]]: string = Claim [[second]] castType=string site=w1
+# CHECK-NEXT: [[result]]: anything = CallDirect [[firstCapture]], [[secondCapture]], [[number]], [[string]] function=f0
+# CHECK-NEXT: ReturnCall [[result]] requirement=Allowed
+# CHECK: name="method" module=m0 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0([[methodClosure]]: f1, [[methodThis]]: anything):
+# CHECK-NEXT: [[receiver]]:{{*}}= Claim [[methodThis]] castType={{*}}site=w2
+# CHECK-NEXT: = CallDirect [[receiver]] function=f1

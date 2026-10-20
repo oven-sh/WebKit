@@ -1,0 +1,75 @@
+# The elements of a short array are appended by a loop in the code, with one loop for each way the source may keep them that the target can take; compact code only calls the operation
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stringsInCompactCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    AppendElements v0, v1
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK-NOT: stub WriteBarrier
+# S: f0 b1 Compact
+function f1 name="stringsInBalancedCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>):
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK: stub WriteBarrier x1
+# S: f1 b0 Balanced
+function f2 name="stringsInFastCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    AppendElements v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK: stub WriteBarrier x1
+# S: f2 b1 Fast
+function f3 name="numbersIntoValues" parameters=[{type=Array}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<number, pristine[Storage, Names]>):
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: f3: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK: stub WriteBarrier x1
+function f4 name="numbersIntoNumbers" parameters=[{type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: Array<number, pristine[Storage, Names]>):
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: f4: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK-NOT: stub WriteBarrier
+function f5 name="integersIntoIntegers" parameters=[{type=Array<i32>}, {type=Array<i32, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array<i32>, v1: Array<i32, pristine[Storage, Names]>):
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: f5: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK-NOT: stub WriteBarrier
+function f6 name="stringsIntoNumbers" parameters=[{type=Array<number>}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
+  b0(v0: Array<number>, v1: Array<string, pristine[Storage, Names]>):
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: f6: size=
+# CHECK: operation operationAOTAppendElements x1
+# CHECK-NOT: stub WriteBarrier

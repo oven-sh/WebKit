@@ -1,0 +1,95 @@
+# The elements of an instance of a class that extends Array or a typed array are kept by native code: a read by index, a loop and a spread get the unknown value, never undefined alone. An instance of a class that extends String has the characters of its string under indexes
+# RUN: flow-solve nodes
+# RUN(TRACKED): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# CHECK: DeclaredPart(Array@f0:v32, 0) = {{*}}unknown
+# CHECK: f0, v6) = {L0#{{*}}}
+# CHECK: f0, v8) = {{*}}number{{*}}unknown
+# CHECK: f0, v10) = {{*}}number
+# CHECK: f0, v18) = {L1#{{*}}}
+# CHECK-NEXT: f0, v19) = {{*}}unknown
+# CHECK: f0, v23) = {undefined|L4#{{*}}|L5#{{*}}}
+# CHECK: f0, v30) = {L6#{{*}}}
+# CHECK-NEXT: f0, v31) = {undefined|string}
+# CHECK: f0, v38) = {{*}}unknown
+# TRACKED-NOT: f0, v10) = {{*}}unknown
+# SINKS: nativeCode {{*}}L2#{{*}}L3#
+# SINKS-NOT: L4#
+# SINKS-NOT: L5#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Vector" constructor=f1 flags=[HasHeritage]
+layout L1 kind=Instance name="List" constructor=f2 flags=[HasHeritage]
+layout L2 name="FirstOfList" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="SecondOfList" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="FirstOfArray" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="SecondOfArray" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+layout L6 kind=Instance name="Text" constructor=f3 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Float32Array
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Integer integer=3
+    v6 = Construct v4, -, v5
+    v7 = Integer integer=0
+    v8 = ElemGet v6, v7
+    v9 = Construct v0, -, v5
+    v10 = ElemGet v9, v7
+    v11 = Builtin builtin=Array
+    v12 = NewClosure function=f2
+    v13 = ResolveHeritage v11
+    v14 = NewClass v12, v11, v13 layout=L1
+    v15 = FinishClass v14 layout=L1
+    v16 = NewObject -, v5 layout=L2 fields=[0]
+    v17 = NewObject -, v5 layout=L3 fields=[0]
+    v18 = Construct v15, -, v16, v17
+    v19 = ElemGet v18, v7
+    v20 = NewObject -, v5 layout=L4 fields=[0]
+    v21 = NewObject -, v5 layout=L5 fields=[0]
+    v22 = Construct v11, -, v20, v21
+    v23 = ElemGet v22, v7
+    v24 = Builtin builtin=String
+    v25 = NewClosure function=f3
+    v26 = ResolveHeritage v24
+    v27 = NewClass v25, v24, v26 layout=L6
+    v28 = FinishClass v27 layout=L6
+    v29 = String string="ab"
+    v30 = Construct v28, -, v29
+    v31 = ElemGet v30, v7
+    v32 = NewArray contents=anything
+    AppendSpread v32, v18
+    v34 = IteratorOpen v18
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v36 = IteratorResume v34
+    v37 = ResultAt v36
+    Branch v37 -> taken b3(), notTaken b2()
+  b2():
+    v38 = ResultAt v36 index=1
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Vector" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 name="List" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="Text" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L6
+    Return v4
+}

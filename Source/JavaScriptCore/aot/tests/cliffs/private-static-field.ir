@@ -1,0 +1,84 @@
+# The storage of a private static field is a variable that the static initializer stores. Where the store comes before every read the variable is never absent, so the test in front of each access goes
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+# RUN(ORDER): flow-order locations failed
+# ORDER: g3: StoredBeforeEveryRead Unknown
+# ORDER-NEXT: g4: Unknown AtMostOnce
+# ORDER-NEXT: read-before-initialization g4
+# ORDER-NOT: read-before-initialization
+# CHECK: variable g3 module=m0 declared={type=int[0, 1] written=
+# CHECK: variable g4 module=m0 declared={type=1|absent written=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1
+variable g0 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function} flags=[IsImmutable]
+variable g3 module=m0 declared={type=anything|absent predicted=number}
+variable g4 module=m0 declared={type=anything|absent predicted=number}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g2
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 side=Static key="next"
+    v5 = NewClosure function=f3
+    DefineMethod v1, v5 layout=L0 side=Static index=1 key="peek"
+    v7 = FinishClass v1 layout=L0
+    PutModuleVariable v7 variable=g1
+    v9 = CallDirect v7 function=f4
+    PutModuleVariable v7 variable=g0
+    v11 = PropGet v7 key="next"
+    v12 = Call v11, v7 calleeKey="next"
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="print" [isFreeName]
+    v15 = Call v14, -, v12
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="next" kind=Method results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2) frequency=Unlikely:
+    v3 = NewRuntimeError runtimeError=InvalidPrivateRead
+    Throw v3
+  b2(v4):
+    v5 = Integer integer=1
+    v6 = BitOr v4, v5
+    PutModuleVariable v6 variable=g3
+    Return v6
+}
+# CHECK-LABEL: function f2 name="next"
+# CHECK-NOT: InvalidPrivateRead
+function f3 name="peek" kind=Method results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g4
+    v1 = TypeTest v0 testedType=absent
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2) frequency=Unlikely:
+    v3 = NewRuntimeError runtimeError=InvalidPrivateRead
+    Throw v3
+  b2(v4):
+    Return v4
+}
+# CHECK-LABEL: function f3 name="peek"
+# CHECK: InvalidPrivateRead
+function f4 name="initializeCounter" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g3
+    v3 = PropGet v0 key="peek"
+    v4 = Call v3, v0 calleeKey="peek"
+    PutModuleVariable v1 variable=g4
+    v6 = Undefined
+    Return v6
+}

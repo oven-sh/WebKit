@@ -1,0 +1,83 @@
+# A claim at the head of a merge block stays there when more than one incoming edge needs the test, or every edge does
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = Claim v3 castType=number
+    Return v4
+}
+# CHECK-LABEL: function f0 name="bothEdges"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b3(v3: anything):
+# CHECK-NEXT: v4: number = Claim v3 castType=number
+
+function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number}] {
+  b0(v0: i32, v1: anything, v2: string|number, v3: number):
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b4(v1)
+  b2():
+    Jump -> next b4(v2)
+  b3():
+    Jump -> next b4(v3)
+  b4(v4):
+    v5 = Claim v4 castType=number
+    Return v5
+}
+# CHECK-LABEL: function f1 name="twoOfThreeEdges"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b4(v1)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b4(v2)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b4(v3)
+# CHECK-NEXT: b4(v4: anything):
+# CHECK-NEXT: v5: number = Claim v4 castType=number
+
+function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=number}] results=[{type=number}] {
+  b0(v0: i32, v1: anything, v2: number):
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b4(v1)
+  b2():
+    Jump -> next b4(v1)
+  b3():
+    Jump -> next b4(v2)
+  b4(v3):
+    v4 = Claim v3 castType=number
+    Return v4
+}
+# CHECK-LABEL: function f2 name="sameValueOnTwoOfThreeEdges"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b4(v1)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b4(v1)
+# CHECK: b4(v3: anything):
+# CHECK-NEXT: v4: number = Claim v3 castType=number
+
+function f3 name="onlyEdge" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    Jump -> next b1(v0)
+  b1(v1):
+    v2 = Claim v1 castType=number
+    Return v2
+}
+# CHECK-LABEL: function f3 name="onlyEdge"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NEXT: b1(v1: anything):
+# CHECK-NEXT: v2: number = Claim v1 castType=number

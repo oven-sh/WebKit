@@ -217,8 +217,6 @@ JS_EXPORT_PRIVATE String canonicalizeUnicodeLocaleID(const StringView);
 bool LEGACY_NODELETE isWellFormedCurrencyCode(StringView);
 
 bool ensureCollationIsAvailable(JSGlobalObject*);
-bool ensureNumberFormattingIsAvailable(JSGlobalObject*);
-bool ensureDateFormattingIsAvailable(JSGlobalObject*);
 
 std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const char* localeID);
 

@@ -6,9 +6,10 @@
 #include "config.h"
 #include "B3ConvertBranchesToSelects.h"
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3Limits.h"
 #include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
@@ -72,11 +73,6 @@ public:
     }
 
 private:
-    static constexpr unsigned maxNestingDepth = 1;
-    static constexpr unsigned maxSpeculatedValues = 4;
-    static constexpr unsigned maxSelectsAtJoin = 3;
-    static constexpr unsigned maxValuesSearchedForLoad = 16;
-
     struct Region {
         BasicBlock* join { nullptr };
         std::array<BasicBlock*, 2> arms { };
@@ -88,7 +84,7 @@ private:
         Vector<Value*, 16> worklist;
         IndexSet<Value*> seen;
         worklist.append(condition);
-        while (!worklist.isEmpty() && seen.size() < maxValuesSearchedForLoad) {
+        while (!worklist.isEmpty() && seen.size() < m_proc.limit(Limit::MaxValuesSearchedForDominatingLoad)) {
             Value* value = worklist.takeLast();
             if (!seen.add(value) || value->opcode() == Phi || !loops.belongsTo(value->owner, loop))
                 continue;
@@ -97,10 +93,12 @@ private:
             for (Value* child : value->children())
                 worklist.append(child);
         }
+        if (!worklist.isEmpty())
+            m_proc.didReachLimit(Limit::MaxValuesSearchedForDominatingLoad, condition->origin());
         return false;
     }
 
-    static bool isSpeculated(Value* value, unsigned& cost)
+    bool isSpeculated(Value* value, unsigned& cost)
     {
         switch (value->opcode()) {
         case Nop:
@@ -143,20 +141,23 @@ private:
             if (!child->type().isInt())
                 return false;
         }
-        return ++cost <= maxSpeculatedValues;
+        if (++cost <= m_proc.limit(Limit::MaxSpeculatedValuesPerSelect))
+            return true;
+        m_proc.didReachLimit(Limit::MaxSpeculatedValuesPerSelect, value->origin());
+        return false;
     }
 
-    static bool holdsOnlySpeculatedValues(BasicBlock* block, BasicBlock* blockOfPhis, BasicBlock* otherBlockOfPhis, bool mayHoldPhis, unsigned& cost)
+    bool containsOnlySpeculatedValues(BasicBlock* block, BasicBlock* phiBlock, BasicBlock* otherPhiBlock, bool mayContainPhis, unsigned& cost)
     {
         for (unsigned i = 0; i + 1 < block->size(); ++i) {
             Value* value = block->at(i);
             if (auto* upsilon = value->as<UpsilonValue>()) {
-                if (upsilon->phi()->owner != blockOfPhis && upsilon->phi()->owner != otherBlockOfPhis)
+                if (upsilon->phi()->owner != phiBlock && upsilon->phi()->owner != otherPhiBlock)
                     return false;
                 continue;
             }
             if (value->opcode() == Phi) {
-                if (!mayHoldPhis)
+                if (!mayContainPhis)
                     return false;
                 continue;
             }
@@ -194,8 +195,12 @@ private:
                 exits[i] = successor->successorBlock(0);
                 continue;
             }
-            if (depth >= maxNestingDepth)
+            if (successor->last()->opcode() != Branch)
                 return false;
+            if (depth >= m_proc.limit(Limit::MaxSelectNestingDepth)) {
+                m_proc.didReachLimit(Limit::MaxSelectNestingDepth, successor->last()->origin());
+                return false;
+            }
             region.nested[i] = makeUniqueWithoutFastMallocCheck<Region>();
             if (!analyze(successor, depth + 1, cost, *region.nested[i]))
                 return false;
@@ -217,9 +222,9 @@ private:
             if (!region.arms[i])
                 continue;
             BasicBlock* innerJoin = region.nested[i] ? region.nested[i]->join : nullptr;
-            if (!holdsOnlySpeculatedValues(region.arms[i], region.join, innerJoin, false, cost))
+            if (!containsOnlySpeculatedValues(region.arms[i], region.join, innerJoin, false, cost))
                 return false;
-            if (innerJoin && !holdsOnlySpeculatedValues(innerJoin, region.join, nullptr, true, cost))
+            if (innerJoin && !containsOnlySpeculatedValues(innerJoin, region.join, nullptr, true, cost))
                 return false;
         }
         unsigned numberOfSelects = 0;
@@ -235,8 +240,12 @@ private:
             }
             if (!isWritten)
                 continue;
-            if (!phi->type().isInt() || ++numberOfSelects > maxSelectsAtJoin)
+            if (!phi->type().isInt())
                 return false;
+            if (++numberOfSelects > m_proc.limit(Limit::MaxSelectsPerJoin)) {
+                m_proc.didReachLimit(Limit::MaxSelectsPerJoin, head->last()->origin());
+                return false;
+            }
         }
         return true;
     }
@@ -308,17 +317,17 @@ private:
         for (BasicBlock* arm : region.arms) {
             if (!arm)
                 continue;
-            Vector<Value*, 4> left;
+            Vector<Value*, 4> remainingValues;
             for (Value* value : *arm) {
                 if (value->opcode() == Upsilon || value == arm->last()) {
-                    left.append(value);
+                    remainingValues.append(value);
                     continue;
                 }
                 value->owner = head;
                 head->values().append(value);
             }
             arm->values().shrink(0);
-            arm->values().appendVector(left);
+            arm->values().appendVector(remainingValues);
             region.join->removePredecessor(arm);
             arm->predecessors().shrink(0);
             m_removedBlocks.add(arm);
@@ -354,4 +363,4 @@ bool convertBranchesToSelects(Procedure& proc)
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

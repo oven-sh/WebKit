@@ -1,0 +1,104 @@
+# An access by a key that is a number or something else is copied once for the number, where that copy accesses an element, and what else the key may be stays with the access by key in an unlikely block
+# FORM: Prepared
+# RUN: pass SplitUnions
+# RUN(RESOLVED): pass SplitUnions ResolveAccesses
+# STATISTIC: UnionsSplit = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Names" fields=[{key="undefined" declared={type=number}}, {key="null" declared={type=number}}]
+
+function f0 name="read" parameters=[{type=Array<int[0, 9], proven, pristine[Storage, Names]>}, {type=undefined|int[0, 9]}] results=[{type=anything}] {
+  b0(v0: Array<int[0, 9], proven, pristine[Storage, Names]>, v1: undefined|int[0, 9]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="read"
+# CHECK: [[isNumber]]: boolean = TypeTest v1 testedType=int[0, 9]
+# CHECK-NEXT: Branch [[isNumber]] -> taken [[element]](| 0), notTaken [[name]](| 0)
+# CHECK: [[element]]([[index]]: int[0, 9]):
+# CHECK-NEXT: = ElemGet v0, [[index]]
+# CHECK: [[name]]([[other]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: = ElemGet v0, [[other]]
+# CHECK-NOT: TypeTest
+# RESOLVED-LABEL: function f0 name="read"
+# RESOLVED: = GetArrayElement v0,
+# RESOLVED-NOT: ElemGet
+# RESOLVED: Return
+
+function f1 name="store" parameters=[{type=Array<number, pristine[Storage]>}, {type=undefined|null|int[0, 9]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: undefined|null|int[0, 9], v2: number):
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+# CHECK-LABEL: function f1 name="store"
+# CHECK: = TypeTest v1 testedType=int[0, 9]
+# CHECK-NOT: TypeTest
+# CHECK: ([[storedAt]]: int[0, 9]):
+# CHECK-NEXT: ElemSet v0, [[storedAt]], v2
+# CHECK: ([[storedUnder]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: ElemSet v0, [[storedUnder]], v2
+
+function f2 name="typed-array-and-string-key" parameters=[{type=Uint8Array}, {type=number|string}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: number|string):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="typed-array-and-string-key"
+# CHECK: = TypeTest v1 testedType=number
+# CHECK-NOT: TypeTest
+
+function f3 name="character" parameters=[{type=string}, {type=undefined|number}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="character"
+# CHECK: = TypeTest v1 testedType=number
+# CHECK-NOT: TypeTest
+
+function f4 name="key-is-never-a-number" parameters=[{type=Array<number, pristine[Storage]>}, {type=undefined|string}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: undefined|string):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="key-is-never-a-number"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = ElemGet v0, v1
+
+function f5 name="key-may-be-an-object" parameters=[{type=Array<number, pristine[Storage]>}, {type=number|object}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage]>, v1: number|object):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="key-may-be-an-object"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = ElemGet v0, v1
+
+function f6 name="receiver-without-elements" parameters=[{type=L0}, {type=Map<number, number>}, {type=undefined|int[0, 9]}] results=[{type=anything}] {
+  b0(v0: L0, v1: Map<number, number>, v2: undefined|int[0, 9]):
+    v3 = ElemGet v0, v2
+    v4 = ElemGet v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f6 name="receiver-without-elements"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = ElemGet v0, v2
+# CHECK-NEXT: v4: anything = ElemGet v1, v2
+
+function f7 name="key-is-the-stored-value" parameters=[{type=Uint8Array}, {type=undefined|int[0, 255]}, {type=undefined|int[0, 255]}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: undefined|int[0, 255], v2: undefined|int[0, 255]):
+    ElemSet v0, v1, v1
+    ElemSet v0, v1, v2
+    Return
+}
+# The copy for the number knows that much about the value wherever it takes it. Another value that may be undefined needs a conversion, so that store has no element form
+# CHECK-LABEL: function f7 name="key-is-the-stored-value"
+# CHECK-COUNT-1: = TypeTest v1 testedType=int[0, 255]
+# CHECK: ElemSet v0, v1, v2
+# CHECK: ([[byte]]: int[0, 255]):
+# CHECK-NEXT: ElemSet v0, [[byte]], [[byte]]
+# CHECK: ([[noByte]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: ElemSet v0, [[noByte]], [[noByte]]
+# RESOLVED-LABEL: function f7 name="key-is-the-stored-value"
+# RESOLVED: PutTypedArrayElement v0,

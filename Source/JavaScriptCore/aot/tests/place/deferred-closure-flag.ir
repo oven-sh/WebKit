@@ -1,0 +1,40 @@
+# A closure that is stored only into a deferred closure slot has the deferred form, and a closure stored into any other slot is created
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow references=narrow
+# RUN: place program
+# STATISTIC: ClosuresDeferred = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="OneFunction" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+layout L1 name="TwoFunctions" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g0
+    v8 = NewClosure function=f2
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g0
+    Return
+}
+function f1 name="run" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="other" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v0: f1 = NewClosure function=f1 {{*}}closureForm=Deferred
+# CHECK-NOT: closureForm=Deferred
+# CHECK-LABEL: function f1 name="run"

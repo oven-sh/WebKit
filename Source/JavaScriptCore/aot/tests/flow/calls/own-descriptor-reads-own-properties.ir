@@ -1,0 +1,29 @@
+# getOwnPropertyDescriptor reads own properties: under a key nobody can name the descriptor of Map holds what Map itself has and nothing that Map inherits, so copying the properties of a built-in class hands out no Function.
+# __lookupGetter__ declares the walk of the prototype chain and goes on
+# RUN: flow-solve nodes
+# CHECK: , f0, v5) = {{*}}MapGroupBy|MapPrototype}
+# RUN(INHERITED): flow-solve nodes
+# INHERITED-NOT: f0, v5) = {{*}}Function
+# INHERITED-NOT: f0, v9) = {{*}}Function
+# RUN(UNSEEN): flow-links unseen
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = Builtin builtin=Map
+    v3 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v4 = Call v3, -, v2, v1
+    v5 = PropGet v4 key="value"
+    v6 = PropGet v0 key="sink" [isFreeName]
+    v7 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v8 = Call v7, -, v2, v1
+    v9 = PropGet v8 key="value"
+    v10 = Call v6, -, v5
+    v11 = Call v6, -, v9
+    Return
+}

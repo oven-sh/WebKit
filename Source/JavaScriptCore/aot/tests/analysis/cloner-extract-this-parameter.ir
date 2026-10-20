@@ -1,0 +1,22 @@
+# The this value of the origin is an ordinary parameter of an extracted function
+# FORM: Prepared
+# RUN: extract function=f0 region=b2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="method" flags=[HasThis] thisType={type=object} parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v0
+}
+# CHECK: check: CanClone
+# CHECK: live-ins: [v0]
+# CHECK: function f1
+# CHECK-NOT: HasThis
+# CHECK: thisType={type=anything} parameters=[{type=object}] results=[{type=anything}]
+# CHECK: b0([[T]]: object):
+# CHECK: Jump -> next [[H]]()
+# CHECK: [[H]]():
+# CHECK: Return [[T]]

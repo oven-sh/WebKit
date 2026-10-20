@@ -1,0 +1,39 @@
+# The sites of a layout past the limit share the layout's own object, the sites below it and every other layout keep a class each
+# OPTIONS: limit=MaxSitesPerLayout:2
+# LOSS: MaxSitesPerLayout x1 L0
+# RUN: flow-sites classes
+# CHECK: site s2 {{*}}layout=L0 class=A2 object=o{{*}}(L0)
+# CHECK: site s3 {{*}}layout=L0 class=A2 object=o{{*}}(L0)
+# CHECK: site s4 {{*}}layout=L0 class=A2 object=o{{*}}(L0)
+# CHECK: class A0 layout=L0 sites=[s0] shared=o{{*}}(L0#0)
+# CHECK-NOT: layout-object
+# CHECK: class A1 layout=L0 sites=[s1] shared=o{{*}}(L0#1)
+# CHECK-NOT: layout-object
+# CHECK: class A2 layout=L0 sites=[s2, s3, s4] shared=o{{*}}(L0) layout-object
+# CHECK: class A3 layout=L1 sites=[s5] shared=o{{*}}(L1#3)
+# CHECK: class A4 layout=L1 sites=[s6] shared=o{{*}}(L1#4)
+# CHECK-NOT: layout-object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Offset" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v0 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    v10 = FinishObject v9
+    v11 = NewObject -, v0 layout=L1 fields=[0]
+    v12 = FinishObject v11
+    v13 = NewObject -, v0 layout=L1 fields=[0]
+    v14 = FinishObject v13
+    Return
+}

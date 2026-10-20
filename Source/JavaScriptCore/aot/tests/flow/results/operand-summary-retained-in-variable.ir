@@ -1,0 +1,42 @@
+# An argument stored in a module variable is retained in unknown memory, also when the function stores it in this as well
+# RUN: flow
+# CHECK: function f1 parameter 0 uses=[Retains] retainedIn=UnknownMemory
+# CHECK: function f2 parameter 1 uses=[Retains] retainedIn=UnknownMemory
+# CHECK: function f3 parameter 1 uses=[Retains] retainedIn=Operand retainingOperand=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="item" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Item" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="holders" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = Undefined
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = CallDirect v4, v1 function=f2
+    v6 = NewObject -, v3 layout=L0 fields=[0]
+    v7 = CallDirect v6, v1 function=f3
+    v8 = NewArray v4, v6 contents=anything holes=[]
+    PutModuleVariable v8 variable=g1
+    Return
+}
+function f1 name="remember" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="holdAndRemember" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="item" mode=Strict
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f3 name="hold" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="item" mode=Strict
+    Return
+}

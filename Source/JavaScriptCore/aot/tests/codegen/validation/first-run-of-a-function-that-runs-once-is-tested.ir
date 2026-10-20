@@ -1,0 +1,38 @@
+# In a validating build a function that runs at most once starts with a test of its first run, and a function that may run again has none
+# OPTIONS: validate
+# RUN: pipeline ApplyFlowResults
+# CHECK: variable [[markOfMain]] module=m0 declared={type=anything|absent}
+# CHECK-NEXT: variable [[markOfOnce]] module=m0 declared={type=anything|absent}
+# CHECK-NOT: variable
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f2
+    v3 = CallDirect v1 function=f2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: b0():
+# CHECK-NEXT: ValidateFirstRun variable=[[markOfMain]]
+
+function f1 name="once" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="once"
+# CHECK: b0(
+# CHECK-NEXT: ValidateFirstRun variable=[[markOfOnce]]
+
+function f2 name="twice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="twice"
+# CHECK-NOT: ValidateFirstRun

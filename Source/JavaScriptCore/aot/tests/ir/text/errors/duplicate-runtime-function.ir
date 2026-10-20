@@ -1,0 +1,8 @@
+# Two runtimefunction lines with one id
+# RUN: print
+# DIAGNOSTIC: DuplicateListEntry
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" role=Library results=[{type=undefined}]
+runtimefunction id=0 function=f0
+runtimefunction id=0 function=f0

@@ -40,7 +40,7 @@ static JSC_DECLARE_HOST_FUNCTION(callShadowRealm);
 static JSC_DECLARE_HOST_FUNCTION(constructWithShadowRealmConstructor);
 
 ShadowRealmConstructor::ShadowRealmConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callShadowRealm, constructWithShadowRealmConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callShadowRealm), JSC_REGISTERED_HOST_FUNCTION(constructWithShadowRealmConstructor))
 {
 }
 

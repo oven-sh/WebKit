@@ -1,0 +1,35 @@
+# With store counts switched off no variable and no field has known writers or a number of stores, and what other switches gate stays
+# OPTIONS: disable=flow:StoreCounts
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK: field L0.0 "x" type=1 written=anything flags=[IsRequired] flow={location={initialization=SetAtCreation cause=ResultDisabled} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: variable g0 type=1 written=anything flow={initialization=StoredBeforeEveryRead cause=ResultDisabled}
+# CHECK-NEXT: variable g1 type=1 written=anything flow={initialization=StoredBeforeEveryRead reads=NeverRead cause=ResultDisabled}
+# CHECK-NEXT: variable g2 type=undefined written=anything flow={cause=ResultDisabled}
+# RUN(NOWHERE): flow
+# NOWHERE-NOT: writers=
+# NOWHERE-NOT: stores=
+# NOWHERE-NOT: storeNaming=
+# NOWHERE-NOT: isUnchangedDuringActivation
+# RUN(APPLY): flow-apply
+# APPLY: v6: L0 = NewObject -, v0 layout=L0 {{*}}[keepsShape]
+# APPLY-NEXT: v7: anything = PropGet v6 key="x" accessSite=0 receivers=[L0]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="once" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="twice" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="never" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g1
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g2
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = PropGet v6 key="x"
+    Return
+}

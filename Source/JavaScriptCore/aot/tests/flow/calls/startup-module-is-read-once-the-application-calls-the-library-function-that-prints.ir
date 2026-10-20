@@ -1,0 +1,108 @@
+# console.log of a value nobody knows, in a function of the library that native code enters first: for native code's own statements the host reads no start-up module.
+# The call of the application that leads to the function is found after the statement has looked at the value. The value comes out again,
+# and the host calls its custom inspect method with a function of the start-up module
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-links calls modules
+# CHECK: host - -> {{*}} f2 Host
+# CHECK: evaluated m0 m1 m2
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m2}]
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f3
+entry module=m0
+variable g0 name="kept" module=m2 declared={type=anything} initialization=Undefined
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f5
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f4 name="print" module=m2 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Console
+    v2 = Builtin builtin=ConsoleLog
+    v3 = Call v2, v1, v0
+    Return v3
+}
+function f5 name="step0" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f6
+    Return v0
+}
+function f6 name="step1" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f7
+    Return v0
+}
+function f7 name="step2" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f8
+    Return v0
+}
+function f8 name="step3" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f9
+    Return v0
+}
+function f9 name="step4" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f10
+    Return v0
+}
+function f10 name="step5" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f11
+    Return v0
+}
+function f11 name="step6" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f12
+    Return v0
+}
+function f12 name="step7" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f13
+    Return v0
+}
+function f13 name="step8" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f14
+    Return v0
+}
+function f14 name="step9" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f15
+    Return v0
+}
+function f15 name="step10" results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f16
+    Return v0
+}
+function f16 name="callsPrint" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="printed" [isFreeName]
+    v3 = Call v0, -, v2
+    Return v3
+}

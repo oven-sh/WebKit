@@ -1,0 +1,29 @@
+# A call that validates its result does so whatever it calls. Where nobody knows the callee, flow still enters the general validator and its helpers and allocates the layouts of the type at the call
+# RUN: flow-links
+# RUN(SOLVE): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+variable g0 name="validated" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="parse" [isFreeName]
+    v2 = String string="{}"
+    v3 = Call v1, -, v2 expectedResult=x0
+    PutModuleVariable v3 variable=g0
+    v5 = Call v1, -, v2
+    PutModuleVariable v5 variable=g1
+    Return
+}
+
+# CHECK: f0 v3 -> {{*}} f1 BuiltinCallback Repeatedly cycle
+# CHECK-NOT: f0 v5 -> {{*}} BuiltinCallback
+# CHECK: use CompilerHelpersValidateByPlan [Called] f0:v3
+
+# SOLVE: Variable(g0) = {{*}}unknown|{{*}}L0#[[user]]
+# SOLVE-NEXT: Variable(g1) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# SOLVE: DeclaredPart(L0#[[user]], 0) = {number}

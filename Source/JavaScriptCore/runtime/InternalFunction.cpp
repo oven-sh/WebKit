@@ -23,12 +23,15 @@
 #include "config.h"
 #include "InternalFunction.h"
 
-#include "AOTFunction.h"
 #include "Debugger.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "ProxyObject.h"
 #include "VMInlines.h"
+
+#if ENABLE(AOT)
+#include "AOTCompiledCallee.h"
+#endif
 
 namespace JSC {
 
@@ -38,8 +41,8 @@ const ClassInfo InternalFunction::s_info = { "Function"_s, &Base::s_info, nullpt
 
 InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct)
     : Base(vm, structure)
-    , m_functionForCall(toTagged(functionForCall))
-    , m_functionForConstruct(functionForConstruct ? toTagged(functionForConstruct) : callHostFunctionAsConstructor)
+    , m_functionForCall(toTagged(functionUnlessRemoved(functionForCall)))
+    , m_functionForConstruct(functionForConstruct ? toTagged(functionUnlessRemoved(functionForConstruct)) : callHostFunctionAsConstructor)
     , m_globalObject(structure->realm(), WriteBarrierEarlyInit)
 {
     ASSERT_WITH_MESSAGE(m_functionForCall, "[[Call]] must be implemented");
@@ -148,11 +151,25 @@ static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction*
 {
     if (function->canUseAllocationProfiles())
         return true;
+    if (!function->isCompiledClosure())
+        return false;
 #if ENABLE(AOT)
-    return AOT::isCompiledClassObject(function);
-#else
-    return false;
+    switch (AOT::CompiledCallee::kind(function)) {
+    case AOT::CompiledCallee::FunctionKind::Class:
+    case AOT::CompiledCallee::FunctionKind::Generator:
+    case AOT::CompiledCallee::FunctionKind::AsyncGenerator:
+        return true;
+    case AOT::CompiledCallee::FunctionKind::Builtin:
+        return AOT::isCompiledClassObject(function);
+    case AOT::CompiledCallee::FunctionKind::Sloppy:
+    case AOT::CompiledCallee::FunctionKind::Strict:
+    case AOT::CompiledCallee::FunctionKind::Arrow:
+    case AOT::CompiledCallee::FunctionKind::Method:
+    case AOT::CompiledCallee::FunctionKind::Async:
+        return false;
+    }
 #endif
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObject, JSObject* newTarget, Structure* baseClass)

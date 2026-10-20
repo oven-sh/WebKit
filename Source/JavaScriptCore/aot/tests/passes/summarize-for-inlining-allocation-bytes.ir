@@ -1,0 +1,49 @@
+# An operation that allocates inline costs an inline allocation, and one that calls unknown code or allocates no cell inline costs a call
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+# LOSS: MaxInlineHeadBytes x3 f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+function f0 name="createsRegExp" results=[{type=object}] {
+  b0():
+    v0 = NewRegExp pattern="a"
+    Return v0
+}
+# CHECK: f0: barrier=None bytes=52
+
+function f1 name="waitsForBoth" parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: anything, v1: anything):
+    v2 = PromiseAllOfElements v0, v1
+    Return v2
+}
+# CHECK: f1: barrier=None bytes=36
+
+function f2 name="createsClosure" parameters=[{type=number}, {type=number}] results=[{type=function}] {
+  b0(v0: number, v1: number):
+    v2 = NewClosure v0, v1 function=f3
+    Return v2
+}
+# CHECK: f2: barrier=None bytes=60
+
+function f3 name="capturesTwo" kind=Arrow captures=[{type=number}, {type=number}] results=[{type=undefined}] {
+  b0(v0: number, v1: number):
+    v2 = Undefined
+    Return v2
+}
+
+function f4 name="createsPlainObject" parameters=[{type=number}, {type=number}] results=[{type=object}] {
+  b0(v0: number, v1: number):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK: f4: barrier=None bytes=64
+
+function f5 name="truncatesNewArray" parameters=[{type=Array<number>}, {type=int}] results=[{type=Array}] {
+  b0(v0: Array<number>, v1: int):
+    v2 = TruncateNewArray v0, v1
+    Return v2
+}
+# CHECK: f5: barrier=None bytes=36
+# CHECK: outcome: Unchanged

@@ -1,0 +1,118 @@
+# A captured object escapes when its closure escapes
+# FORM: AsRead
+# RUN: analyses escape
+# RUN(FLOW): analyses escape flow function=f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+layout L0 name="Empty"
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f4
+    v2 = CallDirect v1 function=f5
+    Return
+}
+function f1 name="closureStaysLocal" results=[{type=undefined}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f4
+    Return
+}
+function f2 name="closureReturned" results=[{type=function}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f4
+    Return v1
+}
+function f3 name="closureCalled" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f4
+    v2 = Call v1
+    Return v2
+}
+function f4 name="capturing" kind=Arrow captures=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = TypeTest v0 testedType=object
+    Return
+}
+function f5 name="callsArgument" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = Call v0
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: DoesNotEscape
+# CHECK-NEXT: o0 reasons: []
+# CHECK-NEXT: o0 first escape: none
+# CHECK: o0 object uses: [v1(0)]
+# CHECK-NEXT: o0 escaping uses: []
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: [o1]
+# CHECK-NEXT: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK: o1 contents: [o0]
+# CHECK-NEXT: o1 containers: []
+# CHECK: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [StoredInEscapingObject]
+# CHECK-NEXT: o0 first escape: v1(0)
+# CHECK: o0 escaping uses: [v1(0)]
+# CHECK-NEXT: o0 contents: []
+# CHECK-NEXT: o0 containers: [o1]
+# CHECK-NEXT: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Returned]
+# CHECK-NEXT: o1 first escape: b0.terminator(0)
+# CHECK: function f3
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer]
+# CHECK-NEXT: o0 first escape: v1(0)
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Returned StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
+# CHECK-NEXT: o1 first escape: v2(0)
+# FLOW: function f0
+# FLOW-NEXT: escape:
+# FLOW-NEXT: objects: 2
+# FLOW-NEXT: o0 definition: v0
+# FLOW-NEXT: o0 kind: Allocation
+# FLOW-NEXT: o0 state: DoesNotEscape
+# FLOW-NEXT: o0 reasons: []
+# FLOW-NEXT: o0 first escape: none
+# FLOW-NEXT: o0 uses: [Inspects Retains]
+# FLOW: o0 containers: [o1]
+# FLOW-NEXT: o1 definition: v1
+# FLOW-NEXT: o1 kind: Allocation
+# FLOW-NEXT: o1 state: DoesNotEscape
+# FLOW-NEXT: o1 reasons: []
+# FLOW-NEXT: o1 first escape: none
+# FLOW-NEXT: o1 uses: [Inspects Calls]
+# FLOW: o1 contents: [o0]

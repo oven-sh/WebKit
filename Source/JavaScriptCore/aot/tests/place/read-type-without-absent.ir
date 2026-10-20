@@ -1,0 +1,77 @@
+# The type of a read says absent only if a load through that set of receivers can find the slot empty, whatever the representation of the slot could say
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Filled" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="MayBeEmpty" fields=[{key="value" declared={type=number}}]
+layout L2 name="NeverStored" fields=[{key="unrelated" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number}}]
+layout L3 name="WithPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="WithoutPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything}}]
+layout L5 name="AlsoWithPayload" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="payload" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="filled" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="mayBeEmpty" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="neverStored" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="filledOrNeverStored" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="withPayload" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="withOrWithoutPayload" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="bothWithPayload" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = NewObject layout=L1
+    v6 = NewObject -, v2 layout=L2 fields=[0]
+    v7 = NewObject -, v2, v1 layout=L3 fields=[0, 1]
+    v8 = NewObject -, v2 layout=L4 fields=[0]
+    v9 = NewObject -, v2, v1 layout=L5 fields=[0, 1]
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v6 variable=g2
+    PutModuleVariable v3 variable=g3
+    PutModuleVariable v6 variable=g3
+    PutModuleVariable v7 variable=g4
+    PutModuleVariable v7 variable=g5
+    PutModuleVariable v8 variable=g5
+    PutModuleVariable v7 variable=g6
+    PutModuleVariable v9 variable=g6
+    v21 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="value"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="value"
+    v4 = GetModuleVariable variable=g2
+    v5 = PropGet v4 key="value"
+    v6 = GetModuleVariable variable=g3
+    v7 = PropGet v6 key="value"
+    v8 = GetModuleVariable variable=g4
+    v9 = PropGet v8 key="payload"
+    v10 = GetModuleVariable variable=g5
+    v11 = PropGet v10 key="payload"
+    v12 = PropGet v10 key="first"
+    v13 = GetModuleVariable variable=g6
+    v14 = PropGet v13 key="payload"
+    Return
+}
+
+# CHECK: "value" [L0] read EveryMember Double @16 {{*}}contents=number
+# CHECK-NOT: absent
+# CHECK: "value" [L1] read EveryMember OptionalDouble @16 {{*}}contents=number|absent
+# CHECK-NEXT: "value" [L2] read NoMember none {{*}}contents=absent
+# CHECK-NEXT: "value" [L0, L2] read SomeMembers Double @16 {{*}}contents=number|absent
+# A JSValue slot could say absent. L3 and L5 always fill it, and L4 keeps its bytes zero.
+# CHECK: "payload" [L3] read EveryMember JSValue @16 {{*}}contents=anything
+# CHECK-NOT: absent
+# CHECK: "payload" [L3, L4] read EveryMemberHasSlot JSValue @16 {{*}}contents=anything|absent
+# CHECK-NEXT: "payload" [L3, L5] read EveryMember JSValue @16 {{*}}contents=anything
+# CHECK-NOT: absent

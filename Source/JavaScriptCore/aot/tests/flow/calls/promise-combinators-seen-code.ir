@@ -1,0 +1,44 @@
+# Promise.all, allSettled, any and race run only code of the program: no unseen-code event, no unknown JavaScript, and no constructor is called on behalf of the elements
+# RUN: flow-links unseen
+# RUN(BUILTINS): flow-links builtins
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+# BUILTINS: builtin [[main]] v3 PromiseAll/0 Call
+# BUILTINS: builtin [[main]] v7 PromiseAllSettled/0 Call
+# BUILTINS: builtin [[main]] v10 PromiseAny/0 Call
+# BUILTINS: builtin [[main]] v13 PromiseRace/0 Call
+# RUN(NOWHERE): flow-links builtins
+# NOWHERE-NOT: Function/
+# NOWHERE-NOT: v3 Array/
+# NOWHERE-NOT: v7 Array/
+# NOWHERE-NOT: v7 Promise/
+# NOWHERE-NOT: v10 Promise/
+# NOWHERE-NOT: v13 Promise/
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=Promise
+    v2 = PropGet v1 key="all"
+    v3 = Call v2, v1, v0 calleeKey="all"
+    v4 = CallDirect function=f1
+    v5 = NewArray v4 contents=anything
+    v6 = PropGet v1 key="allSettled"
+    v7 = Call v6, v1, v5 calleeKey="allSettled"
+    v8 = NewArray v4 contents=anything
+    v9 = PropGet v1 key="any"
+    v10 = Call v9, v1, v8 calleeKey="any"
+    v11 = NewArray v4 contents=anything
+    v12 = PropGet v1 key="race"
+    v13 = Call v12, v1, v11 calleeKey="race"
+    Return
+}
+function f1 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = String string="ann"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}

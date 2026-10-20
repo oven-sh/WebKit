@@ -1,0 +1,138 @@
+# A for-in loop over an object of an expected layout has, behind the tests of the layout and of its key order, one copy of its body for each name, with the name as a constant. A turn that finds the object changed, and the turn behind the last name, are taken by the loop as written
+# FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="a" declared={type=number}}, {key=@@iterator declared={type=anything}}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+layout L1 name="One" fields=[{key="only" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+layout L2 name="Nothing"
+
+function f0 name="copies" parameters=[{type=object predicted=L0}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v0, v8
+    ElemSet v1, v8, v10
+    v12 = Integer integer=1
+    v13 = Add v9, v12
+    Jump -> next b1(v13)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="copies"
+# CHECK: v2:{{*}}= ForInOpen v0
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: v6:{{*}}= ForInStep v2, v0 position=v4
+# CHECK: ElemSet v1, v8, v10
+# The turn of "b" goes on in the loop as written, the turn of "a" in the turn of "b".
+# CHECK: ElemSet v1, [[b]],
+# CHECK: Jump -> next b1(
+# CHECK: [[turnOfB]]([[positionOfB]]: int[0, 8589934591]):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[isCurrentAtB]]: boolean = IsEnumeratorCurrent v2, v0, [[one]]
+# CHECK-NEXT: Branch [[isCurrentAtB]] -> taken [[currentAtB]](| 0), notTaken [[changedAtB]]()
+# CHECK: ElemSet v1, [[a]],
+# CHECK: Jump -> next [[turnOfB]](
+# CHECK: [[turnOfA]]({{*}}: int[0, 8589934591]):
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[zero]]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: = HasNoExtraProperties v0,
+# CHECK: Jump -> next [[turnOfA]](v3)
+# CHECK: ({{*}}, [[b]]: string, {{*}}):
+# CHECK: [[currentAtB]]({{*}}: guard):
+# CHECK: = String string="b"
+# CHECK: [[changedAtB]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1([[positionOfB]])
+# CHECK: ({{*}}, [[a]]: string, {{*}}):
+# CHECK: = String string="a"
+# CHECK-NOT: IsEnumeratorCurrent
+
+function f1 name="nothingExpected" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v0, v8
+    ElemSet v1, v8, v10
+    v12 = Integer integer=1
+    v13 = Add v9, v12
+    Jump -> next b1(v13)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="nothingExpected"
+# CHECK-NOT: IsEnumeratorCurrent
+
+function f2 name="changedBeforeTheLoop" parameters=[{type=object predicted=L0}, {type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object ~ L0, v1: object, v2: anything):
+    v3 = ForInOpen v0
+    v4 = Call v2, -, v0
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6: int[0, 8589934591]):
+    LoopHint
+    v8 = ForInStep v3, v0 position=v6
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    v11 = ResultAt v8 index=2
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v12 = ElemGet v0, v10
+    ElemSet v1, v10, v12
+    v14 = Integer integer=1
+    v15 = Add v11, v14
+    Jump -> next b1(v15)
+  b3():
+    Return
+}
+# What the object looks like behind the call is not what the enumerator lists.
+# CHECK-LABEL: function f2 name="changedBeforeTheLoop"
+# CHECK-NOT: IsEnumeratorCurrent
+
+function f3 name="severalLayouts" parameters=[{type=object predicted=L0|L1|L2}, {type=object}] results=[{type=undefined}] {
+  b0(v0: object ~ L0|L1|L2, v1: object):
+    v2 = ForInOpen v0
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 8589934591]):
+    LoopHint
+    v6 = ForInStep v2, v0 position=v4
+    v7 = ResultAt v6 index=0
+    v8 = ResultAt v6 index=1
+    v9 = ResultAt v6 index=2
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ElemGet v0, v8
+    ElemSet v1, v8, v10
+    v12 = Integer integer=1
+    v13 = Add v9, v12
+    Jump -> next b1(v13)
+  b3():
+    Return
+}
+# A layout without names gets no arm.
+# CHECK-LABEL: function f3 name="severalLayouts"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK-NOT: layouts=[L2]
+# CHECK: = String string="only"

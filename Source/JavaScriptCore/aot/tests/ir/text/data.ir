@@ -1,0 +1,28 @@
+# Data lines with every case of a node
+# RUN: round-trip
+# CHECK: layout L0 fields=[{key="x" declared={type=number}}, {key="y" declared={type=anything}}]
+# CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
+# CHECK-NEXT: module m1 path="/d.json" displayPath="d.json" kind=Data requireResult=DefaultExport data=d1
+# CHECK-NEXT: function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}]
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0 = Data data=d1
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# CHECK-NEXT: data d0
+# CHECK-NEXT: data d1 root=Object{layout=L0 members=[{key="x" value=Number{value=1.5}}, {key="y" value=Array{contents=anything elements=[Undefined, Null, Hole, Boolean{value=true}, Boolean{}, Number{}, Number{value=-0}, String{value="s"}, BigInt{digits="9"}, Array{contents=number}, Object{layout=L0 members=[{key="x"}]}]}}]} module=m1
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+layout L0 fields=[{key="x" declared={type=number}}, {key="y" declared={type=anything}}]
+module m0 path="/a.ts" displayPath="a.ts" body=f0
+module m1 path="/d.json" displayPath="d.json" kind=Data requireResult=DefaultExport data=d1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d1
+    Return
+}
+data d0
+data d1 root=Object{layout=L0 members=[{key="x" value=Number{value=1.5}}, {key="y" value=Array{contents=anything elements=[Undefined, Null, Hole, Boolean{value=true}, Boolean{}, Number{}, Number{value=-0}, String{value="s"}, BigInt{digits="9"}, Array{contents=number}, Object{layout=L0 members=[{key="x"}]}]}}]} module=m1
+entry module=m0

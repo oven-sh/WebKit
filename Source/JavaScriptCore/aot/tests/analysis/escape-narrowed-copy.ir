@@ -1,0 +1,125 @@
+# The parameter that receives an object narrowed by a test is the same object: it must alias, and its escape is the escape of the object
+# FORM: Prepared
+# RUN: analyses escape aliases alias-values=v1,v4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="copyIsReturned" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Returned]
+# CHECK-NEXT: o1 first escape: b1.terminator(0)
+# CHECK-NEXT: o1 uses: [Inspects Returns]
+# CHECK-NEXT: o1 live instances: AtMostOne
+# CHECK-NEXT: o1 aliases: [v1 v4]
+# CHECK-NEXT: o1 object uses: [v3(0) b1.terminator(0)]
+# CHECK-NEXT: o1 escaping uses: [b1.terminator(0)]
+# CHECK: v1 points to: [o1]
+# CHECK-NEXT: v1 may be untracked: no
+# CHECK: v4 points to: [o1]
+# CHECK-NEXT: v4 may be untracked: no
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v1 v4 alias: MustAlias
+function f1 name="copyIsRead" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = TypeOf v4
+    Return v5
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK-NEXT: o1 uses: [Inspects]
+# CHECK-NEXT: o1 live instances: AtMostOne
+# CHECK-NEXT: o1 aliases: [v1 v4]
+# CHECK-NEXT: o1 object uses: [v3(0) v5(0)]
+# CHECK-NEXT: o1 escaping uses: []
+# CHECK: v4 points to: [o1]
+# CHECK-NEXT: v4 may be untracked: no
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v1 v4 alias: MustAlias
+function f2 name="copyOfAnotherObject" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = TypeTest v2 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    Return v4
+  b2():
+    v5 = TypeOf v1
+    Return v5
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 3
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK: o1 aliases: [v1]
+# CHECK: o2 definition: v2
+# CHECK-NEXT: o2 kind: Allocation
+# CHECK-NEXT: o2 state: Escapes
+# CHECK-NEXT: o2 reasons: [Returned]
+# CHECK: o2 aliases: [v2 v4]
+# CHECK: v4 points to: [o2]
+# CHECK-NEXT: v4 may be untracked: no
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v1 v4 alias: NoAlias
+function f3 name="copyOfCopyOnTheFailingEdge" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = Call v0
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = TypeTest v4 testedType=function
+    Branch v5 -> taken b3(), notTaken b2(| 0)
+  b2(v6):
+    Throw v6
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Thrown]
+# CHECK-NEXT: o1 first escape: b2.terminator(0)
+# CHECK: o1 aliases: [v1 v4 v6]
+# CHECK-NEXT: o1 object uses: [v3(0) v5(0) b2.terminator(0)]
+# CHECK-NEXT: o1 escaping uses: [b2.terminator(0)]
+# CHECK: v4 points to: [o1]
+# CHECK-NEXT: v4 may be untracked: no
+# CHECK-NEXT: v6 points to: [o1]
+# CHECK-NEXT: v6 may be untracked: no
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v1 v4 alias: MustAlias

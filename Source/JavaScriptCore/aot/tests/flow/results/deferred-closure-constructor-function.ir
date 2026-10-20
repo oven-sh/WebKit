@@ -1,0 +1,39 @@
+# A constructor function that is only constructed defers the closure over this that it stores, and one that is also called without new does not: the call may store a second closure into an object that has one
+# RUN: flow
+# STATISTIC: FlowDeferredClosureFields = 1
+# CHECK: field L0.0 "handler" type=f3 {{*}}location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=NeverRead deferral=CapturesObject deferredFunction=f3}
+# CHECK: field L1.0 "handler" type=f4 {{*}}location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation reads=NeverRead}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="OnlyConstructed" constructor=f1 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="CalledWithoutNew" constructor=f2 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = NewClosure function=f2
+    v3 = Construct v2
+    v4 = Call v2, v3
+    Return
+}
+function f1 name="OnlyConstructed" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = NewClosure v0 function=f3
+    PropSet v0, v1 key="handler" mode=Strict
+    Return
+}
+function f2 name="CalledWithoutNew" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = NewClosure v0 function=f4
+    PropSet v0, v1 key="handler" mode=Strict
+    Return
+}
+function f3 name="first" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f4 name="second" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}

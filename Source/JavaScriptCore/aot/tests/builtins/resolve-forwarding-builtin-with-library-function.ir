@@ -1,0 +1,43 @@
+# A built-in that only forwards a call becomes the forwarded call, not a call of its library function
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(BOTH): pass ResolveBuiltins ResolveCalls
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=12 function=f0
+runtimefunction id=32 function=f1
+function f0 name="call" role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: Array):
+    Return v2
+}
+function f1 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    Return v3
+}
+
+function f2 name="forwards" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall
+    v4 = Call v3, v0, v1, v2 calleeKey="call" accessSite=3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="forwards"
+# CHECK-NOT: CallDirect
+# CHECK: v4: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeCall/0 accessSite=3
+# BOTH-LABEL: function f2 name="forwards"
+# BOTH-NOT: CallDirect
+# BOTH-NOT: CallBuiltin
+# BOTH: v4: anything = Call v0, v1, v2 accessSite=3
+
+function f3 name="doesMoreThanForward" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
+    v3 = Builtin builtin=ArrayPrototypeEvery
+    v4 = Call v3, v0, v1, v2 calleeKey="every" accessSite=4
+    Return v4
+}
+# CHECK-LABEL: function f3 name="doesMoreThanForward"
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f1 accessSite=4
+# BOTH-LABEL: function f3 name="doesMoreThanForward"
+# BOTH: v4: boolean = CallDirect v0, v1, v2 function=f1 accessSite=4

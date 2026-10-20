@@ -1,0 +1,78 @@
+# Promise.resolve of a promise answers a promise that holds what the given one holds, Promise.resolve of an object a promise that holds the object, a then callback that returns a promise is adopted the same way, and no value slot ever holds a promise
+# RUN(PROMISE): flow-solve nodes
+# RUN(OBJECT): flow-solve nodes
+# RUN(HELD): flow-solve nodes
+# RUN(AWAITED): flow-solve nodes
+# RUN(ADOPTED): flow-solve nodes
+# RUN(CALLBACK): flow-solve nodes
+# RUN(NOWHERE): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# PROMISE: , f1, v1) = {Promise@f4:result@[[caller]]}
+# PROMISE: , f1, v4) = {Promise@f4:result@[[caller]]}
+# PROMISE-NEXT: , f1, v5) = {L0#[[user]]}
+# PROMISE: DeclaredPart(Promise@f4:result@[[caller]], 0) = {L0#[[user]]}
+# OBJECT: , f2, v1) = {L1#[[plain]]}
+# OBJECT: , f2, v4) = {Promise@f2:v4
+# OBJECT-NEXT: , f2, v5) = {L1#[[plain]]}
+# HELD: DeclaredPart(Promise@f2:v4{{*}}, 0) = {L1#[[plain]]}
+# AWAITED: , f3, v5) = {L0#[[user]]}
+# ADOPTED: DeclaredPart(Promise@f3:v4{{*}}, 0) = {L0#[[user]]}
+# CALLBACK: , f5, result 0) = {Promise@f4:result@
+# NOWHERE-NOT: DeclaredPart(Promise@{{*}}, 0) = {{*}}Promise@
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: Promise@f
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+function f1 name="resolvePromise" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    v2 = Builtin builtin=Promise
+    v3 = PropGet v2 key="resolve"
+    v4 = Call v3, v2, v1 calleeKey="resolve"
+    v5 = Await v4
+    Return v5
+}
+function f2 name="resolveObject" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Builtin builtin=Promise
+    v3 = PropGet v2 key="resolve"
+    v4 = Call v3, v2, v1 calleeKey="resolve"
+    v5 = Await v4
+    Return v5
+}
+function f3 name="callbackReturnsPromise" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    v2 = PropGet v1 key="then"
+    v3 = NewClosure function=f5
+    v4 = Call v2, v1, v3 calleeKey="then"
+    v5 = Await v4
+    Return v5
+}
+function f4 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = String string="ann"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f5 name="loadAgain" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}

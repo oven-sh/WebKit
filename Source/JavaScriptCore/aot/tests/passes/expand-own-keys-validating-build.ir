@@ -1,0 +1,20 @@
+# A validating build tests the one key order that flow has proven for every object of a layout: another order reaches an Unreachable, which reports the failure
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot validate
+# RUN: pass ExpandOwnKeys
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="OneProvenOrder" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, StoreOfOtherType]}
+
+function f0 name="oneProvenOrder" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="oneProvenOrder"
+# CHECK: [[hasOrder]]: boolean = HasKeyOrder v0 layout=L0 fields=[1, 0]
+# CHECK-NEXT: Branch [[hasOrder]] -> taken
+# CHECK: Unreachable
+# CHECK: = GetSlot v0, {{*}} key="b" receivers=[L0]
+# CHECK-NEXT: = GetSlot v0, {{*}} key="a" receivers=[L0]
+# CHECK-NOT: CallBuiltin

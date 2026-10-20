@@ -1,0 +1,71 @@
+# A test that several kinds of value pass tries its cases one after the other: only the last one can fail the claim, and a number that needs a test of its own is decided in its own arm. However many cases can fail, they fail at one throw site
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# STATISTIC: TypeChecksInB3 = 6
+# STATISTIC: TypeChecksByOperation = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="numberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=undefined|null|number
+    Return v1
+}
+# CHECK: f0: size={{*}} sites=1 handlers
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f1 name="booleanNumberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=undefined|null|boolean|number
+    Return v1
+}
+# CHECK: f1: size={{*}} sites=1 handlers
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f2 name="smallIntegerOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=undefined|null|int[0, 199999]
+    Return v1
+}
+# CHECK: f2: size={{*}} sites=1 handlers
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f3 name="smallInteger" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=int[0, 199999]
+    Return v1
+}
+# CHECK: f3: size={{*}} sites=1 handlers
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f4 name="stringOrFunction" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=string|function
+    Return v1
+}
+# CHECK: f4: size={{*}} sites=1 handlers
+# CHECK-NEXT: operation operationAOTIsCallable x1
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f5 name="everyCellOrNumber" parameters=[{type=undefined|number|string|object}] results=[{type=anything}] {
+  b0(v0: undefined|number|string|object):
+    v1 = Claim v0 castType=number|string|object
+    Return v1
+}
+# CHECK: f5: size={{*}} sites=1 handlers
+# CHECK-NEXT: stub ThrowAtSite{{*}} x1
+function f6 name="branchesOnFunction" parameters=[{type=anything}] results=[{type=i32}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK: f6: size={{*}} sites=0 handlers
+# CHECK-NEXT: operation operationAOTIsCallable x1
+function f7 name="functionAsValue" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=undefined|function
+    Return v1
+}
+# CHECK: f7: size={{*}} sites=0 handlers
+# CHECK-NEXT: operation operationAOTIsCallable x1

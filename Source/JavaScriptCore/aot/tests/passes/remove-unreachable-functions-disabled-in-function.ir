@@ -1,0 +1,40 @@
+# A switch with a range keeps the bodies in the range and the bodies they reach
+# FORM: Selected
+# OPTIONS: disable=pass:RemoveUnreachableFunctions disable-in=2:1
+# RUN: pass RemoveUnreachableFunctions
+# STATISTIC: UnreachableFunctionsRemoved = 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b0(
+
+function f1 name="deadCaller" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f2
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: b0(
+
+function f2 name="deadMiddle" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+# CHECK-LABEL: function f2
+# CHECK: b0(
+
+function f3 name="deadLeaf" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# CHECK-LABEL: function f3
+# CHECK: b0(

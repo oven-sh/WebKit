@@ -1,0 +1,62 @@
+# A range of a range gets bounds in the base string, and neither range is created when both are only inspected
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int, v3: int):
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = GetStringLength v8
+    v10 = StringRange v9, v3
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    v13 = Substring v8, v11, v12
+    v14 = String string="ab"
+    v15 = StrictEq v13, v14
+    Return v15
+}
+# CHECK-LABEL: function f0 name="slice-of-slice"
+# CHECK-NOT: = Substring
+# CHECK: v7: {{*}} = ResultAt v5 index=1
+# CHECK-NEXT: [[differenceInner0]]: int[-2147483647, 2147483647] = Sub v7, v6
+# CHECK-NEXT: [[maskInner0]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[innerLength0]]: int[0, 2147483647] = BitAnd [[differenceInner0]], [[maskInner0]]
+# CHECK-NEXT: [[innerRange0]]: {{*}} = StringRange [[innerLength0]], v3
+# CHECK-NEXT: [[relativeFrom0]]: {{*}} = ResultAt [[innerRange0]]
+# CHECK-NEXT: [[relativeTo0]]: {{*}} = ResultAt [[innerRange0]] index=1
+# CHECK: [[innerFrom0]]: {{*}} = Add v6, [[relativeFrom0]]
+# CHECK-NEXT: [[innerTo0]]: {{*}} = Add v6, [[relativeTo0]]
+# CHECK-NEXT: [[result0]]: boolean = StringRangeEqualsLiteral v0, [[innerFrom0]], [[innerTo0]] literal="ab"
+# CHECK-NEXT: Return [[result0]]
+
+function f1 name="character-of-slice" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
+  b0(v0: string, v1: int, v2: int):
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    v8 = ElemGet v7, v2
+    v9 = String string="a"
+    v10 = StrictEq v8, v9
+    v11 = GetStringLength v7
+    PutModuleVariable v11 variable=g0
+    Return v10
+}
+variable g0 name="length" declared={type=anything} initialization=Undefined
+# CHECK-LABEL: function f1 name="character-of-slice"
+# CHECK-NOT: = Substring
+# CHECK-NOT: = ElemGet
+# CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0, v5, v6, v2
+# CHECK-NEXT: [[codeUnit1]]: 97 = Integer integer=97
+# CHECK-NEXT: [[result1]]: boolean = StrictEq [[unit1]], [[codeUnit1]]
+# CHECK-NEXT: [[difference1]]: int[-2147483647, 2147483647] = Sub v6, v5
+# CHECK-NEXT: [[mask1]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[length1]]: int[0, 2147483647] = BitAnd [[difference1]], [[mask1]]
+# CHECK-NEXT: PutModuleVariable [[length1]] variable=g0
+# CHECK-NEXT: Return [[result1]]

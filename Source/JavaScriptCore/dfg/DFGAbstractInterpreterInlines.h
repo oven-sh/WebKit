@@ -3884,7 +3884,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case NewArrayWithSizeAndStructure: {
-        setTypeForNode(node, speculationFromStructure(node->structure().get()));
+        setTypeForNode(node, SpecArray);
         break;
     }
 
@@ -5661,7 +5661,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                                         m_graph.freeze(globalObject);
                                         m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
                                         didFoldClobberWorld();
-                                        setTypeForNode(node, speculationFromStructure(structure));
+                                        setTypeForNode(node, SpecArray);
                                         break;
                                     }
                                 }

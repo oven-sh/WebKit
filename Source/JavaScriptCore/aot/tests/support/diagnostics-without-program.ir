@@ -1,0 +1,31 @@
+# without a program a record keeps its ids and gets no location, and its message has ids without names
+# RUN: diagnostics no-program LimitExceeded,f0,v0 FrameTooLarge,f2 OperandTypeMismatch,f0,v0 InvalidLayout,f2,L0
+# RUN(NAMES): diagnostics no-program LimitExceeded,f0,v0 FrameTooLarge,f2 OperandTypeMismatch,f0,v0 InvalidLayout,f2,L0
+# CHECK: user records 2
+# CHECK-NEXT: LimitExceeded f0 - v0 - None 0 - Error |
+# CHECK-NEXT: FrameTooLarge f2 - - - None 0 - Error | the stack frame of f2 would be
+# CHECK-NEXT: internal records 2
+# CHECK-NEXT: OperandTypeMismatch f0 - v0 - None 0 - - | the operand has the wrong type; function f0, value v0
+# CHECK-NEXT: InvalidLayout f2 - - L0 None 0 - - | L0 is not a valid layout; function f2
+# CHECK-NEXT: of 4 added
+# NAMES-NOT: parse
+# NAMES-NOT: Point
+# NAMES-NOT: Undefined
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" module=m0 position=7
+function f0 name="parse" position=40 results=[{type=undefined}] {
+  b0():
+    v0 = Undefined @44
+    Return v0
+}
+function f1 position=60 results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="parse" position=80 role=OutlinedBody results=[{type=undefined}] derivation={source=f0} {
+  b0():
+    v0 = Undefined
+    Return v0
+}

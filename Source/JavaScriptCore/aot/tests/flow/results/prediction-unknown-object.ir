@@ -1,0 +1,51 @@
+# A position that an unknown object reaches keeps its type as read, and its prediction lists the objects that flow saw beside the unknown object. The primitives, which the unknown value brings all of, are left out
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: variable g0 type=anything predicted=L0|L1 flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g1 type=anything predicted=Array<1,{{*}}Int32{{*}}> flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g2 type=anything predicted=f1 flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g3 type=anything predicted=L0|f1|Array<1,{{*}}Int32{{*}}> flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g4 type=anything flow={{*}}cause=UnknownObject witness={function=f0 value=v1}
+# CHECK: variable g5 type=L0|f1|Array<1, proven, pristine[Storage, Names, Dense]> 
+# NOWHERE-NOT: variable g5 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="layouts" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="builtinClass" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="closure" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="everything" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="onlyUnknown" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="allKnown" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    v5 = NewArray v2 contents=anything holes=[]
+    v6 = NewClosure function=f1
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v1 variable=g2
+    PutModuleVariable v6 variable=g2
+    PutModuleVariable v1 variable=g3
+    PutModuleVariable v3 variable=g3
+    PutModuleVariable v5 variable=g3
+    PutModuleVariable v6 variable=g3
+    PutModuleVariable v1 variable=g4
+    PutModuleVariable v3 variable=g5
+    PutModuleVariable v5 variable=g5
+    PutModuleVariable v6 variable=g5
+    Return
+}
+function f1 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

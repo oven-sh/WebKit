@@ -1,0 +1,72 @@
+# Union, collecting union, intersection, difference, subset, overlap, equality and copy of object sets
+# RUN: flow-object-set a+1 a+2 b+2 b+3 b+40 a|=b a|=b a
+# CHECK: a|=b: changed
+# CHECK-NEXT: a|=b: unchanged
+# CHECK-NEXT: a: {o1, o2, o3, o40} size=4 out-of-line
+# RUN(COLLECT): flow-object-set a+1 a+2 a+3 a+40 b+2 b+3 b+5 b+40 b+70 c+7 a|=b>c c a a|=b>c c
+# COLLECT: a|=b>c: changed
+# COLLECT-NEXT: c: {o5, o7, o70} size=3 out-of-line
+# COLLECT-NEXT: a: {o1, o2, o3, o5, o40, o70} size=6 out-of-line
+# COLLECT-NEXT: a|=b>c: unchanged
+# COLLECT-NEXT: c: {o5, o7, o70} size=3 out-of-line
+# RUN(CUT): flow-object-set a+1 a+2 a+3 a+5 a+40 a+70 b+2 b+3 b+5 b+40 b+70 c+5 c+7 c+70 a&=b a-=c a a<=b b<=a a-=a a a<=b b<=a
+# CUT: a&=b: {o2, o3, o5, o40, o70}
+# CUT-NEXT: a-=c: {o2, o3, o40}
+# CUT-NEXT: a: {o2, o3, o40} size=3 out-of-line
+# CUT-NEXT: a<=b: yes
+# CUT-NEXT: b<=a: no
+# CUT-NEXT: a-=a: {}
+# CUT-NEXT: a: {} size=0 inline
+# CUT-NEXT: a<=b: yes
+# CUT-NEXT: b<=a: no
+# RUN(OVERLAP): flow-object-set a+33 b+40 b+100 a^b b^a a+100 a^b b^a c^a
+# OVERLAP: a^b: no
+# OVERLAP-NEXT: b^a: no
+# OVERLAP: a^b: yes
+# OVERLAP-NEXT: b^a: yes
+# OVERLAP-NEXT: c^a: no
+# RUN(EQUAL): flow-object-set a+3 a+100 a-100 a c+3 a==c c==a c+4 a==c a+4 a+100 a+200 a+300 a+400 a+500 a-200 a-300 a-400 a-500 c+100 a==c c-100 a==c
+# EQUAL: a: {o3} size=1 only=o3 inline
+# EQUAL: a==c: yes
+# EQUAL-NEXT: c==a: yes
+# EQUAL: a==c: no
+# EQUAL: a==c: yes
+# EQUAL: a==c: no
+# RUN(COPY): flow-object-set b+3 b+100 a=b a+1 a b c=a c-100 c a
+# COPY: a=b: {o3, o100}
+# COPY-NEXT: a+1: added
+# COPY-NEXT: a: {o1, o3, o100} size=3 out-of-line
+# COPY-NEXT: b: {o3, o100} size=2 out-of-line
+# COPY-NEXT: c=a: {o1, o3, o100}
+# COPY-NEXT: c-100: removed
+# COPY-NEXT: c: {o1, o3} size=2 inline
+# COPY-NEXT: a: {o1, o3, o100} size=3 out-of-line
+# RUN(SELF): flow-object-set a+1 a+40 a|=a a&=a a a<=a a==a a^a b^b b<=b b==b b|=b a|=b a-=b a&=b a
+# SELF: a|=a: unchanged
+# SELF-NEXT: a&=a: {o1, o40}
+# SELF-NEXT: a: {o1, o40} size=2 out-of-line
+# SELF-NEXT: a<=a: yes
+# SELF-NEXT: a==a: yes
+# SELF-NEXT: a^a: yes
+# SELF-NEXT: b^b: no
+# SELF-NEXT: b<=b: yes
+# SELF-NEXT: b==b: yes
+# SELF-NEXT: b|=b: unchanged
+# SELF-NEXT: a|=b: unchanged
+# SELF-NEXT: a-=b: {o1, o40}
+# SELF-NEXT: a&=b: {}
+# SELF-NEXT: a: {} size=0 inline
+# RUN(MANY): flow-object-set a+64 a+128 a+192 a+256 a+320 a+384 a+448 a+512 a+576 a+640 a+704 a+768 a+832 a+896 a+960 a+1024 a+1088 a+1152 b+1 b+32 b+96 b+160 b+224 b+288 b+352 b+416 b+480 b+544 b+608 b+672 b+736 b+800 b+864 b+928 b+992 b+1056 b+1120 b+1184 b+1248 b+64 b+65 a|=b a|=b a b<=a a<=b
+# MANY: a|=b: changed
+# MANY-NEXT: a|=b: unchanged
+# MANY-NEXT: a: {o1, o32, o64, o65, o96, o128, o160, o192, o224, o256, o288, o320, o352, o384, o416, o448, o480, o512, o544, o576, o608, o640, o672, o704, o736, o768, o800, o832, o864, o896, o928, o960, o992, o1024, o1056, o1088, o1120, o1152, o1184, o1248} size=40 out-of-line
+# MANY-NEXT: b<=a: yes
+# MANY-NEXT: a<=b: no
+# RUN(GATHER): flow-object-set a+64 a+128 a+192 a+256 a+320 a+384 a+448 a+512 a+576 a+640 a+704 a+768 a+832 a+896 a+960 a+1024 a+1088 a+1152 b+1 b+32 b+96 b+160 b+224 b+288 b+352 b+416 b+480 b+544 b+608 b+672 b+736 b+800 b+864 b+928 b+992 b+1056 b+1120 b+1184 b+1248 b+64 b+65 c+1 c+97 c+2000 c|=b>a c a a|=b a|=b c|=b>a b
+# GATHER: c|=b>a: changed
+# GATHER-NEXT: c: {o1, o32, o64, o65, o96, o97, o160, o224, o288, o352, o416, o480, o544, o608, o672, o736, o800, o864, o928, o992, o1056, o1120, o1184, o1248, o2000} size=25 out-of-line
+# GATHER-NEXT: a: {o32, o64, o65, o96, o128, o160, o192, o224, o256, o288, o320, o352, o384, o416, o448, o480, o512, o544, o576, o608, o640, o672, o704, o736, o768, o800, o832, o864, o896, o928, o960, o992, o1024, o1056, o1088, o1120, o1152, o1184, o1248} size=39 out-of-line
+# GATHER-NEXT: a|=b: changed
+# GATHER-NEXT: a|=b: unchanged
+# GATHER-NEXT: c|=b>a: unchanged
+# GATHER-NEXT: b: {o1, o32, o64, o65, o96, o160, o224, o288, o352, o416, o480, o544, o608, o672, o736, o800, o864, o928, o992, o1056, o1120, o1184, o1248} size=23 out-of-line

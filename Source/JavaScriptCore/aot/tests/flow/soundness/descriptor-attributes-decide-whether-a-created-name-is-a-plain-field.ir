@@ -1,0 +1,38 @@
+# Object.defineProperty creates a name. Without the three attributes, or with one that is falsy without being false, the field that flow appends for the name may be redefined. With all three true it is a plain field
+# RUN: flow
+# CHECK-NOT: field L0.1 "hidden"{{*}}IsNeverRedefined
+# CHECK-NOT: field L1.1 "zero"{{*}}IsNeverRedefined
+# CHECK: field L2.1 "plain"{{*}}IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="WithoutAttributes" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="WithFalsyAttribute" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="WithEveryAttribute" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="ValueOnly" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="writable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="PlainDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="writable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=0
+    v2 = Boolean boolean=true
+    v3 = Integer integer=5
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = NewObject -, v0 layout=L3 fields=[0]
+    v7 = String string="hidden"
+    v8 = Call v4, -, v5, v7, v6
+    PropSet v5, v3 key="hidden"
+    v10 = NewObject -, v0 layout=L1 fields=[0]
+    v11 = NewObject -, v0, v1, v2, v2 layout=L4 fields=[0, 1, 2, 3]
+    v12 = String string="zero"
+    v13 = Call v4, -, v10, v12, v11
+    PropSet v10, v3 key="zero"
+    v15 = NewObject -, v0 layout=L2 fields=[0]
+    v16 = NewObject -, v0, v2, v2, v2 layout=L5 fields=[0, 1, 2, 3]
+    v17 = String string="plain"
+    v18 = Call v4, -, v15, v17, v16
+    PropSet v15, v3 key="plain"
+    Return
+}

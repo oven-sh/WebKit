@@ -94,12 +94,19 @@ enum class SpecificPattern : uint8_t {
     TrailingSpacesStar,
     TrailingSpacesPlus,
     Newlines,
+    CharacterClass,
+    CharacterClassPlus,
 };
 
 enum class ExecutionMode : uint8_t {
     MatchOnly,
     IncludeSubpatterns,
     InlineTest
+};
+
+enum class PatternAnalysis : uint8_t {
+    Skipped,
+    Performed,
 };
 
 struct BytecodePattern;

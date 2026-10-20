@@ -29,7 +29,6 @@
 
 #if ENABLE(SAMPLING_PROFILER)
 
-#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "CodeBlockHash.h"
 #include "JITCode.h"
@@ -46,11 +45,11 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 
-namespace JSC {
+#if ENABLE(AOT)
+#include "AOTTraceFrame.h"
+#endif
 
-namespace AOT {
-struct Data;
-}
+namespace JSC {
 
 class VM;
 class ExecutableBase;
@@ -75,7 +74,10 @@ public:
         const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
-        AOT::FunctionRef aotFunction;
+#if ENABLE(AOT)
+        AOT::CompiledFunctionID compiledCode;
+        uint32_t compiledCodeOffset { 0 };
+#endif
         CallSiteIndex callSiteIndex;
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)
@@ -108,11 +110,14 @@ public:
         FrameType frameType { FrameType::Unknown };
         const void* cCodePC { nullptr };
         ExecutableBase* executable { nullptr };
-        AOT::FunctionRef unresolvedAOTFunction;
-        uint32_t compiledCode { AOT::FunctionRef::none };
-        uint32_t compiledFunction { AOT::FunctionRef::none };
-        uint32_t compiledSiteSource { 0 };
-        bool isCompiled() const { return compiledFunction != AOT::FunctionRef::none; }
+#if ENABLE(AOT)
+        AOT::TraceFrame compiledFrame { };
+        AOT::Typed::ModuleID compiledSiteModule;
+        bool isCompiledFrame() const { return !!compiledFrame.function; }
+        AOT::Typed::ModuleID compiledModule() const;
+#else
+        static constexpr bool isCompiledFrame() { return false; }
+#endif
         static constexpr SourceID firstCompiledCodeSourceID = 1 << 30;
         JSObject* callee { nullptr };
         RegExp* regExp { nullptr };
@@ -241,11 +246,6 @@ private:
     RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
     Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
-    void resolveAOTFrames() WTF_REQUIRES_LOCK(m_lock);
-#if ENABLE(AOT)
-    void resolveAOTFrame(StackFrame&) WTF_REQUIRES_LOCK(m_lock);
-    bool m_hasUnresolvedAOTFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
-#endif
 };
 
 } // namespace JSC

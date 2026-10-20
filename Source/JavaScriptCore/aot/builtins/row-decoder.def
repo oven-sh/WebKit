@@ -1,8 +1,0 @@
-# The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
-
-inline SetExpectedRowType
-
-runtime SetExpectedRowType : Heap void (EncodedJSValue query, uint32_t type) noexcept
-runtime TryConvertRow : Heap void (EncodedJSValue row, uint32_t type) noexcept
-
-operation SetExpectedRowType (any/W) -> undefined ; Allocates WritesArguments ; Inline(SetExpectedRowType, None)

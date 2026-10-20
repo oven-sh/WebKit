@@ -21,7 +21,6 @@
 #include "config.h"
 #include "RegExpObject.h"
 
-#include "AOTImage.h"
 #include "RegExpObjectInlines.h"
 
 namespace JSC {
@@ -226,35 +225,5 @@ JSValue RegExpObject::matchGlobal(JSGlobalObject* globalObject, JSString* string
             return end + 1;
         }));
 }
-
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-RegExp* RegExpObject::tryCreateRegExpFromLongRope(VM& vm, JSString* string, OptionSet<Yarr::Flags> flags)
-{
-    static constexpr size_t maxLeaves = 1 << 16;
-    Vector<StringView, 32> leaves;
-    Vector<JSString*, 32> pending { string };
-    while (!pending.isEmpty()) {
-        JSString* current = pending.takeLast();
-        if (!current->isRope()) {
-            leaves.append(StringView { current->tryGetValueImpl() });
-            continue;
-        }
-        auto* rope = static_cast<JSRopeString*>(current);
-        if (rope->isSubstring()) {
-            leaves.append(StringView { rope->substringBase()->tryGetValueImpl() }.substring(rope->substringOffset(), rope->length()));
-            continue;
-        }
-        if (leaves.size() + pending.size() > maxLeaves)
-            return nullptr;
-        if (JSString* fiber = rope->fiber2())
-            pending.append(fiber);
-        if (JSString* fiber = rope->fiber1())
-            pending.append(fiber);
-        pending.append(rope->fiber0());
-    }
-    auto* record = AOT::Image::findRegExpWithSourceInPieces(leaves.span(), string->length(), flags);
-    return record ? RegExp::createWithSourceInPieces(vm, *record, flags) : nullptr;
-}
-#endif
 
 } // namespace JSC

@@ -1,0 +1,40 @@
+# The run time reads every enumerable own property of the value of a module while it links, so it runs a getter of a record under a name that nothing imports
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: function f3 {{*}}cause=ReachesNativeCode
+# CHECK: class {{*}} layout=L0 impossibleMutations=[{{*}}LoseShape]
+# CHECK: class {{*}} layout=L1 impossibleMutations=[{{*}}LoseShape]
+# NOWHERE-NOT: function f3 reachability=Unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
+module m1 path="getter.cjs" displayPath="getter.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="plain.cjs" displayPath="plain.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
+entry module=m0
+layout L0 name="WithGetter" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="getter" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    v8 = NewClosure function=f3
+    DefineGetter v7, v8 key="x"
+    v10 = FinishObject v7
+    PropSet v3, v10 key="exports" mode=Strict
+    Return
+}
+function f2 name="plain" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PropSet v3, v8 key="exports" mode=Strict
+    Return
+}
+function f3 name="x" module=m1 kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -1,0 +1,29 @@
+# An object passed to console.log is used as the entry of console.log declares: its keys are listed, it does not reach native code, and a store through an unknown receiver does not reach its field
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] addedKeysAreComplete=true
+# CHECK: field L0.0 "value" type=true written=anything flags=[IsRequired] flow={location={writers=AllKnown
+# RUN(LOCATION): flow
+# LOCATION: builtin-location Console."log" Constant
+# RUN(SINKS): flow-solve sinks
+# SINKS-NOT: L0#
+# RUN(CALLEE): flow-solve nodes
+# CALLEE: , f0, v5) = {ConsoleLog}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Logged" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="console" [isFreeName]
+    v5 = PropGet v4 key="log"
+    v6 = Call v5, v4, v1 calleeKey="log"
+    v7 = PropGet v3 key="input" [isFreeName]
+    v8 = String string="stored"
+    PropSet v7, v8 key="value" mode=Strict
+    Return
+}

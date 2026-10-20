@@ -1,0 +1,132 @@
+# The validator of a union node tests the kinds of value in a fixed order, tries the arms of one kind in order, and picks object arms by a tag that it reads once, from plain data only: reading it from anything else may run code of the program, which the general validator would run again
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0
+# STATISTIC: ValidatorsCreated = 12
+# STATISTIC: ParsersCreated = 0
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=null|number|string|Array<number> validation=[{shape=Union{arms=[1, 2, 3, 4, 5]} type=null|number|string|Array<number>}, {shape=Array{element=3} type=Array<number>}, {shape=Primitive{} type=string rules=[MinimumLength{length=2}]}, {shape=Primitive{primitive=Number} type=number}, {shape=StringLiteral{value="a"} type="a"}, {shape=Null type=null}]
+expectedresult x1 type=L0|L1|L2 layouts=[L0, L1, L2] validation=[{shape=Union{arms=[1, 2, 3]} type=L0|L1|L2}, {shape=Object{layout=L0 members=[{key="kind" node=4 field=0}]} type=L0}, {shape=Object{layout=L1 members=[{key="kind" node=5 field=0}]} type=L1}, {shape=Object{layout=L2 members=[{key="z" node=6 field=0}]} type=L2}, {shape=StringLiteral{value="a"} type="a"}, {shape=StringLiteral{value="b"} type="b"}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x2 type=L3|L4 layouts=[L2, L3, L4, L5] validation=[{shape=Union{arms=[1, 2]} type=L3|L4}, {shape=Object{layout=L3 members=[{key="p" node=3 field=0}]} type=L3}, {shape=Object{layout=L4 members=[{key="p" node=4 field=0}]} type=L4}, {shape=Object{layout=L2 members=[{key="z" node=5 field=0}]} type=L2}, {shape=Object{layout=L5 members=[{key="w" node=5 field=0}]} type=L5}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x3 type=anything validation=[{shape=Union{arms=[1, 2]} type=anything}, {shape=Primitive{primitive=Number} type=number rules=[Minimum{bound=1}]}, {type=anything}]
+layout L0 name="KindA" fields=[{key="kind" declared={type=string}}]
+layout L1 name="KindB" fields=[{key="kind" declared={type=string}}]
+layout L2 name="HasZ" fields=[{key="z" declared={type=number}}]
+layout L3 name="NestsZ" fields=[{key="p" declared={type=object written=L2}}]
+layout L4 name="NestsW" fields=[{key="p" declared={type=object written=L5}}]
+layout L5 name="HasW" fields=[{key="w" declared={type=number}}]
+
+# CHECK: function {{*}}expectedResult=x0}
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: TypeTest v0
+# CHECK: = TypeTest v0 testedType=null
+# CHECK-NOT: TypeTest v0
+# CHECK: = TypeTest v0 testedType=number
+# CHECK-NOT: TypeTest v0
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest v0
+# CHECK: [[isArray0]]: boolean = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[notArray0]](| 0)
+# CHECK-NEXT: ([[string0]]: string):
+# CHECK-NEXT: [[length0]]:{{*}}= GetStringLength [[string0]]
+# CHECK-NEXT: [[minimum0]]: 2 = Integer integer=2
+# CHECK-NEXT: [[longEnough0]]: boolean = GreaterEq [[length0]], [[minimum0]]
+# CHECK-NEXT: Branch [[longEnough0]] -> taken {{*}}, notTaken [[short0]]()
+# CHECK: [[literalArm0]]():
+# CHECK-NEXT: [[a0]]: "a" = String string="a"
+# CHECK-NEXT: [[isA0]]: boolean = StrictEq [[string0]], [[a0]]
+# CHECK-NEXT: Branch [[isA0]] -> taken {{*}}, notTaken [[notA0]](| 0)
+# CHECK: [[short0]]():
+# CHECK-NEXT: Jump -> next [[literalArm0]]()
+# CHECK: [[notA0]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK: [[afterArrayTest0]]():
+# CHECK-NEXT: [[isProxyOfArray0]]: boolean = CallBuiltin -, v0 overload=ArrayIsArray/0
+# CHECK-NEXT: Branch [[isProxyOfArray0]] -> taken [[proxy0]](), notTaken [[noKind0]]()
+# CHECK-NEXT: [[array0]]([[narrowed0]]: Array):
+# CHECK-NEXT: = CallDirect [[narrowed0]] function=[[validatorOfArray]]
+# CHECK: [[notArray0]]({{*}}):
+# CHECK-NEXT: Jump -> next [[afterArrayTest0]]()
+# CHECK: [[proxy0]]() frequency=Rare:
+# CHECK-NEXT: = CallDirect v0 function=[[validatorOfArray]]
+# CHECK: [[noKind0]]():
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK-NOT: TypeTest v0
+# CHECK: }
+
+# CHECK: function {{*}}expectedResult=x1}
+# CHECK: [[rejected1]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown1]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: ([[object1]]: object):
+# CHECK-NEXT: [[isPlain1]]: boolean = IsPlainDataObject [[object1]]
+# CHECK-NEXT: Branch [[isPlain1]] -> taken [[plain1]](| 0), notTaken [[notPlain1]]()
+# CHECK: [[untagged1]]():
+# CHECK-NEXT: [[untaggedResults1]]:{{*}}= CallDirect [[object1]] function=[[validatorOfUntaggedArm]]
+# CHECK-NEXT: [[untaggedOutcome1]]: int[0, 2] = ResultAt [[untaggedResults1]]
+# CHECK-NEXT: Switch [[untaggedOutcome1]] cases=[1, 2] -> case {{*}}, case [[rejected1]](), otherwise [[unknown1]]()
+# CHECK-NEXT: [[plain1]]([[guard1]]: guard):
+# CHECK-NEXT: [[tag1]]: anything = GetOwnDataProperty [[object1]], [[guard1]] key="kind"
+# CHECK-NEXT: = TypeTest [[tag1]] testedType=string
+# CHECK: [[notPlain1]]() frequency=Rare:
+# CHECK-NEXT: [[isArray1]]: boolean = CallBuiltin -, [[object1]] overload=ArrayIsArray/0
+# CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](), notTaken [[otherObject1]]()
+# CHECK-NEXT: [[array1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[untagged1]]()
+# CHECK-NEXT: [[otherObject1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown1]]()
+# CHECK: [[armA1]]():
+# CHECK-NEXT: [[resultsA1]]:{{*}}= CallDirect [[object1]] function=[[validatorOfKindA]]
+# CHECK-NEXT: [[outcomeA1]]: int[0, 2] = ResultAt [[resultsA1]]
+# CHECK-NEXT: Switch [[outcomeA1]] cases=[1, 2] -> case {{*}}, case [[untagged1]](), otherwise [[unknown1]]()
+# CHECK-NEXT: [[armB1]]():
+# CHECK-NEXT: = CallDirect [[object1]] function=[[validatorOfKindB]]
+# CHECK: ([[tagText1]]: string):
+# CHECK-NEXT: SwitchString [[tagText1]] strings=["a", "b"] -> case [[armA1]](), case [[armB1]](), otherwise [[untagged1]]()
+# CHECK-NOT: GetOwnDataProperty
+# CHECK-NOT: PropGet
+# CHECK: function [[validatorOfKindA]] {{*}}expectedResult=x1 node=1}
+# CHECK: function [[validatorOfKindB]] {{*}}expectedResult=x1 node=2}
+# CHECK: function [[validatorOfUntaggedArm]] {{*}}expectedResult=x1 node=3}
+
+# CHECK: function {{*}}expectedResult=x2}
+# CHECK: [[rejected2]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown2]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: IsPlainDataObject
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: ([[object2]]: object):
+# CHECK-NEXT: [[first2]]:{{*}}= CallDirect [[object2]] function=
+# CHECK-NEXT: [[firstOutcome2]]: int[0, 2] = ResultAt [[first2]]
+# CHECK-NEXT: Switch [[firstOutcome2]] cases=[1, 2] -> case {{*}}, case [[secondArm2]](), otherwise [[unknown2]]()
+# CHECK: [[secondArm2]]():
+# CHECK-NEXT: [[second2]]:{{*}}= CallDirect [[object2]] function=
+# CHECK-NEXT: [[secondOutcome2]]: int[0, 2] = ResultAt [[second2]]
+# CHECK-NEXT: Switch [[secondOutcome2]] cases=[1, 2] -> case {{*}}, case [[rejected2]](), otherwise [[unknown2]]()
+# CHECK-NOT: CallDirect
+# CHECK-NOT: IsPlainDataObject
+# CHECK-NOT: GetOwnDataProperty
+# CHECK: }
+
+# CHECK: function {{*}}expectedResult=x3}
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown3]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: = TypeTest v0 testedType=undefined
+# CHECK: = TypeTest v0 testedType=null
+# CHECK: = TypeTest v0 testedType=boolean
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: = TypeTest v0 testedType=bigint
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: [[isObject3]]: boolean = TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[isObject3]] -> taken {{*}}, notTaken [[notObject3]](| 0)
+# CHECK-NEXT: [[noKind3]]():
+# CHECK-NEXT: Jump -> next [[unknown3]]()
+# CHECK: [[notObject3]]({{*}}):
+# CHECK-NEXT: Jump -> next [[noKind3]]()

@@ -320,31 +320,6 @@ ALWAYS_INLINE void JSONCache::addTransition(Structure* from, Structure* to, std:
     entry.to.setWithoutWriteBarrier(to);
 }
 
-ALWAYS_INLINE bool JSONCache::isFinishedObjectStructure(StructureID structureID, unsigned index) const
-{
-    ASSERT(index == nameIndex(structureID));
-    return m_finishedObjectStructures.data()[index].value() == structureID;
-}
-
-ALWAYS_INLINE Structure* JSONCache::getStructureForFinishedObject(Structure* from) const
-{
-    StructureID fromID = StructureID::encode(from);
-    auto& entry = m_structuresForFinishedObjects[nameIndex(fromID)];
-    return entry.from.value() == fromID ? entry.to.unvalidatedGet() : nullptr;
-}
-
-ALWAYS_INLINE void JSONCache::addStructureForFinishedObject(Structure* from, Structure* to)
-{
-    unsigned index = nameIndex(StructureID::encode(from));
-    if (from == to) {
-        m_finishedObjectStructures[index].setWithoutWriteBarrier(from);
-        return;
-    }
-    auto& entry = m_structuresForFinishedObjects[index];
-    entry.from.setWithoutWriteBarrier(from);
-    entry.to.setWithoutWriteBarrier(to);
-}
-
 ALWAYS_INLINE unsigned JSONCache::nameIndex(StructureID structureID)
 {
     static_assert(hasOneBitSet(nameEntrySize));
@@ -504,12 +479,6 @@ void JSONCache::visitAggregate(Visitor& visitor)
         visitor.append(entry.from);
         visitor.append(entry.to);
     }
-    for (auto& entry : m_structuresForFinishedObjects) {
-        visitor.append(entry.from);
-        visitor.append(entry.to);
-    }
-    for (auto& entry : m_finishedObjectStructures)
-        visitor.append(entry);
 }
 
 } // namespace JSC

@@ -1,0 +1,71 @@
+# A loop over `text.split(",")` as lowering writes it: the call is resolved in front of the expansion, so the loop walks the string. A separator that nobody knows keeps the array
+# FORM: AsRead
+# RUN: pipeline ExpandIteration
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="print" [isFreeName]
+    v3 = Call v1
+    v4 = ToString v3
+    v5 = Call v1
+    v6 = ToString v5
+    v7 = CallDirect v4 function=f1
+    v8 = CallDirect v4, v6 function=f2
+    v9 = Call v2, -, v7, v8
+    Return
+}
+function f1 name="atComma" parameters=[{type=string}] results=[{type=anything}] {
+  b0(v0: string):
+    v1 = String string=","
+    v2 = PropGet v0 key="split"
+    v3 = Call v2, v0, v1 calleeKey="split"
+    v4 = IteratorOpen v3
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v4
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v11 = PropGet v10 key="length"
+    v12 = Add v6, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v6
+}
+# CHECK-LABEL: function f1 name="atComma"
+# CHECK-NOT: StringPrototypeSplit
+# CHECK-NOT: IteratorOpen
+# CHECK: = CallBuiltin v0, v1, {{*}} overload=StringPrototypeIndexOf/0
+# CHECK: string = Substring v0,
+# CHECK-NOT: StringPrototypeSplit
+
+function f2 name="atUnknownSeparator" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = PropGet v0 key="split"
+    v3 = Call v2, v0, v1 calleeKey="split"
+    v4 = IteratorOpen v3
+    v5 = Integer integer=0
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v4
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v11 = PropGet v10 key="length"
+    v12 = Add v6, v11
+    Jump -> next b1(v12)
+  b3():
+    Return v6
+}
+# CHECK-LABEL: function f2 name="atUnknownSeparator"
+# CHECK: = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+# CHECK-NOT: StringPrototypeIndexOf

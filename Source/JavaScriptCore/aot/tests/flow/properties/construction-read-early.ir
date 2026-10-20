@@ -1,0 +1,89 @@
+# A read that comes before every store of the field looks at the prototypes alone, so the field still counts as set at creation. A read that one path reaches after a store and another before it sees the field empty
+# RUN(EARLY): flow-construction
+# RUN(LATE): flow-construction
+# RUN(EARLYFIELDS): flow-solve nodes
+# RUN(LATEFIELDS): flow-solve nodes
+# RUN(EARLYEVENTS): flow-solve locations
+# RUN(LATEEVENTS): flow-solve locations
+# RUN(BETWEEN): flow-construction
+# RUN(BETWEENFIELDS): flow-solve nodes
+# RUN(BETWEENEVENTS): flow-solve locations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="ReadsEarly" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="ReadsLate" constructor=f2 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="ReadsBetween" constructor=f3 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Construct v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Construct v10, -, v12
+    Return
+}
+function f1 name="ReadsEarly" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = PropGet v2 key="b"
+    PropSet v2, v3 key="a"
+    v5 = Integer integer=1
+    PropSet v2, v5 key="b"
+    Return v2
+}
+# EARLY: construction f1@i{{*}} root v2: DoesNotLeak before-leak "a" "b" at-exit "a" "b" read-early initial-order "a" "b" stores OnlyInitialOrder reads-from-prototype v3
+# EARLY-NOT: construction f1@i{{*}} read-early "b"
+# EARLY: layout L0: DoesNotLeak OnlyAtConstruction set [0, 1] orders [0, 1]
+# EARLYFIELDS: DeclaredPart(L0#{{*}}, 0) = {undefined}
+# EARLYFIELDS: DeclaredPart(L0#{{*}}, 1) = {1}
+# EARLYEVENTS-NOT: DeclaredPart(L0#{{*}}, {{*}}MissingAtAllocation
+function f2 name="ReadsLate" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="b"
+    v5 = PropGet v2 key="b"
+    PropSet v2, v5 key="a"
+    Return v2
+}
+# LATE: construction f2@i{{*}} root v2: DoesNotLeak before-leak "a" "b" at-exit "a" "b" read-early initial-order "b" "a" stores OnlyInitialOrder
+# LATE-NOT: construction f2@i{{*}} read-early "b"
+# LATE: layout L1: DoesNotLeak OnlyAtConstruction set [0, 1] orders [1, 0]
+# LATEFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# LATEFIELDS: DeclaredPart(L1#{{*}}, 1) = {1}
+# LATEEVENTS-NOT: DeclaredPart(L1#{{*}}, {{*}}MissingAtAllocation
+function f3 name="ReadsBetween" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Integer integer=1
+    PropSet v3, v5 key="b"
+    Jump -> next b2()
+  b2():
+    v7 = PropGet v3 key="b"
+    PropSet v3, v7 key="a"
+    v9 = Integer integer=2
+    PropSet v3, v9 key="b"
+    Return v3
+}
+# BETWEEN: construction f3@i{{*}} root v3: DoesNotLeak before-leak "a" at-exit "a" "b" read-early "b"
+# BETWEEN-NOT: construction f3@i{{*}} reads-from-prototype
+# BETWEEN: layout L2: DoesNotLeak {{*}} set [0] orders
+# BETWEENFIELDS: DeclaredPart(L2#{{*}}, 0) = {undefined|int[1, 2]}
+# BETWEENFIELDS: DeclaredPart(L2#{{*}}, 1) = {undefined|int[1, 2]}
+# BETWEENEVENTS: DeclaredPart(L2#{{*}}, 1) events=[{{*}}MissingAtAllocation{{*}}ReadBeforeInitialization

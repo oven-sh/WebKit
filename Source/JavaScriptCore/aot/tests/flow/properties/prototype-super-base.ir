@@ -1,0 +1,56 @@
+# GetSuperBase reads the prototype link of its home object: the parent's prototype object for a class prototype, the parent class for a class object, Object.prototype for a literal, and unknown or null for an unknown object
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {f1.prototype}
+# CHECK: Variable(g1) = {f1}
+# CHECK: Variable(g2) = {ObjectPrototype}
+# CHECK: Variable(g3) = {null|unknown}
+# CHECK: Variable(g4) = {ObjectPrototype}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1
+layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f2 flags=[HasHeritage]
+layout L2 name="Literal" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="baseOfChildPrototype" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="baseOfChild" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="baseOfLiteral" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="baseOfUnknown" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="baseOfParentPrototype" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = GetSuperBase v6 homeKind=ClassPrototype
+    PutModuleVariable v7 variable=g0
+    v9 = GetSuperBase v6 homeKind=Object
+    PutModuleVariable v9 variable=g1
+    v11 = Integer integer=1
+    v12 = NewObject -, v11 layout=L2 fields=[0]
+    v13 = GetSuperBase v12 homeKind=Object
+    PutModuleVariable v13 variable=g2
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="Unknown" [isFreeName]
+    v17 = Construct v16
+    v18 = GetSuperBase v17 homeKind=Object
+    PutModuleVariable v18 variable=g3
+    v20 = GetSuperBase v2 homeKind=ClassPrototype
+    PutModuleVariable v20 variable=g4
+    Return
+}
+function f1 name="Parent" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Child" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}

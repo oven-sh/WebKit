@@ -25,7 +25,6 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
-#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -499,10 +498,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
         return JSValue::encode(jsUndefined());
     }
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::recordSample(globalObject, "eval", { }, programSource);
-#endif
 
     if (SourceProfiler::g_profilerHook) [[unlikely]] {
         SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -823,10 +818,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     auto* specifier = callFrame->uncheckedArgument(0).toString(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::recordSample(globalObject, "import", { }, specifier->tryGetValue().data);
-#endif
 
     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
     // we should retrieve this from the arguments.
@@ -877,6 +868,35 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
 }
 
 // https://tc39.es/ecma262/#sec-copydataproperties
+#if ENABLE(AOT)
+// False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
+static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
+{
+    Vector<UniquedStringImpl*, 8> properties;
+    MarkedArgumentBuffer values;
+    EnsureStillAliveScope sourceScope(source);
+    auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+        PropertyName propertyName(property.name);
+        if (propertyName == vm.propertyNames->underscoreProto)
+            return IterationStatus::Done;
+        if (!(property.attributes & PropertyAttribute::DontEnum) && !propertyName.isPrivateName() && !isExcluded(propertyName)) {
+            properties.append(property.name);
+            values.appendWithCrashOnOverflow(property.value);
+        }
+        return IterationStatus::Continue;
+    });
+    if (result != AOT::PropertyWalk::Result::Completed)
+        return false;
+    if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+    else {
+        for (size_t i = 0; i < properties.size(); ++i)
+            target->putDirect(vm, properties[i], values.at(i));
+    }
+    return true;
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -897,16 +917,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     std::optional<IdentifierSet> newlyCreatedSet;
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
-#if ENABLE(AOT)
-        if (AOT::FunctionRef caller = AOT::callerFunction(callFrame))
-            excludedSet = &caller.constantIdentifierSet(setIndex);
-#endif
-        if (!excludedSet) {
-            CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
-            ASSERT(codeBlock);
-            unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-            excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
-        }
+        CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
+        ASSERT(codeBlock);
+        unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+        excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
         if (callFrame->argumentCount() > 2) {
             newlyCreatedSet.emplace(*excludedSet);
             for (unsigned index = 2; index < callFrame->argumentCount(); ++index) {
@@ -977,6 +991,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         return JSValue::encode(target);
     }
 
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, isPropertyNameExcluded)) {
+        ensureStillAliveHere(unlinkedCodeBlock);
+        return JSValue::encode(target);
+    }
+#endif
+
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1009,16 +1030,12 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(cloneObjectForSpread(globalObject, callFrame->thisValue()));
-}
-
-JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue, JSObject* into)
-{
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue sourceValue = callFrame->thisValue();
     if (sourceValue.isUndefinedOrNull())
-        RELEASE_AND_RETURN(scope, into ? into : constructEmptyObject(globalObject));
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyObject(globalObject)));
 
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1029,38 +1046,13 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     }
 
     Structure* sourceStructure = source->structure();
-    if (!into && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
+    if (sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
-            return cloned;
+            return JSValue::encode(cloned);
     }
 
-#if ENABLE(AOT)
-    if (!into && sourceStructure->compiledLayout()) {
-        if (JSObject* copy = uncheckedDowncast<AOT::Typed::Object>(source)->tryCopyAsPlainObject(globalObject))
-            return copy;
-    }
-#endif
-
-    JSObject* target = into ? into : constructEmptyObject(globalObject);
+    JSObject* target = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-
-#if ENABLE(AOT)
-    if (sourceStructure->compiledLayout() && !target->structure()->compiledLayout()) {
-        Vector<UniquedStringImpl*, 8> properties;
-        MarkedArgumentBuffer values;
-        EnsureStillAliveScope sourceScope(source);
-        bool isWalked = AOT::Typed::forEachCompiledObjectOwnProperty(source, [&](UniquedStringImpl& name, JSValue value) {
-            properties.append(&name);
-            values.appendWithCrashOnOverflow(value);
-            return true;
-        });
-        if (isWalked) {
-            if (properties.size())
-                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
-            return target;
-        }
-    }
-#endif
 
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
         EnsureStillAliveScope sourceStructureScope(sourceStructure);
@@ -1090,8 +1082,13 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
 
         target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
 
-        return target;
+        return JSValue::encode(target);
     }
+
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, [](PropertyName) { return false; }))
+        return JSValue::encode(target);
+#endif
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
@@ -1116,7 +1113,7 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
         target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return target;
+    return JSValue::encode(target);
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncHandleNegativeProxyHasTrapResult, (JSGlobalObject* globalObject, CallFrame* callFrame))

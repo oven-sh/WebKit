@@ -1,0 +1,17 @@
+# A feature line of one overload is used where flow selects that overload: a separator nobody knows may be a regular expression or have a method that makes one
+# RUN: flow
+# CHECK: builtin-use StringPrototypeSplit [Read, Called] f0:v1
+# CHECK: feature 7 StringPrototypeSplit f0:v1
+# CHECK: feature 53 StringPrototypeSplit f0:v1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="a,b"
+    v1 = PropGet v0 key="split"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="separator" [isFreeName]
+    v4 = Call v1, v0, v3 calleeKey="split"
+    Return
+}

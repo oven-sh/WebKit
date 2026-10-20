@@ -1,0 +1,186 @@
+# A Set or Map built from a literal of constants is created from a data record
+# FORM: Prepared
+# OPTIONS: references=narrow
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 7
+# CHECK: table 0 keys: [String("a") String("b") String("c")]
+# CHECK-NEXT: table 1 keys: [String("x") String("y")]
+# CHECK-NEXT: table 1 values: [Number(1) String("z")]
+# CHECK-NEXT: table 2 keys: [String("a") String("b")]
+# CHECK-NEXT: table 3 keys: [String("k")]
+# CHECK-NEXT: table 3 values: [Number(2)]
+# CHECK-NEXT: table 4 keys: [String("\u{e9}")]
+# CHECK-NEXT: table 5 keys: [String("h")]
+# CHECK-NEXT: table 5 values: [Number(1)]
+# CHECK-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="setOfStrings" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string="c"
+    v3 = NewArray v0, v1, v2 contents=string
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: NewArray
+# CHECK: [[set]]: Set<string> = NewSetFromData data=d0
+# CHECK-NEXT: Return [[set]]
+
+function f1 name="mapOfConstants" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = String string="x"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = String string="y"
+    v4 = String string="z"
+    v5 = NewArray v3, v4 contents=anything
+    v6 = NewArray v2, v5 contents=Array<anything>
+    v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
+    Return v7
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArray
+# CHECK: [[map]]: Map<string, 1|string> = NewMapFromData data=d1
+# CHECK-NEXT: Return [[map]]
+
+function f2 name="repeatedSetKey" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string="a"
+    v3 = NewArray v0, v1, v2 contents=string
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: = NewSetFromData data=d2
+
+function f3 name="repeatedMapKey" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = String string="k"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = String string="k"
+    v4 = Integer integer=2
+    v5 = NewArray v3, v4 contents=anything
+    v6 = NewArray v2, v5 contents=Array<anything>
+    v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
+    Return v7
+}
+# CHECK-LABEL: function f3
+# CHECK: = NewMapFromData data=d3
+
+function f4 name="sameSetAgain" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string="c"
+    v3 = NewArray v0, v1, v2 contents=string
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: = NewSetFromData data=d0
+
+function f5 name="literalUsedTwice" parameters=[{type=anything}] results=[{type=Set<string>}] {
+  b0(v0: anything):
+    v1 = String string="a"
+    v2 = NewArray v1 contents=string
+    v3 = Call v0, -, v2
+    v4 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin
+
+function f6 name="nonASCIIKey" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="\u{e9}"
+    v1 = NewArray v0 contents=string
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK: = NewSetFromData data=d4
+
+function f7 name="variableKey" parameters=[{type=string}] results=[{type=Set<string>}] {
+  b0(v0: string):
+    v1 = NewArray v0 contents=string
+    v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
+    Return v2
+}
+# CHECK-LABEL: function f7
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin
+
+function f8 name="variableValue" parameters=[{type=anything}] results=[{type=Map<string, anything>}] {
+  b0(v0: anything):
+    v1 = String string="k"
+    v2 = NewArray v1, v0 contents=anything
+    v3 = NewArray v2 contents=Array<anything>
+    v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
+    Return v4
+}
+# CHECK-LABEL: function f8
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin
+
+function f9 name="emptyLiteral" results=[{type=Set<string>}] {
+  b0():
+    v0 = NewArray contents=string
+    v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
+    Return v1
+}
+# CHECK-LABEL: function f9
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin
+
+function f10 name="underHandler" results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = String string="h"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v2 contents=Array<anything>
+    v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f10
+# CHECK: b1() handler=b3():
+# CHECK-NOT: NewArray
+# CHECK: = NewMapFromData data=d5
+# CHECK-NEXT: Jump -> next b2()
+
+function f11 name="literalWithHole" results=[{type=Set<string>}] {
+  b0():
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = NewArray v0, v1 contents=string holes=[1]
+    v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f11
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin
+
+function f12 name="pairWithoutValue" results=[{type=Map<string, anything>}] {
+  b0():
+    v0 = String string="k"
+    v1 = NewArray v0 contents=anything
+    v2 = NewArray v1 contents=Array<anything>
+    v3 = CallBuiltin -, v2 overload=Map/2 builtinCallForm=Whole
+    Return v3
+}
+# CHECK-LABEL: function f12
+# CHECK-NOT: FromData
+# CHECK: = CallBuiltin

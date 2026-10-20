@@ -1,0 +1,28 @@
+# A cell in a frame has no Extension, so the number slots of a layout that may be in a frame take 8 bytes
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ComputeEffectSummaries,AllocateInFrames disable=flow:NarrowedTypes
+# RUN: plan-slots
+# STATISTIC: ObjectsInFrames = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="MayBeInFrame" fields=[{key="frameFirst" declared={type=number predicted=i32} flags=[IsRequired]}, {key="frameSecond" declared={type=number predicted=i32} flags=[IsRequired]}, {key="frameFiller" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="OnlyOnHeap" fields=[{key="heapFirst" declared={type=number predicted=i32} flags=[IsRequired]}, {key="heapSecond" declared={type=number predicted=i32} flags=[IsRequired]}, {key="heapFiller" declared={type=i32} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0, v0, v0 layout=L1 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    Return
+}
+# CHECK: L0 CompiledObject size=48 fields=3
+# CHECK-NEXT: "frameFirst" Double @
+# CHECK-NEXT: "frameSecond" Double @
+# CHECK: L1 CompiledObject size=32 extension=24 fields=3
+# CHECK-NEXT: "heapFirst" Int32OrDouble @
+# CHECK-NEXT: "heapSecond" Int32OrDouble @

@@ -1,0 +1,9 @@
+# A value id that does not fit an id is no token
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Return v4294967295
+}

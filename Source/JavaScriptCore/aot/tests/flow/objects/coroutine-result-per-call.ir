@@ -1,0 +1,49 @@
+# Each call of an async function from compiled code has a promise of its own in the class of the function's result site: what happens to one returned promise stays with that call
+# RUN: flow-sites solved
+# RUN(SINKS): flow-solve sinks
+# RUN(NODES): flow-solve nodes
+# CHECK: site [[site]] function=f1 value=- kind=Instance origin=CoroutineResult builtinClass=Promise class=[[class]] object={{*}}(Promise@f1:result)
+# CHECK: class [[class]] builtinClass=Promise sites=[{{*}}] shared={{*}}(Promise@f1:result) copies=[{{*}}(Promise@f1:result@{{*}}), {{*}}(Promise@f1:result@{{*}})]
+# CHECK: object {{*}} Promise@f1:result kind=Instance parts=2 positions=0 undeclared=no events=[]
+# CHECK-COUNT-2: object {{*}} Promise@f1:result@{{*}} kind=Instance parts=2 positions=0 undeclared=no events=[Allocated
+# CHECK-NOT: object {{*}} Promise@f1:result
+# NODES: Variable(g0) = {Promise@f1:result@[[caller]]}
+# NODES-NEXT: Variable(g1) = {Promise@f1:result@[[caller]]}
+# NODES-NEXT: Variable(g2) = {L0#
+# SINKS: nativeCode {
+# SINKS-COUNT-1: Promise@f1:result@
+# SINKS-NOT: Promise@f1:result
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Loaded" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="passedOn" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="awaited" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="value" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return
+}
+function f1 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="keep" [isFreeName]
+    v5 = Call v4, -, v1
+    v6 = Call v0
+    PutModuleVariable v6 variable=g1
+    v8 = Await v6
+    PutModuleVariable v8 variable=g2
+    Return
+}

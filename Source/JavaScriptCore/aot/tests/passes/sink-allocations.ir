@@ -1,0 +1,692 @@
+# Allocations are built only where a cell is needed
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 16
+# STATISTIC: AllocationsSunk = 12
+# STATISTIC: StoresFoldedIntoAllocations = 12
+# STATISTIC: TailsDuplicatedForSinking = 1
+# LOSS: MaxMaterializations x1 f8 v2
+# LOSS: MaxVirtualArrayLength x1 f25 v2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}, {key="z" declared={type=anything} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Other" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Environment name="scope" fields=[{key="value" declared={type=anything} flags=[IsImmutable]}, {key="self" declared={type=anything}}]
+layout L3 name="Sized" fields=[{key="n" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Many" fields=[{key="k0" declared={type=anything}}, {key="k1" declared={type=anything}}, {key="k2" declared={type=anything}}, {key="k3" declared={type=anything}}, {key="k4" declared={type=anything}}, {key="k5" declared={type=anything}}, {key="k6" declared={type=anything}}, {key="k7" declared={type=anything}}, {key="k8" declared={type=anything}}]
+layout L5 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+layout L6 kind=Environment name="inner" fields=[{key="outer" declared={type=env L2}}]
+layout L7 kind=Instance name="Secret" fields=[{key=#"a"@L7 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key=#"b"@L7 declared={type=anything} flags=[IsPrivate]}] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+
+function f0 name="diesOnEveryPath" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = PropGet v2 key="x" receivers=[L0]
+    Return v3
+}
+# CHECK-LABEL: function f0 name="diesOnEveryPath"
+# CHECK: b0(
+# CHECK-NEXT: v3: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v3
+
+function f1 name="diesOnOnePath" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    v5 = PropGet v3 key="y" receivers=[L0]
+    Return v5
+}
+# CHECK-LABEL: function f1 name="diesOnOnePath"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[cell1]]
+# CHECK: b2():
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+
+function f2 name="neededOnEveryPath" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Call v0
+    v4 = Call v0, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f2 name="neededOnEveryPath"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Call v0, -, v2
+
+function f3 name="neededOnBothBranches" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v4
+  b2():
+    v5 = Call v1, -, v3
+    Return v5
+}
+# CHECK-LABEL: function f3 name="neededOnBothBranches"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject
+# CHECK-NEXT: Branch
+# CHECK-NOT: NewObject
+
+function f4 name="storesFoldIntoAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Call v0
+    PropSet v2, v3 key="x" mode=Strict receivers=[L0]
+    PropDefine v2, v1 key="z" receivers=[L0]
+    v6 = Call v0, -, v2
+    Return v6
+}
+# CHECK-LABEL: function f4 name="storesFoldIntoAllocation"
+# CHECK: b0(
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: [[cell4]]:{{*}}= NewObject -, v3, v1, v1 layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: = Call v0, -, [[cell4]]
+
+function f5 name="storeOutsideFieldType" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L3 fields=[0]
+    PropSet v3, v1 key="n" mode=Strict receivers=[L3]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v1, -, v3
+    Return v5
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f5 name="storeOutsideFieldType"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L3 fields=[0]
+# CHECK-NEXT: PropSet v3, v1 key="n"
+# CHECK-NEXT: Branch
+
+function f6 name="storeAfterEscape" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Call v0, -, v2
+    PropSet v2, v3 key="x" mode=Strict receivers=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f6 name="storeAfterEscape"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0, v1
+# CHECK-NEXT: = Call v0, -, v2
+# CHECK-NEXT: PropSet v2, v3 key="x"
+
+function f7 name="twoBuilds" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Call v0, -, v2
+    Return v3
+  b2():
+    v4 = Call v0, -, v2
+    Return v4
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f7 name="twoBuilds"
+# CHECK: b0(
+# CHECK-NEXT: Switch
+# CHECK: b1():
+# CHECK-NEXT: = NewObject
+# CHECK: b2():
+# CHECK-NEXT: = NewObject
+
+function f8 name="threeBuilds" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Switch v1 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1():
+    v3 = Call v0, -, v2
+    Return v3
+  b2():
+    v4 = Call v0, -, v2
+    Return v4
+  b3():
+    v5 = Call v0, -, v2
+    Return v5
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f8 name="threeBuilds"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject
+# CHECK-NOT: NewObject
+
+function f9 name="literalInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v5 = PropGet v4 key="x" receivers=[L0]
+    v6 = Call v1, -, v5
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(v6), notTaken b2()
+  b2():
+    v8 = PropGet v4 key="y" receivers=[L0]
+    Return v8
+}
+# CHECK-LABEL: function f9 name="literalInLoop"
+# CHECK-NOT: NewObject
+# CHECK: v5: anything = Upcast v2 castType=anything
+# CHECK: b2():
+# CHECK-NEXT: v8: anything = Upcast v1 castType=anything
+
+function f10 name="neededInHandler" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b3()
+  b1():
+    v4 = Call v0, -, v3
+    Jump -> next b2()
+  b2() handler=b6():
+    v5 = Call v0
+    Jump -> next b5()
+  b3() handler=b6():
+    v6 = Call v0
+    Jump -> next b4()
+  b4():
+    Return v6
+  b5():
+    Return v5
+  b6() role=CatchHandler:
+    v7 = CatchValue
+    v8 = Call v0, -, v3
+    Return v8
+}
+# CHECK-LABEL: function f10 name="neededInHandler"
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[cell10]]:{{*}}= NewObject -, v0, v1
+# CHECK: b2() handler=b6({{*}}, [[cell10]], 
+# CHECK: b3() handler=b6({{*}}, v0, v1):
+# CHECK: b6([[tag10]]: i32, {{*}}) role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Switch [[tag10]] cases=[
+
+function f11 name="claimIsLeftToRun" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Claim v3 castType=L1
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f11 name="claimIsLeftToRun"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell11]]:{{*}}= NewObject
+# CHECK-NEXT: = Claim [[cell11]] castType=L1
+
+function f12 name="testsFold" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Upcast v2 castType=anything
+    v4 = StrictEq v2, v3
+    v5 = StrictEq v2, v1
+    v6 = ToBoolean v2
+    v7 = TypeTest v2 testedType=object
+    v8 = PropHas v2 key="z" receivers=[L0]
+    PropDefine v2, v1 key="z" receivers=[L0]
+    v10 = PropHas v2 key="z" receivers=[L0]
+    v11 = Call v0, -, v4, v5, v6, v7, v8, v10
+    Return v11
+}
+# CHECK-LABEL: function f12 name="testsFold"
+# CHECK-NOT: NewObject
+# CHECK: [[same12]]: true = Boolean boolean=true
+# CHECK-NEXT: v4: boolean = Upcast [[same12]] castType=boolean
+# CHECK-NEXT: [[other12]]: false = Boolean
+# CHECK-NEXT: v5: boolean = Upcast [[other12]] castType=boolean
+# CHECK-NEXT: [[truthy12]]: true = Boolean boolean=true
+# CHECK-NEXT: v6: true = Upcast [[truthy12]] castType=true
+# CHECK-NEXT: [[object12]]: true = Boolean boolean=true
+# CHECK-NEXT: v7: true = Upcast [[object12]] castType=true
+# CHECK-NEXT: [[absent12]]: false = Boolean
+# CHECK-NEXT: v8: boolean = Upcast [[absent12]] castType=boolean
+# CHECK-NEXT: [[present12]]: true = Boolean boolean=true
+# CHECK-NEXT: v10: boolean = Upcast [[present12]] castType=boolean
+# CHECK-NEXT: = Call v0, -, v4, v5, v6, v7, v8, v10
+
+function f13 name="testOfObjectNeededAtOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Upcast v2 castType=anything
+    v4 = TypeTest v3 testedType=L0
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = Call v0, -, v2
+    v7 = Call v0, -, v5
+    Return v7
+  b2():
+    v8 = Call v1, -, v2
+    Return v8
+}
+# CHECK-LABEL: function f13 name="testOfObjectNeededAtOnce"
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject
+# CHECK: v4:{{*}}= TypeTest v3 testedType=L0
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
+# CHECK: b1(v5: L0):
+
+function f14 name="looseEqualityIsLeftToRun" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    v3 = NewObject layout=L4
+    PropDefine v3, v0 key="k0" receivers=[L4]
+    v5 = PropGet v2 key="x" receivers=[L1]
+    v6 = Eq v3, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v0, -, v3
+    Return v7
+  b2():
+    v8 = Call v0, -, v3, v3
+    Return v8
+}
+# CHECK-LABEL: function f14 name="looseEqualityIsLeftToRun"
+# CHECK-NOT: PropDefine
+# CHECK: [[cell14]]:{{*}}= NewObject -, v0 layout=L4 fields=[0]
+# CHECK-NEXT: v6: boolean = Eq [[cell14]], v5
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
+# CHECK: b1():
+# CHECK-NEXT: = Call v0, -, [[cell14]]
+# CHECK: b2():
+# CHECK-NEXT: = Call v0, -, [[cell14]], [[cell14]]
+
+function f15 name="objectInObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = PropGet v3 key="x" receivers=[L0]
+    v5 = PropGet v4 key="y"
+    Return v5
+}
+# CHECK-LABEL: function f15 name="objectInObject"
+# CHECK: b0(
+# CHECK-NEXT: v5: anything = Upcast v1 castType=anything
+# CHECK-NEXT: Return v5
+
+function f16 name="closureOnlyReadThroughCaptures" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f38
+    v2 = IsClosureOf v1 function=f38
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetCapture v3 function=f38
+    Return v4
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f16 name="closureOnlyReadThroughCaptures"
+# CHECK-NOT: NewClosure
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NEXT: v4: anything = Upcast v0 castType=anything
+
+function f17 name="closureReadBackFromObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure v0 function=f38
+    v2 = Call v0, -, v1
+    v3 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v4 = PropGet v3 key="x" receivers=[L0]
+    v5 = IsClosureOf v4 function=f38
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = GetCapture v6 function=f38
+    Return v7
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f17 name="closureReadBackFromObject"
+# CHECK-NOT: NewObject
+# CHECK: v1:{{*}}= NewClosure v0
+# CHECK: v4: anything = Upcast v1 castType=anything
+# CHECK-NEXT: = IsClosureOf v4
+
+function f18 name="environmentClosureCycle" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = NewClosure v2 function=f39
+    PutEnvironmentField v2, v3 layout=L2 field=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v3
+    Return v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f18 name="environmentClosureCycle"
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[environment18]]:{{*}}= NewObject -, v0 layout=L2 fields=[0]
+# CHECK-NEXT: [[closure18]]:{{*}}= NewClosure [[environment18]]
+# CHECK-NEXT: PutEnvironmentField [[environment18]], [[closure18]] layout=L2 field=1
+# CHECK-NEXT: = Call v0, -, [[closure18]]
+
+function f19 name="fieldLoadedWhereCellMeetsVirtualObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v2 function=f39
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v4 = GetEnvironmentField v2 layout=L2 field=0
+    Return v4
+}
+# CHECK-LABEL: function f19 name="fieldLoadedWhereCellMeetsVirtualObject"
+# CHECK: b1():
+# CHECK-NEXT: [[cell19]]:{{*}}= NewObject
+# CHECK: [[loaded19]]:{{*}}= GetEnvironmentField [[cell19]] layout=L2
+# CHECK: Jump -> next b3({{*}}[[loaded19]])
+# CHECK: b2():
+# CHECK: Jump -> next b3({{*}}v0)
+# CHECK: b3({{*}}[[value19]]: anything):
+# CHECK-NEXT: v4: anything = Upcast [[value19]] castType=anything
+
+function f20 name="nestedVirtualEnvironment" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = NewObject -, v0 layout=L6 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L6 field=0
+    v3 = GetEnvironmentField v2 layout=L2 field=0
+    Return v3
+}
+# CHECK-LABEL: function f20 name="nestedVirtualEnvironment"
+# CHECK-NOT: NewObject
+# CHECK-NOT: layout=L6
+# CHECK: v3: anything = GetEnvironmentField v0 layout=L2
+
+function f21 name="readBeforeInitialization" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L2 field=1
+    PutEnvironmentField v1, v0 layout=L2 field=1
+    Return v2
+}
+# CHECK-LABEL: function f21 name="readBeforeInitialization"
+# CHECK: v1:{{*}}= NewObject
+# CHECK-NEXT: = GetEnvironmentField v1 layout=L2 field=1
+
+function f22 name="constantIndexRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Integer integer=1
+    v4 = ElemGet v2, v3
+    v5 = PropGet v2 key="length"
+    v6 = Integer integer=5
+    v7 = ElemGet v2, v6
+    v8 = Call v0, -, v4, v5, v7
+    Return v8
+}
+# CHECK-LABEL: function f22 name="constantIndexRead"
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: v4: anything = Upcast v1 castType=anything
+# CHECK: [[length22]]: 2 = Integer integer=2
+# CHECK-NEXT: v5: anything = Upcast [[length22]] castType=anything
+# CHECK: [[pastEnd22]]: undefined = Undefined
+# CHECK-NEXT: v7: anything = Upcast [[pastEnd22]] castType=anything
+
+function f23 name="holeReadsUndefined" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything holes=[1]
+    v3 = Integer integer=1
+    v4 = ElemGet v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f23 name="holeReadsUndefined"
+# CHECK-NOT: NewArray
+# CHECK: [[hole23]]: undefined = Undefined
+# CHECK-NEXT: v4: anything = Upcast [[hole23]] castType=anything
+
+function f24 name="unknownIndex" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = ElemGet v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f24 name="unknownIndex"
+# CHECK: v2:{{*}}= NewArray
+# CHECK-NEXT: = ElemGet v2, v1
+
+function f25 name="seventeenElements" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 contents=anything
+    v3 = Integer integer=1
+    v4 = ElemGet v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f25 name="seventeenElements"
+# CHECK: v2:{{*}}= NewArray
+# CHECK: = ElemGet v2, v3
+
+function f26 name="arrayDestructured" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v0, v1 contents=anything
+    v3 = DestructureIterable v2 count=2
+    v4 = ResultAt v3 index=1
+    Return v4
+}
+# CHECK-LABEL: function f26 name="arrayDestructured"
+# CHECK-NOT: NewArray
+# CHECK-NOT: DestructureIterable
+# CHECK: v4: anything = Upcast v1 castType=anything
+
+function f27 name="arrayListedInCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray v1, v1 contents=anything
+    v3 = CallList v0, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f27 name="arrayListedInCall"
+# CHECK-NOT: NewArray
+# CHECK: = Call v0, -, v1, v1
+
+function f28 name="objectCopiedIntoRealObject" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    CopyDataProperties v1, v2
+    Return v1
+}
+# CHECK-LABEL: function f28 name="objectCopiedIntoRealObject"
+# CHECK-NOT: NewObject
+# CHECK: PropDefine v1, v0 key="x"
+# CHECK-NEXT: PropDefine v1, v0 key="y"
+
+function f29 name="copyOfSymbolField" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = NewObject -, v0 layout=L5 fields=[0]
+    CopyDataProperties v1, v2
+    Return v1
+}
+# CHECK-LABEL: function f29 name="copyOfSymbolField"
+# CHECK-NOT: NewObject
+# CHECK: PropDefine v1, v0 key=@@iterator
+
+function f30 name="tailDuplicated" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="y" receivers=[L0]
+    Return v6
+}
+# CHECK-LABEL: function f30 name="tailDuplicated"
+# CHECK-COUNT-2: Return
+# CHECK-NOT: Return
+
+function f31 name="loopAfterMerge" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    LoopHint
+    v7 = PropGet v4 key="y" receivers=[L0]
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b4():
+    Return v7
+}
+# CHECK-LABEL: function f31 name="loopAfterMerge"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject
+# CHECK-NEXT: v4:{{*}}= NewObject
+# CHECK-COUNT-1: LoopHint
+# CHECK-NOT: LoopHint
+
+function f32 name="eightCreatedFields" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject layout=L4
+    PropDefine v2, v0 key="k0" receivers=[L4]
+    PropDefine v2, v0 key="k1" receivers=[L4]
+    PropDefine v2, v0 key="k2" receivers=[L4]
+    PropDefine v2, v0 key="k3" receivers=[L4]
+    PropDefine v2, v0 key="k4" receivers=[L4]
+    PropDefine v2, v0 key="k5" receivers=[L4]
+    PropDefine v2, v0 key="k6" receivers=[L4]
+    PropDefine v2, v0 key="k7" receivers=[L4]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v11 = Call v0, -, v2
+    Return v11
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f32 name="eightCreatedFields"
+# CHECK-NOT: PropDefine
+# CHECK: b1():
+# CHECK-NEXT: = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0 layout=L4 fields=[0, 1, 2, 3, 4, 5, 6, 7]
+
+function f33 name="testOfOptionalDescriptorField" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Undefined
+    v3 = NewObject -, v0, v1, v2, v2, v1, v1 layout=L(PropertyDescriptor) fields=[0, 1, 2, 3, 4, 5]
+    v4 = PropHas v3 key="get"
+    v5 = PropGet v3 key="value"
+    Return v4
+}
+# CHECK-LABEL: function f33 name="testOfOptionalDescriptorField"
+# CHECK: v3:{{*}}= NewObject
+# CHECK-NEXT: = PropHas v3 key="get"
+
+function f34 name="privateFieldRead" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L7 fields=[0]
+    v2 = NewClassToken layout=L7
+    v3 = PrivateGet v1, v2 layout=L7 field=0 receivers=[L7]
+    Return v3
+}
+# CHECK-LABEL: function f34 name="privateFieldRead"
+# CHECK-NOT: NewObject
+# CHECK-NOT: PrivateGet
+# CHECK: v3: anything = Upcast v0 castType=anything
+
+function f35 name="privateFieldNotDefined" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L7 fields=[0]
+    v2 = NewClassToken layout=L7
+    v3 = PrivateGet v1, v2 layout=L7 field=1 receivers=[L7]
+    Return v3
+}
+# CHECK-LABEL: function f35 name="privateFieldNotDefined"
+# CHECK: v1:{{*}}= NewObject
+# CHECK: = PrivateGet v1, v2
+
+function f36 name="builtinCallNeedsCell" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewArray contents=anything
+    v3 = Upcast v2 castType=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v5):
+    v6 = CallBuiltin v5, v0 overload=ArrayPrototypePush/0
+    Return v2
+  b4():
+    v7 = Call v0, -, v2
+    Return v7
+}
+# CHECK-LABEL: function f36 name="builtinCallNeedsCell"
+# CHECK-NOT: NewArray
+# CHECK: b2():
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: [[cell36]]: Array = NewArray
+# CHECK-NEXT: = CallBuiltin [[cell36]], v0
+# CHECK-NEXT: Return [[cell36]]
+# CHECK-NOT: NewArray
+
+function f37 name="narrowedAliasOnlyRead" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v4 = Upcast v3 castType=anything
+    v5 = TypeTest v4 testedType=L0
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = PropGet v6 key="x"
+    Branch v2 -> taken b3(), notTaken b4()
+  b2():
+    v8 = PropGet v3 key="x" receivers=[L0]
+    Return v8
+  b3():
+    Return v3
+  b4():
+    Return v7
+}
+# CHECK-LABEL: function f37 name="narrowedAliasOnlyRead"
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NEXT: v7: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Branch v2 -> taken b3(), notTaken b4()
+# CHECK: b3():
+# CHECK-NEXT: [[cell37]]:{{*}}= NewObject -, v0, v1
+# CHECK-NEXT: Return [[cell37]]
+
+function f38 name="captures" captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f38 name="captures"
+
+function f39 name="capturesScope" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    Return
+}

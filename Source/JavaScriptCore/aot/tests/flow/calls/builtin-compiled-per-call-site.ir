@@ -1,0 +1,56 @@
+# A built-in written in JavaScript is entered once for each call site: each callback sees the elements of its own array, and each call has a result array of its own
+# RUN: flow-solve instances nodes
+# RUN(SECOND): flow-solve instances nodes
+# RUN(COUNT): flow-solve instances
+# CHECK: [[first]] f3 at f0:v8
+# CHECK: , f0, v1) = {L0#[[a]]}
+# CHECK: , f0, v8) = {Array@f3:v2@[[first]]}
+# CHECK: DeclaredPart(Array@f3:v2@[[first]], 0) = {L0#[[a]]}
+# CHECK: , f1, parameter 0) = {L0#[[a]]}
+# SECOND: [[second]] f3 at f0:v12
+# SECOND: , f0, v3) = {L1#[[b]]}
+# SECOND: , f0, v12) = {Array@f3:v2@[[second]]}
+# SECOND: DeclaredPart(Array@f3:v2@[[second]], 0) = {L1#[[b]]}
+# SECOND: , f2, parameter 0) = {L1#[[b]]}
+# COUNT-COUNT-2: f3 at f0:
+# COUNT-NOT: f3 at
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewArray v2 contents=anything @10
+    v6 = NewClosure function=f1
+    v7 = PropGet v5 key="map"
+    v8 = Call v7, v5, v6 calleeKey="map"
+    v9 = NewArray v4 contents=anything @20
+    v10 = NewClosure function=f2
+    v11 = PropGet v9 key="map"
+    v12 = Call v11, v9, v10 calleeKey="map"
+    Return
+}
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=66 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4
+    AppendElement v2, v5
+    Return v2
+}
+runtimefunction id=66 function=f3

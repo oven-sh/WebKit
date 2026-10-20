@@ -1,0 +1,911 @@
+# The inline code of each array method has code with a miss edge where selection leaves one and as a value where it leaves none, in the code shapes selection chooses it for
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-28: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="atInt32InInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b3 Fast
+# S: f0 b7 Compact
+function f1 name="atInt32InNumbers" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b3 Fast
+# S: f1 b7 Compact
+function f2 name="atInt32InStrings" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b3 Fast
+# S: f2 b7 Compact
+function f3 name="atInt32InAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b3 Fast
+# S: f3 b7 Compact
+function f4 name="atInteger" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b3 Fast
+# S: f4 b7 Compact
+function f5 name="atNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: number, v2: boolean):
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b3 Fast
+# S: f5 b7 Compact
+function f6 name="indexOfNumber" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b3 Fast
+# S: f6 b7 Compact
+function f7 name="indexOfInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b3 Fast
+# S: f7 b7 Compact
+function f8 name="includesNumber" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b3 Fast
+# S: f8 b7 Compact
+function f9 name="includesInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b3 Fast
+# S: f9 b7 Compact
+function f10 name="joinWithoutSeparator" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeJoin/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeJoin/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypeJoin/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b3 Fast
+# S: f10 b7 Compact
+function f11 name="joinWithString" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=string}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: string, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b3 Fast
+# S: f11 b7 Compact
+function f12 name="toString" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeToString/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeToString/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeToString/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeToString/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeToString/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypeToString/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f12 b0 Balanced
+# S: f12 b3 Fast
+# S: f12 b7 Compact
+function f13 name="shiftOfInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b4(v8)
+  b6():
+    Return
+}
+# S: f13 b0 Balanced
+# S: f13 b3 Fast
+function f14 name="shiftOfNumbers" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b4(v8)
+  b6():
+    Return
+}
+# S: f14 b0 Balanced
+# S: f14 b3 Fast
+function f15 name="shiftOfStrings" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b4(v8)
+  b6():
+    Return
+}
+# S: f15 b0 Balanced
+# S: f15 b3 Fast
+function f16 name="shiftOfAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Jump -> next b4(v8)
+  b6():
+    Return
+}
+# S: f16 b0 Balanced
+# S: f16 b3 Fast
+function f17 name="popOfInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f17 b0 Balanced
+# S: f17 b3 Fast
+# S: f17 b7 Compact
+function f18 name="popOfNumbers" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f18 b0 Balanced
+# S: f18 b3 Fast
+# S: f18 b7 Compact
+function f19 name="popOfStrings" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<string, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f19 b0 Balanced
+# S: f19 b3 Fast
+# S: f19 b7 Compact
+function f20 name="popOfAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f20 b0 Balanced
+# S: f20 b3 Fast
+# S: f20 b7 Compact
+function f21 name="sliceAll" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: boolean):
+    TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f21 b0 Balanced
+# S: f21 b3 Fast
+# S: f21 b7 Compact
+function f22 name="sliceFromInt32" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f22 b0 Balanced
+# S: f22 b3 Fast
+# S: f22 b7 Compact
+function f23 name="sliceBetweenIntegers" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage, Names]>, v1: i32, v2: int, v3: boolean):
+    TryCallInline v0, v1, v2 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b1(), miss b2()
+  b1(v4):
+    v5 = NewArray v4 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
+    Jump -> next b1(v6)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b4(), miss b5()
+  b4(v8):
+    v9 = NewArray v8 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v10 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
+    Jump -> next b4(v10)
+  b6():
+    Branch v3 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v2 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done b8(), miss b9()
+  b8(v11) frequency=Rare:
+    v12 = NewArray v11 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v13 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
+    Jump -> next b8(v13)
+  b10():
+    Return
+}
+# S: f23 b0 Balanced
+# S: f23 b3 Fast
+# S: f23 b7 Compact
+function f24 name="unshiftAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<anything, proven, pristine[Storage]>, v1: anything, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f24 b0 Balanced
+# S: f24 b3 Fast
+# S: f24 b7 Compact
+function f25 name="unshiftInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f25 b0 Balanced
+# S: f25 b3 Fast
+# S: f25 b7 Compact
+function f26 name="unshiftNumber" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f26 b0 Balanced
+# S: f26 b3 Fast
+# S: f26 b7 Compact
+function f27 name="iterators" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Array, v1: boolean):
+    v2 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[0] overload=ArrayPrototypeKeys/0
+    v3 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0
+    v4 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[2] overload=ArrayPrototypeEntries/0
+    v5 = NewArray v2, v3, v4 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[0] overload=ArrayPrototypeKeys/0
+    v8 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0
+    v9 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[2] overload=ArrayPrototypeEntries/0
+    v10 = NewArray v7, v8, v9 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v11 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[0] overload=ArrayPrototypeKeys/0
+    v12 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0
+    v13 = CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[2] overload=ArrayPrototypeEntries/0
+    v14 = NewArray v11, v12, v13 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f27 b0 Balanced
+# S: f27 b1 Fast
+# S: f27 b3 Compact

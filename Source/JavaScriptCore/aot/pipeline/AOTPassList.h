@@ -1,0 +1,100 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#define FOR_EACH_AOT_PROGRAM_PASS(v) \
+    v(AdmitAssertedObjects) \
+    v(VerifyProgram) \
+    v(AnalyzeFlow) \
+    v(ApplyFlowResults) \
+    v(CheckLockedBuiltinWrites) \
+    v(BuildCallGraph) \
+    v(ComputeEffectSummaries) \
+    v(EstimateHeat) \
+    v(SummarizeForInlining) \
+    v(RemoveUnreadExports) \
+    v(PromoteEnvironmentsToVariables) \
+    v(DeferDefinitions) \
+    v(RemoveUnreadFields) \
+    v(RemoveUnusedResults) \
+    v(RemoveUnusedParameters) \
+    v(RemoveUnreachableFunctions) \
+    v(SplitFreshResults) \
+    v(PromoteAggregateParameters) \
+    v(SplitCoroutines) \
+    v(CreateEntrypoints) \
+    v(GroupCallsByValue) \
+    v(ChooseCallingConventions) \
+    v(DeferClosuresInFields) \
+    v(AllocateInFrames) \
+    v(ReuseEnvironments) \
+    v(NumberLiteralStrings) \
+    v(EmbedConstantCollections) \
+    v(CollectRegExpLiterals) \
+    v(OutlineColdOperations) \
+    v(SplitFunctionsAtCalls) \
+    v(ElideStackChecks) \
+    v(PlanSlots) \
+    v(NumberAndEncode) \
+    v(PlaceSiteCaches) \
+    v(CheckPlacement) \
+    v(GenerateCode)
+
+#define FOR_EACH_AOT_FUNCTION_PASS(v) \
+    v(TypeValues, typeValues) \
+    v(CheckInt32Promises, checkInt32Promises) \
+    v(CheckRegExpLiterals, checkRegExpLiterals) \
+    v(ResolveBuiltins, resolveBuiltins) \
+    v(ResolveCalls, resolveCalls) \
+    v(ResolveAccesses, resolveAccesses) \
+    v(SplitUnions, splitUnions) \
+    v(PlaceTypeTests, placeTypeTests) \
+    v(ExpandIteration, expandIteration) \
+    v(ExpandOwnKeys, expandOwnKeys) \
+    v(SelectTypedResults, selectTypedResults) \
+    v(RetypeValues, retypeValues) \
+    v(InlineCalls, inlineCalls) \
+    v(SimplifyCasts, simplifyCasts) \
+    v(SinkAllocations, sinkAllocations) \
+    v(EliminateRedundantReads, eliminateRedundantReads) \
+    v(EliminateGuards, eliminateGuards) \
+    v(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths) \
+    v(ConvertCountersToIntegers, convertCountersToIntegers) \
+    v(RemoveDeadCountedLoops, removeDeadCountedLoops) \
+    v(FuseArrayChains, fuseArrayChains) \
+    v(FuseGeneratorLoops, fuseGeneratorLoops) \
+    v(CreateStringBuilders, createStringBuilders) \
+    v(FuseConcatenations, fuseConcatenations) \
+    v(ExpandData, expandData) \
+    v(FoldConstants, foldConstants) \
+    v(SimplifyControlFlow, simplifyControlFlow) \
+    v(RemoveTrivialParameters, removeTrivialParameters) \
+    v(PropagateBranchConditions, propagateBranchConditions) \
+    v(HoistTestsIntoPredecessors, hoistTestsIntoPredecessors) \
+    v(ThreadJumps, threadJumps) \
+    v(InferSwitches, inferSwitches) \
+    v(EliminateDeadCode, eliminateDeadCode) \
+    v(MergeDuplicateBlocks, mergeDuplicateBlocks) \
+    v(CompactBlocks, compactBlocks) \
+    v(RemoveRedundantHandlers, removeRedundantHandlers) \
+    v(HoistLoopInvariantReads, hoistLoopInvariantReads) \
+    v(SimplifyBuiltinCalls, simplifyBuiltinCalls) \
+    v(ReduceIntegerDivisions, reduceIntegerDivisions) \
+    v(PlanArrayCapacities, planArrayCapacities) \
+    v(FoldConstantRegExps, foldConstantRegExps) \
+    v(ShareRegExpLiterals, shareRegExpLiterals) \
+    v(InsertObjectCoercibleChecks, insertObjectCoercibleChecks) \
+    v(EliminateTailRecursion, eliminateTailRecursion) \
+    v(ResolveAwaitedCalls, resolveAwaitedCalls) \
+    v(SinkConstants, sinkConstants) \
+    v(ExpandLongArrayLiterals, expandLongArrayLiterals) \
+    v(Select, select) \
+    v(ChooseRepresentations, chooseRepresentations) \
+    v(RemoveRedundantBarriers, removeRedundantBarriers)
+
+#endif // ENABLE(AOT)

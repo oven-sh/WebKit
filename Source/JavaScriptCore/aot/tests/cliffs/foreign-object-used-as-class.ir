@@ -1,0 +1,58 @@
+# An object nobody knows is used as a class at one site. The loss stays with the values that meet it: the reads on instances that never meet it are proven, and so are the constructor's own stores. Where it reaches the same parameter as an instance, the read is not proven
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+# CHECK-LABEL: function f1 name="Node"
+# CHECK-COUNT-2: PutSlot {{*}} receivers=[L0] level=Proven
+# CHECK-LABEL: function f2 name="readsInstances"
+# CHECK: : L0 = GetSlot {{*}} key="next" receivers=[L0] level=Proven
+# CHECK: : number = GetSlot {{*}} key="weight" receivers=[L0] level=Proven
+# CHECK-LABEL: function f3 name="readsForeignObject"
+# CHECK-NOT: level=Proven
+# CHECK-LABEL: function f4 name="readsBoth"
+# CHECK-NOT: level=Proven
+# CHECK-LABEL: function f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=MathRandom
+    v4 = Call v3
+    v5 = ToNumber v4
+    v6 = Construct v2, -, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = CallDirect v6 function=f2
+    v10 = CallDirect v8 function=f3
+    v11 = CallDirect v6 function=f4
+    v12 = CallDirect v8 function=f4
+    Return v9
+}
+function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v1 key="weight" mode=Strict
+    Return v3
+}
+function f2 name="readsInstances" parameters=[{type=object written=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="weight"
+    Return v2
+}
+function f3 name="readsForeignObject" parameters=[{type=anything written=L0}] results=[{type=anything}] {
+  b0(v0: anything ? L0):
+    v1 = PropGet v0 key="weight"
+    Return v1
+}
+function f4 name="readsBoth" parameters=[{type=anything written=L0}] results=[{type=anything}] {
+  b0(v0: anything ? L0):
+    v1 = PropGet v0 key="weight"
+    Return v1
+}

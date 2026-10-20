@@ -1,0 +1,42 @@
+# A SwitchOnShape has one target per layout set and the target otherwise
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: TargetCountMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+layout L1
+function f0 name="bad" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f1 name="goodTwoCases" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return
+  b2():
+    Return
+  b3():
+    Return
+}
+function f2 name="goodOneCase" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0]] -> case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f3 name="goodSharedCaseTarget" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(), case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}

@@ -1,0 +1,45 @@
+# A site that takes the result of an earlier site behind the join of its two copies is rewritten for the type of the join, not for the type of the fast operation
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# STATISTIC: StretchesGuarded = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resultOfTestedCall" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = Predict v1 predicted=builtin(Object)
+    v3 = PropGet v2 key="getOwnPropertyNames"
+    v4 = Predict v3 predicted=builtin(ObjectGetOwnPropertyNames)
+    v5 = Builtin builtin=ObjectPrototype
+    v6 = Call v4, v2, v5 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    v7 = PropGet v2 key="getOwnPropertyNames"
+    v8 = Predict v7 predicted=builtin(ObjectGetOwnPropertyNames)
+    v9 = Call v8, v2, v6 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    Return v9
+}
+# CHECK-LABEL: function f0 name="resultOfTestedCall"
+# CHECK: v6: Array<string> = CallBuiltin -, v5 overload=ObjectGetOwnPropertyNames/0
+# CHECK-NEXT: Jump -> next [[join]](v6)
+# CHECK-NEXT: [[join]]([[created]]: anything ~ Array<string>):
+# CHECK: [[converted]]: object ~ Array<string> = ToObject [[created]]
+# CHECK-NEXT: v9: Array<string> = CallBuiltin -, [[converted]] overload=ObjectGetOwnPropertyNames/0
+# CHECK: [[generic]]: anything = Call v4, v2, v5 calleeKey="getOwnPropertyNames"
+# CHECK-NEXT: Jump -> next [[join]]([[generic]])
+
+function f1 name="resultOfProvenCall" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = Predict v1 predicted=builtin(Object)
+    v3 = Null
+    v4 = CallBuiltin -, v3 overload=ObjectCreate/0
+    v5 = PropGet v2 key="getOwnPropertyNames"
+    v6 = Predict v5 predicted=builtin(ObjectGetOwnPropertyNames)
+    v7 = Call v6, v2, v4 calleeKey="getOwnPropertyNames" calleeName="getOwnPropertyNames"
+    Return v7
+}
+# CHECK-LABEL: function f1 name="resultOfProvenCall"
+# CHECK-NOT: ToObject
+# CHECK: v7: Array<string> = CallBuiltin -, v4 overload=ObjectGetOwnPropertyNames/0
+# CHECK-NOT: ToObject

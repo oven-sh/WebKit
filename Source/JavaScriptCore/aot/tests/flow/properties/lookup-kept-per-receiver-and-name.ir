@@ -1,0 +1,28 @@
+# One walk answers every statement that looks a name up from a receiver. Another name, another receiver and another operation have a lookup of their own
+# RUN: flow-solve lookups nodes
+# CHECK: lookups 4,
+# CHECK: f0, v7) = {1}
+# CHECK-NEXT: f0, v8) = {1}
+# CHECK-NEXT: f0, v9) = {2}
+# CHECK-NEXT: f0, v10) = {1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Parent" fields=[{key="inherited" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Child" fields=[{key="own" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=2
+    v4 = NewObject -, v3 layout=L1 fields=[0]
+    SetLiteralPrototype v4, v2
+    v6 = FinishObject v4
+    v7 = PropGet v6 key="inherited"
+    v8 = PropGet v6 key="inherited"
+    v9 = PropGet v6 key="own"
+    v10 = PropGet v2 key="inherited"
+    v11 = PropHas v6 key="inherited"
+    Return
+}

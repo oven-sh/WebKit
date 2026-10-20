@@ -1,0 +1,101 @@
+# Methods named get, set and parse and a getter cost a class nothing: its instances are keys and values of a Map and go through console.log without a link to a member, a mutation or a sink, while a method console.log does name is linked
+# RUN: flow-links calls
+# RUN(NOWHERE): flow-links calls
+# RUN(METHODS): flow-solve objects
+# RUN(INSTANCE): flow-solve objects
+# RUN(PROTOTYPE): flow-solve objects
+# RUN(MAP): flow-solve objects
+# RUN(SINKS): flow-solve sinks
+# RUN(NODES): flow-solve nodes
+# CHECK: f0 v27 -> [[method]] f7 Protocol
+# NOWHERE-NOT: -> {{*}} f2
+# NOWHERE-NOT: -> {{*}} f3
+# NOWHERE-NOT: -> {{*}} f4
+# NOWHERE-NOT: -> {{*}} f5
+# METHODS: f2 mutations=[] uses=[] events
+# METHODS-NEXT: f3 mutations=[] uses=[] events
+# METHODS-NEXT: f4 mutations=[] uses=[] events
+# METHODS-NEXT: f5 mutations=[] uses=[] events
+# INSTANCE: L0#{{*}} mutations=[] uses
+# PROTOTYPE: f1.prototype mutations=[BecomePrototype] uses=[] events
+# MAP: Map@f0:v14{{*}} mutations=[StoreAfterCreation] uses
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: Map@f0
+# SINKS-NOT: f1
+# SINKS-NOT: f2
+# SINKS-NOT: f3
+# SINKS-NOT: f4
+# SINKS-NOT: f5
+# NODES: , f0, v18) = {undefined|L0#[[instance]]}
+# NODES: DeclaredPart(Map@f0:v14{{*}}, 0) = {L0#[[instance]]}
+# NODES-NEXT: DeclaredPart(Map@f0:v14{{*}}, 1) = {L0#[[instance]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Repository" constructor=f1
+layout L1 kind=Instance name="Printable" constructor=f6
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="get"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="set"
+    v6 = NewClosure function=f4
+    DefineMethod v1, v6 layout=L0 index=2 key="parse"
+    v8 = NewClosure function=f5
+    DefineMethod v1, v8 layout=L0 methodKind=Getter index=3 key="total"
+    v10 = FinishClass v1 layout=L0
+    v11 = Construct v10
+    v12 = Construct v10
+    v13 = Builtin builtin=Map
+    v14 = Construct v13
+    v15 = PropGet v14 key="set"
+    v16 = Call v15, v14, v11, v12 calleeKey="set"
+    v17 = PropGet v14 key="get"
+    v18 = Call v17, v14, v11 calleeKey="get"
+    v19 = Builtin builtin=ConsoleLog
+    v20 = Call v19, -, v11, v18
+    v21 = NewClosure function=f6
+    v22 = NewClass v21 layout=L1
+    v23 = NewClosure function=f7
+    DefineMethod v22, v23 layout=L1 key="toJSON"
+    v25 = FinishClass v22 layout=L1
+    v26 = Construct v25
+    v27 = Call v19, -, v26
+    Return
+}
+function f1 name="Repository" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="get" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="set" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="parse" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f5 name="total" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="Printable" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f7 name="toJSON" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

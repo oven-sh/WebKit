@@ -1,0 +1,31 @@
+# A delete under an unknown string may take away every property of the object that has a string key, and none that has a symbol key
+# RUN: flow-solve nodes objects locations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Integer integer=3
+    PropSet v3, v4 key="c"
+    v6 = Integer integer=4
+    PropSet v3, v6 key=@@iterator
+    v8 = Builtin builtin=MathRandom
+    v9 = Call v8
+    v10 = ToString v9
+    v11 = ElemDelete v3, v10
+    Return
+}
+# CHECK: DeclaredPart(L0#[[object]], 0) = {undefined|1}
+# CHECK-NEXT: DeclaredPart(L0#[[object]], 1) = {undefined|2}
+# CHECK: Property(L0#[[object]], "c") = {undefined|3}
+# CHECK: Property(L0#[[object]], @@iterator) = {4}
+# CHECK: L0#[[object]] mutations=[DeleteField, AddProperty] uses={{*}} events=[Allocated, DeletedByUnknownKey]
+# CHECK: DeclaredPart(L0#[[object]], 0) events=[{{*}}Deleted
+# CHECK-NEXT: DeclaredPart(L0#[[object]], 1) events=[{{*}}Deleted
+# CHECK: Property(L0#[[object]], "c") events=[{{*}}Deleted
+# CHECK-NOT: Property(L0#[[object]], @@iterator) events=[{{*}}Deleted

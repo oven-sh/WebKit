@@ -1,0 +1,88 @@
+# A function whose call sites read more sets of results than the limit keeps one version, and only that function
+# FORM: Prepared
+# OPTIONS: limit=MaxResultClones:2
+# RUN: pass SplitFreshResults VerifyProgram
+# LOSS: MaxResultClones x1 f0
+# STATISTIC: ResultClonesCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threeSets" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f7}
+function f1 name="twoSets" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f8}
+
+function f2 name="readsFirstOfThree" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+function f3 name="readsSecondOfThree" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+function f4 name="readsThirdOfThree" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f7
+    v2 = ResultAt v1 index=2
+    Return v2
+}
+# CHECK-LABEL: function f4 name="readsThirdOfThree"
+# CHECK: [[call4]]:{{*}}= CallDirect v0 function=f7
+# CHECK-NEXT: = ResultAt [[call4]] index=2
+
+function f5 name="readsFirstOfTwo" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f8
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+# CHECK-LABEL: function f5 name="readsFirstOfTwo"
+# CHECK: v1: number = CallDirect v0 function=f8
+# CHECK-NOT: ResultAt
+
+function f6 name="readsSecondOfTwo" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f8
+    v2 = ResultAt v1 index=1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="readsSecondOfTwo"
+# CHECK: v1: number = CallDirect v0 function=[[clone]]
+# CHECK-NOT: ResultAt
+
+function f7 name="threeSets" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f0} creator=ResultWorker{origin=f0} {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v1
+    v3 = Mul v2, v2
+    v4 = Add v0, v0
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Sub v0, v0
+    v8 = Sub v7, v7
+    v9 = Sub v8, v8
+    v10 = Results v3, v6, v9
+    Return v10
+}
+# CHECK-LABEL: function f7 name="threeSets" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}, {type=number}, {type=number}] 
+# CHECK: = Results v3, v6, v9
+
+function f8 name="twoSets" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v1
+    v3 = Mul v2, v2
+    v4 = Add v0, v0
+    v5 = Add v4, v4
+    v6 = Add v5, v5
+    v7 = Results v3, v6
+    Return v7
+}
+# CHECK-LABEL: function f8 name="twoSets" module=m0 role=ResultWorker
+# CHECK: results=[{type=number}] 
+# CHECK-NOT: = Add
+# CHECK: function [[clone]] name="twoSets" module=m0 role=ResultWorker {{*}}results=[{type=number}] 
+# CHECK-NOT: = Mul
+# CHECK-NOT: function f

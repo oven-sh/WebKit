@@ -1,0 +1,44 @@
+# Entry parameters are the first locals, in the order of EntryParameter, and only a rest parameter is seeded: with the site of its array
+# RUN: flow-summary
+# CHECK-LABEL: summary f0: parameters=8 results=1 locals=10 values=8 flags=[PassesParameterOn, CreatesObjects]
+# CHECK-NEXT: l0 = v0
+# CHECK-NEXT: l1 = v1
+# CHECK-NEXT: l2 = v2
+# CHECK-NEXT: l3 = v3
+# CHECK-NEXT: l4 = v4
+# CHECK-NEXT: l5 = v5
+# CHECK-NEXT: l6 = v6
+# CHECK-NEXT: l7 = v7
+# CHECK-NEXT: s0 = Instance RestParameter Array positions=8
+# CHECK-NEXT: seed l7 Site s0
+# CHECK-NOT: seed
+# CHECK: copy l5 -> l8
+# CHECK-NEXT: Allocation#0 site=s0
+# CHECK-NEXT: rest s0
+# CHECK-LABEL: summary f1: parameters=3 results=1 locals=5 values=3 flags=[PassesParameterOn, CreatesObjects]
+# CHECK: s0 = Instance RestParameter Array positions=8
+# CHECK-NEXT: seed l2 Site s0
+# CHECK-NOT: seed
+# CHECK: copy l1 -> l3
+# CHECK-NEXT: Allocation#0 site=s0
+# CHECK-NEXT: rest s0
+# CHECK-LABEL: summary f2: parameters=2 results=1 locals=4 values=2 flags=[PassesParameterOn]
+# CHECK-NOT: s0
+# CHECK-NOT: seed
+# CHECK-NOT: rest
+# CHECK-LABEL: summary f3:
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="everyEntryParameter" flags=[HasRestParameter, HasThis, HasNewTarget, HasArgumentCount] captures=[{type=anything}, {type=number}] parameters=[{type=anything}, {type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: anything, v3: anything, v4: int[0, 4294967295], v5: anything, v6: anything, v7: Array):
+    Return v5
+}
+function f1 name="hiddenRest" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    Return v1
+}
+function f2 name="arrayParameterWithoutRest" parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    Return v0
+}

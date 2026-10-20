@@ -28,7 +28,6 @@
 #include <array>
 #include <wtf/HashFunctions.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -118,7 +117,7 @@ public:
         auto& entry = lookup(i);
         entry.key = i;
         entry.value = value;
-        put(entry.jsString, string);
+        entry.jsString = string;
     }
 
     void clearOnGarbageCollection()
@@ -132,23 +131,6 @@ public:
         // 0-9 are managed by SmallStrings. They never die.
         for (unsigned i = 10; i < m_smallIntCache.size(); ++i)
             m_smallIntCache[i].jsString = nullptr;
-    }
-
-    void didFinishCollection()
-    {
-        m_slotsWrittenSinceLastCollection.shrink(0);
-        m_hasWrittenTooManySlots = false;
-    }
-
-    template<typename Visitor>
-    void visitSlotsWrittenSinceLastCollection(Visitor& visitor)
-    {
-        if (m_hasWrittenTooManySlots) {
-            visitAggregate(visitor);
-            return;
-        }
-        for (JSString** place : m_slotsWrittenSinceLastCollection)
-            visitor.appendUnbarriered(*place);
     }
 
     template<typename Visitor>
@@ -175,9 +157,8 @@ private:
     {
         ASSERT(m_doubleCache);
         uint64_t bits = std::bit_cast<uint64_t>(d);
-        uint32_t hash = (static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32)) * 2654435769u;
-        static_assert(doubleCacheSize == 1 << 12);
-        return m_doubleCache->m_doubleCache[hash >> 20];
+        uint32_t hash = static_cast<uint32_t>(bits) ^ static_cast<uint32_t>(bits >> 32);
+        return m_doubleCache->m_doubleCache[hash & (doubleCacheSize - 1)];
     }
     CacheEntryWithJSString<int>& lookup(int i) { return m_intCache[WTF::IntHash<int>::hash(i) & (cacheSize - 1)]; }
     CacheEntry<unsigned>& lookup(unsigned i) { return m_unsignedCache[WTF::IntHash<unsigned>::hash(i) & (cacheSize - 1)]; }
@@ -191,22 +172,10 @@ private:
 
     JS_EXPORT_PRIVATE void initializeDoubleCache();
 
-    JSString* put(JSString*& place, JSString* cell)
-    {
-        place = cell;
-        if (m_slotsWrittenSinceLastCollection.size() < 2 * cacheSize + doubleCacheSize)
-            m_slotsWrittenSinceLastCollection.append(&place);
-        else
-            m_hasWrittenTooManySlots = true;
-        return cell;
-    }
-
     std::array<StringWithJSString, cacheSize> m_smallIntCache { };
     std::array<CacheEntryWithJSString<int>, cacheSize> m_intCache { };
     std::array<CacheEntry<unsigned>, cacheSize> m_unsignedCache { };
     std::unique_ptr<DoubleCache> m_doubleCache;
-    Vector<JSString**> m_slotsWrittenSinceLastCollection;
-    bool m_hasWrittenTooManySlots { false };
 };
 
 } // namespace JSC

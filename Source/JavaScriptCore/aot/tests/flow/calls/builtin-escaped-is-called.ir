@@ -1,0 +1,29 @@
+# A built-in function that reaches native code may be the callee of any call whose callee nobody knows, so it is called with what was handed to such callees, and with nothing else that has reached native code
+# RUN: flow-solve objects sinks
+# RUN(USES): flow-links uses
+# CHECK: L0#[[holder]] mutations=[ReachNativeCode, ChangeIntegrity] uses=
+# CHECK: L1#[[escaped]] mutations=[ReachNativeCode, ChangeIntegrity] uses=
+# CHECK: nativeCode {{*}}L0#[[holder]], L1#[[escaped]]{{*}}ObjectFreeze
+# USES-NOT: use ObjectSeal
+# USES: use ObjectFreeze [Read, Called, Escaped] f0:v2
+# USES-NOT: use ObjectSeal
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="f" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Escaped" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="freeze"
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v4
+    v7 = Integer integer=1
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v5, -, v9
+    Return
+}

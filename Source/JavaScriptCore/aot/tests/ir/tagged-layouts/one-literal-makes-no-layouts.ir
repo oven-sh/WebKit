@@ -1,0 +1,20 @@
+# One literal below the declared `this` tells nothing apart.
+# RUN: print
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=number predicted=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=object predicted=L1} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    PropSet v0, v1 key="kind" mode=Strict
+    Return
+}
+
+# CHECK-LABEL: function f1 name="NodeObject" module=m0 flags=[HasThis] thisType=
+# CHECK-NOT: Switch

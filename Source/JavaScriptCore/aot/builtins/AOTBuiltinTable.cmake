@@ -1,0 +1,68 @@
+set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS
+    aot/builtins/array-callbacks.builtins.ts
+    aot/builtins/array.builtins.ts
+    aot/builtins/buffer.builtins.ts
+    aot/builtins/date.builtins.ts
+    aot/builtins/engine-syntax.builtins.ts
+    aot/builtins/error.builtins.ts
+    aot/builtins/function.builtins.ts
+    aot/builtins/global.builtins.ts
+    aot/builtins/holders.builtins.ts
+    aot/builtins/intl.builtins.ts
+    aot/builtins/iterator.builtins.ts
+    aot/builtins/json.builtins.ts
+    aot/builtins/layouts.builtins.ts
+    aot/builtins/link-time-constants.builtins.ts
+    aot/builtins/map-set.builtins.ts
+    aot/builtins/math.builtins.ts
+    aot/builtins/number.builtins.ts
+    aot/builtins/object.builtins.ts
+    aot/builtins/promise.builtins.ts
+    aot/builtins/reflect.builtins.ts
+    aot/builtins/regexp.builtins.ts
+    aot/builtins/string.builtins.ts
+    aot/builtins/symbol.builtins.ts
+    aot/builtins/typedarray.builtins.ts
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
+    aot/builtins/handwritten/ArrayIteratorPrototype.ts
+    aot/builtins/handwritten/GeneratorPrototype.ts
+    aot/builtins/handwritten/IteratorOperations.ts
+    aot/builtins/handwritten/JSIteratorHelperPrototype.ts
+    aot/builtins/handwritten/MapPrototype.ts
+    aot/builtins/handwritten/SetPrototype.ts
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS
+    aot/builtins/models/Arrays.ts
+    aot/builtins/models/Collections.ts
+    aot/builtins/models/Iterators.ts
+    aot/builtins/models/Objects.ts
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS
+    aot/builtins/generated/AOTBuiltinFeatures.h
+    aot/builtins/generated/AOTBuiltinIDs.h
+    aot/builtins/generated/AOTBuiltinTableArrays.h
+    aot/builtins/generated/AOTBuiltinTableWords.h
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES
+    aot/builtins/generated/AOTBuiltinTableAttachments.cpp
+    aot/builtins/generated/AOTBuiltinTableBuiltins.cpp
+    aot/builtins/generated/AOTBuiltinTableEngineBindings.cpp
+    aot/builtins/generated/AOTBuiltinTableNames.cpp
+    aot/builtins/generated/AOTBuiltinTableOverloads.cpp
+    aot/builtins/generated/AOTBuiltinTableTypes.cpp
+)
+
+set(JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS
+    aot/builtins/AOTBuiltinIDTypes.h
+    aot/builtins/AOTBuiltinTable.h
+    aot/builtins/AOTBuiltinTableBindings.h
+    aot/builtins/AOTBuiltinTableGuards.h
+    aot/builtins/AOTBuiltinTableRealm.h
+    aot/builtins/generated/AOTBuiltinFeatures.h
+    aot/builtins/generated/AOTBuiltinIDs.h
+)

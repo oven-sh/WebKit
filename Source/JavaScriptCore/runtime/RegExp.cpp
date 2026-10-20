@@ -22,23 +22,25 @@
 
 #include "config.h"
 #include "RegExp.h"
-#include "CompilerHooks.h"
 
-#include "AOTImage.h"
-#include "AOTRuntime.h"
+#include "AOTRemovableFeature.h"
 #include "Lexer.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
 #include "SourceCharacters.h"
-#include "VMEntryScope.h"
+#include "YarrCharacterSetBits.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
-#include <wtf/CompilationThread.h>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
+
+#if ENABLE(AOT)
+#include "AOTRegExpInProcessLoader.h"
+#include "AOTRegExpRecords.h"
+#endif
 
 namespace JSC {
 
@@ -170,38 +172,15 @@ RegExp::RegExp(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags
 static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
 // Deeper patterns are built eagerly so that YarrPatternConstructor's recursion limit still reports at construction.
 static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
-#if ENABLE(AOT)
-static_assert(maxLazilyConstructedParenthesesDepth == AOT::ImageRegExp::maxParenthesesDepthWithoutPattern);
-#endif
-
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-static ALWAYS_INLINE void countDigest(VM& vm, const std::optional<AOT::Image::CodeForRegExp>& code)
-{
-    if (Options::useAOTOperationCounters() && vm.m_aotRuntimeTable && code && code->wasFoundByDigest) [[unlikely]]
-        vm.m_aotRuntimeTable->countOperation("Image::codeForRegExp digest");
-}
-#endif
 
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    auto code = vm.useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt;
-    countDigest(vm, code);
-    if (code && code->hasCode)
-        m_codeWasFoundInImage = true;
-    m_sourceIsPattern = code && code->sourceIsPattern;
-    if (code && !code->retainsPatternDetails) {
-        if (code->recordWithSourceInPieces) {
-            m_rareData = makeUnique<RareData>();
-            m_rareData->m_recordWithSourceInPieces = code->recordWithSourceInPieces;
-            m_patternString = String();
-        } else if (m_patternString.length() > AOT::ImageRegExp::minLengthStoredAsImageString)
-            m_patternString = code->text.is8Bit() ? String(StringImpl::createWithoutCopyingWithHash(code->text.span8(), m_patternString.hash())) : String(StringImpl::createWithoutCopyingWithHash(code->text.span16(), m_patternString.hash()));
-        m_specificPattern = code->specificPattern;
-        m_numSubpatterns = code->numSubpatterns;
-        m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
-        return;
+#if ENABLE(AOT)
+    if (const AOT::ImageRegExp* record = AOT::findRegExpRecord(vm, m_patternString, m_flags)) {
+        finishCreationFromImage(vm, *record);
+        if (record->form() != AOT::RegExpRecordForm::NoMetadata)
+            return;
     }
 #endif
     if (Options::useLazyRegExpPatternConstruction() && m_patternString.length() > maxEagerlyConstructedPatternLength) {
@@ -218,7 +197,7 @@ void RegExp::finishCreation(VM& vm)
         }
     }
 
-    Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+    Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns, Yarr::PatternAnalysis::Skipped);
     if (!isValid()) {
         m_state = ParseError;
         return;
@@ -231,6 +210,31 @@ void RegExp::finishCreation(VM& vm)
         offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
     m_ovector = FixedVector<int>(offsetVectorSize);
 }
+
+#if ENABLE(AOT)
+void RegExp::finishCreationFromImage(VM& vm, const AOT::ImageRegExp& record)
+{
+    m_imageRecord = &record;
+    if (record.form() == AOT::RegExpRecordForm::NoMetadata)
+        return;
+
+    m_numSubpatterns = record.numSubpatterns;
+    m_minimumSize = record.minimumSize;
+    m_specificPattern = record.specificPattern();
+    if (record.form() == AOT::RegExpRecordForm::Atom)
+        m_atom = AOT::regExpAtomOf(vm, record);
+    if (record.hasNamedGroups) {
+        auto groups = AOT::decodeRegExpNamedGroups(vm, record);
+        auto rareData = makeUnique<RareData>();
+        rareData->m_numDuplicateNamedCaptureGroups = groups.numDuplicateNamedCaptureGroups;
+        rareData->m_captureGroupNames = WTF::move(groups.captureGroupNames);
+        rareData->m_namedGroupToParenIndices = WTF::move(groups.namedGroupToParenIndices);
+        WTF::storeStoreFence();
+        m_rareData = WTF::move(rareData);
+    }
+    m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures() + (m_rareData ? m_rareData->m_numDuplicateNamedCaptureGroups : 0));
+}
+#endif
 
 void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
 {
@@ -245,25 +249,27 @@ void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
     if (m_rareData)
         return;
 #endif
-    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty()) {
+    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndices.isEmpty() || pattern.m_specificCharacterClass) {
         auto rareData = makeUnique<RareData>();
         rareData->m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
         rareData->m_captureGroupNames = FixedVector<AtomString>::map(pattern.m_captureGroupNames, [](auto& name) {
             return AtomString { name };
         });
         rareData->m_namedGroupToParenIndices.swap(pattern.m_namedGroupToParenIndices);
+        rareData->m_specificCharacterClass = WTF::move(pattern.m_specificCharacterClass);
         // The concurrent GC thread reads m_rareData in visitChildren, so it must observe a fully initialized RareData.
         WTF::storeStoreFence();
         m_rareData = WTF::move(rareData);
     }
 }
 
-void RegExp::destroy(JSCell* cell)
+NEVER_INLINE void RegExp::destroy(JSCell* cell)
 {
     RegExp* thisObject = static_cast<RegExp*>(cell);
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->clearRegExp(this);
 #endif
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::destroy);
     thisObject->RegExp::~RegExp();
 }
 
@@ -329,37 +335,16 @@ RegExp* RegExp::createWithoutCaching(VM& vm, const String& patternString, Option
     return regExp;
 }
 
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
+#if ENABLE(AOT)
+NEVER_INLINE RegExp* RegExp::createFromImage(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags, const AOT::ImageRegExp& record)
 {
-    auto code = AOT::Image::codeForRegExp(patternString, flags);
-    countDigest(vm, code);
-    if (!code || code->retainsPatternDetails || !code->hasCode)
-        return nullptr;
-    RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, patternString, flags);
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::createFromImage);
+    ASSERT(AOT::ImageRegExp::significantFlags(flags) == record.flags());
+    if (record.form() == AOT::RegExpRecordForm::NoMetadata)
+        return RegExp::create(vm, pattern, flags);
+    RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, pattern, flags);
     regExp->Base::finishCreation(vm);
-    regExp->m_codeWasFoundInImage = true;
-    regExp->m_specificPattern = code->specificPattern;
-    regExp->m_numSubpatterns = code->numSubpatterns;
-    regExp->m_sourceIsPattern = code->sourceIsPattern;
-    regExp->m_ovector = FixedVector<int>(regExp->offsetVectorBaseForNamedCaptures());
-    return regExp;
-}
-#endif
-
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-RegExp* RegExp::createWithSourceInPieces(VM& vm, const AOT::ImageRegExp& record, OptionSet<Yarr::Flags> flags)
-{
-    auto code = AOT::Image::codeForRegExpRecord(record);
-    RELEASE_ASSERT(!code.retainsPatternDetails);
-    RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, String(), flags);
-    regExp->Base::finishCreation(vm);
-    regExp->m_sourceIsPattern = code.sourceIsPattern;
-    regExp->m_rareData = makeUnique<RareData>();
-    regExp->m_rareData->m_recordWithSourceInPieces = &record;
-    regExp->m_specificPattern = code.specificPattern;
-    regExp->m_numSubpatterns = code.numSubpatterns;
-    regExp->m_ovector = FixedVector<int>(regExp->offsetVectorBaseForNamedCaptures());
+    regExp->finishCreationFromImage(vm, record);
     return regExp;
 }
 #endif
@@ -373,40 +358,64 @@ void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& a
 {
     Base::finishCreation(vm);
     m_atom = WTF::move(atom);
-    m_specificPattern = specificPattern;
+    // The bytecode cache carries no character set: the first compile finds a class form again.
+    bool needsCharacterSet = specificPattern == Yarr::SpecificPattern::CharacterClass || specificPattern == Yarr::SpecificPattern::CharacterClassPlus;
+    m_specificPattern = needsCharacterSet ? Yarr::SpecificPattern::None : specificPattern;
     m_numSubpatterns = numSubpatterns;
     m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
 }
 
-
-
-std::unique_ptr<Yarr::BytecodePattern> RegExp::byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode, bool alwaysWithBytecode)
+std::optional<Yarr::CharacterSetView> RegExp::specificCharacterClass() const
 {
-    auto bytecode = Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock, alwaysWithBytecode);
-    if (bytecode && bytecode->m_fastProgram) {
-        bytecode->m_fastProgram->owner = this;
-        bytecode->m_fastProgram->handOver = handOverFromFlatProgram;
+    switch (m_specificPattern) {
+    case Yarr::SpecificPattern::None:
+    case Yarr::SpecificPattern::Atom:
+    case Yarr::SpecificPattern::LeadingSpacesStar:
+    case Yarr::SpecificPattern::LeadingSpacesPlus:
+    case Yarr::SpecificPattern::TrailingSpacesStar:
+    case Yarr::SpecificPattern::TrailingSpacesPlus:
+    case Yarr::SpecificPattern::Newlines:
+        return std::nullopt;
+    case Yarr::SpecificPattern::CharacterClass:
+    case Yarr::SpecificPattern::CharacterClassPlus:
+        if (m_rareData && m_rareData->m_specificCharacterClass)
+            return Yarr::CharacterSetView(*m_rareData->m_specificCharacterClass);
+#if ENABLE(AOT)
+        RELEASE_ASSERT(m_imageRecord);
+        return AOT::regExpCharacterSetOf(vm(), *m_imageRecord);
+#else
+        break;
+#endif
     }
-    return bytecode;
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-void RegExp::crashIfCompiledProgramLiteralIsInterpreted() const
+
+static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
 {
-    if (!Options::crashIfInterpreterIsUsed() || !m_isCompiledProgramLiteral || hasValidAtom()) [[likely]]
+    return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);
+}
+
+#if ENABLE(AOT)
+void RegExp::crashIfLiteralIsInterpreted() const
+{
+    if (!Options::crashIfInterpreterIsUsed() || !m_imageRecord || !m_imageRecord->isLiteral || hasValidAtom()) [[likely]]
         return;
-    dataLogLn("crashIfInterpreterIsUsed: regular expression /", pattern(), "/", StringView { Yarr::flagsString(m_flags).span() });
+    dataLogLn("crashIfInterpreterIsUsed: regular expression /", m_patternString, "/", StringView { Yarr::flagsString(m_flags).span() });
     CRASH();
 }
+#endif
 
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
 {
-    crashIfCompiledProgramLiteralIsInterpreted();
+#if ENABLE(AOT)
+    crashIfLiteralIsInterpreted();
+#endif
     Locker locker { cellLock() };
 
     if (m_regExpBytecode)
         return;
 
-    ensurePattern();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -422,47 +431,32 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
 }
 
-unsigned RegExp::handOverFromFlatProgram(void* owner, StringView s, unsigned startOffset, unsigned* offsetVector)
-{
-    auto& regExp = *static_cast<RegExp*>(owner);
-    if (!regExp.m_regExpBytecode->m_fastProgram->hasBytecode) {
-        if (isCompilationThread())
-            return Yarr::flatProgramGaveUp;
-        VM& vm = regExp.vm();
-        Locker locker { regExp.cellLock() };
-        regExp.ensurePattern();
-        regExp.m_regExpBytecode = nullptr;
-        Yarr::YarrPattern pattern(regExp.m_patternString, regExp.m_flags, regExp.m_constructionErrorCode);
-        if (!hasError(regExp.m_constructionErrorCode))
-            regExp.m_regExpBytecode = regExp.byteCodeCompilePattern(&vm, pattern, regExp.m_constructionErrorCode, true);
-        if (!regExp.m_regExpBytecode) {
-            regExp.m_state = ParseError;
-            return Yarr::offsetNoMatch;
-        }
-    }
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "The flat program gave up: the bytecode interpreter answers");
-    return Yarr::interpretBytecode(regExp.m_regExpBytecode.get(), s, startOffset, offsetVector);
-}
-
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-void RegExp::materializePatternFromPieces() const
-{
-    if (m_rareData && m_rareData->m_recordWithSourceInPieces)
-        m_patternString = AOT::Image::regExpSource(*m_rareData->m_recordWithSourceInPieces);
-}
-
+#if ENABLE(AOT)
 bool RegExp::takeCodeFromImage(VM& vm)
 {
-    auto code = hasSourceInPieces() && m_rareData && m_rareData->m_recordWithSourceInPieces ? std::optional { AOT::Image::codeForRegExpRecord(*m_rareData->m_recordWithSourceInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage);
-    countDigest(vm, code);
-    if (!code || code->retainsPatternDetails || !code->hasCode)
+    if (!m_imageRecord || m_imageRecord->form() != AOT::RegExpRecordForm::Code)
         return false;
     if (!hasCode())
         vm.regExpCache()->addToStrongCache(this);
-    ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+    auto entrypoints = AOT::regExpEntrypointsOf(vm, *m_imageRecord);
+    ensureRegExpJITCode().setCodeFromImage(entrypoints.for8Bit, entrypoints.for16Bit);
     m_state = JITCode;
-    m_minimumSize = code->minimumSize;
+    m_minimumSize = m_imageRecord->minimumSize;
     return true;
+}
+#endif
+
+#if ENABLE(YARR_JIT)
+void RegExp::compileWithJIT(VM* vm, const Yarr::YarrPattern& pattern, Yarr::CharSize charSize, std::optional<StringView> sampleString, Yarr::ExecutionMode mode)
+{
+    auto& jitCode = ensureRegExpJITCode();
+#if ENABLE(AOT)
+    if (Options::useRegExpImageMode()) [[unlikely]] {
+        callRemovable<RemovableFeature::ImageCompiler, RemovedFeatureStub::Abort, &AOT::jitCompileThroughImage>(StringView(m_patternString), m_flags, jitCode);
+        return;
+    }
+#endif
+    callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &Yarr::jitCompile>(pattern, StringView(m_patternString), charSize, sampleString, vm, jitCode, mode);
 }
 #endif
 
@@ -471,14 +465,9 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)
-    if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
-        vm->m_aotRuntimeTable->countOperation("RegExp::compile");
-#endif
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (vm->useImmutableIntrinsics && takeCodeFromImage(*vm))
+    if (takeCodeFromImage(*vm))
         return;
 #endif
-    ensurePattern();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -495,17 +484,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
-        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
-        m_state = JITCode;
-        m_minimumSize = pattern.m_body->m_minimumSize;
-        return;
-    }
-    crashIfCompiledProgramLiteralIsInterpreted();
-    if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
-        AOT::recordSample(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
-        AOT::recordSample(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
-    }
+    crashIfLiteralIsInterpreted();
 #endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
@@ -513,10 +492,8 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 #endif
         && (!pattern.m_containsLookbehinds || Options::useRegExpLookbehindJIT())
         ) {
-        auto& jitCode = ensureRegExpJITCode();
-        reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
-        if (!jitCode.failureReason()) {
-            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
+        compileWithJIT(vm, pattern, charSize, sampleString, Yarr::ExecutionMode::IncludeSubpatterns);
+        if (!m_regExpJITCode->failureReason()) {
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
             return;
@@ -542,7 +519,7 @@ const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPositio
 {
     ASSERT_UNUSED(position, position == FirstCharacterFilterPosition::AtStart ? !globalOrSticky() : sticky());
     const auto& result = m_firstCharacterBitmap.ensure([&] {
-        auto bitmap = Yarr::computeFirstCharacterBitmap(pattern(), m_flags);
+        auto bitmap = Yarr::computeFirstCharacterBitmap(m_patternString, m_flags);
         if (!bitmap || bitmap->isFull()) {
             WTF::BitSet<256> full;
             full.setAll();
@@ -582,19 +559,10 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)
-    if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
-        vm->m_aotRuntimeTable->countOperation("RegExp::compile");
-#endif
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (vm->useImmutableIntrinsics && takeCodeFromImage(*vm))
+    if (takeCodeFromImage(*vm))
         return;
 #endif
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    bool willUseInterpreter = vm->useImmutableIntrinsics && !Options::useRegExpJIT();
-#else
-    constexpr bool willUseInterpreter = false;
-#endif
-    ensurePattern();
+    bool willUseInterpreter = !Options::useRegExpJIT();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, willUseInterpreter ? Yarr::ExecutionMode::IncludeSubpatterns : Yarr::ExecutionMode::MatchOnly);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -611,17 +579,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags, m_codeWasFoundInImage) : std::nullopt; code && code->hasCode) {
-        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
-        m_state = JITCode;
-        m_minimumSize = pattern.m_body->m_minimumSize;
-        return;
-    }
-    crashIfCompiledProgramLiteralIsInterpreted();
-    if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
-        AOT::recordSample(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
-        AOT::recordSample(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
-    }
+    crashIfLiteralIsInterpreted();
 #endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
@@ -629,10 +587,8 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 #endif
         && (!pattern.m_containsLookbehinds || Options::useRegExpLookbehindJIT())
         ) {
-        auto& jitCode = ensureRegExpJITCode();
-        reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
-        if (!jitCode.failureReason()) {
-            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
+        compileWithJIT(vm, pattern, charSize, sampleString, Yarr::ExecutionMode::MatchOnly);
+        if (!m_regExpJITCode->failureReason()) {
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
             return;
@@ -695,8 +651,9 @@ bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
     return m_lastUseEpoch == currentUseEpoch(vm);
 }
 
-void RegExp::deleteCode()
+NEVER_INLINE void RegExp::deleteCode()
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::deleteCode);
     Locker locker { cellLock() };
     
     if (!hasCode())
@@ -1013,22 +970,18 @@ static inline String escapePattern(const String& pattern, std::span<const Charac
     return result.toString();
 }
 
-bool RegExp::sourceIsPattern(const String& pattern)
+String RegExp::escapedPattern(const String& pattern)
 {
-    String source = pattern.is8Bit() ? escapePattern(pattern, pattern.span8()) : escapePattern(pattern, pattern.span16());
-    return source.impl() == pattern.impl();
+    return pattern.is8Bit() ? escapePattern(pattern, pattern.span8()) : escapePattern(pattern, pattern.span16());
 }
 
 String RegExp::escapedPattern() const
 {
-    ensurePattern();
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (m_sourceIsPattern)
+#if ENABLE(AOT)
+    if (m_imageRecord && m_imageRecord->sourceIsPattern)
         return m_patternString;
 #endif
-    if (m_patternString.is8Bit())
-        return escapePattern(m_patternString, m_patternString.span8());
-    return escapePattern(m_patternString, m_patternString.span16());
+    return escapedPattern(m_patternString);
 }
 
 String RegExp::toSourceString() const

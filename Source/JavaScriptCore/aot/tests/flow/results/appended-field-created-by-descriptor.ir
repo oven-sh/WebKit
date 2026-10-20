@@ -1,0 +1,35 @@
+# Object.defineProperty(o, "hidden", { value: 1 }) creates a read-only, hidden, fixed property: the field that flow appends for the name may be redefined, and so may the objects of the layout. A descriptor with all three attributes true creates a plain field
+# RUN: flow
+# RUN(HIDDEN): flow
+# RUN(PLAIN): flow
+# CHECK: class {{*}} layout=L2 impossibleMutations=[{{*}}RedefineProperty
+# HIDDEN-NOT: class {{*}} layout=L0 impossibleMutations=[{{*}}RedefineProperty
+# HIDDEN-NOT: field L0.1 "hidden"{{*}}IsNeverRedefined
+# PLAIN: field L2.1 "plain"{{*}}IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="PlainHolder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="PlainDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="writable" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="hidden"
+    v5 = Call v3, -, v1, v4, v2
+    v6 = Integer integer=5
+    PropSet v1, v6 key="hidden"
+    v8 = PropGet v1 key="hidden"
+    v9 = NewObject -, v0 layout=L2 fields=[0]
+    v10 = Boolean boolean=true
+    v11 = NewObject -, v0, v10, v10, v10 layout=L3 fields=[0, 1, 2, 3]
+    v12 = String string="plain"
+    v13 = Call v3, -, v9, v12, v11
+    PropSet v9, v6 key="plain"
+    v15 = PropGet v9 key="plain"
+    Return v8
+}

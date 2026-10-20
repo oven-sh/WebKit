@@ -1,0 +1,45 @@
+# A function of the engine has no property of its own but length and name, so what it inherits from Function.prototype is proven until the program stores under the name; what a function of the host has is not listed
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything
+    v2 = Undefined
+    v3 = Builtin builtin=ArrayPrototypeSlice
+    v4 = PropGet v3 key="call"
+    v5 = Call v4, v3, v1, v0 calleeKey="call"
+    v6 = Builtin builtin=MathMax
+    v7 = PropGet v6 key="apply"
+    v8 = Call v7, v6, v2, v1 calleeKey="apply"
+    v9 = PropGet v6 key="length"
+    v10 = Add v9, v0
+    v11 = Builtin builtin=MathMin
+    v12 = NewClosure function=f1
+    PropSet v11, v12 key="call"
+    v14 = PropGet v11 key="call"
+    v15 = Call v14, v11, v2, v0 calleeKey="call"
+    v16 = Builtin builtin=StructuredClone
+    v17 = PropGet v16 key="call"
+    v18 = Call v17, v16, v2, v0 calleeKey="call"
+    Return v10
+}
+function f1 name="other" results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v4: anything = PropGet v3 key="call"
+# CHECK-NEXT: [[call]]: builtin(FunctionPrototypeCall) = AssumeType v4 castType=builtin(FunctionPrototypeCall)
+# CHECK: v7: anything = PropGet v6 key="apply"
+# CHECK-NEXT: [[apply]]: builtin(FunctionPrototypeApply) = AssumeType v7 castType=builtin(FunctionPrototypeApply)
+# CHECK-NEXT: v8: anything = Call [[apply]], v6, v2, {{*}} callees=[builtin(FunctionPrototypeApply)]
+# CHECK: v9: anything = PropGet v6 key="length"
+# CHECK-NEXT: [[length]]: number = AssumeType v9 castType=number
+# CHECK: v14: anything = PropGet v11 key="call"
+# CHECK-NEXT: f1|builtin(FunctionPrototypeCall) = AssumeType v14 castType=f1|builtin(FunctionPrototypeCall)
+# CHECK: v17: anything = PropGet v16 key="call"
+# CHECK-NOT: AssumeType v17
+# CHECK: v18: anything = Call {{*}} callees=[{{*}}, ..]

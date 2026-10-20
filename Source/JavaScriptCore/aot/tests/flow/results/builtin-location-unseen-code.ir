@@ -1,0 +1,31 @@
+# Evaluated text replaces no member of a built-in object: start-up fixes each one that compiled code takes as a constant. Where the whole program is open no location that is constant unless written is constant
+# RUN: flow
+# RUN(CHECK2): flow
+# RUN(CHECK3): flow
+# RUN(CHECK4): flow
+# RUN(CHECK5): flow
+# RUN(CHECK6): flow
+# CHECK: builtin-location GlobalThis."Date" Constant
+# CHECK2: builtin-location GlobalThis."Symbol" Constant
+# CHECK3: builtin-location Date."now" Constant
+# CHECK4: builtin-location Symbol."iterator" Constant
+# CHECK5: builtin-location ArrayPrototype."push" Constant
+# CHECK6: unseen-code EvaluatesText f0:v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+evalscope e0 mode=Strict
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Undefined
+    v3 = DirectEval v1, v2 evalScope=e0
+    v4 = PropGet v0 key="Date" [isFreeName]
+    v5 = PropGet v4 key="now"
+    v6 = PropGet v0 key="Symbol" [isFreeName]
+    v7 = PropGet v6 key="iterator"
+    v8 = Builtin builtin=ArrayPrototype
+    v9 = PropGet v8 key="push"
+    Return
+}

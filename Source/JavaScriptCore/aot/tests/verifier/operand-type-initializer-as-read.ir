@@ -1,0 +1,88 @@
+# On the wire an initializer runs on the object that its caller constructs or on a class object, and it is never made a closure
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 6
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Instance constructor=f0
+layout L1 kind=Instance predictedBase=L0 constructor=f1 flags=[HasHeritage]
+function f0 name="goodBaseConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f13
+    Return v2
+}
+function f1 name="goodDerivedConstructor" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    v2 = SuperConstruct v1, v0 layout=L1
+    v3 = CallDirect v2 function=f13
+    Return v2
+}
+function f2 name="goodArrowInDerivedConstructor" kind=Arrow parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = SuperConstruct v0, v1 layout=L1
+    v3 = CallDirect v2 function=f13
+    Return v2
+}
+function f3 name="goodThroughUpcast" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Upcast v2 castType=object
+    v4 = CallDirect v3 function=f13
+    Return v2
+}
+function f4 name="goodClassObject" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f0
+    v1 = NewClass v0 layout=L0
+    v2 = CallDirect v1 function=f13
+    v3 = FinishClass v1 layout=L0
+    v4 = CallDirect v3 function=f13
+    Return
+}
+function f5 name="badOtherObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = CallDirect v1 function=f13
+    Return
+}
+function f6 name="badThisOfMethod" kind=Method flags=[HasThis] thisType={type=object} results=[{type=anything}] {
+  b0(v0: object):
+    v1 = CallDirect v0 function=f13
+    Return
+}
+function f7 name="badNewObjectInPlainFunction" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f13
+    Return v2
+}
+function f8 name="badSuperConstructInPlainFunction" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = SuperConstruct v0, v1 layout=L1
+    v3 = CallDirect v2 function=f13
+    Return v2
+}
+function f9 name="badClosure" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f12
+    v1 = CallDirect v0 function=f13
+    Return
+}
+function f10 name="badInitializerWithoutThis" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect function=f14
+    Return
+}
+function f11 name="badInitializerAsClosure" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f13
+    Return
+}
+function f12 name="plain" results=[{type=undefined}]
+function f13 name="initializer" kind=Initializer flags=[HasThis] thisType={type=object} results=[{type=anything}]
+function f14 name="initializerWithoutThis" kind=Initializer results=[{type=anything}]

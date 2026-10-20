@@ -1,0 +1,16 @@
+# a built-in call gives the first elements of its result only where its overload has a form for that
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodPrefix" parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    v1 = CallBuiltin v0, v0 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
+    Return
+}
+function f1 name="badPrefixOfOverloadWithoutPrefixForm" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=MathAbs/0 builtinCallForm=Prefix prefixLength=2
+    Return
+}

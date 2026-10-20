@@ -1,0 +1,40 @@
+# One read by name reads a field in each layout expected at its receiver: here `content` of the written type and of the predicted one. The predicted one is widened a round before the written one. The function is typed again after each: its values have the types that the result rules give
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Field
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Field
+layout L0 name="MessageLike" fields=[{key="content" declared={type=undefined|null|string|Array predicted=string|Array site=w0} flags=[IsRequired]}]
+layout L1 name="Message" fields=[{key="content" declared={type=undefined|null|string|Array predicted=string|Array site=w3} flags=[IsRequired]}]
+# CHECK: layout L0 {{*}}declared={type=undefined|null|string|object predicted=string|Array site=w0 flags=[AdmitsObjects]}
+# CHECK: layout L1 {{*}}declared={type=undefined|null|string|object predicted=string|Array site=w3 flags=[AdmitsObjects]}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="storesAssertedObject" parameters=[{type=undefined|null|object written=undefined|null|L1 predicted=L1 site=w2}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|string|object written=undefined|null|string|Array predicted=string|Array site=w1}
+    PropSet v0, v2 key="content"
+    Return
+}
+function f2 name="copies" parameters=[{type=undefined|null|object written=undefined|null|L1 predicted=L1 site=w2}, {type=undefined|null|object written=undefined|null|L0 predicted=L0 site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: undefined|null|object):
+    v2 = PropGet v0 key="content"
+    v3 = ClaimRead v2, v0 source=Field{key="content"} site=w3
+    PropSet v1, v3 key="content"
+    Return
+}
+function f3 name="readsBoth" parameters=[{type=undefined|null|object written=undefined|null|L0 predicted=L1 site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="content"
+    v2 = ClaimRead v1, v0 source=Field{key="content"} site=w0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="readsBoth"
+# CHECK: v1: anything ? undefined|null|string|object {{*}}= PropGet v0 key="content"
+# CHECK: v2: undefined|null|string|object {{*}}= ClaimRead v1, v0

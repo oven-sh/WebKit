@@ -1,0 +1,54 @@
+# A bitwise operator gives an int32 whatever its operands are, a mask and a shift count bound the result, and only an unsigned shift can leave the range
+# FORM: AsRead
+# RUN: int32-bounds
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Variable
+function f0 name="wrappedSum" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = Integer
+    v4 = BitOr v2, v3
+    v5 = ClaimDeclared v4 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v5: integers [-2147483648, 2147483647]
+function f1 name="maskedNumber" parameters=[{type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=255
+    v2 = BitAnd v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v3: integers [0, 255]
+function f2 name="upperBitsOfNumber" parameters=[{type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=1
+    v2 = URShift v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v3: integers [0, 2147483647]
+function f3 name="unsigned" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = URShift v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v3: integers [0, 4294967295]
+function f4 name="shiftedByUnknownCount" parameters=[{type=undefined|null|number predicted=number}, {type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|number, v1: anything):
+    v2 = URShift v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3: integers [0, 4294967295]

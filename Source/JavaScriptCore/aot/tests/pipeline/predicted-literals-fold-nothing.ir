@@ -1,0 +1,59 @@
+# A list of literals that is only predicted folds nothing: a comparison with a literal outside the list and a condition on a predicted `true` stay, because a string outside the list and `false` may arrive. The same list as a proven type folds both
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: pipeline Select
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    v3 = Call v1, -
+    v4 = ClaimDeclared v3 declared={type=undefined|null|string predicted="a"|"b"}
+    v5 = CallDirect v4 function=f1
+    v6 = Call v2, -, v5
+    v7 = Call v1, -
+    v8 = ClaimDeclared v7 declared={type=undefined|null|boolean predicted=true}
+    v9 = CallDirect v8 function=f2
+    v10 = Call v2, -, v9
+    v11 = Call v1, -
+    v12 = ClaimDeclared v11 declared={type="a"|"b"}
+    v13 = CallDirect v12 function=f3
+    v14 = Call v2, -, v13
+    Return
+}
+function f1 name="predictedList" parameters=[{type=undefined|null|string predicted="a"|"b"}] results=[{type=anything}] {
+  b0(v0: undefined|null|string ~ "a"|"b"):
+    v1 = String string="c"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f2 name="predictedTrue" parameters=[{type=undefined|null|boolean predicted=true}] results=[{type=anything}] {
+  b0(v0: undefined|null|boolean ~ true):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+function f3 name="provenList" parameters=[{type="a"|"b"}] results=[{type=anything}] {
+  b0(v0: "a"|"b"):
+    v1 = String string="c"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="predictedList"
+# CHECK: [[answer]]: boolean = ValueEqualsLiteral v0 literal="c"
+# CHECK-NEXT: Return [[answer]]
+# CHECK-LABEL: function f2 name="predictedTrue"
+# CHECK: TestAndBranch
+# CHECK: integer=1
+# CHECK: integer=2
+# CHECK-LABEL: function f3 name="provenList"
+# CHECK-NOT: ValueEqualsLiteral
+# CHECK: false = Boolean

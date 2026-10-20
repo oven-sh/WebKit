@@ -27,6 +27,7 @@
 
 #include "AirCode.h"
 #include "AirFixSpillsAfterTerminals.h"
+#include "AirFoldTrapsIntoAccesses.h"
 #include "AirGenerate.h"
 #include "AirInstInlines.h"
 #include "AirSpecial.h"
@@ -34,6 +35,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3Const64Value.h"
 #include "B3ConstDoubleValue.h"
+#include "B3MemoryValue.h"
 #include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
@@ -42,18 +44,60 @@
 #include "InitializeThreading.h"
 #include "JITCompilation.h"
 #include "LinkBuffer.h"
+#include "MachineContext.h"
 #include "Options.h"
 #include "ProbeContext.h"
 #include "PureNaN.h"
+#include "AirAllocateRegistersByGreedy.h"
+#include "AirAllocateStackByGraphColoring.h"
+#include "AirArgInlines.h"
+#include "AirBitMatrixLiveness.h"
+#include "AirBlockEntryClobberSpecial.h"
+#include "AirCustom.h"
+#include "AirDuplicateReturns.h"
+#include "AirEmitShuffle.h"
+#include "AirFormTraits.h"
+#include "AirForwardRegisterCopies.h"
+#include "AirFrameEmission.h"
+#include "AirFrameStates.h"
+#include "AirGenerationContext.h"
+#include "AirHoistCommonMoves.h"
+#include "AirInstObserver.h"
+#include "AirLimits.h"
+#include "AirLiveness.h"
+#include "AirMergeIdenticalBlocks.h"
+#include "AirOpcodeUtils.h"
+#include "AirOptimizeBlockOrder.h"
+#include "AirPadInterference.h"
+#include "AirPlanFrame.h"
+#include "AirRegLiveness.h"
+#include "AirReportUsedRegisters.h"
+#include "AirResequenceMovesBeforePatches.h"
+#include "AirReuseConditionFlags.h"
+#include "AirShrinkWrapFrame.h"
+#include "AirSplitLiveRangesAroundFrame.h"
+#include "AirStackAllocation.h"
+#include "AirStackColoring.h"
+#include "AirTmpInlines.h"
+#include "AirValidate.h"
+#include "B3CompilationReport.h"
+#include "B3Limits.h"
+#include "B3Policy.h"
+#include <csetjmp>
+#include <csignal>
 #include <regex>
 #include <string>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/InterferenceGraph.h>
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdMap.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -2234,7 +2278,7 @@ void testElideSimpleMove()
         root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
         auto compilation = compile(proc);
-#if USE(BUN_JSC_ADDITIONS) && !ENABLE(DISASSEMBLER)
+#if !ENABLE(DISASSEMBLER)
         continue;
 #endif
         auto disassembly = compilation->disassembly();
@@ -2687,570 +2731,7 @@ void testEarlyAndLateUseOfSameTmp()
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-static size_t codeSizeForTwoOops(bool isPositionIndependent, bool followsPatch)
-{
-    B3::Procedure proc;
-    proc.setPositionIndependent(isPositionIndependent);
-    Code& code = proc.code();
-
-    B3::Air::Special* patchpointSpecial = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
-
-    B3::BasicBlock* b3Root = proc.addBlock();
-    B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint->setGenerator(
-        [] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-            jit.nop();
-        });
-
-    BasicBlock* root = code.addBlock();
-    BasicBlock* second = code.addBlock();
-    BasicBlock* firstOops = code.addBlock();
-    BasicBlock* secondOops = code.addBlock();
-    BasicBlock* done = code.addBlock();
-
-    root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
-    root->setSuccessors(firstOops, second);
-    second->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
-    second->setSuccessors(secondOops, done);
-    for (BasicBlock* block : { firstOops, secondOops }) {
-        if (followsPatch)
-            block->append(Patch, patchpoint, Arg::special(patchpointSpecial));
-        block->append(Oops, nullptr);
-    }
-    done->append(Move, nullptr, Arg::imm(42), Tmp(GPRInfo::returnValueGPR));
-    done->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-    prepareForGeneration(code);
-    CCallHelpers jit;
-    generate(code, jit);
-    size_t size = jit.debugOffset();
-    LinkBuffer linkBuffer(jit, nullptr);
-    Compilation compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "testair compilation"), proc.releaseByproducts());
-    CHECK(invoke<int32_t>(compilation, 0, 0) == 42);
-    return size;
-}
-
-void testOopsTraps()
-{
-    CHECK(codeSizeForTwoOops(true, false) == codeSizeForTwoOops(false, false));
-    if (Options::defaultB3OptLevel())
-        CHECK(codeSizeForTwoOops(true, true) < codeSizeForTwoOops(false, true));
-    else
-        CHECK(codeSizeForTwoOops(true, true) == codeSizeForTwoOops(false, true));
-}
-
-template<typename Functor>
-static void checkBranchFallsThroughToLikelySuccessor(const Functor& appendBranch, int32_t (*runWith)(Compilation&, bool shouldBeTaken))
-{
-    for (bool takenIsLikely : { true, false }) {
-        B3::Procedure proc;
-        proc.setOptLevel(2);
-        Code& code = proc.code();
-        BasicBlock* root = code.addBlock();
-        BasicBlock* taken = code.addBlock(takenIsLikely ? 1 : 0.01);
-        BasicBlock* notTaken = code.addBlock(takenIsLikely ? 0.01 : 1);
-        appendBranch(root);
-        root->setSuccessors(FrequentedBlock(taken, takenIsLikely ? B3::FrequencyClass::Normal : B3::FrequencyClass::Rare), FrequentedBlock(notTaken, takenIsLikely ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal));
-        taken->append(Move, nullptr, Arg::imm(1), Tmp(GPRInfo::returnValueGPR));
-        taken->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-        notTaken->append(Move, nullptr, Arg::imm(2), Tmp(GPRInfo::returnValueGPR));
-        notTaken->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-        auto compilation = compile(proc);
-        CHECK(code.findNextBlock(root) == (takenIsLikely ? taken : notTaken));
-        CHECK(root->successorBlock(1) == code.findNextBlock(root));
-        CHECK(runWith(*compilation, true) == 1);
-        CHECK(runWith(*compilation, false) == 2);
-    }
-}
-
-void testBlockOrderInvertsBranches()
-{
-#if CPU(X86_64)
-    for (B3::Air::Opcode opcode : { BranchTestBit32, BranchTestBit64 }) {
-        checkBranchFallsThroughToLikelySuccessor([&](BasicBlock* root) {
-            root->append(opcode, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Arg::imm(3));
-        }, [](Compilation& compilation, bool shouldBeTaken) {
-            return invoke<int32_t>(compilation, shouldBeTaken ? 0x18 : 0x17);
-        });
-    }
-#elif CPU(ARM64)
-    checkBranchFallsThroughToLikelySuccessor([&](BasicBlock* root) {
-        root->append(BranchDoubleWithZero, nullptr, Arg::doubleCond(MacroAssembler::DoubleEqualAndOrdered), Tmp(FPRInfo::argumentFPR0));
-    }, [](Compilation& compilation, bool shouldBeTaken) {
-        return invoke<int32_t>(compilation, shouldBeTaken ? 0.0 : 1.5);
-    });
-    checkBranchFallsThroughToLikelySuccessor([&](BasicBlock* root) {
-        root->append(BranchFloatWithZero, nullptr, Arg::doubleCond(MacroAssembler::DoubleGreaterThanAndOrdered), Tmp(FPRInfo::argumentFPR0));
-    }, [](Compilation& compilation, bool shouldBeTaken) {
-        return invoke<int32_t>(compilation, shouldBeTaken ? 1.5f : -1.5f);
-    });
-#endif
-}
-
-struct BlocksAroundGap {
-    explicit BlocksAroundGap(Code& code)
-        : root(code.addBlock())
-        , guard(code.addBlock())
-        , afterGuard(code.addBlock())
-        , otherSuccessor(code.addBlock(0.5))
-        , rare(code.addBlock(0.01))
-    {
-        root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
-        root->setSuccessors(guard, otherSuccessor);
-        guard->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
-        guard->setSuccessors(FrequentedBlock(rare, B3::FrequencyClass::Rare), FrequentedBlock(afterGuard));
-        appendReturn(otherSuccessor, 2);
-    }
-
-    static void appendReturn(BasicBlock* block, int32_t value)
-    {
-        block->append(Move, nullptr, Arg::imm(value), Tmp(GPRInfo::returnValueGPR));
-        block->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-    }
-
-    static void appendAdditions(BasicBlock* block, unsigned number)
-    {
-        for (unsigned i = 0; i < number; ++i)
-            block->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
-    }
-
-    bool rareBlockPrecedesOtherSuccessor(B3::Procedure& proc)
-    {
-        auto compilation = compile(proc);
-        CHECK(invoke<int32_t>(*compilation, 1, 0, 0) == 1);
-        CHECK(invoke<int32_t>(*compilation, 0, 0, 0) == 2);
-        CHECK(invoke<int32_t>(*compilation, 1, 1, 0) == 3);
-        return rare->index() < otherSuccessor->index();
-    }
-
-    BasicBlock* root;
-    BasicBlock* guard;
-    BasicBlock* afterGuard;
-    BasicBlock* otherSuccessor;
-    BasicBlock* rare;
-};
-
-void testBlockOrderPlacesRareBlocksInGaps()
-{
-    enum class Case : uint8_t { IsNotRequested, Fits, IsTooLarge, IsTooFar, HasLikelyPredecessor };
-    for (Case testCase : { Case::IsNotRequested, Case::Fits, Case::IsTooLarge, Case::IsTooFar, Case::HasLikelyPredecessor }) {
-        B3::Procedure proc;
-        proc.setOptLevel(2);
-        Code& code = proc.code();
-        if (testCase != Case::IsNotRequested)
-            code.setPlacesRareBlocksInGaps();
-        code.setRecordsRareCodeStart();
-        BlocksAroundGap blocks(code);
-        if (testCase == Case::IsTooFar)
-            BlocksAroundGap::appendAdditions(blocks.afterGuard, 30);
-        BlocksAroundGap::appendReturn(blocks.afterGuard, 1);
-        if (testCase == Case::IsTooLarge)
-            BlocksAroundGap::appendAdditions(blocks.rare, 20);
-        BlocksAroundGap::appendReturn(blocks.rare, 3);
-        if (testCase == Case::HasLikelyPredecessor) {
-            blocks.otherSuccessor->insts().clear();
-            blocks.otherSuccessor->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::argumentGPR2));
-            BasicBlock* last = code.addBlock();
-            blocks.otherSuccessor->setSuccessors(blocks.rare, last);
-            BlocksAroundGap::appendReturn(last, 2);
-        }
-
-        CHECK(blocks.rareBlockPrecedesOtherSuccessor(proc) == (testCase == Case::Fits));
-        if (testCase != Case::HasLikelyPredecessor)
-            CHECK(code.numberOfBlocksInChains() == (testCase == Case::Fits ? 5u : 4u));
-    }
-}
-
-void testBlockOrderComparesEdges()
-{
-    enum class Case : uint8_t { IsNotRequested, EdgesAreLevel, BodyIsUnlikely };
-    for (Case testCase : { Case::IsNotRequested, Case::EdgesAreLevel, Case::BodyIsUnlikely }) {
-        B3::Procedure proc;
-        proc.setOptLevel(2);
-        Code& code = proc.code();
-        if (testCase != Case::IsNotRequested)
-            code.setOrdersBlocksByEdgeFrequency();
-        double bodyFrequency = testCase == Case::BodyIsUnlikely ? 0.2 : 0.5;
-        BasicBlock* root = code.addBlock();
-        BasicBlock* body = code.addBlock(bodyFrequency);
-        BasicBlock* firstTarget = code.addBlock(bodyFrequency / 2);
-        BasicBlock* secondTarget = code.addBlock(bodyFrequency / 2);
-        BasicBlock* join = code.addBlock();
-        root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
-        root->setSuccessors(body, join);
-        body->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
-        body->setSuccessors(firstTarget, secondTarget);
-        firstTarget->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR2));
-        firstTarget->append(Jump, nullptr);
-        firstTarget->setSuccessors(join);
-        secondTarget->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR2));
-        secondTarget->append(Jump, nullptr);
-        secondTarget->setSuccessors(join);
-        join->append(Move, nullptr, Tmp(GPRInfo::argumentGPR2), Tmp(GPRInfo::returnValueGPR));
-        join->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-        auto compilation = compile(proc);
-        CHECK(invoke<int32_t>(*compilation, 0, 0, 5) == 5);
-        CHECK(invoke<int32_t>(*compilation, 1, 1, 5) == 6);
-        CHECK(invoke<int32_t>(*compilation, 1, 0, 5) == 7);
-        CHECK((body->index() < join->index()) == (testCase == Case::EdgesAreLevel));
-    }
-}
-
-void testBlockOrderKeepsUnlikelySideOutOfLine()
-{
-    enum class Shape : uint8_t { Triangle, Diamond };
-    for (Shape shape : { Shape::Triangle, Shape::Diamond }) {
-        for (bool hasFrequencies : { false, true }) {
-            for (auto [sideFrequency, rootFrequency] : { std::pair { 0.5, 1.0 }, std::pair { 0.2, 1.0 }, std::pair { 0.5, 1.4 }, std::pair { 0.2, 1.4 } }) {
-                B3::Procedure proc;
-                proc.setOptLevel(2);
-                Code& code = proc.code();
-                if (hasFrequencies)
-                    code.setOrdersBlocksByEdgeFrequency();
-                BasicBlock* root = code.addBlock(rootFrequency);
-                BasicBlock* side = code.addBlock(sideFrequency);
-                BasicBlock* otherSide = shape == Shape::Diamond ? code.addBlock(1 - sideFrequency) : nullptr;
-                BasicBlock* join = code.addBlock();
-                root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
-                root->setSuccessors(side, otherSide ? otherSide : join);
-                side->append(Add32, nullptr, Arg::imm(1), Tmp(GPRInfo::argumentGPR1));
-                side->append(Jump, nullptr);
-                side->setSuccessors(join);
-                if (otherSide) {
-                    otherSide->append(Add32, nullptr, Arg::imm(2), Tmp(GPRInfo::argumentGPR1));
-                    otherSide->append(Jump, nullptr);
-                    otherSide->setSuccessors(join);
-                }
-                join->append(Move, nullptr, Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::returnValueGPR));
-                join->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-                auto compilation = compile(proc);
-                CHECK(invoke<int32_t>(*compilation, 1, 5) == 6);
-                CHECK(invoke<int32_t>(*compilation, 0, 5) == (otherSide ? 7 : 5));
-                CHECK((side->index() > join->index()) == (hasFrequencies && sideFrequency < 0.5));
-            }
-        }
-    }
-}
-
-static RegisterSet callClobberedRegisters()
-{
-    RegisterSet result = RegisterSet::allGPRs();
-    result.exclude(RegisterSet::calleeSaveRegisters());
-    result.exclude(RegisterSet::stackRegisters());
-    result.exclude(RegisterSet::reservedHardwareRegisters());
-    return result;
-}
-
-static B3::PatchpointValue* addCallLikePatchpoint(B3::Procedure& proc)
-{
-    B3::BasicBlock* b3Root = proc.size() ? proc.at(0) : proc.addBlock();
-    B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
-    patchpoint->clobberLate(callClobberedRegisters());
-    patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
-        callClobberedRegisters().forEach([&](Reg reg) {
-            jit.move(CCallHelpers::TrustedImm32(-1), reg.gpr());
-        });
-    });
-    return patchpoint;
-}
-
-static unsigned savedRegisterCountForValueLiveAcrossCalls(bool chargesForCalleeSaves, unsigned numberOfCalls, bool noCalleeSaveIsSaved = false)
-{
-    B3::Procedure proc;
-    proc.setOptLevel(2);
-    Code& code = proc.code();
-    if (chargesForCalleeSaves)
-        code.setChargesForCalleeSaves();
-    if (noCalleeSaveIsSaved)
-        code.setUnsavedCalleeSaves(RegisterSet::calleeSaveRegisters());
-    B3::Air::Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
-    B3::PatchpointValue* patchpoint = addCallLikePatchpoint(proc);
-
-    BasicBlock* root = code.addBlock();
-    StackSlot* slot = code.addStackSlot(8, StackSlotKind::Locked);
-    Tmp kept = code.newTmp(GP);
-    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), kept);
-    for (unsigned i = 0; i < numberOfCalls; ++i) {
-        root->append(Patch, patchpoint, Arg::special(special));
-        root->append(Move, nullptr, kept, Arg::stack(slot));
-    }
-    root->append(Move, nullptr, Arg::stack(slot), Tmp(GPRInfo::returnValueGPR));
-    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-    auto compilation = compile(proc);
-    if (!noCalleeSaveIsSaved)
-        CHECK(invoke<int64_t>(*compilation, 7) == 7);
-    return code.calleeSaveRegisterAtOffsetList().registerCount();
-}
-
-void testCalleeSaveCost()
-{
-    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 1) == 1);
-    CHECK(savedRegisterCountForValueLiveAcrossCalls(true, 1) == 0);
-    CHECK(savedRegisterCountForValueLiveAcrossCalls(true, 6) == 1);
-    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 6) == 1);
-}
-
-void testUnsavedCalleeSaves()
-{
-    CHECK(savedRegisterCountForValueLiveAcrossCalls(false, 6, true) == 0);
-}
-
-void testEpilogueGenerator()
-{
-    for (bool hasGenerator : { false, true }) {
-        B3::Procedure proc;
-        proc.setOptLevel(2);
-        Code& code = proc.code();
-        BasicBlock* root = code.addBlock();
-        BasicBlock* other = code.addBlock();
-        root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
-        root->setSuccessors(other, other);
-        BasicBlock* second = code.addBlock();
-        root->setSuccessors(other, second);
-        for (BasicBlock* block : { other, second }) {
-            block->append(Move, nullptr, Arg::imm(block == other ? 1 : 2), Tmp(GPRInfo::returnValueGPR));
-            block->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
-        }
-        if (hasGenerator) {
-            code.setEpilogueGenerator(createSharedTask<EpilogueGeneratorFunction>([](CCallHelpers& jit, Code&) {
-                jit.add32(CCallHelpers::TrustedImm32(40), GPRInfo::returnValueGPR);
-                jit.emitFunctionEpilogue();
-                jit.ret();
-            }));
-        }
-        auto compilation = compile(proc);
-        CHECK(invoke<int32_t>(*compilation, 1) == (hasGenerator ? 41 : 1));
-        CHECK(invoke<int32_t>(*compilation, 0) == (hasGenerator ? 42 : 2));
-    }
-}
-
-void testManyValuesLiveAcrossCall()
-{
-    constexpr unsigned numberOfValues = 60;
-    for (bool isForImage : { false, true }) {
-        B3::Procedure proc;
-        proc.setOptLevel(2);
-        Code& code = proc.code();
-        if (isForImage) {
-            proc.setPositionIndependent();
-            code.setChargesForCalleeSaves();
-        }
-        B3::Air::Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
-        B3::PatchpointValue* patchpoint = addCallLikePatchpoint(proc);
-
-        BasicBlock* root = code.addBlock();
-        Tmp base = code.newTmp(GP);
-        Tmp sum = code.newTmp(GP);
-        Vector<Tmp> values;
-        root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), base);
-        for (unsigned i = 0; i < numberOfValues; ++i) {
-            values.append(code.newTmp(GP));
-            root->append(Move, nullptr, Arg::addr(base, static_cast<int32_t>(i * sizeof(int64_t))), values.last());
-        }
-        root->append(Patch, patchpoint, Arg::special(special));
-        root->append(Move, nullptr, Arg::imm(0), sum);
-        for (unsigned i = 0; i < numberOfValues; ++i) {
-            for (unsigned k = 0; k <= i % 5; ++k)
-                root->append(Add64, nullptr, values[i], sum);
-        }
-        root->append(Patch, patchpoint, Arg::special(special));
-        for (unsigned i = 0; i < numberOfValues; i += 7)
-            root->append(Add64, nullptr, values[i], sum);
-        root->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
-        root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-        int64_t memory[numberOfValues];
-        int64_t expected = 0;
-        for (unsigned i = 0; i < numberOfValues; ++i) {
-            memory[i] = (i + 1) * 1000003ll;
-            expected += memory[i] * (i % 5 + 1 + !(i % 7));
-        }
-        CHECK(compileAndRun<int64_t>(proc, memory) == expected);
-    }
-}
-
-void testPatchArgRolesAreStable()
-{
-    B3::Procedure proc;
-    proc.setOptLevel(2);
-    Code& code = proc.code();
-    B3::Air::Special* special = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
-    B3::BasicBlock* b3Root = proc.addBlock();
-    for (unsigned numberOfChildren : { 0u, 1u, 2u, 3u, 10u, 50u }) {
-        B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Int64, B3::Origin());
-        Vector<Arg> args { Arg::special(special), Arg(code.newTmp(GP)) };
-        for (unsigned i = 0; i < numberOfChildren; ++i) {
-            bool isDouble = i % 3 == 2;
-            B3::Value* child = isDouble ? static_cast<B3::Value*>(b3Root->appendNew<B3::ConstDoubleValue>(proc, B3::Origin(), 1.5)) : b3Root->appendNew<B3::Const64Value>(proc, B3::Origin(), i);
-            patchpoint->append(child, i % 2 ? B3::ValueRep::SomeRegister : B3::ValueRep::LateColdAny);
-            args.append(Arg(code.newTmp(isDouble ? FP : GP)));
-        }
-        Inst inst(Patch, patchpoint, WTF::move(args));
-        struct Seen {
-            Arg arg;
-            Arg::Role role;
-            B3::Bank bank;
-            Width width;
-        };
-        auto ask = [&] {
-            Vector<Seen> result;
-            inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank bank, Width width) {
-                result.append({ arg, role, bank, width });
-            });
-            return result;
-        };
-        Vector<Seen> first = ask();
-        CHECK(first.size() == numberOfChildren + 2);
-        CHECK(first[0].arg.isSpecial() && first[0].role == Arg::Use && first[0].bank == GP);
-        CHECK(first[1].role == Arg::Def && first[1].bank == GP && first[1].width == Width64);
-        for (unsigned i = 0; i < numberOfChildren; ++i) {
-            CHECK(first[i + 2].role == (i % 2 ? Arg::Use : Arg::LateColdUse));
-            CHECK(first[i + 2].bank == (i % 3 == 2 ? FP : GP));
-            CHECK(first[i + 2].width == Width64);
-        }
-        for (unsigned round = 0; round < 2; ++round) {
-            Inst copy = inst;
-            Vector<Seen> again = round ? ask() : [&] {
-                Vector<Seen> result;
-                copy.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank bank, Width width) {
-                    result.append({ arg, role, bank, width });
-                });
-                return result;
-            }();
-            CHECK(again.size() == first.size());
-            for (unsigned i = 0; i < first.size(); ++i)
-                CHECK(again[i].arg == first[i].arg && again[i].role == first[i].role && again[i].bank == first[i].bank && again[i].width == first[i].width);
-        }
-    }
-}
-
-#if CPU(X86_64)
-struct ManySlotFrame {
-    static constexpr unsigned numberOfSlots = 40;
-    static constexpr unsigned hotSlotExtraUseCount = 10;
-
-    ManySlotFrame(bool isPositionIndependent, bool chargesForCalleeSaves, unsigned hotSlot = numberOfSlots - 10)
-    {
-        proc.setOptLevel(2);
-        proc.setPositionIndependent(isPositionIndependent);
-        Code& code = proc.code();
-        if (chargesForCalleeSaves)
-            code.setChargesForCalleeSaves();
-        root = code.addBlock();
-        Tmp sum = Tmp(GPRInfo::returnValueGPR);
-        Tmp scratch = Tmp(GPRInfo::regT1);
-        for (unsigned i = 0; i < numberOfSlots; ++i) {
-            slots.append(code.addStackSlot(8, StackSlotKind::Spill));
-            root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), scratch);
-            root->append(Add64, nullptr, Arg::imm(i + 1), scratch);
-            root->append(Move, nullptr, scratch, Arg::stack(slots.last()));
-        }
-        root->append(Move, nullptr, Arg::imm(0), sum);
-        for (StackSlot* slot : slots)
-            root->append(Add64, nullptr, Arg::stack(slot), sum);
-        for (unsigned i = 0; i < hotSlotExtraUseCount; ++i)
-            root->append(Add64, nullptr, Arg::stack(slots[hotSlot]), sum);
-        root->append(Ret64, nullptr, sum);
-        auto compilation = compile(proc);
-        constexpr int64_t base = 5;
-        CHECK(invoke<int64_t>(*compilation, base) == numberOfSlots * (numberOfSlots + 1) / 2 + numberOfSlots * base + hotSlotExtraUseCount * (hotSlot + 1 + base));
-    }
-
-    unsigned stackPointerAddressCount()
-    {
-        unsigned result = 0;
-        for (Inst& inst : *root) {
-            for (Arg& arg : inst.args())
-                result += arg.isAddr() && arg.base() == Tmp(MacroAssembler::stackPointerRegister);
-        }
-        return result;
-    }
-
-    B3::Procedure proc;
-    BasicBlock* root;
-    Vector<StackSlot*> slots;
-};
-
-void testHotStackSlotIsNearFramePointer()
-{
-    constexpr intptr_t oneByteRange = -128;
-    constexpr unsigned hotSlot = ManySlotFrame::numberOfSlots - 10;
-    auto isNear = [](bool chargesForCalleeSaves) {
-        return ManySlotFrame(false, chargesForCalleeSaves, hotSlot).slots[hotSlot]->offsetFromFP() >= oneByteRange;
-    };
-    CHECK(isNear(true));
-    CHECK(!isNear(false));
-}
-
-void testFarStackSlotsUseStackPointer()
-{
-    CHECK(ManySlotFrame(true, false).stackPointerAddressCount());
-    CHECK(!ManySlotFrame(false, false).stackPointerAddressCount());
-}
-#endif
-
-#if CPU(ARM64)
-enum class BetweenLoads : uint8_t { Nothing, PossiblyOverlappingStore, StoreToOtherOffsetOfSameBase, BaseIsChanged, FirstIsUsed };
-
-static bool loadsPair(bool isPositionIndependent, BetweenLoads between, int32_t secondOffset = 8)
-{
-    B3::Procedure proc;
-    proc.setOptLevel(2);
-    proc.setPositionIndependent(isPositionIndependent);
-    Code& code = proc.code();
-    BasicBlock* root = code.addBlock();
-    Tmp base(GPRInfo::argumentGPR0);
-    Tmp first(GPRInfo::argumentGPR2);
-    Tmp second(GPRInfo::argumentGPR3);
-    root->append(Move, nullptr, Arg::addr(base, 0), first);
-    switch (between) {
-    case BetweenLoads::Nothing:
-        break;
-    case BetweenLoads::PossiblyOverlappingStore:
-        root->append(Move, nullptr, first, Arg::addr(Tmp(GPRInfo::argumentGPR1), 8));
-        break;
-    case BetweenLoads::StoreToOtherOffsetOfSameBase:
-        root->append(Move, nullptr, first, Arg::addr(base, 16));
-        break;
-    case BetweenLoads::BaseIsChanged:
-        root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR1), base);
-        break;
-    case BetweenLoads::FirstIsUsed:
-        root->append(Add64, nullptr, first, Tmp(GPRInfo::argumentGPR4));
-        break;
-    }
-    root->append(Move, nullptr, Arg::addr(base, secondOffset), second);
-    root->append(Add64, nullptr, first, second, Tmp(GPRInfo::returnValueGPR));
-    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
-
-    auto compilation = compile(proc);
-    int64_t memory[4] = { 100, 20, 3, 4000 };
-    int64_t result = invoke<int64_t>(*compilation, memory, memory, 0, 0, 0);
-    CHECK(result == 100 + (between == BetweenLoads::PossiblyOverlappingStore && secondOffset == 8 ? 100 : memory[secondOffset / 8]));
-    bool hasPair = false;
-    for (Inst& inst : *root)
-        hasPair |= inst.kind.opcode == LoadPair64;
-    return hasPair;
-}
-
-void testLoadPair()
-{
-    CHECK(loadsPair(true, BetweenLoads::Nothing));
-    CHECK(loadsPair(true, BetweenLoads::StoreToOtherOffsetOfSameBase));
-    CHECK(loadsPair(true, BetweenLoads::FirstIsUsed));
-
-    CHECK(!loadsPair(false, BetweenLoads::Nothing));
-    CHECK(!loadsPair(true, BetweenLoads::Nothing, 16));
-    CHECK(!loadsPair(true, BetweenLoads::PossiblyOverlappingStore));
-    CHECK(!loadsPair(true, BetweenLoads::BaseIsChanged));
-}
-#endif
-#endif
+#include "testair_bun.h"
 
 void testEarlyClobberInterference()
 {
@@ -3890,7 +3371,11 @@ void testFixSpillsAfterTerminalWithSameSuccessorTwice()
     code.resetReachability();
     fixSpillsAfterTerminals(code);
     CHECK(root->size() == 2);
-    CHECK(done->size() == 2);
+    CHECK(done->size() == 1);
+    for (BasicBlock* successor : root->successorBlocks()) {
+        CHECK(successor->size() == 2);
+        CHECK(successor->successorBlock(0) == done);
+    }
     CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)) == 42);
 }
 
@@ -4036,25 +3521,7 @@ void run(const char* filter)
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());
-#if USE(BUN_JSC_ADDITIONS)
-    RUN(testOopsTraps());
-    RUN(testBlockOrderInvertsBranches());
-    RUN(testBlockOrderPlacesRareBlocksInGaps());
-    RUN(testBlockOrderComparesEdges());
-    RUN(testBlockOrderKeepsUnlikelySideOutOfLine());
-    RUN(testCalleeSaveCost());
-    RUN(testUnsavedCalleeSaves());
-    RUN(testEpilogueGenerator());
-    RUN(testManyValuesLiveAcrossCall());
-    RUN(testPatchArgRolesAreStable());
-#if CPU(X86_64)
-    RUN(testHotStackSlotIsNearFramePointer());
-    RUN(testFarStackSlotsUseStackPointer());
-#endif
-#if CPU(ARM64)
-    RUN(testLoadPair());
-#endif
-#endif
+    RUN_BUN_TESTS();
 
 #if CPU(ARM64)
     RUN(testStorePair());
@@ -4137,11 +3604,10 @@ int main(int argc, char** argv)
         break;
     }
     
-#if USE(BUN_JSC_ADDITIONS)
-    JSC::installCompilers();
-#endif
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
+        JSC::Options::airValidateGreedRegAlloc() = true;
+        JSC::Options::validateGraphAtEachPhase() = true;
     });
 
     for (unsigned i = 0; i <= 2; ++i) {

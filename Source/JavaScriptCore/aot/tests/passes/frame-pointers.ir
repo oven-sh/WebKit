@@ -1,0 +1,132 @@
+# Which values may point into the frame
+# FORM: Prepared
+# RUN: frame-pointers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="inner" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="outer" fields=[{key="inner" declared={type=env L0}}, {key="other" declared={type=anything}}]
+layout L2 name="Handlers" fields=[{key="first" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="second" declared={type=anything} flow={occupancy=AlwaysFilled}}]
+
+function f0 name="environmentReadBack" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1] storage=Frame
+    v3 = GetEnvironmentField v2 layout=L1 field=0
+    v4 = GetEnvironmentField v2 layout=L1 field=1
+    v5 = GetEnvironmentField v3 layout=L0 field=0
+    Return v4
+}
+# CHECK: function f0
+# CHECK-NEXT: allocations: [v1 v2]
+# CHECK-NEXT: frame pointers: [v1 v2 v3]
+# CHECK-NEXT: environment fields: [L1.0]
+# CHECK-NEXT: keys: []
+# CHECK-NEXT: captures: []
+
+function f1 name="storedInYoungerFrameEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6 storage=Frame
+    v2 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    PutEnvironmentField v2, v1 layout=L0 field=0
+    Return
+}
+# CHECK: function f1
+# CHECK-NEXT: allocations: [v1 v2]
+# CHECK-NEXT: frame pointers: [v1 v2]
+# CHECK-NEXT: environment fields: [L0.0]
+
+function f2 name="heapCopyIsNotFramePointer" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=FrameUntilMaterialized
+    v2 = MaterializeEnvironment v1 layout=L0
+    v3 = NewClosure v2 function=f5
+    Return v3
+}
+# CHECK: function f2
+# CHECK-NEXT: allocations: [v1]
+# CHECK-NEXT: frame pointers: [v1]
+# CHECK-NEXT: environment fields: []
+# CHECK-NEXT: keys: []
+# CHECK-NEXT: captures: []
+
+function f3 name="deadAtBackEdge" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewClosure function=f6 storage=Frame
+    v3 = Upcast v2 castType=anything
+    v4 = IsClosureOf v3 function=f6
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: function f3
+# CHECK-NEXT: allocations: [v2]
+# CHECK-NEXT: frame pointers: [v2 v3]
+
+function f4 name="nothingInFrame" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    Return v0
+}
+# CHECK: function f4
+# CHECK-NEXT: allocations: []
+# CHECK-NEXT: frame pointers: []
+
+function f5 name="callback" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f6 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f7 name="narrowedOnBothEdges" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6 storage=Frame
+    v2 = Upcast v1 castType=anything
+    v3 = TypeTest v2 testedType=function
+    v4 = TypeTest v0 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Branch v4 -> taken b3(| 0), notTaken b2(v5)
+  b2(v6):
+    Return
+  b3(v7):
+    Return v7
+}
+# CHECK: function f7
+# CHECK-NEXT: allocations: [v1]
+# CHECK-NEXT: frame pointers: [v1 v2 v5 v6]
+
+function f8 name="slotReadBackByKey" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f6 storage=Frame
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1] storage=Frame
+    PutSlot v2, v2, v1 key="first" receivers=[L2] level=Proven
+    v4 = GetSlot v2, v2 key="first" receivers=[L2] level=Proven
+    v5 = GetSlot v2, v2 key="second" receivers=[L2] level=Proven
+    Return v5
+}
+# CHECK: function f8
+# CHECK-NEXT: allocations: [v1 v2]
+# CHECK-NEXT: frame pointers: [v1 v2 v4]
+# CHECK-NEXT: environment fields: []
+# CHECK-NEXT: keys: ["first"]
+# CHECK-NEXT: captures: []
+
+function f9 name="slotOfHeapObject" parameters=[{type=L2}] results=[{type=anything}] {
+  b0(v0: L2):
+    v1 = NewClosure function=f6 storage=Frame
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1] storage=Frame
+    PutSlot v2, v2, v1 key="first" receivers=[L2] level=Proven
+    v4 = GetSlot v0 key="first" receivers=[L2] level=Proven
+    Return v4
+}
+# CHECK: function f9
+# CHECK-NEXT: allocations: [v1 v2]
+# CHECK-NEXT: frame pointers: [v1 v2]

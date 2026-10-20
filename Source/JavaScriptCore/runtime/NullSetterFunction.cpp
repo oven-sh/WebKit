@@ -29,6 +29,10 @@
 #include "CodeBlock.h"
 #include "ErrorInstanceInlines.h"
 #include "JSCInlines.h"
+#if ENABLE(AOT)
+#include "AOTCompiledFrame.h"
+#include "AOTFunctionDescription.h"
+#endif
 
 namespace JSC {
 
@@ -51,9 +55,17 @@ public:
         if (m_iterations < 2)
             return IterationStatus::Continue;
 
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame()) {
+            m_callerIsStrict = AOT::FunctionDescription(visitor->compiledFrame().function).isStrict();
+            return IterationStatus::Done;
+        }
+#endif
+
+        CodeBlock* codeBlock = visitor->codeBlock();
         // This does not take into account that we might have an strict opcode in a non-strict context, but that's
         // ok since we assert below that this function should never be called from any kind strict context.
-        m_callerIsStrict = visitor->isTypedAOTFrame() || (visitor->hasCode() && visitor->ownerExecutable()->isInStrictContext());
+        m_callerIsStrict = codeBlock && codeBlock->ownerExecutable()->isInStrictContext();
         return IterationStatus::Done;
     }
 

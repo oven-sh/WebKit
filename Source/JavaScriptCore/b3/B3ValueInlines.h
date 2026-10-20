@@ -44,6 +44,7 @@
 #include "B3PatchpointValue.h"
 #include "B3PhiChildren.h"
 #include "B3Procedure.h"
+#include "B3RelocatableValue.h"
 #include "B3SIMDValue.h"
 #include "B3SlotBaseValue.h"
 #include "B3SwitchValue.h"
@@ -85,6 +86,33 @@ ALWAYS_INLINE bool Value::mustExecute() const
     const Effects& entry = constantEffectsTable[opcode()];
     if (entry.isValid()) [[likely]]
         return entry.mustExecute();
+    std::optional<bool> result;
+    switch (opcode()) {
+    case Load8Z:
+    case Load8S:
+    case Load16Z:
+    case Load16S:
+    case Load:
+        result = static_cast<const MemoryValue*>(this)->hasFence() || traps();
+        break;
+    case Store8:
+    case Store16:
+    case Store:
+        result = static_cast<const MemoryValue*>(this)->range() || static_cast<const MemoryValue*>(this)->hasFence() || traps();
+        break;
+    case Patchpoint:
+        result = static_cast<const PatchpointValue*>(this)->effects.mustExecute();
+        break;
+    case CCall:
+        result = static_cast<const CCallValue*>(this)->effects.mustExecute();
+        break;
+    default:
+        break;
+    }
+    if (result) {
+        ASSERT(*result == effectsSlow().mustExecute());
+        return *result;
+    }
     return effectsSlow().mustExecute();
 }
 
@@ -102,6 +130,7 @@ ALWAYS_INLINE bool Value::mustExecute() const
     case Neg: \
     case PurifyNaN: \
     case Clz: \
+    case PopCount: \
     case Abs: \
     case Ceil: \
     case Floor: \
@@ -173,6 +202,8 @@ ALWAYS_INLINE bool Value::mustExecute() const
         return MACRO(FenceValue); \
     case SlotBase: \
         return MACRO(SlotBaseValue); \
+    case Relocatable: \
+        return MACRO(RelocatableValue); \
     case Get: \
     case Set: \
         return MACRO(VariableValue); \
@@ -320,18 +351,10 @@ ALWAYS_INLINE size_t Value::computeAdjacencyListOffset() const
 #undef VALUE_TYPE_SIZE
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 ALWAYS_INLINE Value* Value::cloneImpl(Arena* arena) const
-#else
-ALWAYS_INLINE Value* Value::cloneImpl() const
-#endif
 {
     ASSERT(!kind().isCloningForbidden());
-#if USE(BUN_JSC_ADDITIONS)
 #define VALUE_TYPE_CLONE(ValueType) allocateCloneIn<ValueType>(arena, *static_cast<const ValueType*>(this))
-#else
-#define VALUE_TYPE_CLONE(ValueType) allocate<ValueType>(*static_cast<const ValueType*>(this))
-#endif
     DISPATCH_ON_KIND(VALUE_TYPE_CLONE);
 #undef VALUE_TYPE_CLONE
 }

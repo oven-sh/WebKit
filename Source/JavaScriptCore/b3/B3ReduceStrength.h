@@ -46,11 +46,6 @@ enum class ReduceStrengthPass : uint8_t {
 
 JS_EXPORT_PRIVATE bool reduceStrength(Procedure&, ReduceStrengthPass = ReduceStrengthPass::Final);
 
-#if USE(BUN_JSC_ADDITIONS)
-constexpr int32_t toInt64TruncationKey = 1;
-constexpr int32_t toInt32ConversionKey = 3;
-#endif
-
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)

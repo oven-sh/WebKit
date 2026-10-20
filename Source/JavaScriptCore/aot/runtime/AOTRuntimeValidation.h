@@ -1,0 +1,118 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTRecordTypes.h"
+#include "CollectionScope.h"
+#include "JSCJSValue.h"
+#include "VM.h"
+#include <algorithm>
+
+namespace JSC { namespace AOT {
+
+enum class Entry : uint16_t;
+struct Instance;
+struct RuntimeType;
+
+// Append only: these numbers are immediates in the code of a validated image.
+enum class ValidationFailureKind : uint8_t {
+    ValueType,
+    UnreachableValue,
+    FrameCellEscaped,
+    SavedFrameRootMissing,
+    VisitedCellsDiffer,
+    OperationEnteredVM,
+    OperationCollected,
+    CacheHitDiffers,
+    CacheEntryDropped,
+    ImpossibleMutation,
+    TypeTestsDiffer,
+    BarrierWasNeeded,
+    BuiltinNotImmutable,
+    ArrayNotPristine,
+    ShapeWordInvalid,
+    StackTraceDiffers,
+    FastPathResultDiffers,
+    OperationPreconditionBroken,
+    NativeCallChangedOperand,
+    NativeCallWroteHeap,
+    NativeCallRanCode,
+    NativeCallThrew,
+    NativeCallCollected,
+    NativeCallKeptOperand,
+    AssumedType,
+    UnlistedCallee,
+    SecondRun,
+    ReadsDiffer,
+    ContainerContents,
+    ArrayStorageKind,
+    RemovedFieldNamed,
+    ReceiverShape,
+    CallChangedKeptRegister,
+    UnwindingChangedKeptRegister,
+    ArrayElementsNotOrdinary,
+    KeysListed,
+    LegacyRegExpStaticRead,
+    GuardNoLongerHolds,
+    BindingReadBeforeStore,
+};
+
+static constexpr unsigned numberOfValidationFailureKinds = 39;
+
+ASCIILiteral nameOf(ValidationFailureKind);
+
+struct ValidationFailure {
+    ValidationFailureKind kind;
+    FunctionID function;
+    Typed::ValueID value;
+    JSValue found;
+};
+
+// What ValidationFailure::found holds for CallChangedKeptRegister and UnwindingChangedKeptRegister: an int32 with the register and, if a call names it, the callee.
+struct ChangedRegister {
+    static constexpr unsigned calleeShift = 8;
+    static constexpr uint32_t unknownCallee = (1u << (32 - calleeShift)) - 1;
+    static constexpr uint32_t calleeIsStub = 1u << (31 - calleeShift);
+    static constexpr unsigned unknownRegister = (1u << calleeShift) - 1;
+
+    static constexpr int32_t encode(unsigned registerIndex, uint32_t callee)
+    {
+        return static_cast<int32_t>(registerIndex | std::min(callee, unknownCallee) << calleeShift);
+    }
+
+    template<typename Family>
+    static constexpr int32_t encodeForStub(Family family)
+    {
+        return encode(unknownRegister, calleeIsStub | static_cast<uint32_t>(family));
+    }
+};
+
+[[noreturn]] JS_EXPORT_PRIVATE void crashOnValidationFailure(VM&, const ValidationFailure&);
+
+// Looks at no more than a fixed number of the values a large container holds.
+bool contentsHaveType(Instance&, JSCell* container, Typed::ContentsSlot, const RuntimeType&);
+bool hasOrdinaryElements(VM&, JSValue array);
+// RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
+JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
+
+ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
+
+struct OperationPermissions {
+    bool mayEnterVM { true };
+    bool mayCollect { true };
+};
+
+OperationPermissions permissionsOf(Entry);
+
+struct CollectionValidator {
+    void didFinishCollection(VM&, CollectionScope);
+};
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

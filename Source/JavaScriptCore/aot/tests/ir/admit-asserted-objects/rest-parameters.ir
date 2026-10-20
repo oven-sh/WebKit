@@ -1,0 +1,48 @@
+# An asserted object that is passed where a rest parameter begins is an element of its array: the elements admit objects, an element that is read has the object part, and the position behind the read admits it.
+# The function returns an element, so the place behind the call of the caller that passed the object admits it, and the place of a caller that passed numbers keeps its type
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 3
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Element
+typesite w3 module=m0 position=40 kind=Result
+typesite w4 module=m0 position=50 kind=Variable
+variable g0 name="first" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f0 flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 name="behindAssertedElement" module=m0 declared={type=undefined|null|number predicted=number site=w4} initialization=Undefined
+variable g3 name="behindNumbers" module=m0 declared={type=undefined|null|number predicted=number site=w4} initialization=Undefined
+# CHECK: variable g2 name="behindAssertedElement" {{*}}declared={type=undefined|null|number|object predicted=number site=w4 flags=[AdmitsObjects]}
+# CHECK: variable g3 name="behindNumbers" {{*}}declared={type=undefined|null|number predicted=number site=w4}
+function f0 name="first" flags=[HasRestParameter] parameters=[{type=undefined|null|number site=w0}, {type=Array<undefined|null|number> predicted=Array<number> site=w0 flags=[IsFromCompiler]}] results=[{type=undefined|null|number predicted=number site=w3}] {
+  b0(v0: undefined|null|number, v1: Array<undefined|null|number>):
+    v2 = Integer
+    v3 = ElemGet v1, v2
+    v4 = ClaimRead v3, v1 source=Contents{} site=w2
+    v5 = ClaimDeclared v4 declared={type=undefined|null|number predicted=number site=w3}
+    Return v5
+}
+# CHECK-LABEL: function f0 name="first" {{*}}parameters=[{type=undefined|null|number site=w0}, {type=Array<undefined|null|number|object> predicted=Array<number> site=w0 flags=[IsFromCompiler, AdmitsObjects]}] results=[{type=undefined|null|number|object predicted=number site=w3 flags=[AdmitsObjects]}]
+# CHECK: : undefined|null|number|object {{*}}= Claim v3 castType=undefined|null|number|object site=w2
+function f1 name="other" flags=[HasRestParameter] parameters=[{type=Array<undefined|null|number> predicted=Array<number> site=w0 flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: Array<undefined|null|number>):
+    Return v0
+}
+# CHECK-LABEL: function f1 name="other" {{*}}parameters=[{type=Array<undefined|null|number> predicted=Array<number> site=w0 flags=[IsFromCompiler]}]
+function f2 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=1
+    v3 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v4 = Call v1, -, v2, v2, v3 calleeName="first"
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v0 calleeName="other"
+    v7 = ClaimDeclared v4 declared={type=undefined|null|number predicted=number site=w4}
+    PutModuleVariable v7 variable=g2
+    v9 = Call v1, -, v2, v2, v2 calleeName="first"
+    v10 = ClaimDeclared v9 declared={type=undefined|null|number predicted=number site=w4}
+    PutModuleVariable v10 variable=g3
+    Return v4
+}

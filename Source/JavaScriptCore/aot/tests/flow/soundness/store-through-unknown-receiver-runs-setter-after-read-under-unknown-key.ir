@@ -1,0 +1,48 @@
+# A store through a receiver nobody knows runs the setter that a built-in class has under the name. The instance reaches native code only in a function that is entered later, after a read through the unknown receiver under a key nobody knows
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(RegExp@f4:v1, 0) = {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Stored" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = ElemGet v1, v2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    PropSet v1, v6 key="lastIndex"
+    v8 = NewClosure function=f1
+    v9 = Call v8
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewRegExp pattern="b"
+    v2 = PropGet v0 key="keep" [isFreeName]
+    v3 = Call v2, -, v1
+    v4 = PropGet v1 key="lastIndex"
+    Return v4
+}

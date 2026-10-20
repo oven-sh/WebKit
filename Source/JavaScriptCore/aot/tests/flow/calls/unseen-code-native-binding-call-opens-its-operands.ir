@@ -1,0 +1,41 @@
+# Creating the native binding of node:vm and reading from it run nothing. A call of what was read from it starts unseen code, which reaches the operands of that call
+# RUN: flow-links unseen
+# RUN(SINKS): flow-solve sinks
+# RUN(NEIGHBOR): flow-solve sinks
+# CHECK: unseen RunsUnseenCode NativeCppNodeVMCppBunCreateNodeVMBinding f1:v3
+# CHECK: unknown-javascript yes
+# CHECK: whole-program-open no
+# SINKS: unknownJavaScript {{*}}L0#
+# NEIGHBOR-NOT: unknownJavaScript {{*}}L1#
+# NEIGHBOR-NOT: nativeCode {{*}}L1#
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="node:vm" displayPath="node:vm" kind=RuntimeSource exportRule=RuntimeModule requireResult=ModuleExports runtimeModule=NodeVm body=f2
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="binding" module=m1 declared={type=anything} initialization=Undefined
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Neighbor" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v1
+    Return
+}
+function f1 name="runInContext" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="runInContext"
+    v3 = Call v2, v1, v0 calleeKey="runInContext"
+    Return v3
+}
+function f2 name="vm" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeCppNodeVMCppBunCreateNodeVMBinding
+    PutModuleVariable v0 variable=g1
+    Return
+}

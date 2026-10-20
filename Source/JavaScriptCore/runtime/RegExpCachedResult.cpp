@@ -26,6 +26,7 @@
 #include "config.h"
 #include "RegExpCachedResult.h"
 
+#include "AOTRemovableFeature.h"
 #include "RegExpCache.h"
 #include "RegExpMatchesArray.h"
 
@@ -46,8 +47,9 @@ void RegExpCachedResult::visitAggregateImpl(Visitor& visitor)
 
 DEFINE_VISIT_AGGREGATE(RegExpCachedResult);
 
-JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* owner)
+NEVER_INLINE JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* owner)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::lastResult);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -93,8 +95,9 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
     return m_reifiedResult.get();
 }
 
-JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObject, JSObject* owner)
+NEVER_INLINE JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObject, JSObject* owner)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::leftContext);
     // Make sure we're reified.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -110,8 +113,9 @@ JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObject, JSObject
     return m_reifiedLeftContext.get();
 }
 
-JSString* RegExpCachedResult::rightContext(JSGlobalObject* globalObject, JSObject* owner)
+NEVER_INLINE JSString* RegExpCachedResult::rightContext(JSGlobalObject* globalObject, JSObject* owner)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::rightContext);
     // Make sure we're reified.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -130,6 +134,7 @@ JSString* RegExpCachedResult::rightContext(JSGlobalObject* globalObject, JSObjec
 
 NEVER_INLINE void RegExpCachedResult::setInput(JSGlobalObject* globalObject, JSObject* owner, JSString* input)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpCachedResult::setInput);
     // Make sure we're reified, otherwise m_reifiedInput will be ignored.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

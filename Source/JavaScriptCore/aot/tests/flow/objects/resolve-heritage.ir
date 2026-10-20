@@ -1,0 +1,39 @@
+# ResolveHeritage gives the prototype property of its operand, and null only for an operand that may be null
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {f1.prototype}
+# CHECK-NEXT: Variable(g1) = {f2}
+# CHECK-NEXT: Variable(g2) = {null}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+variable g0 name="prototypeParent" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="methodOfPrototypeParent" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="prototypeParentOfNull" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Prototype methodKind=Method key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = ResolveHeritage v4
+    PutModuleVariable v5 variable=g0
+    v7 = PropGet v5 key="m"
+    PutModuleVariable v7 variable=g1
+    v9 = Null
+    v10 = ResolveHeritage v9
+    PutModuleVariable v10 variable=g2
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

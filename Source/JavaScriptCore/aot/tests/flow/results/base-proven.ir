@@ -1,0 +1,79 @@
+# The base of a class whose heritage holds one class is proven, link by link, and a subclass lists the fields of its proven bases as inherited entries
+# RUN: flow
+# RUN(NOWHERE): flow
+# STATISTIC: FlowProvenBases = 3
+# STATISTIC: FlowAppendedFields = 0
+# CHECK: layout L0 flow={{*}}baseState=None
+# CHECK-NEXT: field L0.0 "a" type=1|"late" written=anything flow={location={writers=AllKnown
+# CHECK-NEXT: layout L1 flow={{*}}baseState=Layout base=L0
+# CHECK-NEXT: field L1.0 "b" type=2 written=anything flow={location={writers=AllKnown
+# CHECK-NEXT: field L1.1 "a" type=1|"late" written=anything flags=[IsInherited] originLayout=L0 originField=0
+# CHECK-NEXT: layout L2 flow={baseState=Layout base=L1
+# CHECK-NEXT: field L2.0 "c" type=3 written=anything flow={location={writers=AllKnown
+# CHECK-NEXT: field L2.1 "b" type=2 written=anything flags=[IsInherited] originLayout=L1 originField=0
+# CHECK-NEXT: field L2.2 "a" type=1|"late" written=anything flags=[IsInherited] originLayout=L0 originField=0
+# CHECK-NEXT: layout L3 flow={{*}}baseState=None
+# NOWHERE-NOT: layout L0 {{*}}base=L
+# NOWHERE-NOT: layout L3 {{*}}base=L
+# NOWHERE-NOT: IsAppendedByFlow
+# NOWHERE-NOT: cause=UnknownBase
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1 fields=[{key="a" declared={type=anything}}]
+layout L1 kind=Instance name="B" predictedBase=L0 constructor=f2 fields=[{key="b" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="C" predictedBase=L1 constructor=f3 fields=[{key="c" declared={type=anything}}] flags=[HasHeritage]
+layout L3 kind=Instance name="N" constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = NewClosure function=f4
+    v12 = Null
+    v13 = ResolveHeritage v12
+    v14 = NewClass v11, v12, v13 layout=L3
+    v15 = FinishClass v14 layout=L3
+    v16 = Construct v10
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="a" mode=Strict
+    Return v2
+}
+function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b" mode=Strict
+    Return v3
+}
+function f3 name="C" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    v4 = Integer integer=3
+    PropSet v3, v4 key="c" mode=Strict
+    v6 = String string="late"
+    PropSet v3, v6 key="a" mode=Strict
+    Return v3
+}
+function f4 name="N" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}

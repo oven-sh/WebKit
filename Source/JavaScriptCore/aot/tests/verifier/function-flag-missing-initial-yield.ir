@@ -1,0 +1,16 @@
+# InitialYield needs a generator
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FunctionFlagMissing 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" results=[{type=undefined}] {
+  b0():
+    InitialYield
+    Return
+}
+function f1 name="good" flags=[IsGenerator, TakesCallee] results=[{type=undefined}] {
+  b0(v0: function):
+    InitialYield
+    Return
+}

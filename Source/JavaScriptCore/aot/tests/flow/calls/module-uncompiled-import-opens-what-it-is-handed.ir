@@ -1,0 +1,58 @@
+# A module that stays outside the image is unseen code like any other. What seen code passes to its exports is open to it, and so is what the modules of the library export, which it requires by name.
+# It names no variable and no module of the program: an object that is not handed over keeps its shape, a function that nobody hands over is not entered, a module that nobody imports is not evaluated
+# RUN: flow-links modules unseen calls
+# RUN(SINKS): flow-solve sinks
+# RUN(KEPT): flow-solve sinks
+# CHECK-NOT: -> {{*}} f1
+# CHECK: evaluated m0 m1 m2
+# CHECK-NOT: m3
+# CHECK: unseen ImportsUncompiledModule -
+# CHECK-NOT: unseen LoadsModuleByName
+# CHECK: unknown-javascript yes
+# CHECK: whole-program-open no
+# SINKS: unknownJavaScript {{*}}L0#{{*}}f3
+# KEPT-NOT: unknownJavaScript {{*}}L1#
+# KEPT-NOT: nativeCode {{*}}L1#
+# KEPT-NOT: nativeCode {{*}}f1
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
+module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
+module m2 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f2
+module m3 path="/never-imported.js" displayPath="never-imported.js" body=f4
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="keptFunction" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Handed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Path" fields=[{key="join" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewClosure function=f1
+    v4 = ModuleNamespace module=m1
+    v5 = PropGet v4 key="describe"
+    v6 = Call v5, v4, v1 calleeKey="describe"
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f1 name="keptFunction" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="path" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    Return v1
+}
+function f3 name="join" module=m2 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="neverImported" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

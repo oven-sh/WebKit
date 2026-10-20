@@ -28,149 +28,233 @@
 
 #if ENABLE(B3_JIT)
 
-#include "AirArgInlines.h"
-#include "AirCFG.h"
+#include "AirBitMatrixLiveness.h"
+#include "AirFormTraits.h"
 #include "AirInstInlines.h"
-#include <wtf/GraphOrdering.h>
 
-namespace AirRegLivenessInternal {
-    static constexpr bool verbose = false;
-};
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 { namespace Air {
 
-RegLiveness::RegLiveness(Code& code)
-    : m_liveAtHead(code.size())
-    , m_liveAtTail(code.size())
-    , m_actions(code.size())
-{
-    dataLogLnIf(AirRegLivenessInternal::verbose, "Compute reg liveness for code: ", code);
-    // Compute constraints.
-    for (BasicBlock* block : code) {
-        ActionsForBoundary& actionsForBoundary = m_actions[block];
-        actionsForBoundary.resize(block->size() + 1);
+namespace {
 
-        for (size_t instIndex = block->size(); instIndex--;) {
-            Inst& inst = block->at(instIndex);
-            inst.forEach<Reg>(
-                [&] (Reg& reg, Arg::Role role, Bank, Width width) {
-                    if (Arg::isEarlyUse(role))
-                        actionsForBoundary[instIndex].use.add(reg, width);
-                    if (Arg::isEarlyDef(role))
-                        actionsForBoundary[instIndex].def.add(reg, width);
-                    if (Arg::isLateUse(role))
-                        actionsForBoundary[instIndex + 1].use.add(reg, width);
-                    if (Arg::isLateDef(role))
-                        actionsForBoundary[instIndex + 1].def.add(reg, width);
-                });
+using Mentions = Greedy::Mentions;
+
+} // anonymous namespace
+
+struct RegLiveness::DecodedInst {
+    ALWAYS_INLINE void noteTmp(Tmp tmp, unsigned traits)
+    {
+        if (!tmp.isReg())
+            return;
+        uint64_t bit = static_cast<uint64_t>(1) << tmp.reg().index();
+        if (tmp.isFP() && static_cast<Width>((traits >> Mentions::widthShift) & Mentions::widthMask) > Width64) [[unlikely]] {
+            namesWideRegister = true;
+            upperHalfUses[0] |= traits & Mentions::earlyUse ? bit : 0;
+            upperHalfUses[1] |= traits & Mentions::lateUse ? bit : 0;
         }
+        regs[0] |= traits & Mentions::earlyUse ? bit : 0;
+        regs[1] |= traits & Mentions::lateUse ? bit : 0;
+        regs[2] |= traits & Mentions::earlyDef ? bit : 0;
+        regs[3] |= traits & Mentions::lateDef ? bit : 0;
     }
 
-    IndexMap<BasicBlock*, RegisterSet> gen(code.size());
-    IndexMap<BasicBlock*, RegisterSet> kill(code.size());
-
-    for (BasicBlock* block : code) {
-        ActionsForBoundary& actionsForBoundary = m_actions[block];
-
-        // kill: every register defined anywhere in the block. The whole register width is included so
-        // that excluding it later clears a register entirely, matching LocalCalc's width-agnostic remove.
-        RegisterSet& killSet = kill[block];
-        for (size_t boundary = 0; boundary <= block->size(); ++boundary)
-            killSet.merge(actionsForBoundary[boundary].def);
-        killSet.includeWholeRegisterWidth();
-
-        // gen: the block's transfer function applied to an empty liveAtTail, i.e. the uses exposed at the head.
-        RegisterSet workset;
-        for (size_t instIndex = block->size(); instIndex--;) {
-            actionsForBoundary[instIndex + 1].def.forEach([&](Reg r) {
-                workset.remove(r);
+    ALWAYS_INLINE void noteArg(Arg& arg, unsigned traits)
+    {
+        argTimings |= traits & Mentions::timingMask;
+        if (traits & Mentions::lateDef) {
+            if (arg.isReg())
+                regArgLateDefs |= static_cast<uint64_t>(1) << arg.reg().index();
+            else
+                definesNonRegister = true;
+        }
+        forEachTmpWithTraits(arg, traits,
+            [&](Tmp tmp, unsigned tmpTraits) ALWAYS_INLINE_LAMBDA {
+                noteTmp(tmp, tmpTraits);
             });
-            workset.merge(actionsForBoundary[instIndex].use);
+    }
+
+    NEVER_INLINE static DecodedInst decodeSlowly(Inst& inst)
+    {
+        DecodedInst result;
+        inst.forEachArg(
+            [&](Arg& arg, Arg::Role role, Bank bank, Width width) {
+                result.noteArg(arg, Mentions::traitsOf(role, bank, width));
+            });
+        return result;
+    }
+
+    ALWAYS_INLINE static DecodedInst decodeInst(Inst& inst)
+    {
+        DecodedInst result;
+        unsigned argIndex = 0;
+        if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
+            Arg* args = inst.args().data();
+            const unsigned numberOfArgs = inst.args().size();
+            for (; argIndex < numberOfArgs; ++argIndex)
+                result.noteArg(args[argIndex], Greedy::formTraits[forms[argIndex]]);
+        } else
+            result = decodeSlowly(inst);
+        return result;
+    }
+
+    std::array<uint64_t, 4> regs { };
+    std::array<uint64_t, 2> upperHalfUses { };
+    uint64_t regArgLateDefs { 0 };
+    unsigned argTimings { 0 };
+    bool namesWideRegister { false };
+    bool definesNonRegister { false };
+};
+
+struct RegLiveness::RegisterRows {
+    RegisterRows(const Vector<TransferSets>& transferSets, bool tracksUpperHalves)
+        : transferSets(transferSets)
+        , tracksUpperHalves(tracksUpperHalves)
+    {
+    }
+
+    unsigned numIndices() const { return tracksUpperHalves ? 128 : 64; }
+    bool needsLiveAtTail(BasicBlock*) const { return true; }
+
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail) const
+    {
+        ASSERT((firstWord + numberOfWords) * 64 <= numIndices());
+        const TransferSets& sets = transferSets[block->index()];
+        uint64_t filled = 0;
+        for (size_t i = 0; i < numberOfWords; ++i) {
+            const bool holdsUpperHalves = firstWord + i;
+            gen[i] |= holdsUpperHalves ? sets.gen.upperHalves : sets.gen.registers;
+            kill[i] |= sets.kill;
+            tail[i] |= holdsUpperHalves ? sets.usedAtTail.upperHalves : sets.usedAtTail.registers;
+            filled |= gen[i] | kill[i] | tail[i];
         }
-        // Handle the early def's of the first instruction.
-        actionsForBoundary[0].def.forEach([&](Reg r) {
-            workset.remove(r);
-        });
-        gen[block] = workset;
-
-        // The liveAtTail of each block automatically contains the LateUse's of the terminal, which are
-        // exactly the uses at the final boundary.
-        m_liveAtTail[block].merge(actionsForBoundary[block->size()].use);
+        return filled;
     }
 
-    if (AirRegLivenessInternal::verbose) {
-        dataLogLn("Initial state");
-        for (size_t blockIndex = code.size(); blockIndex--;) {
-            BasicBlock* block = code[blockIndex];
-            if (!block)
-                continue;
-            dataLogLn("Block ", blockIndex, " gen: ", gen[block], " kill: ", kill[block], " live at tail: ", m_liveAtTail[block]);
-        }
+    const Vector<TransferSets>& transferSets;
+    bool tracksUpperHalves;
+};
+
+RegLiveness::RegLiveness(Code& code)
+{
+    Vector<TransferSets> transferSets;
+    if (!tryDecode(code, transferSets, code.usesSIMD() ? UpperHalves::Tracked : UpperHalves::Ignored)) {
+        bool didDecode = tryDecode(code, transferSets, UpperHalves::Tracked);
+        RELEASE_ASSERT(didDecode);
     }
-
-    CFG cfg(code);
-    Vector<unsigned, 64> worklist;
-    BitVector dirtyBlocks(code.size());
-    worklist.reserveInitialCapacity(code.size());
-    appendNodeIndicesInOrder(cfg, GraphOrder::PostOrder, dirtyBlocks, worklist);
-    worklist.reverse();
-    // Queue any active block the DFS did not reach (e.g. unreachable but not yet pruned).
-    for (unsigned blockIndex = 0; blockIndex < code.size(); ++blockIndex) {
-        if (code[blockIndex] && !dirtyBlocks.quickSet(blockIndex))
-            worklist.append(blockIndex);
-    }
-
-    while (!worklist.isEmpty()) {
-        unsigned blockIndex = worklist.takeLast();
-        bool cleared = dirtyBlocks.quickClear(blockIndex);
-        ASSERT_UNUSED(cleared, cleared);
-
-        BasicBlock* block = code[blockIndex];
-        ASSERT(block);
-
-        // liveAtHead = gen | (liveAtTail & ~kill)
-        RegisterSet liveAtHead = gen[block];
-        RegisterSet throughLiveness = m_liveAtTail[block];
-        throughLiveness.exclude(kill[block]);
-        liveAtHead.merge(throughLiveness);
-
-        if (m_liveAtHead[block].subsumes(liveAtHead))
-            continue;
-
-        m_liveAtHead[block] = liveAtHead;
-
-        for (BasicBlock* predecessor : block->predecessors()) {
-            auto& liveAtTail = m_liveAtTail[predecessor];
-            if (liveAtTail.subsumes(liveAtHead))
-                continue;
-
-            liveAtTail.merge(liveAtHead);
-            if (!dirtyBlocks.quickSet(predecessor->index()))
-                worklist.append(predecessor->index());
-        }
-    }
-
-    if (AirRegLivenessInternal::verbose) {
-        dataLogLn("Reg liveness result:");
-        for (size_t blockIndex = code.size(); blockIndex--;) {
-            BasicBlock* block = code[blockIndex];
-            if (!block)
-                continue;
-            ActionsForBoundary& actionsForBoundary = m_actions[block];
-            dataLogLn("Block ", blockIndex);
-            dataLogLn("Live at head: ", m_liveAtHead[block]);
-            dataLogLn("Live at tail: ", m_liveAtTail[block]);
-
-            for (size_t instIndex = block->size(); instIndex--;) {
-                dataLogLn(block->at(instIndex), " | use: ", actionsForBoundary[instIndex].use, " def: ", actionsForBoundary[instIndex].def);
-            }
-        }
-    }
+    solve(code, transferSets);
 }
 
 RegLiveness::~RegLiveness() = default;
 
+bool RegLiveness::tryDecode(Code& code, Vector<TransferSets>& transferSets, UpperHalves upperHalves)
+{
+    const bool tracksUpperHalves = upperHalves == UpperHalves::Tracked;
+    size_t numberOfInsts = 0;
+    for (BasicBlock* block : code)
+        numberOfInsts += block->size();
+    m_blocks.grow(code.size());
+    transferSets.grow(code.size());
+    m_boundaries.grow(numberOfInsts * 2 + code.size() + 1);
+    m_registerArgLateDefs.grow(numberOfInsts * 2 + 1);
+    m_slotFlags.grow(numberOfInsts * 2 + 1);
+    if (tracksUpperHalves)
+        m_upperHalfUses.fill(0, m_boundaries.size());
+    else
+        m_upperHalfUses.clear();
+    Boundary* boundaries = m_boundaries.mutableSpan().data();
+    uint64_t* upperHalfUses = m_upperHalfUses.mutableSpan().data();
+    uint64_t* registerArgLateDefs = m_registerArgLateDefs.mutableSpan().data();
+    uint8_t* slotFlags = m_slotFlags.mutableSpan().data();
+    unsigned slot = 0;
+    unsigned boundary = 0;
+
+    for (BasicBlock* block : code) {
+        const unsigned firstSlot = slot;
+        const unsigned firstBoundary = boundary;
+        RegisterBits gen;
+        uint64_t kill = 0;
+        boundaries[boundary] = { 0, 0 };
+        bool previousHasLateUseOrDef = false;
+
+        auto finishBoundary = [&]() ALWAYS_INLINE_LAMBDA {
+            kill |= boundaries[boundary].def;
+            gen.registers |= boundaries[boundary].use & ~kill;
+            if (tracksUpperHalves) [[unlikely]]
+                gen.upperHalves |= upperHalfUses[boundary] & ~kill;
+        };
+
+        for (Inst& inst : *block) {
+            const DecodedInst decoded = DecodedInst::decodeInst(inst);
+            if (decoded.namesWideRegister && !tracksUpperHalves) [[unlikely]]
+                return false;
+
+            bool hasEarlyDef = decoded.argTimings & Mentions::earlyDef;
+            bool hasLateUseOrDef = decoded.argTimings & (Mentions::lateUse | Mentions::lateDef);
+            if (inst.kind.opcode == Patch) [[unlikely]] {
+                hasEarlyDef |= !inst.extraEarlyClobberedRegs().isEmpty();
+                hasLateUseOrDef |= !inst.extraClobberedRegs().isEmpty();
+            }
+
+            if (previousHasLateUseOrDef && hasEarlyDef) {
+                finishBoundary();
+                boundaries[++boundary] = { 0, 0 };
+                registerArgLateDefs[slot] = 0;
+                slotFlags[slot++] = representsPadding;
+            }
+            previousHasLateUseOrDef = hasLateUseOrDef;
+
+            boundaries[boundary].use |= decoded.regs[0];
+            boundaries[boundary].def |= decoded.regs[2];
+            if (tracksUpperHalves) [[unlikely]]
+                upperHalfUses[boundary] |= decoded.upperHalfUses[0];
+            finishBoundary();
+            boundaries[++boundary] = { decoded.regs[1], decoded.regs[3] };
+            if (tracksUpperHalves) [[unlikely]]
+                upperHalfUses[boundary] = decoded.upperHalfUses[1];
+            registerArgLateDefs[slot] = decoded.regArgLateDefs;
+            slotFlags[slot++] = !(decoded.argTimings & Mentions::earlyDef) && !decoded.definesNonRegister ? definesOnlyRegistersLate : 0;
+        }
+
+        RegisterBits usedAtTail { boundaries[boundary].use, tracksUpperHalves ? upperHalfUses[boundary] : 0 };
+        m_blocks[block->index()] = BlockRecord { { }, { }, firstSlot, firstBoundary, slot - firstSlot };
+        transferSets[block->index()] = TransferSets { gen, usedAtTail, kill | boundaries[boundary].def };
+        ++boundary;
+    }
+    return true;
+}
+
+void RegLiveness::solve(Code& code, const Vector<TransferSets>& transferSets)
+{
+    const bool tracksUpperHalves = !m_upperHalfUses.isEmpty();
+    BitMatrixLiveness<RegisterRows> liveness(code, transferSets, tracksUpperHalves);
+    liveness.compute();
+    RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+
+    auto workset = liveness.makeWorkset();
+    for (BasicBlock* block : code) {
+        liveness.copyLiveAtTailInto(workset, block);
+        const TransferSets& sets = transferSets[block->index()];
+        BlockRecord& record = m_blocks[block->index()];
+        record.liveAtTail = { workset.words()[0], tracksUpperHalves ? workset.words()[1] : 0 };
+        record.liveAtHead.registers = sets.gen.registers | (record.liveAtTail.registers & ~sets.kill);
+        record.liveAtHead.upperHalves = sets.gen.upperHalves | (record.liveAtTail.upperHalves & ~sets.kill);
+    }
+}
+
+RegisterSet RegLiveness::toRegisterSet(RegisterBits bits)
+{
+    RegisterSet result;
+    for (uint64_t registers = bits.registers; registers; registers &= registers - 1) {
+        unsigned index = std::countr_zero(registers);
+        Reg reg = Reg::fromIndex(index);
+        result.add(reg, (bits.upperHalves >> index & 1) ? conservativeWidth(reg) : conservativeWidthWithoutVectors(reg));
+    }
+    return result;
+}
+
 } } } // namespace JSC::B3::Air
 
-#endif // ENABLE(B3_JIT)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+#endif // ENABLE(B3_JIT)

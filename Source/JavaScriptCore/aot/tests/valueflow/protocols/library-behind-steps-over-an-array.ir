@@ -1,0 +1,28 @@
+# for (const n of [1]) take(n);  [...[2]]
+# The loop and the spread go over the array by rule. The function of the library behind next of the array iterator is reached with them (runtimefunction 70),
+# the one behind next of a generator is not (71).
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=70 function=f1
+runtimefunction id=71 function=f2 visibility=Private
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = IteratorOpen v1
+    v3 = IteratorResume v2
+    Return
+}
+function f1 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="next" role=Library flags=[HasThis] enclosingRuntimeFunction=71 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

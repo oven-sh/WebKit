@@ -1,0 +1,144 @@
+# The parser of a union node switches on the first byte, tries arms of one kind of value in order, and picks object arms by a tag that it searches once
+# FORM: Prepared optimizing
+# RUN: derived-functions ValidatingParser:x0.0 ValidatingParser:x1.0 ValidatingParser:x2.0 ValidatingParser:x3.0 ValidatingParser:x4.0 ValidatingParser:x5.0 ValidatingParser:x6.0
+# STATISTIC: ParsersCreated = 18
+# STATISTIC: ValidatorsCreated = 0
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=number|string validation=[{shape=Union{arms=[1, 2]} type=number|string}, {shape=Primitive{} type=string}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type="a"|"b" validation=[{shape=Union{arms=[1, 2]} type="a"|"b"}, {shape=StringLiteral{value="a"} type="a"}, {shape=StringLiteral{value="b"} type="b"}]
+expectedresult x2 type=L0|L1 layouts=[L0, L1] validation=[{shape=Union{arms=[1, 2]} type=L0|L1}, {shape=Object{layout=L0 members=[{key="x" node=3 field=0}]} type=L0}, {shape=Object{layout=L1 members=[{key="y" node=3 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x3 type=L2|L3|L0 layouts=[L0, L2, L3] validation=[{shape=Union{arms=[1, 2, 3]} type=L0|L2|L3}, {shape=Object{layout=L2 members=[{key="kind" node=4 field=0}, {key="x" node=6 field=1}]} type=L2}, {shape=Object{layout=L3 members=[{key="kind" node=5 field=0}, {key="y" node=6 field=1}]} type=L3}, {shape=Object{layout=L0 members=[{key="x" node=6 field=0}]} type=L0}, {shape=StringLiteral{value="a"} type="a"}, {shape=StringLiteral{value="b"} type="b"}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x4 type=L4|L5 layouts=[L4, L5] validation=[{shape=Union{arms=[1, 2]} type=L4|L5}, {shape=Object{layout=L4 members=[{key="t" node=3 field=0}]} type=L4}, {shape=Object{layout=L5 members=[{key="t" node=4 field=0}]} type=L5}, {shape=NumberLiteral{value=1} type=1}, {shape=NumberLiteral{value=2} type=2}]
+expectedresult x5 type=L6|L7 layouts=[L6, L7] validation=[{shape=Union{arms=[1, 2]} type=L6|L7}, {shape=Object{layout=L6 members=[{key="ok" node=3 field=0}]} type=L6}, {shape=Object{layout=L7 members=[{key="ok" node=4 field=0}]} type=L7}, {shape=BooleanLiteral{value=true} type=true}, {shape=BooleanLiteral{} type=false}]
+expectedresult x6 type=L2|L3 layouts=[L2, L3] validation=[{shape=Union{arms=[1, 2]} type=L2|L3}, {shape=Object{layout=L2 members=[{key="kind" node=3 field=0}]} type=L2}, {shape=Object{layout=L3 members=[{key="kind" node=4 field=0}]} type=L3}, {shape=StringLiteral{value="q\"q"} type="q\"q"}, {shape=StringLiteral{value="b"} type="b"}]
+layout L0 name="HasX" fields=[{key="x" declared={type=number}}]
+layout L1 name="HasY" fields=[{key="y" declared={type=number}}]
+layout L2 name="KindA" fields=[{key="kind" declared={type=string}}, {key="x" declared={type=undefined|number}}]
+layout L3 name="KindB" fields=[{key="kind" declared={type=string}}, {key="y" declared={type=undefined|number}}]
+layout L4 name="One" fields=[{key="t" declared={type=number}}]
+layout L5 name="Two" fields=[{key="t" declared={type=number}}]
+layout L6 name="Ok" fields=[{key="ok" declared={type=boolean}}]
+layout L7 name="Failed" fields=[{key="ok" declared={type=boolean}}]
+
+# CHECK-LABEL: form=ParsedText expectedResult=x0}
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[byte0]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: Switch [[byte0]] cases=[34, 45, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57] -> case [[string0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), case [[number0]](), otherwise [[rejected0]]()
+# CHECK: [[number0]]():
+# CHECK-NEXT: = JSONParseNumber v0
+# CHECK: = JSONParseString v0
+
+# CHECK-LABEL: form=ParsedText expectedResult=x1}
+# CHECK: [[rejected1]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[byte1]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: Switch [[byte1]] cases=[34] -> case {{*}}, otherwise [[rejected1]]()
+# CHECK: [[merge1]]({{*}}: undefined|"a"|"b", {{*}}: cursor):
+# CHECK: [[parsed1]]:{{*}}= JSONParseString v0
+# CHECK-NOT: JSONParseString
+# CHECK: [[text1]]: string = ResultAt [[parsed1]] index=1
+# CHECK-NEXT: [[next1]]: cursor = ResultAt [[parsed1]] index=2
+# CHECK-NEXT: SwitchString [[text1]] strings=["a", "b"] -> case [[isA1]](), case [[isB1]](), otherwise [[rejected1]]()
+# CHECK: [[isA1]]():
+# CHECK-NEXT: [[a1]]: "a" = String string="a"
+# CHECK-NEXT: Jump -> next [[merge1]]([[a1]], [[next1]])
+# CHECK-NEXT: [[isB1]]():
+# CHECK-NEXT: [[b1]]: "b" = String string="b"
+# CHECK-NEXT: Jump -> next [[merge1]]([[b1]], [[next1]])
+
+# CHECK-LABEL: form=ParsedText expectedResult=x2}
+# CHECK: [[rejected2]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown2]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK-NOT: JSONFindMember
+# CHECK: [[first2]]:{{*}}= CallDirect v0 function=[[parserOfFirstArm]]
+# CHECK-NEXT: [[firstOutcome2]]: int[0, 2] = ResultAt [[first2]]
+# CHECK-NEXT: Switch [[firstOutcome2]] cases=[1, 2] -> case {{*}}, case [[secondArm2]](), otherwise [[unknown2]]()
+# CHECK: [[secondArm2]]():
+# CHECK-NEXT: [[second2]]:{{*}}= CallDirect v0 function=[[parserOfSecondArm]]
+# CHECK-NEXT: [[secondOutcome2]]: int[0, 2] = ResultAt [[second2]]
+# CHECK-NEXT: Switch [[secondOutcome2]] cases=[1, 2] -> case {{*}}, case [[rejected2]](), otherwise [[unknown2]]()
+# CHECK-NOT: JSONFindMember
+# CHECK: function [[parserOfFirstArm]] {{*}}expectedResult=x2 node=1}
+# CHECK: function [[parserOfSecondArm]] {{*}}expectedResult=x2 node=2}
+
+# CHECK-LABEL: form=ParsedText expectedResult=x3}
+# CHECK: [[rejected3]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown3]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[afterBrace3]]: cursor = JSONSkipByte v0
+# CHECK-NEXT: [[firstKey3]]: cursor = JSONSkipWhitespace [[afterBrace3]]
+# CHECK-NEXT: [[search3]]:{{*}}= JSONFindMember [[firstKey3]] string="kind"
+# CHECK-NEXT: [[searchResult3]]: int[0, 2] = ResultAt [[search3]]
+# CHECK-NEXT: Switch [[searchResult3]] cases=[1, 2] -> case [[found3]](), case [[untagged3]](), otherwise [[unknown3]]()
+# CHECK-NOT: JSONFindMember
+# CHECK: [[untagged3]]():
+# CHECK-NEXT: [[untaggedResults3]]:{{*}}= CallDirect v0 function=[[parserOfUntaggedArm]]
+# CHECK-NEXT: [[untaggedOutcome3]]: int[0, 2] = ResultAt [[untaggedResults3]]
+# CHECK-NEXT: Switch [[untaggedOutcome3]] cases=[1, 2] -> case {{*}}, case [[rejected3]](), otherwise [[unknown3]]()
+# CHECK: [[found3]]():
+# CHECK-NEXT: [[tag3]]: cursor = ResultAt [[search3]] index=1
+# CHECK-NEXT: [[isA3]]: boolean = JSONStartsWith [[tag3]] string="\"a\""
+# CHECK-NEXT: Branch [[isA3]] -> taken [[armA3]](), notTaken [[notA3]]()
+# CHECK-NEXT: [[armA3]]():
+# CHECK-NEXT: [[resultsA3]]:{{*}}= CallDirect v0 function=[[parserOfKindA]]
+# CHECK-NEXT: [[outcomeA3]]: int[0, 2] = ResultAt [[resultsA3]]
+# CHECK-NEXT: Switch [[outcomeA3]] cases=[1, 2] -> case {{*}}, case [[noTagMatches3]](), otherwise [[unknown3]]()
+# CHECK-NEXT: [[armB3]]():
+# CHECK-NEXT: = CallDirect v0 function=[[parserOfKindB]]
+# CHECK: [[noTagMatches3]]():
+# CHECK-NEXT: [[tagRepeats3]]: boolean = JSONMemberRepeats [[tag3]] string="kind"
+# CHECK-NEXT: Branch [[tagRepeats3]] -> taken [[unknown3]](), notTaken [[untagged3]]()
+# CHECK-NEXT: [[notA3]]():
+# CHECK-NEXT: [[isB3]]: boolean = JSONStartsWith [[tag3]] string="\"b\""
+# CHECK-NEXT: Branch [[isB3]] -> taken [[armB3]](), notTaken
+# CHECK: [[spelled3]]:{{*}}= JSONParseString [[tag3]]
+# CHECK: [[spelledText3]]: string = ResultAt [[spelled3]] index=1
+# CHECK: SwitchString [[spelledText3]] strings=["a", "b"] -> case [[armA3]](), case [[armB3]](), otherwise [[noTagMatches3]]()
+# CHECK-NOT: JSONFindMember
+# CHECK: function [[parserOfKindA]] {{*}}expectedResult=x3 node=1}
+# CHECK: function [[parserOfKindB]] {{*}}expectedResult=x3 node=2}
+# CHECK: function [[parserOfUntaggedArm]] {{*}}expectedResult=x3 node=3}
+
+# CHECK-LABEL: form=ParsedText expectedResult=x4}
+# CHECK: [[search4]]:{{*}}= JSONFindMember {{*}} string="t"
+# CHECK: [[tag4]]: cursor = ResultAt [[search4]] index=1
+# CHECK-NEXT: [[parsedTag4]]:{{*}}= JSONParseNumber [[tag4]]
+# CHECK: [[armOne4]]():
+# CHECK-NEXT: = CallDirect v0 function=
+# CHECK: [[armTwo4]]():
+# CHECK-NEXT: = CallDirect v0 function=
+# CHECK: [[number4]]: number = ResultAt [[parsedTag4]] index=1
+# CHECK: [[one4]]: 1 = Integer integer=1
+# CHECK-NEXT: [[isOne4]]: boolean = StrictEq [[number4]], [[one4]]
+# CHECK-NEXT: Branch [[isOne4]] -> taken [[armOne4]](), notTaken
+# CHECK: [[two4]]: 2 = Integer integer=2
+# CHECK-NEXT: [[isTwo4]]: boolean = StrictEq [[number4]], [[two4]]
+# CHECK-NEXT: Branch [[isTwo4]] -> taken [[armTwo4]](), notTaken
+
+# CHECK-LABEL: form=ParsedText expectedResult=x5}
+# CHECK: [[search5]]:{{*}}= JSONFindMember {{*}} string="ok"
+# CHECK: [[tag5]]: cursor = ResultAt [[search5]] index=1
+# CHECK-NEXT: [[isTrue5]]: boolean = JSONStartsWith [[tag5]] string="true"
+# CHECK-NEXT: Branch [[isTrue5]] -> taken [[armTrue5]](), notTaken
+# CHECK-NEXT: [[armTrue5]]():
+# CHECK-NEXT: = CallDirect v0 function=
+# CHECK: [[armFalse5]]():
+# CHECK-NEXT: = CallDirect v0 function=
+# CHECK: [[isFalse5]]: boolean = JSONStartsWith [[tag5]] string="false"
+# CHECK-NEXT: Branch [[isFalse5]] -> taken [[armFalse5]](), notTaken
+
+# CHECK-LABEL: form=ParsedText expectedResult=x6}
+# CHECK: [[search6]]:{{*}}= JSONFindMember {{*}} string="kind"
+# CHECK: [[tag6]]: cursor = ResultAt [[search6]] index=1
+# CHECK-NEXT: = JSONStartsWith [[tag6]] string="\"b\""
+# CHECK-NOT: JSONStartsWith
+# CHECK: [[spelled6]]:{{*}}= JSONParseString [[tag6]]
+# CHECK: [[spelledText6]]: string = ResultAt [[spelled6]] index=1
+# CHECK: SwitchString [[spelledText6]] strings=["q\"q", "b"] -> case
+# CHECK-NOT: JSONStartsWith
+# CHECK: }

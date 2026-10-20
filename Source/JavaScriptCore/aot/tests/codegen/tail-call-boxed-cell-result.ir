@@ -1,0 +1,58 @@
+# A function that returns an object jumps to a callee that returns its argument boxed, because flow proves the object at this call. One that returns a number has to unbox after the call
+# FORM: AsRead
+# RUN: generate-code
+# CHECK: f1: size={{*}} frame=none
+# CHECK-NEXT: f2: size=
+# CHECK-NOT: frame=none
+# CHECK: f3: size=
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Result
+typesite w1 module=m0 position=20 kind=Result
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="more" [isFreeName]
+    v3 = ToBoolean v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect function=f4 [isNeverInlined]
+    v6 = Call v1, -, v5
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="returnsObject" flags=[IsChecked] parameters=[{type=L0}] results=[{type=L0 site=w0}] {
+  b0(v0: object ? L0):
+    v1 = CallDirect v0 function=f3 [isNeverInlined]
+    ReturnCall v1 casts=[{declared={type=L0 site=w0}}]
+}
+function f2 name="returnsNumber" flags=[IsChecked] parameters=[{type=number}] results=[{type=number site=w1}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f3 [isNeverInlined]
+    ReturnCall v1 casts=[{declared={type=number site=w1}}]
+}
+function f3 name="returnsArgument" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v0
+}
+function f4 name="driver" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject layout=L0
+    PropDefine v3, v2 key="x"
+    v5 = CallDirect v3 function=f1 [isNeverInlined]
+    v6 = CallDirect v2 function=f2 [isNeverInlined]
+    v7 = PropGet v5 key="x"
+    v8 = NewArray v6, v7 contents=anything
+    Return v8
+}

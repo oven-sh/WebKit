@@ -1,0 +1,156 @@
+# A closure of a bound function answers with the name, the length and the prototype its target was created with, so bind stays a call where a closure of the target may have got another one
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,ChooseCallingConventions
+# STATISTIC: BoundFunctions = 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ValueDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Parent" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = CallDirect function=f1
+    v3 = CallDirect function=f2
+    v4 = CallDirect function=f3
+    v5 = CallDirect function=f4
+    v6 = CallDirect function=f5
+    v7 = CallDirect function=f6
+    v8 = CallDirect function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return
+}
+
+function f1 name="as-created" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    v1 = Undefined
+    v2 = PropGet v0 key="bind"
+    v3 = Call v2, v0, v1 calleeKey="bind"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="as-created"
+# CHECK: = NewClosure v0 function=[[bound]]
+# CHECK-NOT: CallBuiltin
+function f2 name="other-property-added" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f9
+    v1 = Undefined
+    PropSet v0, v1 key="extra" mode=Strict
+    v3 = PropGet v0 key="bind"
+    v4 = Call v3, v0, v1 calleeKey="bind"
+    Return v4
+}
+# CHECK-LABEL: function f2 name="other-property-added"
+# CHECK: = NewClosure v0 function=[[boundWithExtra]]
+# CHECK-NOT: CallBuiltin
+function f3 name="name-redefined" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f10
+    v1 = Undefined
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="name"
+    v4 = String string="other"
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v2, -, v0, v3, v5
+    v7 = PropGet v0 key="bind"
+    v8 = Call v7, v0, v1 calleeKey="bind"
+    Return v8
+}
+# CHECK-LABEL: function f3 name="name-redefined"
+# CHECK: v0: f10 = NewClosure function=f10
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+function f4 name="name-set-at-run-time" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f11
+    v1 = Undefined
+    v2 = String string="computed"
+    SetFunctionName v0, v2
+    v4 = PropGet v0 key="bind"
+    v5 = Call v4, v0, v1 calleeKey="bind"
+    Return v5
+}
+# CHECK-LABEL: function f4 name="name-set-at-run-time"
+# CHECK: v0: f11 = NewClosure function=f11
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+function f5 name="length-deleted" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f12
+    v1 = Undefined
+    v2 = PropDelete v0 key="length" mode=Strict
+    v3 = PropGet v0 key="bind"
+    v4 = Call v3, v0, v1 calleeKey="bind"
+    Return v4
+}
+# CHECK-LABEL: function f5 name="length-deleted"
+# CHECK: v0: f12 = NewClosure function=f12
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+function f6 name="prototype-changed" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f13
+    v1 = Undefined
+    v2 = Builtin builtin=FunctionPrototype
+    v3 = NewObject v2 layout=L1 fields=[]
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Call v4, -, v0, v3
+    v6 = Builtin builtin=FunctionPrototypeBind
+    v7 = Call v6, v0, v1
+    Return v7
+}
+# CHECK-LABEL: function f6 name="prototype-changed"
+# CHECK: v0: f13 = NewClosure function=f13
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+function f7 name="bound-again" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = Undefined
+    v2 = PropGet v0 key="bind"
+    v3 = Call v2, v0, v1 calleeKey="bind"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v1 calleeKey="bind"
+    Return v5
+}
+# CHECK-LABEL: function f7 name="bound-again"
+# CHECK: [[once]]: [[boundOnce]] = NewClosure v0 function=[[boundOnce]]
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin {{*}}, v1 overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+
+function f8 name="untouched" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="extended" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f10 name="renamed" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f12 name="shortened" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="reparented" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f14 name="twice" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

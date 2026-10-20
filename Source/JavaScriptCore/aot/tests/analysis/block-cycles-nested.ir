@@ -1,0 +1,112 @@
+# The depth of a block is the number of cycles around it, loops in sequence are different outermost cycles, and a diamond has no cycle
+# FORM: Prepared
+# RUN: analyses cycles
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="threeNestedLoops" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b7()
+  b2():
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b6()
+  b3():
+    LoopHint
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b3()
+  b5():
+    Jump -> next b2()
+  b6():
+    Jump -> next b1()
+  b7():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 2
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: yes
+# CHECK-NEXT: b3 depth: 3
+# CHECK-NEXT: b3 outermost cycle: b1
+# CHECK-NEXT: b4 in cycle: yes
+# CHECK-NEXT: b4 depth: 3
+# CHECK-NEXT: b4 outermost cycle: b1
+# CHECK-NEXT: b5 in cycle: yes
+# CHECK-NEXT: b5 depth: 2
+# CHECK-NEXT: b5 outermost cycle: b1
+# CHECK-NEXT: b6 in cycle: yes
+# CHECK-NEXT: b6 depth: 1
+# CHECK-NEXT: b6 outermost cycle: b1
+# CHECK-NEXT: b7 in cycle: no
+# CHECK-NEXT: b7 depth: 0
+# CHECK-NEXT: b7 outermost cycle: none
+function f1 name="twoLoopsInSequence" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    LoopHint
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b3()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: yes
+# CHECK-NEXT: b1 depth: 1
+# CHECK-NEXT: b1 outermost cycle: b1
+# CHECK-NEXT: b2 in cycle: yes
+# CHECK-NEXT: b2 depth: 1
+# CHECK-NEXT: b2 outermost cycle: b1
+# CHECK-NEXT: b3 in cycle: yes
+# CHECK-NEXT: b3 depth: 1
+# CHECK-NEXT: b3 outermost cycle: b3
+# CHECK-NEXT: b4 in cycle: yes
+# CHECK-NEXT: b4 depth: 1
+# CHECK-NEXT: b4 outermost cycle: b3
+# CHECK-NEXT: b5 in cycle: no
+# CHECK-NEXT: b5 depth: 0
+# CHECK-NEXT: b5 outermost cycle: none
+function f2 name="diamond" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# CHECK-NEXT: b1 in cycle: no
+# CHECK-NEXT: b1 depth: 0
+# CHECK-NEXT: b1 outermost cycle: none
+# CHECK-NEXT: b2 in cycle: no
+# CHECK-NEXT: b2 depth: 0
+# CHECK-NEXT: b2 outermost cycle: none
+# CHECK-NEXT: b3 in cycle: no
+# CHECK-NEXT: b3 depth: 0
+# CHECK-NEXT: b3 outermost cycle: none

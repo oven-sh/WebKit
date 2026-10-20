@@ -1,0 +1,56 @@
+# A base constructor that unseen code can construct allocates its own object, and its allocation also holds the unknown object: unseen code may pass a subclass nobody tracks as new.target. A class that only compiled code constructs holds its own object alone
+# RUN: flow-solve nodes
+# CHECK: , f2, parameter 0) = {f2}
+# CHECK: , f2, v2) = {L1#[[tracked]]}
+# RUN(ESCAPED): flow-solve nodes
+# ESCAPED: , f1, parameter 0) = {{*}}unknown|f1}
+# ESCAPED: , f1, v2) = {unknown|L0#[[escaped]]}
+# RUN(SITES): flow-sites solved
+# SITES: site {{*}} function=f1 value=v2 kind=Layout origin=Operation layout=L0 class=
+# SITES-NOT: site {{*}} function=f1
+# RUN(TRACKED): flow-sites solved
+# TRACKED: site {{*}} function=f2 value=v2 kind=Layout origin=Operation layout=L1 class=
+# TRACKED-NOT: site {{*}} function=f2
+# RUN(OBJECTS): flow-sites solved
+# OBJECTS: object {{*}} L0#{{*}} kind=Allocation parts=0 positions=0 undeclared=no events=[Allocated, AllocatedByConstructor
+# RUN(OBJECT): flow-sites solved
+# OBJECT: object {{*}} L1#{{*}} kind=Allocation parts=0 positions=0 undeclared=no events=[Allocated, AllocatedByConstructor]
+# RUN(INSTANCES): flow-solve instances
+# INSTANCES: {{*}} f2 Proven
+# INSTANCES-NOT: {{*}} f2
+# RUN(GENERIC): flow-solve instances
+# GENERIC: {{*}} f1 Generic
+# GENERIC-NOT: {{*}} f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Escaped" constructor=f1
+layout L1 kind=Instance name="Tracked" constructor=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=Function
+    v4 = String string="constructor"
+    v5 = String string="return class extends constructor {}"
+    v6 = Construct v3, -, v4, v5
+    v7 = Call v6, -, v2
+    v8 = NewClosure function=f2
+    v9 = NewClass v8 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = Construct v10
+    Return
+}
+function f1 name="Escaped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Tracked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}

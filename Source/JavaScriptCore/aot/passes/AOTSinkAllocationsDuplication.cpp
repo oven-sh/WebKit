@@ -1,0 +1,223 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTSinkAllocationsInterpreter.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTRegionCloner.h"
+#include <algorithm>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+struct DuplicationPlan {
+    VirtualObjectID object;
+    BlockID merge;
+    Vector<Edge, 2> cellEdges;
+};
+
+} // anonymous namespace
+
+static bool allocatesOnEveryPath(const Candidate& candidate)
+{
+    return candidate.isAbandoned || (candidate.numberOfBuilds && !candidate.diesVirtual);
+}
+
+static void resetAnalysis(AllocationSinking& sinking)
+{
+    for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index) {
+        Candidate& candidate = sinking.at(VirtualObjectID(index));
+        if (candidate.abandonedBy == LimitID::None)
+            candidate.isAbandoned = false;
+    }
+    sinking.decisions() = SinkingDecisions { };
+}
+
+static Vector<VirtualObjectID, 4> collectReachableObjects(const SinkingState& state, VirtualObjectID root)
+{
+    Vector<VirtualObjectID, 4> objects;
+    if (!state.find(root))
+        return objects;
+
+    objects.append(root);
+    for (size_t next = 0; next < objects.size(); ++next) {
+        for (const HeldObject& entry : state.find(objects[next])->heldObjects) {
+            if (state.find(entry.object))
+                objects.appendIfNotContains(entry.object);
+        }
+    }
+    return objects;
+}
+
+Vector<Edge, 2> AllocationSinking::collectCellEdges(VirtualObjectID object, BlockID merge)
+{
+    std::span<const Edge> incomingEdges = m_analyses.cfg().incomingEdges(merge);
+    if (std::ranges::any_of(incomingEdges, &Edge::isHandlerEdge))
+        return { };
+
+    Vector<Edge, 2> cellEdges;
+    bool hasOtherShape = false;
+    for (Edge edge : incomingEdges) {
+        const SinkingState* head = headOf(edge.from);
+        if (!head)
+            continue;
+
+        const Block& source = m_function.at(edge.from);
+        SinkingState state = *head;
+        ObjectInterpreter interpreter(*this, SinkingMode::Analyze, state);
+        for (ValueID id : source.values)
+            interpreter.execute(id);
+        interpreter.executeTerminator(source.terminator);
+        OutgoingEdge outgoing = outgoingEdgeOf(m_function, edge);
+        interpreter.enterEdge(outgoing, &source.terminator, nullptr);
+
+        const ObjectState* entering = state.isReachable ? state.find(object) : nullptr;
+        if (!entering)
+            continue;
+        if (entering->isCell())
+            cellEdges.append(edge);
+        else
+            hasOtherShape = true;
+    }
+    if (!hasOtherShape)
+        return { };
+    return cellEdges;
+}
+
+Vector<BlockID> AllocationSinking::collectLiveRange(VirtualObjectID object, BlockID merge)
+{
+    const SinkingState* headOfMerge = headOf(merge);
+    if (!headOfMerge)
+        return { };
+    Vector<VirtualObjectID, 4> objects = collectReachableObjects(*headOfMerge, object);
+    if (objects.isEmpty())
+        return { };
+
+    const CFG& cfg = m_analyses.cfg();
+    Vector<BlockID> region { merge };
+    BitVector isInRegion(m_function.blocks.size());
+    isInRegion.quickSet(merge.index());
+    uint64_t numberOfValues = 0;
+    for (size_t next = 0; next < region.size(); ++next) {
+        BlockID block = region[next];
+        numberOfValues += m_function.at(block).values.size() + 1;
+        if (exceeds(LimitID::MaxDuplicatedTailValues, numberOfValues, at(object).definition))
+            return { };
+
+        for (BlockID successor : cfg.successors(block)) {
+            if (successor == merge)
+                return { };
+            const SinkingState* head = headOf(successor);
+            bool isLive = head && std::ranges::any_of(objects, [&](VirtualObjectID member) {
+                return !!head->find(member);
+            });
+            if (isLive && !isInRegion.quickSet(successor.index()))
+                region.append(successor);
+        }
+    }
+
+    std::ranges::sort(region, { }, [&](BlockID block) {
+        return cfg.reversePostOrderIndex(block);
+    });
+    return region;
+}
+
+bool AllocationSinking::paysWithoutEdges(VirtualObjectID object, std::span<const Edge> edges)
+{
+    BitVector allocatedOnEveryPath(m_candidates.size());
+    for (size_t index = 0; index < m_candidates.size(); ++index) {
+        if (allocatesOnEveryPath(m_candidates[index]))
+            allocatedOnEveryPath.quickSet(index);
+    }
+
+    resetAnalysis(*this);
+    m_ignoredEdges.clear();
+    m_ignoredEdges.append(edges);
+    analyze();
+    m_ignoredEdges.clear();
+
+    const SinkingState* head = headOf(targetOf(m_function, edges.front()).block);
+    if (!head)
+        return false;
+    Vector<VirtualObjectID, 4> objects = collectReachableObjects(*head, object);
+    return std::ranges::any_of(objects, [&](VirtualObjectID member) {
+        return allocatedOnEveryPath.quickGet(member.index()) && !allocatesOnEveryPath(at(member));
+    });
+}
+
+void AllocationSinking::duplicate(IRBuilder& builder, std::span<const BlockID> region, std::span<const Edge> cellEdges)
+{
+    RegionCloner cloner(builder, m_function);
+    cloner.cloneBlocks(region, [](ValueID, Value&) { });
+    for (Edge edge : cellEdges) {
+        const Target& target = targetOf(m_function, edge);
+        BlockID clone = cloner.cloneOf(target.block);
+        builder.redirectEdge(edge, clone, Arguments(target.arguments));
+    }
+    cloner.repairSSA(m_analyses);
+}
+
+bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
+{
+    Vector<DuplicationPlan, 2> plans;
+    for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+        const Candidate& candidate = m_candidates[index];
+        if (!candidate.isJoin && candidate.mergeBlock && candidate.abandonedBy == LimitID::None)
+            plans.append(DuplicationPlan { VirtualObjectID(index), candidate.mergeBlock, { } });
+    }
+    if (plans.isEmpty())
+        return false;
+
+    Vector<Candidate> savedCandidates = m_candidates;
+    SinkingDecisions savedDecisions = m_decisions;
+    auto restoreAnalysis = [&] {
+        m_candidates = savedCandidates;
+        m_decisions = savedDecisions;
+    };
+    auto collectClonableRange = [&](const DuplicationPlan& plan) {
+        Vector<BlockID> region = collectLiveRange(plan.object, plan.merge);
+        if (!region.isEmpty() && RegionCloner::checkCanDuplicate(m_analyses, region.span()) != CloneCheck::CanClone)
+            region.clear();
+        return region;
+    };
+
+    resetAnalysis(*this);
+    solve();
+    for (DuplicationPlan& plan : plans) {
+        plan.cellEdges = collectCellEdges(plan.object, plan.merge);
+        if (!plan.cellEdges.isEmpty() && collectClonableRange(plan).isEmpty())
+            plan.cellEdges.clear();
+    }
+
+    uint64_t numberOfTrials = 0;
+    for (const DuplicationPlan& plan : plans) {
+        if (plan.cellEdges.isEmpty())
+            continue;
+        if (exceeds(LimitID::MaxSinkingRounds, ++numberOfTrials, at(plan.object).definition))
+            continue;
+        restoreAnalysis();
+        if (!paysWithoutEdges(plan.object, plan.cellEdges.span()))
+            continue;
+        Vector<BlockID> region = collectClonableRange(plan);
+        if (region.isEmpty())
+            continue;
+
+        duplicate(builder, region.span(), plan.cellEdges.span());
+        context().build.statistics().count(StatisticID::TailsDuplicatedForSinking);
+        return true;
+    }
+
+    restoreAnalysis();
+    analyze();
+    return false;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

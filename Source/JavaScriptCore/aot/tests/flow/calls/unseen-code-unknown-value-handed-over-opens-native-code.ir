@@ -1,0 +1,24 @@
+# The unknown object stands for whatever has reached native code. Once it is handed to unseen code, all of that is opened
+# RUN: flow-links unseen
+# RUN(SINKS): flow-solve sinks
+# CHECK: unknown-javascript yes
+# CHECK: whole-program-open no
+# SINKS: unknownJavaScript {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Neighbor" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = PropGet v2 key="input" [isFreeName]
+    v6 = PropGet v2 key="eval" [isFreeName]
+    v7 = Call v6, -, v5
+    v8 = Call v7, -, v5
+    Return
+}

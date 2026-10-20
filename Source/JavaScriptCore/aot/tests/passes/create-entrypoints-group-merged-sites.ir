@@ -1,0 +1,61 @@
+# Two calls that share a callee share one convention: a member that only one of them reaches tests the wider type of the group, and the shared member takes it as it is
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints
+# STATISTIC: GroupEntrypoints = 9
+# CHECK: group g0 members=[f2, f3, f4, f5, f6, f7, f8, f9, f10] sites=[a0, a1] this=[omitted] arguments=[{{*}}[number, string]]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesNumber" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number):
+    v2 = Call v0, -, v1 accessSite=0 callees=[f2, f3, f4, f5, f6]
+    Return v2
+}
+function f1 name="passesString" parameters=[{type=f6|f7|f8|f9|f10}, {type=string}] results=[{type=anything}] {
+  b0(v0: f6|f7|f8|f9|f10, v1: string):
+    v2 = Call v0, -, v1 accessSite=1 callees=[f6, f7, f8, f9, f10]
+    Return v2
+}
+function f2 name="takesNumber" kind=Arrow parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f3 name="second" kind=Arrow parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f4 name="third" kind=Arrow parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f5 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    Return
+}
+function f6 name="takesBoth" kind=Arrow parameters=[{type=number|string}] results=[{type=undefined}] {
+  b0(v0: number|string):
+    Return
+}
+function f7 name="sixth" kind=Arrow parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    Return
+}
+function f8 name="seventh" kind=Arrow parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    Return
+}
+function f9 name="eighth" kind=Arrow parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    Return
+}
+function f10 name="takesString" kind=Arrow parameters=[{type=string}] results=[{type=undefined}] {
+  b0(v0: string):
+    Return
+}
+# CHECK: name="takesNumber"{{*}}role=GroupEntrypoint{{*}}parameters=[{type=number|string}]
+# CHECK-NEXT: b0([[closure]]: f2|f3|f4|f5|f6|f7|f8|f9|f10, [[wide]]: number|string):
+# CHECK: [[narrow]]: number = Claim [[wide]] castType=number
+# CHECK-NEXT: = CallDirect [[narrow]] function=f2
+# CHECK: name="takesBoth"{{*}}role=GroupEntrypoint{{*}}parameters=[{type=number|string}]
+# CHECK-NEXT: b0([[bothClosure]]: f2|f3|f4|f5|f6|f7|f8|f9|f10, [[both]]: number|string):
+# CHECK-NOT: Claim
+# CHECK: = CallDirect [[both]] function=f6

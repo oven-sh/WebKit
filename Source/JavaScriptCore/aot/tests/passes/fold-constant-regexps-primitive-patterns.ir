@@ -1,0 +1,70 @@
+# A pattern that is a known primitive has a known text, and a pattern that is left out or undefined is the empty text
+# FORM: Prepared
+# RUN: pass FoldConstantRegExps
+# STATISTIC: FoldConstantRegExpsChanges = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="integerPattern" results=[{type=RegExp}] {
+  b0():
+    v0 = Integer integer=12
+    v1 = CallBuiltin -, v0 overload=RegExp/6
+    Return v1
+}
+# CHECK-LABEL: function f0 name="integerPattern"
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: RegExp<"12"[]> = NewRegExp pattern="12"
+
+function f1 name="noPattern" results=[{type=RegExp}] {
+  b0():
+    v0 = CallBuiltin overload=RegExp/6
+    Return v0
+}
+# CHECK-LABEL: function f1 name="noPattern"
+# CHECK-NOT: CallBuiltin
+# CHECK: v0: RegExp<""[]> = NewRegExp pattern=""
+
+function f2 name="undefinedPatternWithFlags" results=[{type=RegExp}] {
+  b0():
+    v0 = Undefined
+    v1 = String string="g"
+    v2 = CallBuiltin -, v0, v1 overload=RegExp/6
+    Return v2
+}
+# CHECK-LABEL: function f2 name="undefinedPatternWithFlags"
+# CHECK: v2: RegExp<""[Global]> = NewRegExp pattern="" regExpFlags=[Global]
+
+function f3 name="nullPattern" results=[{type=RegExp}] {
+  b0():
+    v0 = Null
+    v1 = CallBuiltin -, v0 overload=RegExp/6
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nullPattern"
+# CHECK: = NewRegExp pattern="null"
+
+function f4 name="booleanPatternCalledWithoutNew" results=[{type=RegExp}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = CallBuiltin -, v0 overload=RegExp/2
+    Return v1
+}
+# CHECK-LABEL: function f4 name="booleanPatternCalledWithoutNew"
+# CHECK: = NewRegExp pattern="true"
+
+function f5 name="unknownNumber" parameters=[{type=number}] results=[{type=RegExp}] {
+  b0(v0: number):
+    v1 = CallBuiltin -, v0 overload=RegExp/6
+    Return v1
+}
+# CHECK-LABEL: function f5 name="unknownNumber"
+# CHECK-NOT: NewRegExp
+# CHECK: = CallBuiltin -, v0 overload=RegExp/6
+
+function f6 name="mayBeUndefined" parameters=[{type=undefined|number}] results=[{type=RegExp}] {
+  b0(v0: undefined|number):
+    v1 = CallBuiltin -, v0 overload=RegExp/6
+    Return v1
+}
+# CHECK-LABEL: function f6 name="mayBeUndefined"
+# CHECK-NOT: NewRegExp
+# CHECK: = CallBuiltin -, v0 overload=RegExp/6

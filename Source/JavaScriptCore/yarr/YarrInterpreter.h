@@ -28,6 +28,7 @@
 #include "ConcurrentJSLock.h"
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
+#include "YarrFlatProgram.h"
 #include "YarrPattern.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -478,113 +479,6 @@ public:
     unsigned m_frameSize;
 };
 
-static constexpr unsigned flatProgramGaveUp = static_cast<unsigned>(JSRegExpResult::JITCodeFailure);
-
-#define FOR_EACH_YARR_FAST_OP_THAT_PUSHES_A_FRAME(macro) \
-    macro(Choice) \
-    macro(ChoiceByFirst) \
-    macro(GreedyLoopChoice) \
-    macro(NegativeLookaheadBegin) \
-    macro(GreedyRun) \
-    macro(LazyRun) \
-    macro(GreedyRunBeforeKnownCharacters) \
-    macro(LazyRunBeforeKnownCharacters) \
-    macro(LoggedCaptureStart) \
-    macro(LoggedCaptureEnd) \
-    macro(LoggedClearCaptures) \
-    macro(LoggedSavePosition) \
-    macro(LoggedSetRegister) \
-    macro(LoggedIncrement)
-
-#define FOR_EACH_YARR_FAST_OP(macro) \
-    FOR_EACH_YARR_FAST_OP_THAT_PUSHES_A_FRAME(macro) \
-    macro(KnownCharacters) \
-    macro(Character) \
-    macro(Text) \
-    macro(CasedText) \
-    macro(WideText) \
-    macro(Set) \
-    macro(SetCount) \
-    macro(PossessiveRun) \
-    macro(CapturedRun) \
-    macro(Jump) \
-    macro(CaptureStart) \
-    macro(CaptureEnd) \
-    macro(CaptureEmpty) \
-    macro(ClearCaptures) \
-    macro(SavePosition) \
-    macro(FailIfEmpty) \
-    macro(NeedsInput) \
-    macro(InputStart) \
-    macro(LineStart) \
-    macro(InputEnd) \
-    macro(LineEnd) \
-    macro(WordBoundary) \
-    macro(NotWordBoundary) \
-    macro(Match) \
-    macro(JumpIfBelow) \
-    macro(JumpIfNotBelow) \
-    macro(LoopBack) \
-    macro(LoopBackUnlessEmpty) \
-    macro(LookaheadBegin) \
-    macro(LookaheadEnd) \
-    macro(LookaheadEndKeepingCaptures) \
-    macro(NegativeLookaheadEnd) \
-    macro(BackReference) \
-    macro(BackReferenceIgnoringCase)
-
-struct FastOp {
-    enum class Kind : uint8_t {
-#define YARR_FAST_OP_ENUMERATOR(name) name,
-        FOR_EACH_YARR_FAST_OP(YARR_FAST_OP_ENUMERATOR)
-#undef YARR_FAST_OP_ENUMERATOR
-    };
-    Kind kind;
-    uint16_t set;
-    uint32_t argument;
-    uint32_t target;
-    uint32_t needed;
-};
-
-struct FastSet {
-    uint64_t bits[4];
-    CharacterClass* characterClass;
-    char16_t first;
-    char16_t second;
-    bool invert;
-};
-
-struct FastFrame {
-    uint32_t op;
-    uint32_t position;
-    uint32_t limit;
-    uint32_t extra;
-};
-
-struct FastProgram {
-    WTF_MAKE_TZONE_ALLOCATED(FastProgram);
-public:
-    size_t estimatedSizeInBytes() const { return ops.capacity() * sizeof(FastOp) + sets.capacity() * sizeof(FastSet) + text.capacity() + wideText.capacity() * sizeof(char16_t); }
-
-    Vector<FastOp> ops;
-    Vector<FastSet> sets;
-    Vector<Latin1Character> text;
-    Vector<char16_t> wideText;
-    uint64_t firstCharacters[4] { };
-    unsigned numSubpatterns { 0 };
-    unsigned numRegisters { 0 };
-    unsigned endAnchoredFixedSize { 0 };
-    bool scansForFirstCharacter { false };
-    bool firstCharacterMayBeWide { false };
-    bool hasOnlyOneFirstCharacter { false };
-    uint8_t onlyFirstCharacter { 0 };
-    bool triesOnlyOnce { false };
-    bool validate { false };
-    bool hasBytecode { false };
-    void* owner { nullptr };
-    unsigned (*handOver)(void* owner, StringView subject, unsigned start, unsigned* output) { nullptr };
-};
-
 struct BytecodePattern {
     WTF_MAKE_TZONE_ALLOCATED(BytecodePattern);
 public:
@@ -616,7 +510,29 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes() + (m_fastProgram ? m_fastProgram->estimatedSizeInBytes() : 0); }
+    BytecodePattern(std::unique_ptr<FlatProgram> flatProgram, const YarrPattern& pattern)
+        : m_flags(pattern.m_flags)
+        , m_allocator(nullptr)
+        , m_lock(nullptr)
+        , m_numDuplicateNamedCaptureGroups(pattern.m_numDuplicateNamedCaptureGroups)
+        , m_endAnchoredFixedSize(pattern.m_endAnchoredFixedSize)
+        , m_offsetVectorBaseForNamedCaptures(pattern.offsetVectorBaseForNamedCaptures())
+        , m_offsetsSize(pattern.offsetsSize())
+        , newlineCharacterClass(nullptr)
+        , wordcharCharacterClass(nullptr)
+        , ignoreCaseWordcharCharacterClass(nullptr)
+        , m_flatProgram(WTF::move(flatProgram))
+    {
+        ASSERT(m_flatProgram);
+    }
+
+    size_t estimatedSizeInBytes() const
+    {
+        size_t size = m_body ? m_body->estimatedSizeInBytes() : 0;
+        if (m_flatProgram)
+            size += m_flatProgram->estimatedSizeInBytes();
+        return size;
+    }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
@@ -648,7 +564,6 @@ public:
     bool dotAll() const { return m_flags.contains(Flags::DotAll); }
 
     std::unique_ptr<ByteDisjunction> m_body;
-    std::unique_ptr<FastProgram> m_fastProgram;
     OptionSet<Flags> m_flags;
     // Each BytecodePattern is associated with a RegExp, each RegExp is associated
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.
@@ -665,13 +580,15 @@ public:
     CharacterClass* wordcharCharacterClass;
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
+    std::unique_ptr<FlatProgram> m_flatProgram;
+    std::optional<FlatProgramDecline> m_flatProgramDecline;
+
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
 };
 
-JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, bool alwaysWithBytecode = false);
-JS_EXPORT_PRIVATE unsigned interpretBytecode(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 
 } } // namespace JSC::Yarr

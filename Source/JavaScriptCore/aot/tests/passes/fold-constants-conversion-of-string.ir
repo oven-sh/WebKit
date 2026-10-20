@@ -1,0 +1,45 @@
+# ToString of a value that is always a string is the value
+# FORM: Prepared
+# RUN: pass FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="string" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = ToString v0
+    Return v1
+}
+# CHECK-LABEL: name="string"
+# CHECK: v1: string = Upcast v0 castType=string
+
+function f1 name="oneOfTwoTexts" parameters=[{type="a"|"b"}] results=[{type=string}] {
+  b0(v0: "a"|"b"):
+    v1 = ToString v0
+    Return v1
+}
+# CHECK-LABEL: name="oneOfTwoTexts"
+# CHECK: v1: "a"|"b" = Upcast v0 castType=string
+
+function f2 name="stringOrNumber" parameters=[{type=number|string}] results=[{type=string}] {
+  b0(v0: number|string):
+    v1 = ToString v0
+    Return v1
+}
+# CHECK-LABEL: name="stringOrNumber"
+# CHECK: v1: string = ToString v0
+
+function f3 name="stringOrUndefined" parameters=[{type=undefined|string}] results=[{type=string}] {
+  b0(v0: undefined|string):
+    v1 = ToString v0
+    Return v1
+}
+# CHECK-LABEL: name="stringOrUndefined"
+# CHECK: v1: string = ToString v0
+
+function f4 name="unknown" parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    Return v1
+}
+# CHECK-LABEL: name="unknown"
+# CHECK: v1: string = ToString v0

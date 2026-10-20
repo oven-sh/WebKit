@@ -1,0 +1,105 @@
+# A property is stored late only where the object it holds refers back to the holder, and a property that the allocation lists stays listed
+# FORM: Prepared
+# RUN: pass SinkAllocations SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Leaf" fields=[{key="w" declared={type=anything}}] flow={members=[L0]}
+layout L1 name="Middle" fields=[{key="id" declared={type=anything}}, {key="leaf" declared={type=L0}}, {key="size" declared={type=number}}] flow={members=[L1]}
+layout L2 name="Top" fields=[{key="leaf" declared={type=L0}}, {key="middle" declared={type=L1}}] flow={members=[L2]}
+layout L3 kind=Environment name="scope" fields=[{key="self" declared={type=anything}}]
+layout L4 name="Listed" fields=[{key="run" declared={type=function} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L4]}
+layout L5 name="Created" fields=[{key="run" declared={type=function}}, {key="count" declared={type=number}}]
+
+function f0 name="sharedObjectInListedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v4 = NewObject -, v0, v3, v1 layout=L1 fields=[0, 1, 2] [keepsShape]
+    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1] [keepsShape]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v0, -, v5
+    Return v6
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="sharedObjectInListedFields"
+# CHECK: b1():
+# CHECK-NEXT: [[leaf0]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: [[middle0]]:{{*}}= NewObject -, v0, [[leaf0]], v1 layout=L1 fields=[0, 1, 2]
+# CHECK-NEXT: [[top0]]:{{*}}= NewObject -, [[leaf0]], [[middle0]] layout=L2 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[top0]]
+
+function f1 name="sharedObjectInCreatedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v4 = NewObject layout=L1 [keepsShape]
+    PropDefine v4, v0 key="id" receivers=[L1]
+    PropDefine v4, v3 key="leaf" receivers=[L1]
+    PropDefine v4, v1 key="size" receivers=[L1]
+    v8 = NewObject -, v3, v4 layout=L2 fields=[0, 1] [keepsShape]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v9 = Call v0, -, v8
+    Return v9
+  b2():
+    Return v0
+}
+# Nothing refers back, so every object is built before its holders and the definitions fold into the allocation.
+# CHECK-LABEL: function f1 name="sharedObjectInCreatedFields"
+# CHECK: b1():
+# CHECK-NEXT: [[leaf1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: [[middle1]]:{{*}}= NewObject -, v0, [[leaf1]], v1 layout=L1 fields=[0, 1, 2]
+# CHECK-NEXT: [[top1]]:{{*}}= NewObject -, [[leaf1]], [[middle1]] layout=L2 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[top1]]
+
+function f2 name="run" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}
+
+function f3 name="listedFieldInCycle" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = NewObject layout=L3
+    v4 = NewClosure v3 function=f2
+    v5 = NewObject -, v4, v1 layout=L4 fields=[0, 1]
+    PutEnvironmentField v3, v5 layout=L3 field=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Call v0, -, v4
+    Return v7
+  b2():
+    Return v0
+}
+# Every allocation of the layout lists both fields, which is what their occupancy says. The cycle is closed by the store to the environment.
+# CHECK-LABEL: function f3 name="listedFieldInCycle"
+# CHECK: b1():
+# CHECK-NEXT: [[scope3]]: env L3 = NewObject layout=L3
+# CHECK-NEXT: [[closure3]]:{{*}}= NewClosure [[scope3]] function=f2
+# CHECK-NEXT: [[listed3]]:{{*}}= NewObject -, [[closure3]], v1 layout=L4 fields=[0, 1]
+# CHECK-NEXT: PutEnvironmentField [[scope3]], [[listed3]] layout=L3
+# CHECK-NEXT: = Call v0, -, [[closure3]]
+
+function f4 name="createdFieldInCycle" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = NewObject layout=L3
+    v4 = NewClosure v3 function=f2
+    v5 = NewObject layout=L5
+    PropDefine v5, v4 key="run" receivers=[L5]
+    PropDefine v5, v1 key="count" receivers=[L5]
+    PutEnvironmentField v3, v5 layout=L3 field=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v9 = Call v0, -, v4
+    Return v9
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="createdFieldInCycle"
+# CHECK: b1():
+# CHECK-NEXT: [[created4]]:{{*}}= NewObject layout=L5
+# CHECK-NEXT: [[scope4]]: env L3 = NewObject -, [[created4]] layout=L3 fields=[0]
+# CHECK-NEXT: [[closure4]]:{{*}}= NewClosure [[scope4]] function=f2
+# CHECK-NEXT: PutSlotOrAdd [[created4]], [[created4]], [[closure4]] key="run" receivers=[L5] level=Proven
+# CHECK-NEXT: PutSlotOrAdd [[created4]], [[created4]], v1 key="count" receivers=[L5] level=Proven
+# CHECK-NEXT: = Call v0, -, [[closure4]]

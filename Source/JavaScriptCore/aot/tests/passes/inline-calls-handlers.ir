@@ -1,0 +1,92 @@
+# The copy of a callee under the handler of the call, and a callee with a handler of its own
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 3
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="catchesInside" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = PropGet v0 key="p"
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+
+function f1 name="readsProperty" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="p"
+    Return v1
+}
+
+function f2 name="throwsOrReturns" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Throw v0
+  b2():
+    Return v0
+}
+
+function f3 name="callerWithoutHandlers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="callerWithoutHandlers"
+# CHECK: = CallDirect v0 function=f0
+# CHECK-NEXT: Return
+
+function f4 name="callerWithHandlers" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = CallDirect v0 function=f0
+    Jump -> next b2()
+  b2():
+    Return v1
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: name="callerWithHandlers"
+# CHECK-NOT: CallDirect
+# CHECK: b3() role=CatchHandler:
+# CHECK: [[entry4]]() handler=b3():
+# CHECK-NEXT: Jump -> next [[covered4]]() @0:1
+# CHECK-NEXT: [[covered4]]() handler=[[inner4]]():
+# CHECK-NEXT: = PropGet v0 key="p"
+# CHECK: [[inner4]]() role=CatchHandler handler=b3():
+# CHECK-NEXT: = CatchValue
+# CHECK-NOT: CallDirect
+
+function f5 name="callsUnderHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v2, v1 function=f2
+    Jump -> next b2()
+  b2():
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: name="callsUnderHandler"
+# CHECK-NOT: CallDirect
+# CHECK: b1() handler=b3():
+# CHECK-NEXT: Jump -> next [[first5]]()
+# CHECK: frequency=Rare handler=b3():
+# CHECK-NEXT: Throw v2
+# CHECK: [[first5]]() handler=b3():
+# CHECK-NEXT: = PropGet v0 key="p"
+# CHECK-NOT: CallDirect

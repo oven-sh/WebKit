@@ -1,0 +1,30 @@
+# A store into an object that the function allocated before another allocation is a slot store without a guard, and its barrier is a call that passes the back-end checks
+# FORM: AsRead
+# RUN: compile BarriersEmitted
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
+# CHECK: image not empty
+# CHECK: statistic BarriersEmitted 1
+# PLACED-LABEL: name="storeIntoOlderAllocation"
+# PLACED: PutSlot [[older]], -, [[younger]] key="next"
+
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="storeIntoOlderAllocation" results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v2 key="next" mode=Strict
+    Return v1
+}

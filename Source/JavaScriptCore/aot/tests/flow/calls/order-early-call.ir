@@ -1,0 +1,33 @@
+# The body calls a hoisted function above the store of a constant the function reads, so the proof of that constant fails and the constant stored above the call keeps its proof
+# RUN: flow-order timelines locations failed
+# CHECK: timeline f0: f1 after b0#3
+# CHECK-NEXT: timeline f0 by use: f1 after b0#2
+# CHECK-NEXT: g0: SetAtCreation AtMostOnce
+# CHECK-NEXT: g1: Unknown AtMostOnce
+# CHECK-NEXT: g2: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: read-before-initialization g1
+# CHECK-NOT: read-before-initialization
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="read" module=m0 declared={type=function} initialization=Function function=f1
+variable g1 name="x" module=m0 declared={type=anything|absent} initialization=Uninitialized flags=[IsImmutable]
+variable g2 name="above" module=m0 declared={type=anything|absent} initialization=Uninitialized flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g2
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2
+    v4 = Integer integer=1
+    PutModuleVariable v4 variable=g1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="above"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="x"
+    Return v3
+}

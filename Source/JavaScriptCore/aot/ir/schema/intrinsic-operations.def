@@ -1,0 +1,56 @@
+enum GeneratorStepCheck { IsUnmodifiedGenerator IsGenerator | engine IsUnmodified None }
+enum GeneratorStepStatus { Yielded Completed NotStepped }
+enum StepGeneratorResult { | engine Value Status }
+enum StepArrayIteratorResult { | engine Done Value }
+enum MapNextResult { | engine HasEntry Entry Key Value }
+enum SetNextResult { | engine HasEntry Entry Element }
+
+family EngineIntrinsic AsRead..Placed ; isIntrinsic = true
+operation IsConstructor (value: Any/inspects) -> natural(boolean) ; none ; runtime = IsConstructor
+operation ArraySpeciesCreate (length: Number/inspects, array: Any/inspects+runs(Species)) -> unknown ; Allocates throws ; runtime = ArraySpeciesCreate
+operation GetByValWithThis (object: Any/retains, thisValue: Any/retains, property: Any/Converted) -> unknown ; unknownCode ; runtime = GetByValWithThis
+operation GetOwnProperty (object: Any/retains, key: PropertyKey) -> unknown ; unknownCode ; runtime = GetOwnProperty
+operation ToLength (value: Any/Converted) -> natural(number) ; ResolvesRopes by Operator ; runtime = ToLength
+operation ThrowNewError (errorKind: ErrorKind, message: String) -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowAtSite ; replaces = CallBuiltin, Throw
+operation ResumeGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains) -> unknown ; unknownCode ; runtime = ResumeGenerator
+operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains, check: GeneratorStepCheck) -> results(StepGeneratorResult: unknown, natural(GeneratorStepStatus)) ; unknownCode
+operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart
+operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May
+operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects, engine allocationSite?: AllocationSite) [| engine keepsShape] -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; removedBy = ResolveBuiltins
+operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; removedBy = ExpandIteration
+
+family RuntimeIntrinsic AsRead..Placed ; isIntrinsic = true
+operation RequireBuiltinModule (runtimeModule: RuntimeModule) -> unknown ; unknownCode ; runtime = RequireBuiltinModule
+operation NativeBinding (builtin: Builtin) -> unknown ; Allocates UsesRuntime throws ; runtime = NativeBinding
+operation LinkTimeConstant (constant: LinkTimeConstant) -> unknown ; CreatesConstant ; runtime = LinkTimeConstant
+operation HasJSType (value: Any/inspects, first: CheckedJSType, last: CheckedJSType) -> natural(boolean) ; none ; branches = May
+operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ; reads(InternalFields, PromiseState, CollectionStorage)
+operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; remembersOwner = true
+
+family PromiseIntrinsic AsRead..Placed ; isIntrinsic = true
+operation NewPromise (engine allocationSite?: AllocationSite) -> allocation(Promise) ; Allocates ; runtime = NewPromise ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CallBuiltin
+operation CreatePromise (constructor: Any/inspects+runs(Named(prototype)), engine allocationSite?: AllocationSite) -> allocation(Promise) ; Allocates reads(NamedProperties) throws ; newTarget = constructor ; runtime = CreatePromise ; allocatesInline = true ; allocatesAfterLastSafepoint = true
+operation ResolvePromise (promise: Object/inspects+writesContents, value: Any/retains(promise)+runs(Thenable)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = ResolvePromise ; replaces = CallBuiltin
+operation RejectPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = RejectPromise
+
+family ArrayIntrinsic AsRead..Placed ; isIntrinsic = true
+operation IsPristineArray (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ArrayStorage) ; proves = Pristine ; branches = May
+operation ArrayStorageKind (array: Array/inspects) -> natural(ArrayStorage) ; reads(ArrayStorage)
+operation HasContiguousIndex (array: Array/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array])
+operation GetContiguousIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> unknown => declared(array) ; reads(ArrayStorage, Elements[Array])
+operation GetDoubleIndex (array: Array/inspects+readsContents, position: Integer/inspects) -> natural(number) ; reads(ArrayStorage, Elements[Array])
+operation PutContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; remembersOwner = true
+operation PutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array])
+operation NewContiguousArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true
+operation NewDoubleArray (length: Integer/inspects, engine allocationSite?: AllocationSite) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true
+operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true
+operation NewArrayWithCapacity (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true
+operation TryPutByValDirect (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine arrayStorage: ArrayStorage) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true
+operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true
+operation GrowNewArray (array: Array/inspects+writesContents, length: Integer/inspects) -> none ; GrowsArray ; runtime = GrowNewArray
+operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) ; GrowsArray ; runtime = TruncateNewArray
+
+family CollectionIntrinsic AsRead..Placed ; isIntrinsic = true
+operation CollectionTable (collection: Object/inspects) -> unknown ; reads(CollectionStorage)
+operation MapNext (map: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(MapNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(map), unknown => declared(map)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) ; runtime = MapNext
+operation SetNext (set: Object/inspects+readsContents, table: Any/inspects, entry: Integer/inspects) -> results(SetNextResult: natural(boolean), natural(int[0, 2147483647]), unknown => declared(set)) ; CreatesConstant reads(CollectionStorage, CollectionEntries) ; runtime = SetNext

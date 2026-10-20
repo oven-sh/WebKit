@@ -55,7 +55,7 @@ function make() {
     shouldBe(Object.isFrozen(object), false);
 }
 
-// [[Set]] with the object as receiver. An assignment that resolves to an accessor is left to the accessor: it changes no property.
+// [[Set]] with the object as receiver. A setter is not called either.
 {
     let object = $vm.makePropertiesImmutable(make());
     let before = snapshot(object);
@@ -66,14 +66,33 @@ function make() {
     shouldThrow(() => { "use strict"; object[symbol] = 9; }, TypeError);
     shouldThrow(() => { "use strict"; object[0] = 9; }, TypeError);
     object.g = 9;
-    (() => { "use strict"; object.g = 9; })();
-    shouldBe(Reflect.set(object, "g", 9), true);
-    shouldBe(setterCalls, 3);
+    shouldThrow(() => { "use strict"; object.g = 9; }, TypeError);
+    shouldBe(Reflect.set(object, "g", 9), false);
+    shouldBe(setterCalls, 0);
     shouldBe(Reflect.set(object, "a", 9), false);
     shouldBe(Reflect.set(object, "fresh", 9), false);
     shouldBe(snapshot(object), before);
     shouldBe(object.a, 1);
     shouldBe(object.g, 4);
+}
+
+// [[Set]] of the value that a writable data property holds changes nothing and succeeds. A read-only property and an accessor refuse it as before.
+{
+    let held = { };
+    let object = { a: 1, b: held, get g() { return 4; }, set g(v) { setterCalls++; } };
+    Object.defineProperty(object, "readOnly", { value: 5, writable: false, configurable: true });
+    $vm.makePropertiesImmutable(object);
+    let before = snapshot(object);
+    (function () { "use strict"; object.a = 1; object.b = held; object.a = object.a || 2; })();
+    shouldBe(Reflect.set(object, "a", 1), true);
+    shouldBe(Reflect.set(object, "b", held), true);
+    shouldThrow(() => { "use strict"; object.a = 2; }, TypeError);
+    shouldThrow(() => { "use strict"; object.b = { }; }, TypeError);
+    shouldThrow(() => { "use strict"; object.readOnly = 5; }, TypeError);
+    shouldThrow(() => { "use strict"; object.g = 4; }, TypeError);
+    shouldThrow(() => { "use strict"; object.fresh = undefined; }, TypeError);
+    shouldBe(setterCalls, 0);
+    shouldBe(snapshot(object), before);
 }
 
 // [[DefineOwnProperty]]: a definition that changes nothing succeeds, every other one fails.

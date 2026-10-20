@@ -1,0 +1,69 @@
+# A store under an unknown key is a store to every field of the object with a string key, listed at the allocation or not, and to no private field
+# RUN: flow
+# CHECK: field L0.0 "x" type=true|1 {{*}}flow={location={writers=AllKnown
+# CHECK-NOT: stores=
+# CHECK: field L0.1 "y" type=undefined|true {{*}}flow={location={writers=AllKnown
+# CHECK-NOT: stores=
+# CHECK: layout L1 flow={
+# CHECK: field L1.0 "x" type=1 {{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK: field L1.1 "y" {{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation
+# CHECK: field L4.0 #"secret"@L4 type=1 {{*}}flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK: field L4.1 "x" type=true|1 {{*}}flow={location={writers=AllKnown
+# CHECK-NOT: stores=
+# CHECK: layout L(
+# CHECK: variable g0 type=true {{*}}flow={writers=AllKnown
+# CHECK-NOT: stores=
+# CHECK: variable g1 {{*}}flow={writers=AllKnown stores=Never
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="StoredByKey" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}]
+layout L1 name="OnlyAllocated" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}]
+layout L2 kind=Instance name="StaticStoredByKey" constructor=f1 staticFields=[{key="count" variable=g0}]
+layout L3 kind=Instance name="StaticNeverStored" constructor=f2 staticFields=[{key="count" variable=g1}]
+layout L4 kind=Instance name="PrivateField" constructor=f3 fields=[{key=#"secret"@L4 declared={type=anything} flags=[IsRequired, IsPrivate]}, {key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="count" module=m0 declared={type=anything} initialization=Undefined owner=L2
+variable g1 name="count" module=m0 declared={type=anything} initialization=Undefined owner=L3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="key" [isFreeName]
+    v5 = ToString v4
+    v6 = Boolean boolean=true
+    ElemSet v1, v5, v6 mode=Strict
+    v8 = NewClosure function=f1
+    v9 = NewClass v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    ElemSet v10, v5, v6 mode=Strict
+    v12 = NewClosure function=f2
+    v13 = NewClass v12 layout=L3
+    v14 = FinishClass v13 layout=L3
+    v15 = NewClosure function=f3
+    v16 = NewClass v15 layout=L4
+    v17 = FinishClass v16 layout=L4
+    v18 = Construct v17
+    ElemSet v18, v5, v6 mode=Strict
+    Return
+}
+function f1 name="StaticStoredByKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f2 name="StaticNeverStored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3 fields=[]
+    Return v2
+}
+function f3 name="PrivateField" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = Integer integer=1
+    v3 = NewObject v1, v2, v2 layout=L4 fields=[0, 1]
+    Return v3
+}

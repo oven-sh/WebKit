@@ -1,0 +1,37 @@
+# Two casts of one object are one string: the cast outside the loop is flattened, and the read of the cast inside the loop takes the flat string too
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 kind=Assertion
+
+# CHECK-NOT: LoopHint
+# CHECK: [[flat]]: flatstring = FlattenString v5
+# CHECK-NOT: FlattenString
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
+# CHECK-NEXT: v11: string = Claim v0 castType=string site=w0
+# CHECK-NEXT: v12: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
+# CHECK-NOT: FlattenString
+function f0 name="claims-inside-and-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+  b0(v0: undefined|string, v1: number):
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = Claim v0 castType=string site=w0
+    Jump -> next b1(v3, v2)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v6, v1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = CallBuiltin v5, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Claim v0 castType=string site=w0
+    v12 = CallBuiltin v11, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v13 = Add v6, v4
+    Jump -> next b1(v13, v12)
+  b3():
+    Return v7
+}

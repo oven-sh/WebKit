@@ -1,0 +1,58 @@
+# A position that takes every object anyway, by a written type or for want of one, is left as it is and ends the trail: its type names what it holds, and what is read from it is tested like any other value. An assertion to an object type starts no trail
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Assertion
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|null|number}}]
+variable g0 name="either" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f0 flags=[IsImmutable]
+variable g1 name="narrow" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g2 name="untyped" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g3 name="behindUntyped" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g4 name="behindPoint" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+function f0 name="either" parameters=[{type=undefined|null|number|L0 site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number|object):
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v1, -, v0 calleeName="narrow"
+    Return v2
+}
+# CHECK-LABEL: function f0 name="either" {{*}}parameters=[{type=undefined|null|number|object written=undefined|null|number|L0 site=w0}]
+function f1 name="narrow" parameters=[{type=undefined|null|number site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f1 name="narrow" {{*}}parameters=[{type=undefined|null|number site=w2}]
+function f2 name="untyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g3
+    v2 = Call v1, -, v0 calleeName="behindUntyped"
+    Return v2
+}
+# CHECK-LABEL: function f2 name="untyped" {{*}}parameters=[{type=anything}]
+function f3 name="behindUntyped" parameters=[{type=undefined|null|number site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f3 name="behindUntyped" {{*}}parameters=[{type=undefined|null|number site=w3}]
+function f4 name="behindPoint" parameters=[{type=undefined|null|number site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f4 name="behindPoint" {{*}}parameters=[{type=undefined|null|number site=w3}]
+function f5 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="either"
+    v4 = GetModuleVariable variable=g2
+    v5 = Call v4, -, v1 calleeName="untyped"
+    v6 = ClaimDeclared v0 declared={type=undefined|null|L0 site=w4}
+    v7 = GetModuleVariable variable=g4
+    v8 = Call v7, -, v6 calleeName="behindPoint"
+    Return v8
+}

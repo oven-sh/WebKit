@@ -64,6 +64,11 @@ RegisterSet StackmapSpecial::extraClobberedRegs(Inst& inst)
     return value->lateClobbered();
 }
 
+bool StackmapSpecial::needsFrame(Inst& inst)
+{
+    return !inst.origin->as<StackmapValue>()->runsWithoutFrame();
+}
+
 RegisterSet StackmapSpecial::extraEarlyClobberedRegs(Inst& inst)
 {
     StackmapValue* value = inst.origin->as<StackmapValue>();

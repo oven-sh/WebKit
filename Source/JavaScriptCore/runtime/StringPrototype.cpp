@@ -23,6 +23,7 @@
 #include "config.h"
 #include "StringPrototype.h"
 
+#include "AOTRemovableFeature.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "ExecutableBaseInlines.h"
@@ -65,7 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToString);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCodePointAt);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncMatchAll);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncReplace);
@@ -80,7 +81,7 @@ static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncToLocaleUpperCase);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrim);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimStart);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncTrimEnd);
-static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncStartsWith);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncEndsWith);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(stringProtoFuncNormalize);
@@ -334,8 +335,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncRepeatCharacter, (JSGlobalObject* global
     return JSValue::encode(repeatCharacter(globalObject, character, repeatCount));
 }
 
-JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, const CallData& callData, const String& replacementString, JSValue replaceValue)
+NEVER_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, const CallData& callData, const String& replacementString, JSValue replaceValue)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, static_cast<JSString* (*)(VM&, JSGlobalObject*, JSString*, JSValue, const CallData&, const String&, JSValue)>(replaceUsingRegExpSearch));
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto source = string->view(globalObject);
@@ -371,7 +373,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         if (callData.type == CallData::Type::JS && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache()) {
             auto resolved = string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, asObject(replaceValue)));
+            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, uncheckedDowncast<JSFunction>(replaceValue)));
         }
     }
 
@@ -390,7 +392,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     Vector<String, 16> replacements;
 
     // This is either a loop (if global is set) or a one-way (if not).
-    if (global && callData.type == CallData::Type::JS) {
+    if (global && CachedCall::supports(callData)) {
         // regExp->numSubpatterns() + 1 for pattern args, + 2 for match start and string
         int argCount = regExp->numSubpatterns() + 1 + 2;
         if (hasNamedCaptures)
@@ -409,9 +411,8 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 OUT_OF_MEMORY(globalObject, scope);
 
             if (!cachedCall) {
-                cachedCallHolder.emplace(globalObject, func, argCount);
+                cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, func, callData, argCount);
                 RETURN_IF_EXCEPTION(scope, nullptr);
-                cachedCall = &cachedCallHolder.value();
             }
             cachedCall->clearArguments();
             JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, groupsStructure ? groupsStructure : globalObject->nullPrototypeObjectStructure()) : nullptr;
@@ -597,8 +598,9 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
 }
 
-JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
+NEVER_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, static_cast<JSString* (*)(VM&, JSGlobalObject*, JSString*, JSValue, JSValue)>(replaceUsingRegExpSearch));
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String replacementString;
@@ -877,11 +879,6 @@ static EncodedJSValue stringIndexOfImpl(JSGlobalObject* globalObject, CallFrame*
 
     if (thisJSString->length() < otherJSString->length() + pos)
         return JSValue::encode(jsNumber(-1));
-
-    if (otherJSString->length() == 1 && !thisJSString->isRope() && !otherJSString->isRope()) {
-        size_t result = thisJSString->tryGetValueImpl()->find((*otherJSString->tryGetValueImpl())[0], pos);
-        return JSValue::encode(result == notFound ? jsNumber(-1) : jsNumber(result));
-    }
 
     if (otherJSString->length() == 1 && thisJSString->isRope() && thisJSString->length() >= JSString::minLengthForRopeWalk) {
         auto otherView = otherJSString->view(globalObject);
@@ -2409,25 +2406,6 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncConcat, (JSGlobalObject* globalObject, C
 static constexpr unsigned maxPatternLengthForFlatRepeat = 8;
 static constexpr unsigned maxResultLengthForFlatRepeat = 1024;
 
-enum class PadKind : uint8_t {
-    PadStart,
-    PadEnd
-};
-
-template<typename CharacterType>
-static void fillBufferWithPattern(std::span<CharacterType> buffer, StringView pattern)
-{
-    unsigned fillLength = buffer.size();
-    unsigned initialCopyLength = std::min(pattern.length(), fillLength);
-    pattern.left(initialCopyLength).getCharacters(buffer.first(initialCopyLength));
-    unsigned copied = initialCopyLength;
-    while (copied < fillLength) {
-        unsigned copyLen = std::min(copied, fillLength - copied);
-        memcpySpan(buffer.subspan(copied, copyLen), buffer.first(copyLen));
-        copied += copyLen;
-    }
-}
-
 template<typename CharacterType>
 static JSString* createFillerString(JSGlobalObject* globalObject, StringView fillStringView, unsigned fillLength)
 {
@@ -2442,31 +2420,6 @@ static JSString* createFillerString(JSGlobalObject* globalObject, StringView fil
     }
 
     fillBufferWithPattern(buffer, fillStringView);
-    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
-}
-
-template<typename CharacterType, PadKind padKind>
-static JSString* createPaddedString(JSGlobalObject* globalObject, StringView thisView, StringView fillStringView, unsigned maxLength, unsigned fillLength)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    std::span<CharacterType> buffer;
-    auto impl = StringImpl::tryCreateUninitialized(maxLength, buffer);
-    if (!impl) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-
-    unsigned stringLength = thisView.length();
-    if constexpr (padKind == PadKind::PadStart) {
-        fillBufferWithPattern(buffer.first(fillLength), fillStringView);
-        thisView.getCharacters(buffer.last(stringLength));
-    } else {
-        thisView.getCharacters(buffer.first(stringLength));
-        fillBufferWithPattern(buffer.last(fillLength), fillStringView);
-    }
-
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
@@ -2592,40 +2545,6 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncPadStart, (JSGlobalObject* globalObject,
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncPadEnd, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(padString<PadKind::PadEnd>(globalObject, callFrame));
-}
-
-template<typename CharacterType>
-static JSString* repeatString(JSGlobalObject* globalObject, StringView source, unsigned repeatCount)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    unsigned sourceLength = source.length();
-
-    auto checkedResultLength = checkedProduct<unsigned>(sourceLength, repeatCount);
-    if (checkedResultLength.hasOverflowed() || checkedResultLength > JSString::MaxLength) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    unsigned resultLength = checkedResultLength;
-
-    std::span<CharacterType> buffer;
-    auto impl = StringImpl::tryCreateUninitialized(resultLength, buffer);
-    if (!impl) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-
-    source.getCharacters(buffer.first(sourceLength));
-
-    unsigned copied = sourceLength;
-    while (copied < resultLength) {
-        unsigned copyLen = std::min(copied, resultLength - copied);
-        memcpySpan(buffer.subspan(copied, copyLen), buffer.first(copyLen));
-        copied += copyLen;
-    }
-
-    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
 static JSString* repeatRope(JSGlobalObject* globalObject, JSString* thisString, int32_t repeatCount)

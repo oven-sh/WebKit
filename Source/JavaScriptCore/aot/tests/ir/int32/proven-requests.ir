@@ -1,0 +1,93 @@
+# A proven request leaves nothing behind but a prediction where the value may be nullish. Nothing tests an int32 when the program runs: the position holds anything and predicts an int32
+# FORM: AsRead
+# RUN: pass TypeValues CheckInt32Promises
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Variable
+typesite w3 module=m0 position=40 kind=PropertyRead
+typesite w4 module=m0 position=50 kind=CallResult
+layout L0 name="Cursor" fields=[{key="line" declared={type=undefined|null|i32 predicted=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="column" declared={type=undefined|null|i32 predicted=i32 flags=[IsInt32Promise]}}]
+variable g0 name="count" module=m0 declared={type=undefined|null|i32 predicted=i32 site=w2 flags=[IsInt32Promise]} initialization=Undefined
+# CHECK: layout L0 name="Cursor" fields=[{key="line" declared={type=anything predicted=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="column" declared={type=anything predicted=i32 flags=[IsInt32Promise]}}]
+# CHECK: variable g0 name="count" module=m0 declared={type=anything predicted=i32 site=w2 flags=[IsInt32Promise]}
+function f0 name="parameter" parameters=[{type=undefined|null|i32 predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v1
+}
+# CHECK-LABEL: function f0 name="parameter"{{*}}parameters=[{type=anything predicted=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=anything predicted=i32 site=w1 flags=[IsInt32Promise]}]
+# CHECK-NEXT: b0(v0: anything ~ i32):
+# CHECK-NEXT: Return v0
+function f1 name="maskedNumber" parameters=[{type=undefined|null|number predicted=number}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=255
+    v2 = BitAnd v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f1 name="maskedNumber"
+# CHECK: v2: int[0, 255] = BitAnd v0, v1
+# CHECK-NEXT: Return v2
+function f2 name="field" parameters=[{type=undefined|null|L0 predicted=L0}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="line"
+    v2 = ClaimRead v1, v0 source=Field{key="line"} site=w3
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f2 name="field"
+# CHECK: v1: anything ~ i32 = PropGet v0 key="line"
+# CHECK-NOT: Claim
+# CHECK: Return
+function f3 name="optionalField" parameters=[{type=undefined|null|L0 predicted=L0}] results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="column"
+    v2 = ClaimRead v1, v0 source=Field{key="column"} site=w3
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f3 name="optionalField"
+# CHECK: v1: anything ~ undefined|i32 = PropGet v0 key="column"
+# CHECK-NOT: Claim
+# CHECK: anything ~ i32 = Predict {{*}} predicted=i32
+function f4 name="variable" results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v1
+}
+# CHECK-LABEL: function f4 name="variable"
+# CHECK: v0: anything ~ i32 = GetModuleVariable variable=g0
+# CHECK-NEXT: Return v0
+function f5 name="callResult" results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    v2 = ClaimDeclared v1 declared={type=undefined|null|i32 predicted=i32 site=w4 flags=[IsInt32Promise]}
+    v3 = ClaimDeclared v2 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v3
+}
+# CHECK-LABEL: function f5 name="callResult"
+# CHECK: v1: anything = Call v0
+# CHECK-NEXT: v2: anything ~ i32 = Predict v1 predicted=i32
+# CHECK-NEXT: Return v2
+function f6 name="tailCall" results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=undefined|null|i32 predicted=i32 site=w4 flags=[IsInt32Promise]}}, {declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}}]
+}
+# CHECK-LABEL: function f6 name="tailCall"
+# CHECK: ReturnCall v1 casts=[{declared={type=anything predicted=i32 site=w4 flags=[IsInt32Promise]} resolution=Prediction}, {declared={type=anything predicted=i32 site=w1 flags=[IsInt32Promise]} resolution=Prediction}]
+function f7 name="nothing" results=[{type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}] {
+  b0():
+    v0 = Undefined
+    v1 = ClaimDeclared v0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]}
+    Return v1
+}
+# CHECK-LABEL: function f7 name="nothing"
+# CHECK: v0: undefined = Undefined
+# CHECK-NEXT: Return v0

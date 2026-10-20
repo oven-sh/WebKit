@@ -1,0 +1,81 @@
+# A constant that stops dominating its uses is copied, and a copy or a definition in a dominating block is used again.
+# FORM: Prepared
+# RUN: repair function=f0 redirect=b5.0:b2 variable=v3
+# RUN(SIBLINGS): repair function=f1 redirect=b5.0:b2 variable=v3
+# RUN(DEFINITION): repair function=f2 redirect=b1.0:b4 redirect=b1.1:b4 redirect=b3.0:b2 variable=v3,v5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="copyInDominatingBlock" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    v3 = Integer integer=7
+    Jump -> next b2()
+  b2():
+    v4 = Add v2, v3
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v5 = Mul v4, v3
+    Return v5
+  b4():
+    v6 = Sub v4, v3
+    Return v6
+  b5():
+    Branch v1 -> taken b6(), notTaken b6()
+  b6():
+    Return v2
+}
+# CHECK: function f0
+# CHECK: b2():
+# CHECK-NEXT: [[K]]: 7 = Integer integer=7
+# CHECK-NEXT: v4: number = Add v2, [[K]]
+# CHECK: b3():
+# CHECK-NEXT: v5: number = Mul v4, [[K]]
+# CHECK: b4():
+# CHECK-NEXT: v6: number = Sub v4, [[K]]
+function f1 name="copiesInSiblingBlocks" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    v3 = Integer integer=7
+    Jump -> next b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Mul v2, v3
+    Return v4
+  b4():
+    v5 = Sub v2, v3
+    Return v5
+  b5():
+    Branch v1 -> taken b6(), notTaken b6()
+  b6():
+    Return v2
+}
+# SIBLINGS: function f1
+# SIBLINGS: b2():
+# SIBLINGS-NEXT: Branch v1 -> taken b3(), notTaken b4()
+# SIBLINGS: b3():
+# SIBLINGS-NEXT: [[A]]: 7 = Integer integer=7
+# SIBLINGS-NEXT: v4: number = Mul v2, [[A]]
+# SIBLINGS: b4():
+# SIBLINGS-NEXT: [[B]]: 7 = Integer integer=7
+# SIBLINGS-NEXT: v5: number = Sub v2, [[B]]
+function f2 name="definitionInDominatingBlock" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: boolean, v2: number):
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    v3 = Integer integer=7
+    Branch v1 -> taken b2(), notTaken b2()
+  b2():
+    v4 = Add v2, v3
+    Return v4
+  b3():
+    v5 = Integer integer=7
+    Branch v1 -> taken b4(), notTaken b4()
+  b4():
+    Return v2
+}
+# DEFINITION: function f2
+# DEFINITION: b2():
+# DEFINITION-NEXT: v4: number = Add v2, v5

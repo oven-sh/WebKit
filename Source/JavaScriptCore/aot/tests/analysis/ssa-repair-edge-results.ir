@@ -1,0 +1,91 @@
+# A merge parameter goes in front of the parameters that an edge fills with a proof
+# FORM: Prepared
+# RUN: repair function=f0 variable=v3,v6
+# RUN(ARGUMENT): repair function=f1 variable=v3,v6
+# RUN(GUARD): repair function=f2 variable=v3,v6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="bothEdgesPassNarrowedCopy" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: number):
+    v3 = Add v2, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b2():
+    v5 = TypeTest v1 testedType=string
+    v6 = Sub v2, v2
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    v8 = Negate v3
+    v9 = StrictEq v7, v8
+    Return v9
+  b4():
+    Return
+}
+# CHECK: function f0
+# CHECK: b1():
+# CHECK-NEXT: v4: boolean = TypeTest v1 testedType=string
+# CHECK-NEXT: Branch v4 -> taken b3(v3 | 0), notTaken b4()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v5: boolean = TypeTest v1 testedType=string
+# CHECK-NEXT: v6: number = Sub v2, v2
+# CHECK-NEXT: Branch v5 -> taken b3(v6 | 0), notTaken b4()
+# CHECK-NEXT: b3([[P]]: number, v7: string):
+# CHECK-NEXT: v8: number = Negate [[P]]
+# CHECK-NEXT: = StrictEq v7, v8
+# CHECK: b4():
+# CHECK-NEXT: Return
+
+function f1 name="oneEdgePassesArgumentsOnly" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: number):
+    v3 = Add v2, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = TypeTest v1 testedType=string
+    Branch v4 -> taken b3(v2 | 0), notTaken b4()
+  b2():
+    v5 = String string="a"
+    v6 = Sub v2, v2
+    Jump -> next b3(v2, v5)
+  b3(v7, v8):
+    v9 = Add v3, v7
+    v10 = StrictEq v8, v9
+    Return v10
+  b4():
+    Return
+}
+# ARGUMENT: function f1
+# ARGUMENT: Branch v4 -> taken b3(v2, v3 | 0), notTaken b4()
+# ARGUMENT: Jump -> next b3(v2, v6, v5)
+# ARGUMENT-NEXT: b3(v7: number, [[P]]: number, v8: string):
+# ARGUMENT-NEXT: v9: number = Add [[P]], v7
+
+function f2 name="bothEdgesPassGuard" parameters=[{type=boolean}, {type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: object, v2: number):
+    v3 = Add v2, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = ShapeTest v1 layouts=[L0]
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b2():
+    v5 = ShapeTest v1 layouts=[L0]
+    v6 = Sub v2, v2
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    v8 = GetSlotOrUndefined v1, v7 key="x" receivers=[L0] level=Proven
+    v9 = StrictEq v8, v3
+    Return v9
+  b4():
+    Return v3
+}
+# GUARD: function f2
+# GUARD: Branch v4 -> taken b3(v3 | 0), notTaken b4(v3)
+# GUARD: Branch v5 -> taken b3(v6 | 0), notTaken b4(v6)
+# GUARD-NEXT: b3([[P]]: number, v7: guard):
+# GUARD-NEXT: = GetSlotOrUndefined v1, v7 key="x"
+# GUARD-NEXT: = StrictEq v8, [[P]]
+# GUARD: b4([[Q]]: number):
+# GUARD-NEXT: Return [[Q]]

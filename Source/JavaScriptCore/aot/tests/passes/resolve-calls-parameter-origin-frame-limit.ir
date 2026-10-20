@@ -1,0 +1,25 @@
+# A caller without room for another inline frame tests a written parameter at the call
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# OPTIONS: limit=InlineFramesPerFunction:1
+# STATISTIC: CallsResolved = 1
+# LOSS: InlineFramesPerFunction x1 f1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=17 kind=Parameter
+
+function f0 name="written" parameters=[{type=number site=w0}] results=[{type=anything}] {
+  b0(v0: number):
+    Return
+}
+
+# CHECK-LABEL: function f1 name="untyped-argument"
+# CHECK-NOT: inlineFrames=
+# CHECK: [[claimed]]: number = Claim v1 castType=number site=w0 cause=UnknownObject @40
+# CHECK-NEXT: CallDirect [[claimed]] function=f0 @40
+function f1 name="untyped-argument" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    v2 = Call v0, -, v1 @40
+    Return v2
+}

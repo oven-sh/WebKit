@@ -1,0 +1,100 @@
+# A loop over an object of the program calls its iterator method once and the next method of what that returns repeatedly, the loop variable holds the value field of the results, both methods are read as values, and a sent value nobody knows enters next as generic
+# RUN: flow-links calls
+# RUN(NODES): flow-solve nodes
+# RUN(SENT): flow-solve nodes
+# RUN(INSTANCES): flow-solve instances
+# RUN(TRACKED): flow-solve instances
+# RUN(LOCATIONS): flow-solve locations
+# RUN(UNREAD): flow-solve locations
+# CHECK-NOT: f3
+# CHECK: : [[main]] f0 v3 -> [[open]] f1 Protocol Once
+# CHECK-NOT: f3
+# CHECK: : [[main]] f0 v5 -> [[step]] f2 Protocol Repeatedly cycle
+# CHECK-NOT: f3
+# NODES: Variable(g0) = {undefined|L0#[[a]]}
+# NODES: , f0, v3) = {L2#[[iterator]]
+# NODES: , f2, v2) = {L0#[[a]]}
+# SENT: , f5, parameter 1) = {{*}}unknown|L0#
+# INSTANCES: f5 Generic
+# TRACKED-NOT: f1 Generic
+# TRACKED-NOT: f2 Generic
+# LOCATIONS: DeclaredPart(L1#[[iterable]], 0) events=[{{*}}ReadAsValue
+# LOCATIONS: DeclaredPart(L2#[[iterator]], 0) events=[{{*}}ReadAsValue
+# UNREAD-NOT: ReadAsCallee
+# UNREAD-NOT: DeclaredPart(L2#{{*}}, 1) events=[{{*}}Read
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Element" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="reset" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="element" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="sent" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v7 = ResultAt v5 index=1
+    PutModuleVariable v7 variable=g0
+    Jump -> next b1()
+  b3():
+    v9 = Integer integer=2
+    v10 = NewObject -, v9 layout=L0 fields=[0]
+    PutModuleVariable v10 variable=g1
+    v12 = NewClosure function=f4
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = IteratorOpen v13
+    v15 = GetModuleVariable variable=g1
+    v16 = IteratorResume v14, v15
+    v17 = CallDirect function=f6
+    Return
+}
+function f1 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    Return v3
+}
+function f2 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Boolean boolean=false
+    v4 = NewObject -, v2, v3 layout=L3 fields=[0, 1]
+    Return v4
+}
+function f3 name="reset" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="iteratorTakingValues" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f5
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    Return v3
+}
+function f5 name="nextTakingValue" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Boolean boolean=true
+    v3 = NewObject -, v1, v2 layout=L3 fields=[0, 1]
+    Return v3
+}
+function f6 name="storeUnknownValue" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    PutModuleVariable v1 variable=g1
+    Return
+}

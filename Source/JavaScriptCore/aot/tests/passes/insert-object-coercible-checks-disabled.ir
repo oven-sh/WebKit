@@ -1,0 +1,30 @@
+# With its switch off the pass inserts no check
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass disable=pass:InsertObjectCoercibleChecks
+# RUN: pass InsertObjectCoercibleChecks
+# STATISTIC: InsertObjectCoercibleChecksChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="dominatedRead" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: undefined|L0, v1: boolean):
+    v2 = PropGet v0 key="x" receivers=[L0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="x" receivers=[L0]
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0(v0: undefined|L0, v1: boolean):
+# CHECK-NEXT: v2:{{*}}= PropGet v0 key="x" receivers=[L0]
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key="x" receivers=[L0]
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

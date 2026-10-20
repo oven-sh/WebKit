@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
+#include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "B3BasicBlockUtils.h"
 
@@ -59,10 +60,8 @@ bool simplifyCFG(Code& code)
     }
 
     bool changed = false;
-    bool validateAtEachPhase = shouldValidateIRAtEachPhase();
-#if USE(BUN_JSC_ADDITIONS)
+    bool validateAtEachPhase = shouldValidateIRAtEachPhase(code.proc());
     LargePredecessorLists<BasicBlock> lists;
-#endif
     for (BasicBlock* block : code) {
         // We rely on predecessors being conservatively correct. Verify this here.
         if (validateAtEachPhase) [[unlikely]] {
@@ -116,18 +115,10 @@ bool simplifyCFG(Code& code)
                 for (BasicBlock* current = successor; current != newSuccessor;) {
                     BasicBlock* next = current->successorBlock(0);
                     current->successorBlock(0) = newSuccessor;
-#if USE(BUN_JSC_ADDITIONS)
                     lists.add(newSuccessor, current);
-#else
-                    newSuccessor->addPredecessor(current);
-#endif
                     current = next;
                 }
-#if USE(BUN_JSC_ADDITIONS)
                 lists.add(newSuccessor, block);
-#else
-                newSuccessor->addPredecessor(block);
-#endif
                 successor = newSuccessor;
                 changed = true;
             }
@@ -159,7 +150,7 @@ bool simplifyCFG(Code& code)
         if (block->numSuccessors() == 1
             && !block->last().hasNonControlEffects()) {
             BasicBlock* successor = block->successorBlock(0);
-            if (successor != block && successor->numPredecessors() == 1) {
+            if (successor != block && successor->numPredecessors() == 1 && !successor->at(0).clobbersAtBlockEntry()) {
                 RELEASE_ASSERT(successor->predecessor(0) == block);
 
                 // We can merge the two blocks because the predecessor only jumps to the successor
@@ -182,13 +173,8 @@ bool simplifyCFG(Code& code)
                 successor->successors().clear();
 
                 // Ensure that the predecessors of block's new successors know what's up.
-                for (BasicBlock* newSuccessor : block->successorBlocks()) {
-#if USE(BUN_JSC_ADDITIONS)
+                for (BasicBlock* newSuccessor : block->successorBlocks())
                     lists.replace(newSuccessor, successor, block);
-#else
-                    newSuccessor->replacePredecessor(successor, block);
-#endif
-                }
 
                 dataLogLnIf(verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
                 changed = true;

@@ -1,0 +1,46 @@
+# In a module with a dynamic star export a name that comes from a star export may be missing and a name nobody lists is unknown, while a local export is there for certain
+# RUN: flow-walk f0
+# CHECK: f0@i{{*}} v1 Get {"starred"}
+# CHECK-NEXT: namespace m1: Value own Proven namespace m1 "starred"
+# CHECK-NEXT: namespace m1: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v2 Get {"unlisted"}
+# CHECK-NEXT: namespace m1: Unknown own Predicted namespace m1 *
+# CHECK: f0@i{{*}} v3 Get {"local"}
+# CHECK-NEXT: namespace m1: Value own Proven namespace m1 "local"
+# CHECK-NEXT: f0@i{{*}} v5 Get {"unlisted"}
+# CHECK-NEXT: namespace m2: Absent Proven
+# CHECK-NOT: namespace m
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}, {target=m2}]
+module m1 path="barrel.js" displayPath="barrel.js" body=f1 requests=[{target=m2}, {target=m3 isDynamicStarExport=true}] exports=[{name="local" variable=g0}, {name="starred" variable=g1 isFromStarExport=true}]
+module m2 path="listed.js" displayPath="listed.js" body=f2 exports=[{name="starred" variable=g1}]
+module m3 path="dynamic.cjs" displayPath="dynamic.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+entry module=m0
+variable g0 name="local" module=m1 declared={type=anything}
+variable g1 name="starred" module=m2 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = PropGet v0 key="starred"
+    v2 = PropGet v0 key="unlisted"
+    v3 = PropGet v0 key="local"
+    v4 = ModuleNamespace module=m2
+    v5 = PropGet v4 key="unlisted"
+    Return
+}
+function f1 name="barrel" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="listed" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f3 name="dynamic" module=m3 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}

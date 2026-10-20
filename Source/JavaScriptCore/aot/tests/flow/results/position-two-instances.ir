@@ -1,0 +1,64 @@
+# A parameter of a function without a generic version is converted once from what it holds in all its instances
+# RUN: flow
+# RUN(ALL): flow
+# STATISTIC: FlowGenericVersions = 0
+# LOSS: MinNarrowedUsesForGenericVersion x2 f2
+# CHECK: function f1 parameter 0 type=L1|L2|L3 written=
+# CHECK: function f2 parameter 0 type=L1|L2 written=
+# CHECK: function f3 parameter 0 type=undefined|null|object predicted=undefined|null|L1 written=
+# CHECK: function f4 parameter 0 type=L1|L2|L3|f1 written=anything
+# ALL-NOT: genericVersion=
+# ALL-NOT: function f2 parameter 1 type=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shape" fields=[{key="x" declared={type=number}}]
+layout L1 name="Shape1" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L2 name="Shape2" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+layout L3 name="Shape3" fields=[{key="x" declared={type=number}}] supertypes=[L0]
+variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = NewObject -, v0 layout=L3 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v3 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="external" [isFreeName]
+    v10 = NewClosure function=f1
+    v11 = Call v10, -, v1
+    v12 = Call v10, -, v7
+    v13 = NewClosure function=f2
+    v14 = Call v13, -, v1, v0
+    v15 = Call v13, -, v2, v9
+    v16 = NewClosure function=f3
+    v17 = Call v16, -, v1
+    v18 = Call v16, -, v9
+    v19 = NewClosure function=f4
+    v20 = Call v19, -, v10
+    v21 = Call v19, -, v7
+    Return
+}
+function f1 name="oneAndThree" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="provenAndGenericInstance" parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? L0, v1: anything):
+    v2 = PropGet v0 key="x"
+    Return v2
+}
+function f3 name="provenAndUnknown" parameters=[{type=undefined|null|L0}] results=[{type=anything}] {
+  b0(v0: undefined|null|object ? L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="functionAndObjects" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

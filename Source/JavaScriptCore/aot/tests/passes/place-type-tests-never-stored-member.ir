@@ -1,0 +1,69 @@
+# A store tests for the predicted layouts whose field some store reaches. A layout whose field flow proves never stored has no slot for it: the store does not name it, and the stored value is tested against the fields of the others. A read names both
+# FORM: AsRead
+# OPTIONS: admit=RuntimeCode references=narrow
+# RUN: pipeline PlaceTypeTests
+# RUN(BUILD): compile
+# RUN(PLAN): plan-slots layouts accesses
+# RUN(ACCESSES): place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Filled" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=undefined|string}}]
+layout L1 name="NeverFilled" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=undefined|string}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = String string="first"
+    PropSet v4, v5 key="late"
+    v7 = NewObject -, v2 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v8 variable=g0
+    v10 = Call v1, -, v4
+    v11 = CallDirect v10, v1 function=f1
+    v12 = CallDirect v10 function=f2
+    v13 = GetModuleVariable variable=g0
+    v14 = PropGet v13 key="late"
+    v15 = Call v1, -, v12, v14
+    Return v15
+}
+function f1 name="set" parameters=[{type=anything predicted=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late"
+    Return
+}
+# CHECK-LABEL: function f1 name="set"
+# CHECK-NOT: [L0, L1]
+# CHECK: PutSlot [[object]], {{*}} key="late" receivers=[L0] level=Predicted
+# CHECK-NOT: [L0, L1]
+# CHECK: = ShapeTest [[object]] layouts=[L0]
+# CHECK-NOT: [L0, L1]
+# CHECK: = IsSlotFilled [[object]], {{*}} key="late" receivers=[L0] level=Predicted
+# CHECK-NOT: testedType=undefined
+# CHECK: = TypeTest v1 testedType=undefined|string
+# CHECK-NOT: [L0, L1]
+function f2 name="get" parameters=[{type=anything predicted=L0|L1}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="get"
+# CHECK: = ShapeTest {{*}} layouts=[L0, L1]
+
+# BUILD-NOT: diagnostic
+# BUILD: image not empty
+
+# PLAN: L1 CompiledObject
+# PLAN-NEXT: "late" {L0} read+store
+# PLAN-NEXT: one location
+# PLAN-NEXT: "late" {L0 L1} read weight
+# PLAN-NEXT: one location
+# PLAN-NEXT: without slot {L1}
+
+# ACCESSES: "late" [L0] store EveryMember
+# ACCESSES-NOT: "late" [L0, L1] store

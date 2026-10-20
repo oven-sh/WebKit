@@ -1,0 +1,33 @@
+# The run time's definition of a private name throws where the field exists, and a slot without an absent state always looks filled. So a private field that a definition by name creates has an absent state, whoever enumerates the keys
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key=#"count"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="step" declared={type=number} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClassToken layout=L0
+    v4 = NewClosure v3 function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Construct v6, -, v2
+    PutModuleVariable v7 variable=g0
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything, v2: number):
+    v3 = GetConstructPrototype v1 layout=L0
+    v4 = NewObject v3, v2 layout=L0 fields=[1]
+    PrivateDefine v4, v0, v2 layout=L0 field=0
+    Return v4
+}
+
+# CHECK: L0 CompiledObject size=32 {{*}} unordered
+# CHECK-NEXT: .0 #"count"@L0 OptionalDouble @16
+# CHECK-NEXT: .1 "step" Double @24

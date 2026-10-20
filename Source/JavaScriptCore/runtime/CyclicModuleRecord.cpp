@@ -26,9 +26,9 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
-#include "AOTImage.h"
-#include "AOTRuntime.h"
-
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
 #include "BuiltinNames.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
@@ -231,18 +231,6 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
         env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
-#if ENABLE(AOT)
-        if (isPrelinked() && AOT::Image::environmentsSize()) {
-            AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
-            if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
-                AOT::Instance& instance = AOT::Instance::ensure(moduleLoader());
-                if (JSCell** slot = instance.environmentSlot(environment); slot && !*slot) {
-                    *slot = env;
-                    instance.didAddCell(env);
-                }
-            }
-        }
-#endif
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);
@@ -260,7 +248,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
         if (in.type == ImportEntryType::Namespace) {
             // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
-            JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, in.phase);
+            JSObject* ns = importedModule->moduleNamespaceObject(globalObject, in.phase);
             RETURN_IF_EXCEPTION(scope, void());
             // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
             // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -325,7 +313,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 // 7.c.iii. If resolution.[[BindingName]] is NAMESPACE, then
                 if (vm.propertyNames->starNamespacePrivateName == resolution.localName) {
                     // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
-                    JSModuleNamespaceObject* ns = resolution.moduleRecord->getModuleNamespace(globalObject); // Force module namespace object materialization.
+                    JSObject* ns = resolution.moduleRecord->moduleNamespaceObject(globalObject); // Force module namespace object materialization.
                     RETURN_IF_EXCEPTION(scope, void());
                     // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
                     // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -456,44 +444,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
     // 18. Let code be module.[[ECMAScriptCode]].
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = moduleProgramExecutable->unlinkedCodeBlock();
-#if ENABLE(AOT)
-    const AOT::ProgramModule* programModule = moduleProgramExecutable->programModule();
-    if (programModule) {
-        for (unsigned i = 0; i < programModule->numberOfVarScopeOffsets; ++i)
-            env->variableAt(ScopeOffset(programModule->firstVarScopeOffset + i)).setUndefined();
-        jsModule->setProgramModule(vm, moduleProgramExecutable);
-        if (!Options::useLazyModuleFunctionDeclarations()) {
-            for (uint32_t slot : AOT::ProgramData::get()->functionDeclarationSlots(*programModule))
-                jsModule->readFunctionDeclarationSlot(vm, env, ScopeOffset(slot));
-        }
-    }
-#else
-    constexpr bool programModule = false;
-#endif
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
-    bool initializeVarsByOffset = !programModule && symbolTable->hasCachedEntriesPending();
-    if (initializeVarsByOffset) {
-        for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
-            env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
-        if (Options::validatePrelinkedModuleInfo()) [[unlikely]] {
-            unsigned found = 0;
-            for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
-                SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
-                if (entry.isNull() || entry.varOffset().isStack())
-                    continue;
-                unsigned offset = entry.scopeOffset().offset();
-                RELEASE_ASSERT(offset >= unlinkedCodeBlock->firstVarScopeOffset() && offset - unlinkedCodeBlock->firstVarScopeOffset() < unlinkedCodeBlock->numberOfVarScopeOffsets(), offset, unlinkedCodeBlock->firstVarScopeOffset(), unlinkedCodeBlock->numberOfVarScopeOffsets());
-                found++;
-            }
-            RELEASE_ASSERT(found == unlinkedCodeBlock->numberOfVarScopeOffsets(), found, unlinkedCodeBlock->numberOfVarScopeOffsets());
-        }
-    }
-    static NeverDestroyed<const VariableEnvironment> noVariables;
-    for (const auto& variable : programModule ? noVariables.get() : unlinkedCodeBlock->variableDeclarations()) {
-        if (initializeVarsByOffset)
-            break;
+    for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
         // 21.a. For each element dn of the BoundNames of d, do
         // 21.a.i. If declaredVarNames does not contain dn, then
         // 21.a.i.1. Perform ! env.CreateMutableBinding(dn, false).
@@ -516,14 +470,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 24. For each element d of lexDeclarations, do
     // The heap-allocated declarations come first (BytecodeGenerator); the stack-allocated rest is the module body's to
     // create, so do not look those up by name (the name may still be in the bytecode cache).
-    size_t numberOfFunctions = 0;
-    if (!programModule) {
-        numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
-        bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
-        jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
-        if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
-            numberOfFunctions = 0;
-    }
+    size_t numberOfFunctions = Options::useLazyFunctionExecutables() ? unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls() : unlinkedCodeBlock->numberOfFunctionDecls();
+    // The profilers want every function's range up front.
+    bool leaveFunctionDeclarationsUninstantiated = Options::useLazyModuleFunctionDeclarations() && !vm.typeProfiler() && !vm.controlFlowProfiler();
+    jsModule->setFunctionDeclarationSlots(vm, moduleProgramExecutable, unlinkedCodeBlock, leaveFunctionDeclarationsUninstantiated);
+    if (leaveFunctionDeclarationsUninstantiated && jsModule->numberOfUninstantiatedFunctionDeclarations() == unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls())
+        numberOfFunctions = 0;
     for (size_t i = 0; i < numberOfFunctions; ++i) {
         // 24.a. For each element dn of the BoundNames of d, do
         // 24.a.i. If IsConstantDeclaration of d is true, then
@@ -531,11 +483,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 24.a.ii. Else,
         // 24.a.ii.1. Perform ! env.CreateMutableBinding(dn, false).
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
-        const Identifier& name = unlinkedFunctionExecutable->name();
-        VarOffset offset = symbolTable->get(name.impl()).varOffset();
+        SymbolTableEntry::Fast entry = symbolTable->get(unlinkedFunctionExecutable->name().impl());
+        VarOffset offset = entry.varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
-            ASSERT(!name.isEmpty());
+            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
@@ -557,7 +509,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
             bool putResult = false;
-            symbolTablePutTouchWatchpointSet(env, globalObject, name, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+            symbolTablePutTouchWatchpointSet(env, globalObject, unlinkedFunctionExecutable->name(), function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
@@ -710,6 +662,10 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->execute(globalObject, capability));
+#endif
 #if ENABLE(WEBASSEMBLY)
     if (auto* wasmModule = dynamicDowncast<WebAssemblyModuleRecord>(this)) {
         wasmModule->initializeImports(globalObject, nullptr, Wasm::CreationMode::FromModuleLoader);
@@ -743,6 +699,10 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     // 2. Assert: module.[[HasTLA]] is true.
     ASSERT(hasTLA());
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->executeAsync(globalObject));
+#endif
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     // 4. Let fulfilledClosure be a new Abstract Closure with no parameters that captures module and performs the following steps when called:

@@ -1,0 +1,28 @@
+# An edge dominates a block only if it is the only edge into its target
+# FORM: Prepared
+# RUN: analyses edge-dominance
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="edgeDominance" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+  b1(v3):
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = TypeOf v3
+    Branch v1 -> taken b2(), notTaken b4()
+  b3(v6):
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: edge-dominance:
+# CHECK-NEXT: b0.0 dominates: [b1 b2]
+# CHECK-NEXT: b0.1 dominates: [b3]
+# CHECK-NEXT: b1.0 dominates: []
+# CHECK-NEXT: b2.0 dominates: []
+# CHECK-NEXT: b2.1 dominates: []
+# CHECK-NEXT: b3.0 dominates: []

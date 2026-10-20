@@ -73,6 +73,12 @@ public:
     static constexpr ptrdiff_t offsetOfAllocationProfileWatchpointSet() { return OBJECT_OFFSETOF(FunctionRareData, m_allocationProfileWatchpointSet); }
     static constexpr ptrdiff_t offsetOfInternalFunctionAllocationProfile() { return OBJECT_OFFSETOF(FunctionRareData, m_internalFunctionAllocationProfile); }
     static constexpr ptrdiff_t offsetOfExecutable() { return OBJECT_OFFSETOF(FunctionRareData, m_executable); }
+#if ENABLE(AOT)
+    Structure* compiledAllocationStructure() const { return m_compiledAllocationStructureID.get(); }
+    uint32_t compiledAllocationOrderWord() const { return m_compiledAllocationOrderWord; }
+    JSObject* compiledAllocationConstructor() const { return m_compiledAllocationConstructor.get(); }
+    JS_EXPORT_PRIVATE void setCompiledAllocation(VM&, Structure*, uint32_t orderWord, JSObject* constructor);
+#endif
 
     ObjectAllocationProfileWithPrototype* objectAllocationProfile()
     {
@@ -115,9 +121,6 @@ public:
     void setBoundFunctionStructure(VM& vm, Structure* structure) { m_boundFunctionStructureID.set(vm, this, structure); }
 
     ExecutableBase* executable() const LIFETIME_BOUND { return m_executable.get(); }
-
-    bool allocatesGuardedObjects() const { return m_allocatesGuardedObjects; }
-    void setAllocatesGuardedObjects() { m_allocatesGuardedObjects = true; }
 
     bool hasReifiedLength() const { return m_hasReifiedLength; }
     void setHasReifiedLength() { m_hasReifiedLength = true; }
@@ -164,11 +167,15 @@ private:
     WriteBarrierStructureID m_boundFunctionStructureID;
     WriteBarrier<ExecutableBase> m_executable;
     std::unique_ptr<AllocationProfileClearingWatchpoint> m_allocationProfileClearingWatchpoint;
+#if ENABLE(AOT)
+    WriteBarrierStructureID m_compiledAllocationStructureID;
+    uint32_t m_compiledAllocationOrderWord { 0 };
+    WriteBarrier<JSObject> m_compiledAllocationConstructor;
+#endif
     bool m_hasReifiedLength : 1;
     bool m_hasReifiedName : 1;
     bool m_hasModifiedLengthForBoundOrNonHostFunction : 1;
     bool m_hasModifiedNameForBoundOrNonHostFunction : 1;
-    bool m_allocatesGuardedObjects : 1;
 };
 
 class FunctionRareData::AllocationProfileClearingWatchpoint final : public Watchpoint {

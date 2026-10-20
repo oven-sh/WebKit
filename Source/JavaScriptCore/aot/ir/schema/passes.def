@@ -1,0 +1,31 @@
+enum PassID {
+    None
+    AdmitAssertedObjects TypeValues CheckInt32Promises VerifyProgram CheckRegExpLiterals
+    AnalyzeFlow ApplyFlowResults CheckLockedBuiltinWrites
+    BuildCallGraph ComputeEffectSummaries EstimateHeat SummarizeForInlining RemoveUnreadExports PromoteEnvironmentsToVariables DeferDefinitions RemoveUnreadFields RemoveUnusedResults RemoveUnusedParameters
+    RemoveUnreachableFunctions SplitFreshResults PromoteAggregateParameters SplitCoroutines CreateEntrypoints GroupCallsByValue ChooseCallingConventions DeferClosuresInFields
+    AllocateInFrames ReuseEnvironments NumberLiteralStrings EmbedConstantCollections CollectRegExpLiterals OutlineColdOperations SplitFunctionsAtCalls
+    ElideStackChecks
+    ResolveBuiltins ResolveCalls ResolveAccesses SplitUnions PlaceTypeTests ExpandIteration ExpandOwnKeys SelectTypedResults RetypeValues InlineCalls
+    SimplifyCasts SinkAllocations EliminateRedundantReads EliminateGuards SeparateUnlikelyLoopPaths ConvertCountersToIntegers RemoveDeadCountedLoops FuseArrayChains FuseGeneratorLoops
+    CreateStringBuilders FuseConcatenations ExpandData FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions
+    HoistTestsIntoPredecessors ThreadJumps InferSwitches EliminateDeadCode MergeDuplicateBlocks CompactBlocks RemoveRedundantHandlers
+    HoistLoopInvariantReads SimplifyBuiltinCalls ReduceIntegerDivisions PlanArrayCapacities FoldConstantRegExps ShareRegExpLiterals
+    InsertObjectCoercibleChecks EliminateTailRecursion ResolveAwaitedCalls SinkConstants ExpandLongArrayLiterals
+    PlanSlots Select NumberAndEncode PlaceSiteCaches CheckPlacement ChooseRepresentations RemoveRedundantBarriers GenerateCode
+}
+
+enum SelectionRuleID {
+    None
+    PlannedSlots ClassDefinition DescriptorLiteral AccessorGroup SlotStoreRun PropertyRun MethodCall CheckedPropertyRead PropertyReadAndTest EncodedVariableTest
+    PropertyChain PropertyPair SubstringView SwitchString SwitchNumber StringLiteralForms HoistStringCharacters SharedStringOrder
+    IntegerBound FreshPromiseFulfillment ResolvedCallTarget RegExpLiteralMatch ThrowNewError InlineBuiltin StringBuilderParts ArrayLiteralStorage
+    DataEncoding ClosureForm NumberPaths OperatorForm TestAndBranch
+}
+
+enum FlowResultKind {
+    ProvenLayoutSets NarrowedTypes RemovedNullish LiteralValues IntegerRanges WholeNumbers ExactFunctions ProvenContents ArrayStorageKinds PristineInstances
+    ConstantBuiltinLocations CalleeSets ReceiverSets ClassBases AppendedFields HolderMutations OwnNames ClassEvaluations StoreCounts Initialization
+    ConstructorFieldOrders ThisLeaks FrameLocalAllocations OperandSummaries ResultChecks CallVersions ObjectUses DeferredClosures ReachedFunctions
+    ExecutionCounts ModuleOrder NotThenable Predictions DictionaryObjects DerivedLayouts
+}

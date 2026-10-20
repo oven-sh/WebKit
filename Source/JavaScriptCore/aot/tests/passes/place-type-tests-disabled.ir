@@ -1,0 +1,19 @@
+# With the pass switched off a prediction gets no test
+# FORM: Prepared
+# OPTIONS: disable=pass:PlaceTypeTests
+# RUN: pass PlaceTypeTests
+# STATISTIC: TypeTestsPlaced = 0
+# STATISTIC: StretchesGuarded = 0
+# STATISTIC: PlaceTypeTestsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mulOfPredictedNumbers" parameters=[{type=anything predicted=number}, {type=anything predicted=number}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Mul v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="mulOfPredictedNumbers"
+# CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number):
+# CHECK-NEXT: v2:{{*}}= Mul v0, v1
+# CHECK-NEXT: Return v2

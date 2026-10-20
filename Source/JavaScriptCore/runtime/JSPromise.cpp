@@ -27,7 +27,7 @@
 #include "JSPromise.h"
 
 #if ENABLE(AOT)
-#include "AOTTypedObject.h"
+#include "AOTPropertyWalk.h"
 #endif
 
 #include "BuiltinNames.h"
@@ -83,9 +83,7 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSPromise>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    if (JSCell* payload = thisObject->m_packed.pointer())
-        visitor.appendUnbarriered(payload);
-    visitor.append(thisObject->m_slot);
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSPromise);
@@ -596,43 +594,51 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
         return false;
 
     auto* structure = object->structure();
-#if ENABLE(AOT)
-    bool isCompiledObject = structure->compiledLayout();
-    if (isCompiledObject && uncheckedDowncast<AOT::Typed::Object>(object)->hasExtraProperties())
-        return false;
-#else
-    constexpr bool isCompiledObject = false;
-#endif
     auto state = structure->definitelyNonThenableState();
     if (state == Structure::DefinitelyNonThenableState::NonThenable && structure->realm() == globalObject)
         return true;
     if (state == Structure::DefinitelyNonThenableState::MaybeThenable)
         return false;
 #if ENABLE(AOT)
-    if (state == Structure::DefinitelyNonThenableState::NotComputed && globalObject->vm().useImmutableIntrinsics && structure->realm() == globalObject && AOT::Typed::neverHasThen(structure)) {
-        structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
-        return true;
+    UniquedStringImpl* then = globalObject->vm().propertyNames->then.impl();
+    if (state == Structure::DefinitelyNonThenableState::NotComputed && structure->isCompiledStructure() && structure->realm() == globalObject) {
+        switch (AOT::PropertyWalk::hasPropertyOnChain(structure, then)) {
+        case AOT::PropertyWalk::Presence::Absent:
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
+            return true;
+        case AOT::PropertyWalk::Presence::Present:
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::MaybeThenable);
+            return false;
+        case AOT::PropertyWalk::Presence::Unknown:
+            break;
+        }
     }
 #endif
 
     bool result = true;
+    bool dependsOnObjectState = false;
+    bool isChainFixed = true;
     auto* current = structure;
     JSObject* holder = object;
     while (current) {
-        bool absenceIsObservable = !current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
+        bool mayHideProperty = current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
 #if ENABLE(AOT)
-        if (isCompiledObject && current == structure)
-            absenceIsObservable = !AOT::Typed::hasFieldNamedThen(structure);
-        else if (!absenceIsObservable)
-            absenceIsObservable = AOT::Typed::isClassPrototypeWithoutThen(holder);
+        if (mayHideProperty) {
+            auto presence = AOT::PropertyWalk::hasOwnProperty(holder, then);
+            mayHideProperty = presence != AOT::PropertyWalk::Presence::Absent;
+            dependsOnObjectState |= presence != AOT::PropertyWalk::Presence::Unknown;
+        }
 #endif
         if (current->hasSpecialProperties()
-            || !absenceIsObservable
+            || mayHideProperty
             || current->typeInfo().overridesGetPrototype()
             || !current->hasMonoProto()) {
             result = false;
             break;
         }
+        bool cannotGainThen = current->hasImmutablePrototype() && (!current->isStructureExtensible() || current->isImmutableProperty(globalObject->vm().propertyNames->then.impl()));
+        if (holder != object && !cannotGainThen && holder != structure->realm()->objectPrototype())
+            isChainFixed = false;
         holder = current->storedPrototypeObject();
         current = holder ? holder->structure() : nullptr;
     }
@@ -642,17 +648,17 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
     // Give up caching entirely for them; the per-call walk above remains correct because
     // `hasSpecialProperties` is updated in place even for dictionaries.
     if (state == Structure::DefinitelyNonThenableState::NotComputed && !structure->isDictionary()) [[unlikely]] {
-        if (!result) {
+        if (dependsOnObjectState)
+            structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);
+        else if (!result) {
             // Always safe: a stale `false` only loses the optimization, never miscompiles.
             structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::MaybeThenable);
         } else {
-            // A `true` result is cacheable only when the entire prototype chain stays
-            // under the protection of promiseThenWatchpointSet, which watches `then`
-            // absence on Object.prototype. That limits the cacheable chain to [self]
-            // (null proto) or [self, Object.prototype]. Mark anything else Uncacheable
+            // A `true` result is cacheable only when no object above this one can gain `then`:
+            // each either has immutable properties or is Object.prototype, whose `then`
+            // absence promiseThenWatchpointSet watches. Mark anything else Uncacheable
             // so subsequent calls skip this check and go straight to the walk.
-            JSValue proto = structure->storedPrototype();
-            if (!proto.isObject() || asObject(proto) == structure->realm()->objectPrototype())
+            if (isChainFixed)
                 structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
             else
                 structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::Uncacheable);
@@ -692,7 +698,7 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
 #endif
 }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
 std::optional<JSPromise::InlineJob> JSPromise::tryFulfillTakingInlineJob(VM& vm, JSValue argument)
 {
     uint16_t currentFlags = flags();
@@ -811,10 +817,6 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
     if (isDefinitelyNonThenable(resolutionObject, globalObject))
         return fulfillPromise(vm, resolution);
 
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::Typed::countThenLookup(vm);
-#endif
     JSValue then;
     JSValue error;
     {
@@ -1186,10 +1188,6 @@ void JSPromise::resolveWithInternalMicrotask(JSGlobalObject* globalObject, VM& v
     if (isDefinitelyNonThenable(resolutionObject, globalObject))
         return fulfillWithInternalMicrotask(vm, globalObject, resolution, task, context BUN_ASYNC_CONTEXT);
 
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::Typed::countThenLookup(vm);
-#endif
     JSValue then;
     JSValue error;
     {

@@ -1,0 +1,74 @@
+# A call marked isAlwaysInlined is inlined whatever it costs, unless a copy of the callee would be wrong
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+# STATISTIC: InlineDecisionBarrier = 1
+# LOSS: MaxInlineHeadBytes x1 f0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0 mode=Strict
+
+function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    v14 = Mul v13, v0
+    v15 = Mul v14, v0
+    v16 = Mul v15, v0
+    v17 = Mul v16, v0
+    v18 = Mul v17, v0
+    v19 = Mul v18, v0
+    v20 = Mul v19, v0
+    v21 = Mul v20, v0
+    v22 = Mul v21, v0
+    v23 = Mul v22, v0
+    v24 = Mul v23, v0
+    Return v24
+}
+
+function f1 name="evaluatesText" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return v0
+}
+
+function f2 name="unmarkedCall" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="unmarkedCall"
+# CHECK: = CallDirect {{*}} function=f0
+# CHECK-NEXT: Return
+
+function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: name="markedCall"
+# CHECK-NOT: CallDirect
+
+function f4 name="markedCallOfBarrier" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f1 [isAlwaysInlined]
+    Return v1
+}
+# CHECK-LABEL: name="markedCallOfBarrier"
+# CHECK: = CallDirect {{*}} function=f1 [isAlwaysInlined]
+# CHECK-NEXT: Return

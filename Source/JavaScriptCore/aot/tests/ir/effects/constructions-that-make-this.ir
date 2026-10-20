@@ -1,0 +1,85 @@
+# A constructor that is no class constructor is handed `this`: whoever constructs reads the prototype of new.target, which may run code, and allocates. No summary has this, so the construction says it, and it says no less than the operations ResolveCalls puts in its place. A native constructor reads the prototype of a new.target other than itself
+# FORM: Prepared
+# RUN: effects summaries f3 f4 f5 f6 f7
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Legacy" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None}
+layout L1 kind=Instance name="BelowLegacy" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]}
+layout L2 kind=Instance name="BelowArray" constructor=f2 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array members=[L2]}
+function f0 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
+  b0(v0: object):
+    Return
+}
+function f1 name="BelowLegacy" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f2 name="BelowArray" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
+function f3 name="newTargetIsUnknown" parameters=[{type=f0}, {type=anything}, {type=function}, {type=Array}] results=[{type=undefined}] {
+  b0(v0: f0, v1: anything, v2: function, v3: Array):
+    v4 = Construct v0, v1 callees=[f0]
+    v5 = Construct v0, v2 callees=[f0]
+    v6 = SuperConstruct v0, v1 layout=L1 callees=[f0]
+    v7 = ConstructList v0, v1, v3 callees=[f0]
+    v8 = SuperConstructList v0, v1, v3 layout=L1 callees=[f0]
+    Return
+}
+# A proxy as new.target runs its trap
+# CHECK: f3 return: {{*}}callsUnknownCode
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v4 Construct: {{*}}callsUnknownCode
+# CHECK-NEXT: v5 Construct: {{*}}callsUnknownCode
+# CHECK-NEXT: v6 SuperConstruct: {{*}}callsUnknownCode
+# CHECK-NEXT: v7 ConstructList: {{*}}callsUnknownCode
+# CHECK-NEXT: v8 SuperConstructList: {{*}}callsUnknownCode
+function f4 name="newTargetIsProven" parameters=[{type=f0}, {type=f1}, {type=builtin(Array)}, {type=Array}] results=[{type=undefined}] {
+  b0(v0: f0, v1: f1, v2: builtin(Array), v3: Array):
+    v4 = Construct v0 callees=[f0]
+    v5 = GetConstructPrototype v0 layout=L0
+    v6 = SuperConstruct v0, v1 layout=L1 callees=[f0]
+    v7 = GetConstructPrototype v1 layout=L1
+    v8 = Construct v0, v2 callees=[f0]
+    v9 = GetConstructPrototype v2 layout=L0
+    v10 = NewObject v9 layout=L0
+    v11 = ConstructList v0, -, v3 callees=[f0]
+    Return
+}
+# The body of f0 does nothing: what is left is the read and the allocation
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v4 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v5 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v6 SuperConstruct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v7 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v8 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v9 GetConstructPrototype: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v10 NewObject: reads(AllocatorState) writes(AllocatorState) collects
+# CHECK-NEXT: v11 ConstructList: reads(ObjectFields, PrototypeLinks, NamedProperties, {{*}}AllocatorState) writes(AllocatorState) throws collects
+function f5 name="nativeConstructors" parameters=[{type=builtin(Array)}, {type=anything}, {type=builtin(Boolean)}, {type=f2}] results=[{type=undefined}] {
+  b0(v0: builtin(Array), v1: anything, v2: builtin(Boolean), v3: f2):
+    v4 = SuperConstruct v0, v1 layout=L2 callees=[builtin(Array)]
+    v5 = Construct v2, v1 callees=[builtin(Boolean)]
+    v6 = Construct v0 callees=[builtin(Array)]
+    v7 = Construct v2 callees=[builtin(Boolean)]
+    v8 = Construct v2, v0 callees=[builtin(Boolean)]
+    v9 = SuperConstruct v0, v3 layout=L2 callees=[builtin(Array)]
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v4 SuperConstruct: {{*}}callsUnknownCode
+# CHECK-NEXT: v5 Construct: {{*}}callsUnknownCode
+# CHECK-NEXT: v6 Construct: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v7 Construct: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v8 Construct: reads(ObjectFields, PrototypeLinks, NamedProperties, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v9 SuperConstruct: reads(ObjectFields, PrototypeLinks, NamedProperties, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+function f6 name="calls" parameters=[{type=f0}, {type=object}] results=[{type=undefined}] {
+  b0(v0: f0, v1: object):
+    v2 = Call v0, v1 callees=[f0]
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v2 Call: none
+function f7 name="callsWhatConstructs" parameters=[{type=f0}, {type=anything}, {type=function}, {type=Array}] results=[{type=undefined}] {
+  b0(v0: f0, v1: anything, v2: function, v3: Array):
+    v4 = CallDirect v0, v1, v2, v3 function=f3
+    Return
+}
+# The summary of f3 has the code that the read may run
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v4 CallDirect: {{*}}callsUnknownCode

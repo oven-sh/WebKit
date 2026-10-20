@@ -32,7 +32,6 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-#include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CodeBlockHash.h>
 #include <JavaScriptCore/CodeSpecializationKind.h>
@@ -164,6 +163,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+    // The id of the built-in function whose text holds the offset, in a provider that holds the text of built-in functions one after the other.
+    virtual std::optional<uint32_t> builtinFunctionAt(unsigned) const { return std::nullopt; }
 
     SourceProvenance provenance() const { return m_provenance; }
 #endif
@@ -210,16 +211,6 @@ public:
     void setSourceURLDirective(const String& sourceURLDirective) { m_sourceURLDirective = sourceURLDirective; }
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintKind kind, SourceTaintedOrigin taintedness) { m_taintedness[kind] = taintedness; }
-
-#if USE(BUN_JSC_ADDITIONS)
-    uint32_t aotModuleID() const { return m_aotModuleID; }
-    void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
-    bool hasNoSourceText() const { return m_hasNoSourceText; }
-    void setHasNoSourceText() { m_hasNoSourceText = true; }
-#endif
-
-    const AuditSites* auditSites() const { return m_auditSites.get(); }
-    void setAuditSites(RefPtr<AuditSites>&& auditSites) { m_auditSites = WTF::move(auditSites); }
 
     SourceTaintedness taintedness() const { return m_taintedness; }
     SourceTaintedOrigin sourceTaintedOrigin(SourceTaintKind kind) const { return m_taintedness[kind]; }
@@ -321,11 +312,6 @@ private:
     SourceID m_id { 0 };
     SourceTaintedness m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
-    uint32_t m_aotModuleID { 0 };
-    bool m_hasNoSourceText { false };
-#endif
-    RefPtr<AuditSites> m_auditSites;
-#if USE(BUN_JSC_ADDITIONS)
     SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
 #endif
 
@@ -385,26 +371,31 @@ private:
 // counts from where it starts. That takes no table: a builtin is short, and few of them are ever asked about.
 class BuiltinsSourceProvider final : public StringSourceProvider {
 public:
-    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider.
-    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts)
+    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider. The builtins have consecutive ids.
+    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts, uint32_t firstID)
     {
-        return adoptRef(*new BuiltinsSourceProvider(source, starts));
+        return adoptRef(*new BuiltinsSourceProvider(source, starts, firstID));
     }
 
     JS_EXPORT_PRIVATE LineColumn lineColumnInTextForOffset(unsigned offset) final;
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE std::optional<uint32_t> builtinFunctionAt(unsigned offset) const final;
+#endif
 
 private:
-    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts, uint32_t firstID)
 #if USE(BUN_JSC_ADDITIONS)
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static)
 #else
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
 #endif
         , m_starts(starts)
+        , m_firstID(firstID)
     {
     }
 
     std::span<const unsigned> m_starts;
+    uint32_t m_firstID;
 };
 
     class SyntheticSourceProvider final : public SourceProvider {

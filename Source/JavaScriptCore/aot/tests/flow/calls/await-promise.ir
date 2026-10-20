@@ -1,0 +1,36 @@
+# Awaiting the promise of an async function gives what its body returns, and awaiting a primitive gives the primitive
+# RUN: flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# CHECK: , f1, v1) = {Promise@f2:result@[[run]]}
+# CHECK-NEXT: , f1, v2) = {L0#[[row]]}
+# CHECK-NEXT: , f1, v3) = {1}
+# CHECK-NEXT: , f1, v4) = {1}
+# CHECK: , f2, v1) = {L0#[[row]]}
+# SINKS-NOT: L0#
+# SINKS-NOT: Promise@f
+# SINKS-NOT: f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Row" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = Await v1
+    v3 = Integer integer=1
+    v4 = Await v3
+    Return
+}
+function f2 name="row" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

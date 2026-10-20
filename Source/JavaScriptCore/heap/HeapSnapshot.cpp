@@ -26,6 +26,7 @@
 #include "config.h"
 #include "HeapSnapshot.h"
 
+#include "AOTRemovableFeature.h"
 #include <numeric>
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -80,8 +81,9 @@ void HeapSnapshot::sweepCell(JSCell* cell)
         m_previous->sweepCell(cell);
 }
 
-NEVER_INLINE void HeapSnapshot::shrinkToFit()
+void HeapSnapshot::shrinkToFit()
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     if (m_finalized && m_hasCellsToSweep) {
         m_filter.reset();
         m_nodes.removeAllMatching(
@@ -97,6 +99,7 @@ NEVER_INLINE void HeapSnapshot::shrinkToFit()
 
     if (m_previous)
         m_previous->shrinkToFit();
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 void HeapSnapshot::finalize()

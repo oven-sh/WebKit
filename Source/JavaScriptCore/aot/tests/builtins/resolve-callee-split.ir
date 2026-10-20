@@ -1,0 +1,246 @@
+# A member call on a receiver nothing is known about is split on the identity of the callee that was read, over the methods of that name in the table
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(TWICE): pass ResolveBuiltins ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stack" fields=[{key="depth" declared={type=number}}]
+
+function f0 name="oneMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="oneMethod"
+# CHECK: v2: anything = PropGet v0 key="push"
+# CHECK-NEXT: [[isPush]]: boolean = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK-NEXT: Branch [[isPush]] -> taken [[pushArm]](| 0), notTaken [[pushRest]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[pushArm]]([[push]]: builtin(ArrayPrototypePush)):
+# CHECK-NEXT: [[array]]: anything ~ Array = Predict v0 predicted=Array
+# CHECK-NEXT: anything = Call [[push]], [[array]], v1 calleeKey="push"
+# CHECK-NOT: TypeTest
+# CHECK: [[pushRest]]([[notPush]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[notPush]], v0, v1 calleeKey="push"
+# CHECK-NOT: TypeTest
+# PLACED-LABEL: function f0 name="oneMethod"
+# PLACED: TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# PLACED: [[predicted]]: anything ~ Array = Predict v0 predicted=Array
+# PLACED-NEXT: = TypeTest [[predicted]] testedType=Array
+# PLACED: int[0, 4294967295] = CallBuiltin [[tested]], v1 overload=ArrayPrototypePush/0 [needsPristineReceiver]
+# PLACED: ([[tested]]: Array):
+# PLACED-NEXT: boolean = IsPristine [[tested]] builtinClass=Array aspects=[Storage]
+
+function f1 name="methodsOfTwoClasses" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="methodsOfTwoClasses"
+# CHECK: [[isMapGet]]: boolean = TypeTest v2 testedType=builtin(MapPrototypeGet)
+# CHECK-NEXT: Branch [[isMapGet]] -> taken [[mapArm]](| 0), notTaken
+# CHECK: [[mapArm]]([[mapGet]]: builtin(MapPrototypeGet)):
+# CHECK-NEXT: [[map]]: anything ~ Map = Predict v0 predicted=Map
+# CHECK-NEXT: anything = Call [[mapGet]], [[map]], v1 calleeKey="get"
+# CHECK: [[isWeakMapGet]]: boolean = TypeTest {{*}} testedType=builtin(WeakMapPrototypeGet)
+# CHECK-NEXT: Branch [[isWeakMapGet]] -> taken [[weakMapArm]](| 0), notTaken [[getRest]](| 0)
+# CHECK: [[weakMapArm]]([[weakMapGet]]: builtin(WeakMapPrototypeGet)):
+# CHECK-NEXT: [[weakMap]]: anything ~ WeakMap = Predict v0 predicted=WeakMap
+# CHECK-NEXT: anything = Call [[weakMapGet]], [[weakMap]], v1 calleeKey="get"
+# CHECK: [[getRest]]([[otherGet]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[otherGet]], v0, v1 calleeKey="get"
+
+function f2 name="methodOfClassAndOfPrimitive" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+}
+# CHECK-LABEL: function f2 name="methodOfClassAndOfPrimitive"
+# CHECK: TypeTest v2 testedType=builtin(ArrayPrototypeSlice)
+# CHECK: anything ~ Array = Predict v0 predicted=Array
+# CHECK: TypeTest {{*}} testedType=builtin(StringPrototypeSlice)
+# CHECK: anything ~ string = Predict v0 predicted=string
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call {{*}}, v0, v1 calleeKey="slice"
+
+function f3 name="predictedReceiver" parameters=[{type=anything predicted=Array}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="predictedReceiver"
+# CHECK-NEXT: b0(v0: anything ~ Array, v1: anything):
+# CHECK-NEXT: v2: anything = PropGet v0 key="push"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+
+function f4 name="receiverWithWrittenLayout" parameters=[{type=object written=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="receiverWithWrittenLayout"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+
+function f5 name="receiverOfOneClass" parameters=[{type=Date}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Date, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f5 name="receiverOfOneClass"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+
+function f6 name="predictedCallee" parameters=[{type=anything}, {type=anything}, {type=anything predicted=builtin(ArrayPrototypePush)|builtin(StringPrototypeTrim)}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything ~ builtin(ArrayPrototypePush)|builtin(StringPrototypeTrim)):
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f6 name="predictedCallee"
+# CHECK: = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK: anything ~ Array = Predict v0 predicted=Array
+# CHECK-NOT: TypeTest
+
+function f7 name="calleesListedByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push" callees=[f14]
+    v4 = Call v2, v0, v1 calleeKey="push" callees=[f14, ..]
+    Return v4
+}
+# CHECK-LABEL: function f7 name="calleesListedByFlow"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push" callees=[f14]
+# CHECK-NEXT: v4: anything = Call v2, v0, v1 calleeKey="push" callees=[f14, ..]
+# CHECK-NEXT: Return v4
+
+function f8 name="unlikelyBlock" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push"
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f8 name="unlikelyBlock"
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v4
+
+function f9 name="rareBlock" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push"
+    Return v4
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f9 name="rareBlock"
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v4
+
+function f10 name="everyMethodIsHostCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="reverse"
+    v2 = Call v1, v0 calleeKey="reverse"
+    Return v2
+}
+# CHECK-LABEL: function f10 name="everyMethodIsHostCall"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = Call v1, v0 calleeKey="reverse"
+# CHECK-NEXT: Return v2
+
+function f11 name="nameOfNoClass" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="enqueue"
+    v2 = Call v1, v0 calleeKey="enqueue"
+    Return v2
+}
+# CHECK-LABEL: function f11 name="nameOfNoClass"
+# CHECK-NOT: TypeTest
+# CHECK: v2: anything = Call v1, v0 calleeKey="enqueue"
+# CHECK-NEXT: Return v2
+
+function f12 name="callWithoutKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f12 name="callWithoutKey"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1
+# CHECK-NEXT: Return v3
+
+function f13 name="callWithoutThis" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, -, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f13 name="callWithoutThis"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, -, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+
+function f14 name="push" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f15 name="calleePredictedAmongOtherValues" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=undefined|null|boolean|number|string|symbol|bigint|builtin(StringPrototypeSlice)|builtin(StringPrototypeTrim)
+    v4 = Call v3, v0, v1 calleeKey="slice" callees=[builtin(StringPrototypeSlice), builtin(StringPrototypeTrim), ..]
+    Return v4
+}
+# CHECK-LABEL: function f15 name="calleePredictedAmongOtherValues"
+# CHECK-NOT: ArrayPrototypeSlice
+# CHECK: TypeTest v3 testedType=builtin(StringPrototypeSlice)
+# CHECK-NOT: ArrayPrototypeSlice
+# CHECK: anything ~ string = Predict v0 predicted=string
+# CHECK-NOT: TypeTest
+# PLACED-LABEL: function f15 name="calleePredictedAmongOtherValues"
+# PLACED: TypeTest v3 testedType=builtin(StringPrototypeSlice)
+# PLACED: string = CallBuiltin {{*}} overload=StringPrototypeSlice/
+
+function f16 name="calleePredictedToBeAnotherBuiltin" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="slice"
+    v3 = Predict v2 predicted=undefined|builtin(StringPrototypeTrim)
+    v4 = Call v3, v0, v1 calleeKey="slice"
+    Return v4
+}
+# CHECK-LABEL: function f16 name="calleePredictedToBeAnotherBuiltin"
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, v0, v1 calleeKey="slice"
+# CHECK-NEXT: Return v4
+
+function f17 name="calleeWithWrittenType" parameters=[{type=anything}, {type=i32}, {type=anything written=L0}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32, v2: anything ? L0):
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+}
+# CHECK-LABEL: function f17 name="calleeWithWrittenType"
+# CHECK-NOT: TypeTest
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="slice"
+# CHECK-NEXT: Return v3

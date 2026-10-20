@@ -131,7 +131,7 @@ public:
             m_data[blockIndex].m_defs.clear();
             m_data[blockIndex].m_phis.clear();
         }
-        m_dominanceFrontiersComputed = false;
+        m_dominanceFrontierCache = DominanceFrontierCache::Empty;
     }
 
     class Variable {
@@ -232,71 +232,16 @@ public:
     template<typename BeforeVariable, typename Functor>
     void computePhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
     {
-        computePhis([](Node) { return true; }, beforeVariable, functor);
+        ensureDominanceFrontiers(DominanceFrontierCache::Unfiltered, [](Node) { return true; });
+        insertPhis(beforeVariable, functor);
     }
 
+    // mayNeedPhi(block) may be false only where functor(variable, block) returns a null Value for every variable.
     template<typename MayNeedPhi, typename BeforeVariable, typename Functor>
     void computePhis(NOESCAPE const MayNeedPhi& mayNeedPhi, NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
     {
-        ensureDominanceFrontiers(mayNeedPhi);
-
-        CFG& cfg = this->cfg();
-
-        // Iterated dominance frontier per variable, computed over the shared per-block
-        // dominance-frontier cache. The per-variable "visited" set is tracked with
-        // an epoch stamp so we don't allocate a fresh set for every variable.
-        Vector<Node, 16> worklist;
-        IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
-        for (Variable& variable : m_variables) {
-            unsigned epoch = variable.index() + 1;
-            beforeVariable(&variable);
-            worklist.shrink(0);
-            worklist.appendVector(variable.m_blocksWithDefs);
-            while (!worklist.isEmpty()) {
-                Node block = worklist.takeLast();
-                for (Node to : m_dominanceFrontiers[block]) {
-                    if (visited[to] == epoch)
-                        continue;
-                    visited[to] = epoch;
-
-                    Value phi = functor(&variable, to);
-                    if (!phi)
-                        continue;
-
-                    BlockData& data = m_data[to];
-                    Def* phiDef = m_phis.add(Def(&variable, to, phi));
-                    data.m_phis.append(phiDef);
-
-                    // Note that it's possible to have a block that looks like this before SSA
-                    // conversion:
-                    //
-                    // label:
-                    //     print(x);
-                    //     ...
-                    //     x = 42;
-                    //     goto label;
-                    //
-                    // And it may look like this after SSA conversion:
-                    //
-                    // label:
-                    //     x1: Phi()
-                    //     ...
-                    //     Upsilon(42, ^x1)
-                    //     goto label;
-                    //
-                    // In this case, we will want to insert a Phi in this block, and the block
-                    // will already have a Def for the variable. When this happens, we don't want
-                    // the Phi to override the original Def, since the Phi is at the top, the
-                    // original Def in the m_defs table would have been at the bottom, and we want
-                    // m_defs to tell us about defs at tail.
-                    //
-                    // So, we rely on the fact that UncheckedKeyHashMap::add() does nothing if the
-                    // key was already present.
-                    data.m_defs.add(&variable, phiDef);
-                    worklist.append(to);
-                }
-            }
-        }
+        ensureDominanceFrontiers(DominanceFrontierCache::Filtered, mayNeedPhi);
+        insertPhis(beforeVariable, functor);
     }
 
     const Vector<Def*>& phisForBlock(Node block)
@@ -374,12 +319,77 @@ private:
         Vector<Def*> m_phis;
     };
 
-    template<typename MayNeedPhi>
-    void ensureDominanceFrontiers(NOESCAPE const MayNeedPhi& mayNeedPhi)
+    enum class DominanceFrontierCache : uint8_t { Empty, Unfiltered, Filtered };
+
+    template<typename BeforeVariable, typename Functor>
+    void insertPhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
     {
-        if (m_dominanceFrontiersComputed)
+        CFG& cfg = this->cfg();
+
+        // Iterated dominance frontier per variable, computed over the shared per-block
+        // dominance-frontier cache. The per-variable "visited" set is tracked with
+        // an epoch stamp so we don't allocate a fresh set for every variable.
+        Vector<Node, 16> worklist;
+        IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
+        for (Variable& variable : m_variables) {
+            unsigned epoch = variable.index() + 1;
+            beforeVariable(&variable);
+            worklist.shrink(0);
+            worklist.appendVector(variable.m_blocksWithDefs);
+            while (!worklist.isEmpty()) {
+                Node block = worklist.takeLast();
+                for (Node to : m_dominanceFrontiers[block]) {
+                    if (visited[to] == epoch)
+                        continue;
+                    visited[to] = epoch;
+
+                    Value phi = functor(&variable, to);
+                    if (!phi)
+                        continue;
+
+                    BlockData& data = m_data[to];
+                    Def* phiDef = m_phis.add(Def(&variable, to, phi));
+                    data.m_phis.append(phiDef);
+
+                    // Note that it's possible to have a block that looks like this before SSA
+                    // conversion:
+                    //
+                    // label:
+                    //     print(x);
+                    //     ...
+                    //     x = 42;
+                    //     goto label;
+                    //
+                    // And it may look like this after SSA conversion:
+                    //
+                    // label:
+                    //     x1: Phi()
+                    //     ...
+                    //     Upsilon(42, ^x1)
+                    //     goto label;
+                    //
+                    // In this case, we will want to insert a Phi in this block, and the block
+                    // will already have a Def for the variable. When this happens, we don't want
+                    // the Phi to override the original Def, since the Phi is at the top, the
+                    // original Def in the m_defs table would have been at the bottom, and we want
+                    // m_defs to tell us about defs at tail.
+                    //
+                    // So, we rely on the fact that UncheckedKeyHashMap::add() does nothing if the
+                    // key was already present.
+                    data.m_defs.add(&variable, phiDef);
+                    worklist.append(to);
+                }
+            }
+        }
+    }
+
+    template<typename MayNeedPhi>
+    void ensureDominanceFrontiers(DominanceFrontierCache kind, NOESCAPE const MayNeedPhi& mayNeedPhi)
+    {
+        ASSERT(kind != DominanceFrontierCache::Empty);
+        if (m_dominanceFrontierCache == DominanceFrontierCache::Unfiltered)
             return;
-        m_dominanceFrontiersComputed = true;
+        m_dominanceFrontierCache = kind;
 
         CFG& cfg = this->cfg();
         auto& dominators = this->dominators();
@@ -409,7 +419,7 @@ private:
     Bag<Def> m_phis;
     IndexMap<Node, BlockData> m_data;
     IndexMap<Node, Vector<Node, 2>> m_dominanceFrontiers;
-    bool m_dominanceFrontiersComputed { false };
+    DominanceFrontierCache m_dominanceFrontierCache { DominanceFrontierCache::Empty };
 };
 
 WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<typename Adapter>, SSACalculator<Adapter>);

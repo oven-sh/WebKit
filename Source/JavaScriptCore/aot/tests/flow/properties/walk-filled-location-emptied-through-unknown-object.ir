@@ -1,0 +1,242 @@
+# A read that ended at a field of an instance goes on to the prototype once the instance has escaped and a function reached through four calls deletes the name through an unknown value. A store through an unknown value leaves the field filled, and an instance that has not escaped is not affected
+# OPTIONS: check=FlowFixpoint
+# RUN(DELETED): flow-solve nodes
+# DELETED: , f5, v1) = {{*}}"inherited"
+# RUN(KEPT): flow-solve nodes
+# KEPT: , f6, v1) = {3}
+# RUN(STORED): flow-solve nodes
+# STORED: , f7, v1) = {int[4, 5]}
+# RUN(FIXPOINT): flow-solve fixpoint
+# FIXPOINT: nothing changes
+
+layout L0 kind=Instance name="Deleted" module=m0 position=136 constructor=f8 fields=[{key="k" declared={type=anything predicted=1}}]
+layout L1 kind=Instance name="Kept" module=m0 position=219 constructor=f9 fields=[{key="k" declared={type=anything predicted=3}}]
+layout L2 kind=Instance name="Stored" module=m0 position=296 constructor=f10 fields=[{key="j" declared={type=anything predicted=4}}]
+variable g0 name="h1" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="h2" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="h3" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="deleted" module=m0 declared={type=anything|absent predicted=L0} flags=[IsImmutable]
+variable g4 name="stored" module=m0 declared={type=anything|absent predicted=L2} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f5 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f6 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = NewClosure function=f7 @0
+    v7 = ClaimDeclared v6 declared={type=anything predicted=function} @0
+    v8 = NewClosure function=f8 @130
+    v9 = NewClass v8 layout=L0 @130
+    PutModuleVariable v9 variable=g5 @130
+    v11 = FinishClass v9 layout=L0 @130
+    v12 = ClaimDeclared v11 declared={type=anything predicted=function} @130
+    v13 = ClaimDeclared v11 declared={type=anything predicted=function} @130
+    v14 = PropGet v13 key="prototype" @178
+    v15 = Predict v14 predicted=L0 @178
+    v16 = String string="inherited" @200
+    v17 = ClaimDeclared v16 declared={type=anything predicted=number} @178
+    PropSet v15, v17 key="k" @178
+    v19 = NewClosure function=f9 @213
+    v20 = NewClass v19 layout=L1 @213
+    PutModuleVariable v20 variable=g6 @213
+    v22 = FinishClass v20 layout=L1 @213
+    v23 = ClaimDeclared v22 declared={type=anything predicted=function} @213
+    v24 = ClaimDeclared v22 declared={type=anything predicted=function} @213
+    v25 = PropGet v24 key="prototype" @258
+    v26 = Predict v25 predicted=L1 @258
+    v27 = String string="inherited" @277
+    v28 = ClaimDeclared v27 declared={type=anything predicted=number} @258
+    PropSet v26, v28 key="k" @258
+    v30 = NewClosure function=f10 @290
+    v31 = NewClass v30 layout=L2 @290
+    PutModuleVariable v31 variable=g7 @290
+    v33 = FinishClass v31 layout=L2 @290
+    v34 = ClaimDeclared v33 declared={type=anything predicted=function} @290
+    v35 = ClaimDeclared v33 declared={type=anything predicted=function} @290
+    v36 = PropGet v35 key="prototype" @337
+    v37 = Predict v36 predicted=L2 @337
+    v38 = String string="inherited" @358
+    v39 = ClaimDeclared v38 declared={type=anything predicted=number} @337
+    PropSet v37, v39 key="j" @337
+    v41 = Construct v13 calleeName="Deleted" @391
+    v42 = Predict v41 predicted=L0 @387
+    PutModuleVariable v42 variable=g3 @377
+    v44 = Construct v24 calleeName="Kept" @413
+    v45 = Predict v44 predicted=L1 @409
+    v46 = Construct v35 calleeName="Stored" @434
+    v47 = Predict v46 predicted=L2 @430
+    PutModuleVariable v47 variable=g4 @421
+    v49 = Builtin builtin=GlobalThis @560
+    v50 = PropGet v49 key="print" [isFreeName] @560
+    v51 = Predict v3 predicted=function @566
+    v52 = Call v51, -, v42 calleeName="readDeleted" @566
+    v53 = Predict v5 predicted=function @588
+    v54 = Call v53, -, v45 calleeName="readKept" @588
+    v55 = Predict v7 predicted=function @604
+    v56 = Call v55, -, v47 calleeName="readStored" @604
+    v57 = Call v50, -, v52, v54, v56 calleeName="print" @560
+    v58 = Predict v1 predicted=function @625
+    v59 = NewClosure function=f11 @628
+    v60 = Call v58, -, v59 calleeName="h0" @625
+    v61 = NewClosure function=f12 @670
+    v62 = Call v58, -, v61 calleeName="h0" @667
+    v63 = Builtin builtin=GlobalThis @705
+    v64 = PropGet v63 key="print" [isFreeName] @705
+    v65 = Call v51, -, v42 calleeName="readDeleted" @711
+    v66 = Call v53, -, v45 calleeName="readKept" @733
+    v67 = Call v55, -, v47 calleeName="readStored" @749
+    v68 = Call v64, -, v65, v66, v67 calleeName="print" @705
+    v69 = Undefined @705
+    Return v69 @705
+}
+function f1 name="h1" module=m0 position=33 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @33
+  b1():
+    v1 = GetModuleVariable variable=g1 @57
+    v2 = Predict v1 predicted=function @57
+    v3 = Call v2, -, v0 calleeName="h2" @57
+    ReturnCall v3 @57
+}
+function f2 name="h2" module=m0 position=66 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @66
+  b1():
+    v1 = GetModuleVariable variable=g2 @90
+    v2 = Predict v1 predicted=function @90
+    v3 = Call v2, -, v0 calleeName="h3" @90
+    ReturnCall v3 @90
+}
+function f3 name="h3" module=m0 position=99 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @99
+  b1():
+    v1 = Call v0 calleeName="f" @123
+    ReturnCall v1 @123
+}
+function f4 name="h0" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @0
+  b1():
+    v1 = GetModuleVariable variable=g0 @24
+    v2 = Predict v1 predicted=function @24
+    v3 = Call v2, -, v0 calleeName="h1" @24
+    ReturnCall v3 @24
+}
+function f5 name="readDeleted" module=m0 position=444 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @444
+  b1():
+    v1 = PropGet v0 key="k" @477
+    Return v1 @477
+}
+function f6 name="readKept" module=m0 position=484 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @484
+  b1():
+    v1 = PropGet v0 key="k" @514
+    Return v1 @514
+}
+function f7 name="readStored" module=m0 position=521 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @521
+  b1():
+    v1 = PropGet v0 key="j" @553
+    Return v1 @553
+}
+function f8 name="Deleted" module=m0 position=146 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @146
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @130
+    v2 = NewObject v1 layout=L0 @130
+    v3 = Predict v2 predicted=L0 @162
+    v4 = Integer integer=1 @171
+    v5 = ClaimDeclared v4 declared={type=anything predicted=number} @162
+    PropSet v3, v5 key="k" @162
+    v7 = Undefined @162
+    v8 = TypeTest v7 testedType=object @162
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @162
+  b2(v9):
+    Jump -> next b4(v9) @162
+  b3(v10):
+    Jump -> next b4(v2) @162
+  b4(v11):
+    Return v11 @162
+}
+function f9 name="Kept" module=m0 position=226 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @226
+  b1():
+    v1 = GetConstructPrototype v0 layout=L1 @213
+    v2 = NewObject v1 layout=L1 @213
+    v3 = Predict v2 predicted=L1 @242
+    v4 = Integer integer=3 @251
+    v5 = ClaimDeclared v4 declared={type=anything predicted=number} @242
+    PropSet v3, v5 key="k" @242
+    v7 = Undefined @242
+    v8 = TypeTest v7 testedType=object @242
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @242
+  b2(v9):
+    Jump -> next b4(v9) @242
+  b3(v10):
+    Jump -> next b4(v2) @242
+  b4(v11):
+    Return v11 @242
+}
+function f10 name="Stored" module=m0 position=305 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @305
+  b1():
+    v1 = GetConstructPrototype v0 layout=L2 @290
+    v2 = NewObject v1 layout=L2 @290
+    v3 = Predict v2 predicted=L2 @321
+    v4 = Integer integer=4 @330
+    v5 = ClaimDeclared v4 declared={type=anything predicted=number} @321
+    PropSet v3, v5 key="j" @321
+    v7 = Undefined @321
+    v8 = TypeTest v7 testedType=object @321
+    Branch v8 -> taken b2(| 0), notTaken b3(| 0) @321
+  b2(v9):
+    Jump -> next b4(v9) @321
+  b3(v10):
+    Jump -> next b4(v2) @321
+  b4(v11):
+    Return v11 @321
+}
+function f11 module=m0 position=628 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @628
+  b1():
+    v0 = Builtin builtin=GlobalThis @643
+    v1 = PropGet v0 key="launder" [isFreeName] @643
+    v2 = GetModuleVariable variable=g3 @651
+    v3 = CheckInitialized v2 name="deleted" @651
+    v4 = Call v1, -, v3 calleeName="launder" @643
+    v5 = PropDelete v4 key="k" @643
+    v6 = Undefined @643
+    Return v6 @643
+}
+function f12 module=m0 position=670 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @670
+  b1():
+    v0 = Builtin builtin=GlobalThis @678
+    v1 = PropGet v0 key="launder" [isFreeName] @678
+    v2 = GetModuleVariable variable=g4 @686
+    v3 = CheckInitialized v2 name="stored" @686
+    v4 = Call v1, -, v3 calleeName="launder" @678
+    v5 = Integer integer=5 @698
+    PropSet v4, v5 key="j" @678
+    v7 = Undefined @678
+    Return v7 @678
+}
+entry module=m0

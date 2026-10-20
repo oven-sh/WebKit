@@ -1,0 +1,36 @@
+# Whoever holds an array iterator steps it through next of its prototype: an iterator that is handed to unknown code takes the library's function along.
+# RUN: flow-solve instances sinks
+# CHECK: f1 Generic
+# CHECK: nativeCode {
+# CHECK: ArrayIterator@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=70 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="take" [isFreeName]
+    v2 = String string="a"
+    v3 = NewArray v2 contents=anything
+    v4 = PropGet v3 key="values"
+    v5 = Call v4, v3 calleeKey="values"
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ClaimDeclared v0 declared={type=object flags=[IsFromCompiler]}
+    v3 = StepArrayIterator v2
+    v4 = ResultAt v3 index=1
+    v5 = ResultAt v3
+    v6 = CreateIteratorResult v4, v5
+    Return v6
+  b2():
+    v7 = ThrowNewError errorKind=TypeError message="not an array iterator"
+    Unreachable
+}

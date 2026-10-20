@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "Options.h"
 #include "WasmFormat.h"
 #include "WasmLimits.h"
 #include "WasmOps.h"
@@ -119,12 +120,25 @@ public:
         return sizeof(JSWebAssemblyArray) + std::max(alignmentShift(elementSize), preciseShift);
     }
 
+    static constexpr ptrdiff_t offsetPastShapeWord = 16;
+
+    static ptrdiff_t paddingOverShapeWord(size_t elementSize)
+    {
+#if ENABLE(AOT)
+        if (alignedOffsetOfData(elementSize) < offsetPastShapeWord && Options::useAOT()) [[unlikely]]
+            return offsetPastShapeWord - alignedOffsetOfData(elementSize);
+#else
+        UNUSED_PARAM(elementSize);
+#endif
+        return 0;
+    }
+
     static std::optional<unsigned> allocationSizeInBytes(Wasm::FieldType fieldType, unsigned size)
     {
         unsigned elementSize = fieldType.type.elementSize();
         if (productOverflows<uint32_t>(elementSize, size) || elementSize * size > Wasm::maxArraySizeInBytes) [[unlikely]]
             return std::nullopt;
-        return allocationMetadataSize(elementSize) + size * elementSize;
+        return allocationMetadataSize(elementSize) + paddingOverShapeWord(elementSize) + size * elementSize;
     }
 
     static constexpr ptrdiff_t offsetOfSize() { return OBJECT_OFFSETOF(JSWebAssemblyArray, m_size); }
@@ -138,6 +152,12 @@ private:
     // NB: It's *HIGHLY* recommended that you don't use these directly since you'll have to remember to clean up the alignment for v128.
     uint8_t* data() LIFETIME_BOUND { return reinterpret_cast<uint8_t*>(this) + offsetOfData(); }
     const uint8_t* data() const LIFETIME_BOUND { return const_cast<JSWebAssemblyArray*>(this)->data(); }
+
+    void zeroShapeWord()
+    {
+        constexpr ptrdiff_t offsetPastSize = offsetOfSize() + sizeof(m_size);
+        memset(reinterpret_cast<uint8_t*>(this) + offsetPastSize, 0, offsetPastShapeWord - offsetPastSize);
+    }
 
     JSWebAssemblyArray(VM&, WebAssemblyGCStructure*, unsigned);
 

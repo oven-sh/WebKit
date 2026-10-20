@@ -1,0 +1,41 @@
+# The namespace object of a compiled module whose export names are all known is made from tables: asking for it runs no code, so one that nobody uses goes.
+# A module that takes names from a module of another kind, a CommonJS module, code that is not compiled and a deferred import are asked at run time, and stay
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m1 declared={type=number} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1}, {target=m2}, {target=m3}, {target=m4}, {target=m5 phase=Defer}]
+module m1 path="lib.js" displayPath="lib.js" exports=[{name="a" variable=g0}]
+module m2 path="star.js" displayPath="star.js" requests=[{target=m4 isDynamicStarExport=true}]
+module m3 path="common.cjs" displayPath="common.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m4 path="plain.js" displayPath="plain.js" kind=External referrer=m2
+module m5 path="lazy.js" displayPath="lazy.js"
+
+function f0 name="unused" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = ModuleNamespace module=m2
+    v2 = ModuleNamespace module=m3
+    v3 = ModuleNamespace module=m4
+    v4 = ModuleNamespace module=m5 phase=Defer
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f0 name="unused"
+# CHECK-NOT: ModuleNamespace module=m1
+# CHECK: = ModuleNamespace module=m2
+# CHECK-NEXT: = ModuleNamespace module=m3
+# CHECK-NEXT: = ModuleNamespace module=m4
+# CHECK-NEXT: = ModuleNamespace module=m5 phase=Defer
+function f1 name="common" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="used" results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    Return v0
+}
+# CHECK-LABEL: function f2 name="used"
+# CHECK: = ModuleNamespace module=m1

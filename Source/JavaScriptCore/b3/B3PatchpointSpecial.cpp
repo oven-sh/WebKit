@@ -54,8 +54,6 @@ void PatchpointSpecial::forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst:
         Arg::Role role;
         if (patchpoint->resultConstraints[argIndex - 1].kind() == ValueRep::SomeEarlyRegister)
             role = Arg::EarlyDef;
-        else if (patchpoint->resultConstraints[argIndex - 1].kind() == ValueRep::SomeRegisterWithClobber)
-            role = Arg::UseDef;
         else
             role = Arg::Def;
 
@@ -176,13 +174,11 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     return MacroAssembler::Jump();
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 bool PatchpointSpecial::hasFixedForms(Inst&)
 {
     return true;
 }
 
-#endif
 bool PatchpointSpecial::isTerminal(Inst& inst)
 {
     return inst.origin->as<PatchpointValue>()->effects.terminal;

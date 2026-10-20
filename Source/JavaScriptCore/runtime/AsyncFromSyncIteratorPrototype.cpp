@@ -29,10 +29,6 @@
 
 #include "AsyncContextSwapScope.h"
 
-#if ENABLE(AOT)
-#include "AOTTypedObject.h"
-#include "GeneratorPrototype.h"
-#endif
 #include "IteratorOperations.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
@@ -44,7 +40,6 @@
 #include "JSPromise.h"
 #include "JSSetIterator.h"
 #include "Microtask.h"
-#include "MicrotaskQueueInlines.h"
 #include "TopExceptionScope.h"
 
 namespace JSC {
@@ -152,52 +147,23 @@ static bool driveSyncIterator(JSGlobalObject* globalObject, VM& vm, JSAsyncFromS
     JSObject* syncIterator = iterator->syncIterator();
     if (iterator->iterationMode() != IterationMode::Generic)
         return driveFastSyncIterator(globalObject, vm, syncIterator, iterator->iterationMode(), value);
-#if ENABLE(AOT)
-    if (auto* generator = dynamicDowncast<AOT::Typed::Generator>(syncIterator); generator && iterator->nextMethod() == globalObject->generatorPrototype()->getDirect(vm, vm.propertyNames->next)) {
-        bool isDone = true;
-        value = generator->resume(globalObject, AOT::Typed::Generator::ResumeMode::Next, argument ? argument : jsUndefined(), isDone);
-        return isDone;
-    }
-#endif
     return callSyncIteratorMethodAndExtract(globalObject, iterator->nextMethod(), syncIterator, argument, value);
 }
 
 // https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%.next
-JSValue asyncFromSyncIteratorNext(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSValue argument, JSPromise* immediateStep)
+JSValue asyncFromSyncIteratorNext(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSValue argument)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+
     JSValue value = jsUndefined();
     bool done = driveSyncIterator(globalObject, vm, iterator, argument, value);
 
-    if (scope.exception()) [[unlikely]] {
-        JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, promise->rejectWithCaughtException(vm, scope));
-    }
 
-    if (immediateStep) {
-        bool isSettled = !value.isObject();
-        if (!isSettled) {
-            if (value.asCell()->structureID() == globalObject->promiseStructure()->id())
-                isSettled = uncheckedDowncast<JSPromise>(value)->status() == JSPromise::Status::Fulfilled;
-            else
-                isSettled = !value.inherits<JSPromise>() && isDefinitelyNonThenable(asObject(value), globalObject);
-        }
-        if (isSettled && iterator->realm() == globalObject && globalObject->promiseThenWatchpointSet().isStillValid() && globalObject->microtaskQueue().isEmpty() && globalObject->canFastQueueMicrotask() && !vm.hostObservesMicrotaskBoundaries()) {
-            if (value.isObject() && value.asCell()->structureID() == globalObject->promiseStructure()->id()) {
-                auto* fulfilled = uncheckedDowncast<JSPromise>(value);
-                fulfilled->markAsHandled();
-                value = fulfilled->result();
-            }
-            JSObject* result = asObject(immediateStep->result());
-            result->putDirectOffset(vm, iteratorResultObjectValuePropertyOffset, value);
-            result->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(done));
-            return immediateStep;
-        }
-    }
-
-    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ true, value, done);
     return promise;
@@ -320,49 +286,5 @@ void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject* globalObject, JSAsyncF
 
     awaitAndContinue(globalObject, vm, iterator, driver, /* closeSyncIteratorOnRejection */ true, value, done);
 }
-
-#if ENABLE(AOT)
-JSObject* driveAsyncFromSyncIterator(JSGlobalObject* globalObject, JSAsyncFromSyncIterator* iterator, JSObject* driver)
-{
-    VM& vm = globalObject->vm();
-    JSValue value = jsUndefined();
-    bool done = false;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        done = driveSyncIterator(globalObject, vm, iterator, JSValue(), value);
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue error = catchScope.exception()->value();
-            if (catchScope.clearExceptionExceptTermination()) [[likely]]
-                JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver, AsyncContextSwapScope::current(vm, globalObject));
-            return nullptr;
-        }
-    }
-    bool isSettled = !value.isObject();
-    if (!isSettled) {
-        if (value.asCell()->structureID() == globalObject->promiseStructure()->id())
-            isSettled = uncheckedDowncast<JSPromise>(value)->status() == JSPromise::Status::Fulfilled;
-        else
-            isSettled = !value.inherits<JSPromise>() && isDefinitelyNonThenable(asObject(value), globalObject);
-    }
-    if (!isSettled || iterator->realm() != globalObject || !globalObject->promiseThenWatchpointSet().isStillValid() || !globalObject->microtaskQueue().isEmpty() || !globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries()) {
-        awaitAndContinue(globalObject, vm, iterator, driver, /* closeSyncIteratorOnRejection */ true, value, done);
-        return nullptr;
-    }
-    if (value.isObject() && value.asCell()->structureID() == globalObject->promiseStructure()->id()) {
-        auto* promise = uncheckedDowncast<JSPromise>(value);
-        promise->markAsHandled();
-        value = promise->result();
-    }
-    if (JSValue cached = iterator->cachedDriverResult(); cached.isObject()) [[likely]] {
-        JSObject* result = asObject(cached);
-        result->putDirectOffset(vm, iteratorResultObjectValuePropertyOffset, value);
-        result->putDirectOffset(vm, iteratorResultObjectDonePropertyOffset, jsBoolean(done));
-        return result;
-    }
-    JSObject* result = createIteratorResultObject(globalObject, value, done);
-    iterator->setCachedDriverResult(vm, result);
-    return result;
-}
-#endif
 
 } // namespace JSC

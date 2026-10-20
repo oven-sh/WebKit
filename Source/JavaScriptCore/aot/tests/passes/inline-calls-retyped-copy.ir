@@ -1,0 +1,70 @@
+# The copy of a body gets the types of the caller's arguments in the run that makes it, and so does what reads the result
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="add" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+# CHECK-LABEL: name="add"
+# CHECK: v2: number|string|bigint = Add v0, v1
+
+function f1 name="addsIntegers" parameters=[{type=int[0, 9]}, {type=int[0, 9]}] results=[{type=anything}] {
+  b0(v0: int[0, 9], v1: int[0, 9]):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: name="addsIntegers"
+# CHECK-NOT: CallDirect
+# CHECK: (v2: int[0, 18]):
+# CHECK-NEXT: v3: int[0, 36] = Add v2, v2
+# CHECK-NOT: CallDirect
+# CHECK: [[sum1]]: int[0, 18] = Add
+# CHECK-NEXT: Jump -> next {{*}}([[sum1]])
+
+function f2 name="addsStrings" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: string):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: name="addsStrings"
+# CHECK-NOT: CallDirect
+# CHECK: (v2: string):
+# CHECK-NEXT: v3: string = Add v2, v2
+# CHECK-NOT: CallDirect
+# CHECK: [[sum2]]: string = Add
+# CHECK-NEXT: Jump -> next {{*}}([[sum2]])
+
+function f3 name="addsIntegerToUnknown" parameters=[{type=int[0, 9]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 9], v1: anything):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: name="addsIntegerToUnknown"
+# CHECK-NOT: CallDirect
+# CHECK: (v2: number|string|bigint):
+# CHECK-NEXT: v3: number|string|bigint = Add v2, v2
+# CHECK-NOT: CallDirect
+# CHECK: [[sum3]]: number|string|bigint = Add
+# CHECK-NEXT: Jump -> next {{*}}([[sum3]])
+
+function f4 name="addsUnknowns" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: name="addsUnknowns"
+# CHECK-NOT: CallDirect
+# CHECK: (v2: number|string|bigint):
+# CHECK-NEXT: v3: number|string|bigint = Add v2, v2
+# CHECK-NOT: CallDirect
+# CHECK: [[sum4]]: number|string|bigint = Add v0, v1
+# CHECK-NEXT: Jump -> next {{*}}([[sum4]])

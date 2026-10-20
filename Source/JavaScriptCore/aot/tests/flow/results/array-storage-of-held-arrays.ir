@@ -1,0 +1,45 @@
+# The type of a container names the storage that the site of each array it holds allocates, at any depth, and not the storage that would hold what that one array holds
+# RUN: flow
+# The site of make() allocates one storage for integers and fractions.
+# CHECK: variable g0 type=Array<Array<1, proven{{*}}> ~ Array<1, proven, Double
+# An array that is created with a length has the storage that holds any value.
+# CHECK: variable g1 type=Array<Array<1, proven{{*}}> ~ Array<1, proven, Contiguous
+# CHECK: variable g2 type=Array<Array<Array<1, proven{{*}}> ~ Array<1, proven, Double
+# A site whose arrays all hold integers allocates the storage for integers.
+# CHECK: variable g3 type=Array<Array<1, proven{{*}}> ~ Array<1, proven, Int32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="holdsArrayOfSharedSite" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="holdsConstructedArray" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="holdsTheHolder" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="holdsArrayOfOwnSite" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="fractions" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Double number=0.5
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v1
+    PutModuleVariable v4 variable=g4
+    v6 = NewArray v3 contents=anything
+    PutModuleVariable v6 variable=g0
+    v8 = Builtin builtin=Array
+    v9 = Construct v8, -, v0
+    v10 = Integer
+    ElemSet v9, v10, v0
+    v12 = NewArray v9 contents=anything
+    PutModuleVariable v12 variable=g1
+    v14 = NewArray v6 contents=anything
+    PutModuleVariable v14 variable=g2
+    v16 = NewArray v0 contents=anything
+    v17 = NewArray v16 contents=anything
+    PutModuleVariable v17 variable=g3
+    Return
+}
+function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    Return v1
+}

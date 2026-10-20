@@ -1,0 +1,148 @@
+# a guard that one of several tests or allocations stands behind proves one of their layouts and the slots all of them fill, until an object of any of them may be written
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 4
+# DIAGNOSTIC: GuardNotAvailable 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="goodTwoTests" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = ShapeTest v0 layouts=[L1]
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0, L1] level=Proven
+    Return v5
+  b4():
+    Return
+}
+function f1 name="badReceiversLackTheLayoutOfOneTest" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = ShapeTest v0 layouts=[L1]
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    Return v5
+  b4():
+    Return
+}
+function f2 name="goodTwoAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0, L1] level=Proven
+    Return v8
+}
+function f3 name="badReceiversLackTheLayoutOfOneAllocation" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L1] level=Proven
+    Return v8
+}
+function f4 name="badSlotFilledByOneAllocation" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    v5 = AllGuards v4
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="y" receivers=[L0, L1] level=Proven
+    Return v8
+}
+function f5 name="badSlotsFilledByDifferentTests" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    v5 = GetSlot v0, v4 key="x" receivers=[L0] level=Proven
+    Return v5
+  b4():
+    Return
+}
+function f6 name="badWriteToTheObjectOfTheSecondLayout" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: function):
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = AllGuards v3
+    Jump -> next b3(v3, v5)
+  b2():
+    v6 = AllGuards v4
+    Jump -> next b3(v4, v6)
+  b3(v7, v8):
+    DefineGetter v4, v2 key="z"
+    v10 = GetSlot v7, v8 key="x" receivers=[L0, L1] level=Proven
+    Return v10
+}
+function f7 name="badWriteToTheObjectOfTheFirstLayout" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: function):
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = AllGuards v3
+    Jump -> next b3(v3, v5)
+  b2():
+    v6 = AllGuards v4
+    Jump -> next b3(v4, v6)
+  b3(v7, v8):
+    DefineGetter v3, v2 key="z"
+    v10 = GetSlot v7, v8 key="x" receivers=[L0, L1] level=Proven
+    Return v10
+}
+function f8 name="goodWriteToAnotherObject" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: function):
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v5 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v6 = AllGuards v3
+    Jump -> next b3(v3, v6)
+  b2():
+    v7 = AllGuards v4
+    Jump -> next b3(v4, v7)
+  b3(v8, v9):
+    DefineGetter v5, v2 key="z"
+    v11 = GetSlot v8, v9 key="x" receivers=[L0, L1] level=Proven
+    Return v11
+}

@@ -1,0 +1,68 @@
+# A static field is a variable of its class and a private field is named by its layout: each admits the asserted object that is stored into it, and the read gives it back
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 4
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=StaticField
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Result
+typesite w3 module=m0 position=40 kind=Field
+typesite w4 module=m0 position=50 kind=PropertyRead
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key=#"hidden"@L0 declared={type=undefined|null|number predicted=number site=w3} flags=[IsPrivate]}, {key=#"other"@L0 declared={type=undefined|null|number predicted=number site=w3} flags=[IsPrivate]}] staticFields=[{key="latest" variable=g1}, {key="first" variable=g2}]
+variable g0 name="Widget" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="latest" module=m0 declared={type=undefined|null|number predicted=number site=w0} initialization=Undefined owner=L0
+variable g2 name="first" module=m0 declared={type=undefined|null|number predicted=number site=w0} initialization=Undefined owner=L0
+variable g3 name="token" module=m0 declared={type=classtoken|absent flags=[IsFromCompiler]}
+# CHECK: layout L0 kind=Instance name="Widget" {{*}}declared={type=undefined|null|number|object predicted=number site=w3 flags=[AdmitsObjects]} flags=[IsPrivate]}, {{*}}declared={type=undefined|null|number predicted=number site=w3} flags=[IsPrivate]}]
+# CHECK: variable g1 name="latest" module=m0 declared={type=undefined|null|number|object predicted=number site=w0 flags=[AdmitsObjects]}
+# CHECK: variable g2 name="first" module=m0 declared={type=undefined|null|number predicted=number site=w0}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="remember" parameters=[{type=anything}] results=[{type=undefined|null|number predicted=number site=w2}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Widget"
+    v3 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v4 = ClaimDeclared v3 declared={type=undefined|null|number predicted=number site=w0}
+    PropSet v2, v4 key="latest"
+    v6 = PropGet v2 key="latest"
+    v7 = ClaimRead v6, v2 source=Field{key="latest"} site=w4
+    v8 = ClaimDeclared v7 declared={type=undefined|null|number predicted=number site=w2}
+    Return v8
+}
+# CHECK-LABEL: function f2 name="remember" {{*}}results=[{type=undefined|null|number|object predicted=number site=w2 flags=[AdmitsObjects]}]
+function f3 name="readsOtherStaticField" results=[{type=undefined|null|number predicted=number site=w2}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="Widget"
+    v2 = PropGet v1 key="first"
+    v3 = ClaimDeclared v2 declared={type=undefined|null|number predicted=number site=w2}
+    Return v3
+}
+# CHECK-LABEL: function f3 name="readsOtherStaticField" {{*}}results=[{type=undefined|null|number predicted=number site=w2}]
+# CHECK: : undefined|null|number {{*}}= Claim v2 castType=undefined|null|number site=w2
+function f4 name="hide" kind=Method flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=undefined|null|number predicted=number site=w2}] {
+  b0(v0: anything, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v3 = ClaimDeclared v2 declared={type=undefined|null|number predicted=number site=w3}
+    v4 = GetModuleVariable variable=g3
+    v5 = CheckInitialized v4 name="Widget"
+    PrivateSet v0, v5, v3 layout=L0
+    v7 = PrivateGet v0, v5 layout=L0
+    v8 = ClaimDeclared v7 declared={type=undefined|null|number predicted=number site=w2}
+    Return v8
+}
+# CHECK-LABEL: function f4 name="hide" {{*}}results=[{type=undefined|null|number|object predicted=number site=w2 flags=[AdmitsObjects]}]

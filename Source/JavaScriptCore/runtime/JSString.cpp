@@ -23,10 +23,10 @@
 #include "config.h"
 #include "JSString.h"
 
-#include "AOTImage.h"
 #include "JSGlobalObjectFunctions.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
+#include "JSStringVisitInlines.h"
 #include "StringObject.h"
 #include "StrongInlines.h"
 #include "StructureCreateInlines.h"
@@ -89,12 +89,7 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
 
 bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) const
 {
-#if USE(BUN_JSC_ADDITIONS)
-    UNUSED_PARAM(globalObject);
-    return equalResolvingRopes(other);
-#else
     return equalInline(globalObject, other);
-#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -127,6 +122,22 @@ bool JSString::equalResolvingRopes(JSString* other) const
     return true;
 }
 
+StringView JSRopeString::LeafIterator::next()
+{
+    while (true) {
+        const JSString* string = m_pending.takeLast();
+        if (!string->isRope())
+            return StringView { string->valueInternal().impl() };
+        auto* rope = static_cast<const JSRopeString*>(string);
+        if (rope->isSubstring())
+            return StringView { rope->substringBase()->valueInternal().impl() }.substring(rope->substringOffset(), rope->length());
+        for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
+            if (const JSString* fiber = rope->fiber(i))
+                m_pending.append(fiber);
+        }
+    }
+}
+
 bool JSString::equalWithoutResolvingRopes(JSString* other) const
 {
     auto runOf = [](const JSString* string) -> StringView {
@@ -138,89 +149,10 @@ bool JSString::equalWithoutResolvingRopes(JSString* other) const
     if (!isNonSubstringRope() && !other->isNonSubstringRope())
         return runOf(this) == runOf(other);
 
-    auto charactersOf = [](const JSString* string) -> std::optional<std::span<const Latin1Character>> {
-        if (!string->isRope()) {
-            auto& flat = string->valueInternal();
-            if (!flat.is8Bit())
-                return std::nullopt;
-            return flat.span8();
-        }
-        auto* part = static_cast<const JSRopeString*>(string);
-        auto& base = part->substringBase()->valueInternal();
-        if (!base.is8Bit())
-            return std::nullopt;
-        return base.span8().subspan(part->substringOffset(), part->length());
-    };
-    const JSString* operands[2] { this, other };
-    for (unsigned i = 0; i < 2; ++i) {
-        if (!operands[i]->isNonSubstringRope() || operands[1 - i]->isNonSubstringRope())
-            continue;
-        auto whole = charactersOf(operands[1 - i]);
-        if (!whole)
-            break;
-        const Latin1Character* end = whole->data() + whole->size();
-        constexpr unsigned capacity = 24;
-        const JSString* pending[capacity];
-        unsigned count = 0;
-        pending[count++] = operands[i];
-        bool isSettled = true;
-        while (count) {
-            const JSString* string = pending[--count];
-            if (string->isNonSubstringRope()) {
-                if (count + JSRopeString::s_maxInternalRopeLength > capacity) {
-                    isSettled = false;
-                    break;
-                }
-                auto* rope = static_cast<const JSRopeString*>(string);
-                for (unsigned j = 0; j < JSRopeString::s_maxInternalRopeLength; ++j) {
-                    if (const JSString* fiber = rope->fiber(j))
-                        pending[count++] = fiber;
-                }
-                continue;
-            }
-            auto piece = charactersOf(string);
-            if (!piece) {
-                isSettled = false;
-                break;
-            }
-            end -= piece->size();
-            if (!WTF::equal(end, *piece))
-                return false;
-        }
-        if (isSettled)
-            return true;
-        break;
-    }
-
-    struct Pieces {
-        explicit Pieces(const JSString* string)
-        {
-            pending.append(string);
-        }
-
-        StringView next()
-        {
-            while (true) {
-                const JSString* string = pending.takeLast();
-                if (!string->isRope())
-                    return StringView { string->valueInternal().impl() };
-                auto* rope = static_cast<const JSRopeString*>(string);
-                if (rope->isSubstring())
-                    return StringView { rope->substringBase()->valueInternal().impl() }.substring(rope->substringOffset(), rope->length());
-                for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
-                    if (const JSString* fiber = rope->fiber(i))
-                        pending.append(fiber);
-                }
-            }
-        }
-
-        Vector<const JSString*, 16> pending;
-    };
-
     unsigned remaining = length();
     ASSERT(remaining == other->length());
-    Pieces left { this };
-    Pieces right { other };
+    JSRopeString::LeafIterator left { this };
+    JSRopeString::LeafIterator right { other };
     StringView a;
     StringView b;
     while (remaining) {
@@ -256,41 +188,7 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    uintptr_t pointer = thisObject->fiberConcurrently();
-    if (pointer & isRopeInPointer) {
-        if (pointer & JSRopeString::isSubstringInPointer) {
-            visitor.appendUnbarriered(static_cast<JSRopeString*>(thisObject)->fiber1());
-            return;
-        }
-        for (unsigned index = 0; index < JSRopeString::s_maxInternalRopeLength; ++index) {
-            JSString* fiber = nullptr;
-            switch (index) {
-            case 0:
-                fiber = std::bit_cast<JSString*>(pointer & JSRopeString::stringMask);
-                break;
-            case 1:
-                fiber = static_cast<JSRopeString*>(thisObject)->fiber1();
-                break;
-            case 2:
-                fiber = static_cast<JSRopeString*>(thisObject)->fiber2();
-                break;
-            default:
-                ASSERT_NOT_REACHED();
-                return;
-            }
-            if (!fiber)
-                break;
-            visitor.appendUnbarriered(fiber);
-        }
-        return;
-    }
-    if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
-#if ENABLE(AOT)
-        if (AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
-            return;
-#endif
-        visitor.reportExtraMemoryVisited(impl->costDuringGC());
-    }
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSString);
@@ -442,32 +340,6 @@ const String& JSRopeString::resolveRopeWithoutGC() const
     return resolveRopeWithFunction<reportAllocation>(nullptr, [](Ref<StringImpl>&& newImpl) {
         return WTF::move(newImpl);
     });
-}
-
-bool JSString::tryCollectLeaves(Vector<StringView, 32>& leaves) const
-{
-    static constexpr size_t maxLeaves = 1 << 16;
-    Vector<const JSString*, 32> pending { this };
-    while (!pending.isEmpty()) {
-        const JSString* current = pending.takeLast();
-        if (!current->isRope()) {
-            leaves.append(StringView { current->tryGetValueImpl() });
-            continue;
-        }
-        auto* rope = static_cast<const JSRopeString*>(current);
-        if (rope->isSubstring()) {
-            leaves.append(StringView { rope->substringBase()->tryGetValueImpl() }.substring(rope->substringOffset(), rope->length()));
-            continue;
-        }
-        if (leaves.size() + pending.size() > maxLeaves)
-            return false;
-        if (JSString* fiber = rope->fiber2())
-            pending.append(fiber);
-        if (JSString* fiber = rope->fiber1())
-            pending.append(fiber);
-        pending.append(rope->fiber0());
-    }
-    return true;
 }
 
 void JSRopeString::outOfMemory(JSGlobalObject* nullOrGlobalObjectForOOM) const

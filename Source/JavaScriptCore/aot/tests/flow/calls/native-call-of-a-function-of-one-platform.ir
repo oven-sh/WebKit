@@ -1,0 +1,19 @@
+# On Windows process.env is what windowsEnv returns. The front end sends the function where it compiles for Windows, and there it is entered with the read.
+# Another platform: flow/calls/native-call-of-a-function-that-the-platform-lacks.ir
+# runtimefunction 65581 is builtins/ProcessObjectInternals windowsEnv (builtinTableRuntimeFunctions in J:aot/builtins/generated/AOTBuiltinTableBuiltins.cpp)
+# RUN: flow-links calls
+# CHECK: host - -> {{*}} f1 Host
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65581 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    Return
+}
+function f1 name="windowsEnv" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

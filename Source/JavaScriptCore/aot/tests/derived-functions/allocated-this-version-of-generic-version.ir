@@ -1,0 +1,50 @@
+# The generic version of a constructor takes an allocated object like the function as read, and super(..) enters the version of the parent that its callees name
+# FORM: Prepared
+# RUN: derived-functions AllocatedThisVersion:f3 AllocatedThisVersion:f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flow={baseState=None members=[L0, L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" module=m0 predictedBase=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+
+function f0 name="main" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f2 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: number):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f1] [keepsShape]
+    Return v4
+}
+function f3 name="Shape" kind=BaseConstructor role=GenericVersion flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="x"
+    Return v3
+}
+function f4 name="Circle" kind=DerivedConstructor role=GenericVersion flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f2} constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f3] [keepsShape]
+    Return v4
+}
+
+# CHECK: function [[shapeVersion]] name="Shape" module=m0 kind=BaseConstructor role=AllocatedThisVersion
+# CHECK: derivation={source=f3
+# CHECK-NEXT: b0([[shapeThis]]:{{*}}, {{*}}: anything, [[shapeX]]: anything):
+# CHECK-NOT: NewObject
+# CHECK: PropSet [[shapeThis]], [[shapeX]] key="x"
+
+# CHECK: function [[circleVersion]] name="Circle" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
+# CHECK: derivation={source=f4
+# CHECK-NEXT: b0([[circleThis]]:{{*}}, [[circleCallee]]: function, [[circleNewTarget]]: anything, [[circleX]]: anything):
+# CHECK-NOT: SuperConstruct
+# CHECK: = CallDirect [[circleThis]], [[circleNewTarget]], [[circleX]] function=[[shapeVersion]] [isConstruction]

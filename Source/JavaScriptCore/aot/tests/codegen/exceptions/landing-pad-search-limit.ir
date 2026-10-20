@@ -1,0 +1,33 @@
+# With the search lowered to one landing pad, a site whose arguments match an earlier landing pad of the handler gets one of its own
+# RUN: compile
+# OPTIONS: limit=MaxLandingPadsSearched:1 check=validate-back-end
+# LOSS: MaxLandingPadsSearched x1 f1
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="alternatingArguments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b4(v0):
+    v2 = PropGet v0 key="first"
+    Jump -> next b1()
+  b1() handler=b4(v1):
+    v3 = PropGet v0 key="second"
+    Jump -> next b2()
+  b2() handler=b4(v0):
+    v4 = PropGet v0 key="third"
+    Jump -> next b3()
+  b3():
+    Return v4
+  b4(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}

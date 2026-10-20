@@ -30,7 +30,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(JIT)
 
-#include "AOTLockedOperation.h"
 #include "ArithProfile.h"
 #include "ArrayConstructor.h"
 #include "CacheableIdentifierInlines.h"
@@ -3369,6 +3368,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
 
     if (auto* arrayIterator = dynamicDowncast<JSArrayIterator>(iterator)) {
         auto* array = downcast<JSArray>(arrayIterator->iteratedObject());
+        ASSERT(isJSArray(array));
         IterationKind kind = arrayIterator->kind();
         IterationMode mode = IterationMode::FastArrayValues;
         switch (kind) {
@@ -3474,7 +3474,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextFastArray, UGPRPair, (JSGlobalObje
 
     auto& metadata = *std::bit_cast<OpIteratorNext::Metadata*>(metadataPointer);
     JSValue iterable = JSValue::decode(encodedIterable);
-    RELEASE_ASSERT(is<JSArray>(iterable));
+    RELEASE_ASSERT(isJSArray(iterable));
     auto* array = asArray(iterable);
     metadata.m_iterableProfile.observeStructureID(array->structureID());
     metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
@@ -4168,17 +4168,6 @@ JSC_DEFINE_JIT_OPERATION(operationGetPrivateNameByIdGeneric, EncodedJSValue, (JS
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
-static bool isDeleteOfBuiltinFunction(VM& vm)
-{
-    CallFrame* frame = vm.topCallFrame;
-    CodeBlock* codeBlock = frame && !frame->isNativeCalleeFrame() ? frame->codeBlock() : nullptr;
-    if (!codeBlock)
-        return false;
-    if (auto* inlined = frame->codeOrigin().inlineCallFrame())
-        codeBlock = inlined->baselineCodeBlock.get();
-    return codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
-}
-
 static bool deleteById(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot& slot, JSValue base, PropertyName propertyName, ECMAMode ecmaMode)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4189,9 +4178,7 @@ static bool deleteById(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot&
         return false;
     bool couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!couldDelete && baseObj->recordIfOnlyLockRejects(vm, propertyName.uid(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true))
-        throwTypeError(globalObject, scope, AOT::lockedOperationErrorMessage(vm, baseObj, AOT::LockedOperation::Delete, propertyName.uid()));
-    else if (!couldDelete && ecmaMode.isStrict())
+    if (!couldDelete && ecmaMode.isStrict())
         throwTypeError(globalObject, scope, UnableToDeletePropertyError);
     return couldDelete;
 }
@@ -4314,11 +4301,6 @@ static bool deleteByVal(JSGlobalObject* globalObject, VM& vm, DeletePropertySlot
         Identifier property = key.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         couldDelete = baseObj->methodTable()->deleteProperty(baseObj, globalObject, property, slot);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!couldDelete && baseObj->recordIfOnlyLockRejects(vm, property.impl(), !ecmaMode.isStrict() && isDeleteOfBuiltinFunction(vm), true)) {
-            throwTypeError(globalObject, scope, AOT::lockedOperationErrorMessage(vm, baseObj, AOT::LockedOperation::Delete, property.impl()));
-            return false;
-        }
     }
     RETURN_IF_EXCEPTION(scope, false);
     if (!couldDelete && ecmaMode.isStrict())

@@ -28,6 +28,7 @@
 
 #include "Yarr.h"
 #include "YarrErrorCode.h"
+#include "YarrFirstFollowSets.h"
 #include "YarrFlags.h"
 #include "YarrUnicodeProperties.h"
 #include <array>
@@ -39,9 +40,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
-#if USE(BUN_JSC_ADDITIONS)
-#include <wtf/StackCheck.h>
-#endif
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
@@ -72,10 +70,8 @@ struct CharacterRange {
         , end(end)
     {
     }
-#if USE(BUN_JSC_ADDITIONS)
 
     friend bool operator==(const CharacterRange&, const CharacterRange&) = default;
-#endif
 };
 
 enum struct CharacterClassWidths : unsigned char {
@@ -300,12 +296,15 @@ struct PatternTerm {
     // (PatternCharacter / CharacterClass) term whose following mandatory term can never
     // match a character this term matches. Backtracking into such a term is always futile,
     // so the JIT generates a possessive (no-give-back) backtrack instead of the retry loop.
+    // analyzeBacktracking() also sets it, on atoms from their follow set and on groups whose alternatives are deterministic.
     bool m_possessive { false };
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_matchesPrecedingCapture { false };
-    bool m_immediatelyFollowsItsLookahead { false };
     bool m_isNeverBacktrackedInto { false };
-#endif
+    WordCharacterKnowledge m_previousCharacterKnowledge { WordCharacterKnowledge::Unknown };
+    WordCharacterKnowledge m_nextCharacterKnowledge { WordCharacterKnowledge::Unknown };
+    CharacterSetID m_matchedSet { CharacterSetID::Unknown };
+    CharacterSetID m_followSet { CharacterSetID::Unknown };
+    // Points into m_terms of a live alternative: no pass after analyzeBacktracking() may move a ParentheticalAssertion term. Code that copies an alternative points each copied reference at the copied lookahead.
+    const PatternTerm* m_repeatedLookahead { nullptr };
 
     PatternTerm(char32_t ch, OptionSet<Flags> currFlags, MatchDirection matchDirection = Forward)
         : type(PatternTerm::Type::PatternCharacter)
@@ -581,6 +580,8 @@ public:
     unsigned m_minimumSize;
     unsigned m_firstSubpatternId;
     unsigned m_lastSubpatternId;
+    // Bounds the next character without saying that one is consumed: (?=a) has { a }.
+    CharacterSetID m_firstSet { CharacterSetID::Unknown };
     MatchDirection m_direction;
     bool m_onceThrough : 1;
     bool m_hasFixedSize : 1;
@@ -643,13 +644,11 @@ struct TermChain {
     Vector<TermChain> hotTerms;
 };
 
+struct CharacterSetWithRanges;
 
 struct YarrPattern {
-#if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, StackCheck* = nullptr);
-#else
-    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns);
-#endif
+    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, PatternAnalysis = PatternAnalysis::Performed);
+    JS_EXPORT_PRIVATE ~YarrPattern();
 
     void resetForReparsing()
     {
@@ -659,9 +658,6 @@ struct YarrPattern {
         m_maxParenContextFrameSize = 0;
 
         m_containsBackreferences = false;
-#if USE(BUN_JSC_ADDITIONS)
-        m_comparesBackreferences = false;
-#endif
         m_containsBOL = false;
         m_containsLookbehinds = false;
         m_containsUnsignedLengthPattern = false;
@@ -671,32 +667,33 @@ struct YarrPattern {
 
         m_disjunctions.clear();
         m_userCharacterClasses.clear();
+        m_firstFollowSets = { };
         m_captureGroupNames.clear();
         m_namedGroupToParenIndices.clear();
         m_duplicateNamedGroupForSubpatternId.clear();
     }
 
-    bool containsUnsignedLengthPattern()
+    bool containsUnsignedLengthPattern() const
     {
         return m_containsUnsignedLengthPattern;
     }
 
-    CharacterClass* anyCharacterClass() { return sharedCharacterClass(SharedCharacterClass::AnyChar); }
+    CharacterClass* anyCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::AnyChar); }
     // The DotStarEnclosure's two frame slots (YarrStackSpaceForDotStarEnclosure): the offset the
     // match started from, and the end of the newline-free span known to follow it.
     unsigned initialStartFrameLocation() const { return m_initialStartValueFrameLocation; }
     unsigned noNewlineBeforeFrameLocation() const { return m_initialStartValueFrameLocation + 1; }
 
-    CharacterClass* newlineCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Newline); }
-    CharacterClass* digitsCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Digits); }
-    CharacterClass* spacesCharacterClass() { return sharedCharacterClass(SharedCharacterClass::Spaces); }
-    CharacterClass* wordcharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::WordChar); }
-    CharacterClass* wordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::WordUnicodeIgnoreCaseChar); }
-    CharacterClass* nondigitsCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonDigits); }
-    CharacterClass* nonspacesCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonSpaces); }
-    CharacterClass* nonwordcharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonWordChar); }
-    CharacterClass* nonwordUnicodeIgnoreCaseCharCharacterClass() { return sharedCharacterClass(SharedCharacterClass::NonWordUnicodeIgnoreCaseChar); }
-    CharacterClass* unicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID) { return sharedUnicodeCharacterClassFor(unicodeClassID); }
+    CharacterClass* newlineCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::Newline); }
+    CharacterClass* digitsCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::Digits); }
+    CharacterClass* spacesCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::Spaces); }
+    CharacterClass* wordcharCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::WordChar); }
+    CharacterClass* wordUnicodeIgnoreCaseCharCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::WordUnicodeIgnoreCaseChar); }
+    CharacterClass* nondigitsCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::NonDigits); }
+    CharacterClass* nonspacesCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::NonSpaces); }
+    CharacterClass* nonwordcharCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::NonWordChar); }
+    CharacterClass* nonwordUnicodeIgnoreCaseCharCharacterClass() const { return sharedCharacterClass(SharedCharacterClass::NonWordUnicodeIgnoreCaseChar); }
+    CharacterClass* unicodeCharacterClassFor(BuiltInCharacterClassID unicodeClassID) const { return sharedUnicodeCharacterClassFor(unicodeClassID); }
 
     unsigned offsetVectorBaseForNamedCaptures() const
     {
@@ -708,13 +705,13 @@ struct YarrPattern {
         return offsetVectorBaseForNamedCaptures() + m_numDuplicateNamedCaptureGroups;
     }
 
-    unsigned offsetForDuplicateNamedGroupId(unsigned duplicateNamedGroupId)
+    unsigned offsetForDuplicateNamedGroupId(unsigned duplicateNamedGroupId) const
     {
         ASSERT(duplicateNamedGroupId);
         return offsetVectorBaseForNamedCaptures() + duplicateNamedGroupId - 1;
     }
 
-    void dumpPatternString(PrintStream& out, StringView patternString);
+    void dumpPatternString(PrintStream& out, StringView patternString) const;
     void dumpPattern(StringView pattern);
     void dumpPattern(PrintStream& out, StringView pattern);
 
@@ -743,9 +740,6 @@ struct YarrPattern {
         return CompileMode::Legacy;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_comparesBackreferences { false };
-#endif
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
     bool m_containsLookbehinds : 1;
@@ -757,6 +751,7 @@ struct YarrPattern {
     ExecutionMode m_executionMode { ExecutionMode::IncludeSubpatterns };
     OptionSet<Flags> m_flags;
     SpecificPattern m_specificPattern { SpecificPattern::None };
+    std::unique_ptr<CharacterSetWithRanges> m_specificCharacterClass;
     unsigned m_endAnchoredFixedSize { endAnchoredFixedSizeNotSet };
     unsigned m_numSubpatterns { 0 };
     unsigned m_initialStartValueFrameLocation { 0 };
@@ -767,6 +762,7 @@ struct YarrPattern {
     PatternDisjunction* m_body;
     Vector<std::unique_ptr<PatternDisjunction>, 4> m_disjunctions;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
+    FirstFollowSets m_firstFollowSets;
     Vector<String> m_captureGroupNames;
     // The contents of the RHS Vector of m_namedGroupToParenIndices depends on whether the String is a
     // duplicate named group or not.
@@ -779,16 +775,12 @@ struct YarrPattern {
     String m_atom;
 
 private:
-#if USE(BUN_JSC_ADDITIONS)
-    ErrorCode compile(StringView patternString, StackCheck*);
-#else
-    ErrorCode compile(StringView patternString);
-#endif
+    ErrorCode compile(StringView patternString, PatternAnalysis);
 };
 
     void indentForNestingLevel(PrintStream&, unsigned);
     void dumpChar32(PrintStream&, char32_t);
-    void dumpCharacterClass(PrintStream&, YarrPattern*, CharacterClass*);
+    void dumpCharacterClass(PrintStream&, const YarrPattern*, CharacterClass*);
 
     struct BackTrackInfoPatternCharacter {
         uintptr_t begin; // Only needed for unicode patterns

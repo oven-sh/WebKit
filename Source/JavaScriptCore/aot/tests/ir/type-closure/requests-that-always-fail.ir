@@ -1,0 +1,109 @@
+# A request that no value of its operand's type passes: the program performs the conversion all the same, so the request lets the kind through and each position the value goes on to takes it:
+# a field at the allocation and by a store, a variable, a capture, a private field, the result of the function. Whoever reads one of them follows the value on: the request behind a read, the
+# parameter of a callee known before flow, the result of a function and the request on it in the caller. A request that some value passes is a test at run time as before.
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Field
+typesite w1 module=m0 position=20 kind=PropertyRead
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Result
+typesite w4 module=m0 position=50 kind=Variable
+layout L0 name="Allocated" fields=[{key="name" declared={type=undefined|null|string predicted=string}}, {key="verbose" declared={type=undefined|null|boolean predicted=boolean}}]
+layout L1 name="Stored" fields=[{key="verbose" declared={type=undefined|null|boolean predicted=boolean}}, {key="other" declared={type=undefined|null|boolean predicted=boolean}}]
+layout L2 name="Untouched" fields=[{key="verbose" declared={type=undefined|null|boolean predicted=boolean}}]
+layout L3 name="Second" fields=[{key="copy" declared={type=undefined|null|boolean predicted=boolean}}]
+# CHECK: layout L0 name="Allocated" fields=[{key="name" declared={type=undefined|null|string predicted=string}}, {key="verbose" declared={type=undefined|null|boolean|number predicted=boolean}}]
+# CHECK: layout L1 name="Stored" fields=[{key="verbose" declared={type=undefined|null|boolean|string predicted=boolean}}, {key="other" declared={type=undefined|null|boolean predicted=boolean}}]
+# CHECK: layout L2 name="Untouched" fields=[{key="verbose" declared={type=undefined|null|boolean predicted=boolean}}]
+# CHECK: layout L3 name="Second" fields=[{key="copy" declared={type=undefined|null|boolean|string predicted=boolean}}]
+variable g0 name="flag" module=m0 declared={type=undefined|null|boolean|absent predicted=boolean site=w4}
+variable g1 name="gives" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="takes" module=m0 declared={type=function|absent} flags=[IsImmutable]
+# CHECK: variable g0 name="flag" module=m0 declared={type=undefined|null|boolean|bigint|absent predicted=boolean site=w4}
+
+function f0 name="module" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f6
+    PutModuleVariable v2 variable=g2
+    v4 = BigInt digits="1"
+    v5 = ClaimDeclared v4 declared={type=undefined|null|boolean predicted=boolean site=w4}
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f1 name="atAllocation" parameters=[{type=undefined|null|string predicted=string site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|string):
+    v1 = Integer integer=1
+    v2 = Predict v1 predicted=boolean
+    v3 = ClaimDeclared v2 declared={type=undefined|null|boolean predicted=boolean}
+    v4 = NewObject -, v0, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="atAllocation"
+# CHECK-NOT: Claim
+# CHECK-NOT: Unreachable
+# CHECK: = NewObject -, v0, {{*}} layout=L0 fields=[0, 1]
+function f2 name="byStore" parameters=[{type=undefined|null|object written=undefined|null|L1 predicted=L1 site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|object):
+    v1 = String string="yes"
+    v2 = ClaimDeclared v1 declared={type=undefined|null|boolean predicted=boolean site=w0}
+    PropSet v0, v2 key="verbose"
+    Return
+}
+# CHECK-LABEL: function f2 name="byStore"
+# CHECK-NOT: Claim
+# CHECK: PropSet v0, {{*}} key="verbose"
+function f3 name="readsAndStoresAgain" parameters=[{type=undefined|null|object written=undefined|null|L1 predicted=L1 site=w2}, {type=undefined|null|object written=undefined|null|L3 predicted=L3 site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: undefined|null|object):
+    v2 = PropGet v0 key="verbose"
+    v3 = ClaimRead v2, v0 source=Field{key="verbose"} site=w1
+    v4 = ClaimDeclared v3 declared={type=undefined|null|boolean predicted=boolean site=w0}
+    PropSet v1, v4 key="copy"
+    v6 = PropGet v0 key="other"
+    v7 = ClaimRead v6, v0 source=Field{key="other"} site=w1
+    Return v7
+}
+# CHECK-LABEL: function f3 name="readsAndStoresAgain"
+# CHECK: : undefined|null|boolean|string {{*}}= Claim v2 castType=undefined|null|boolean|string site=w1
+# CHECK-NOT: castType=undefined|null|boolean site=w0
+# CHECK: : undefined|null|boolean {{*}}= Claim {{*}}castType=undefined|null|boolean site=w1
+function f4 name="gives" results=[{type=undefined|null|boolean predicted=boolean site=w3}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = ClaimDeclared v0 declared={type=undefined|null|boolean predicted=boolean site=w3}
+    Return v1
+}
+# CHECK-LABEL: function f4 name="gives" {{*}}results=[{type=undefined|null|boolean|number predicted=boolean site=w3}]
+# CHECK-NOT: Unreachable
+# CHECK: Return
+function f5 name="callsAndPassesOn" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    v2 = ClaimDeclared v1 declared={type=undefined|null|boolean predicted=boolean site=w3}
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v3, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f5 name="callsAndPassesOn"
+# CHECK: = Claim v1 castType=undefined|null|boolean|number site=w3
+function f6 name="takes" parameters=[{type=undefined|null|boolean predicted=boolean site=w2}] results=[{type=anything}] {
+  b0(v0: undefined|null|boolean):
+    v1 = TypeOf v0
+    Return v1
+}
+# CHECK-LABEL: function f6 name="takes" {{*}}parameters=[{type=undefined|null|boolean|number predicted=boolean site=w2}]
+# CHECK: b0(v0: undefined|null|boolean|number ~ boolean):
+function f7 name="mayPass" parameters=[{type=anything}, {type=undefined|null|object written=undefined|null|L2 predicted=L2 site=w2}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|object):
+    v2 = ClaimDeclared v0 declared={type=undefined|null|boolean predicted=boolean site=w0}
+    PropSet v1, v2 key="verbose"
+    Return
+}
+# CHECK-LABEL: function f7 name="mayPass"
+# CHECK: : undefined|null|boolean = Claim v0 castType=undefined|null|boolean site=w0

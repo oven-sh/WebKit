@@ -1,0 +1,36 @@
+# A union that would try two recursive arms is one call of the interpreter with the plan of its own subgraph, and its parent and the other members of the parent stay compiled
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0
+# STATISTIC: ValidatorsCreated = 2
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0, L1, L2] validation=[{shape=Object{layout=L0 members=[{key="tree" node=1 field=0}, {key="n" node=4 field=1}, {key="inner" node=5 field=2}]} type=L0}, {shape=Union{arms=[2, 3]} type=L1|L2}, {shape=Object{layout=L1 members=[{key="left" node=1 field=0 isOptional=true}]} type=L1}, {shape=Object{layout=L2 members=[{key="right" node=1 field=0 isOptional=true}]} type=L2}, {shape=Primitive{primitive=Number} type=number}, {shape=Object{layout=L3 members=[{key="x" node=4 field=0}]} type=L3}]
+layout L0 name="Holder" fields=[{key="tree" declared={type=object}}, {key="n" declared={type=number}}, {key="inner" declared={type=object written=L3}}]
+layout L1 name="LeftNode" fields=[{key="left" declared={type=undefined|object}}]
+layout L2 name="RightNode" fields=[{key="right" declared={type=undefined|object}}]
+layout L3 name="Inner" fields=[{key="x" declared={type=number}}]
+
+# CHECK: function {{*}}role=Validator {{*}}creator=Validator{type=L0 layout=L0 expectedResult=x0}
+# CHECK: [[rejected]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[tree]]: anything = GetOwnDataProperty {{*}} key="tree"
+# CHECK-NEXT: [[n]]: anything = GetOwnDataProperty {{*}} key="n"
+# CHECK-NEXT: [[inner]]: anything = GetOwnDataProperty {{*}} key="inner"
+# CHECK-NEXT: [[plan]]:{{*}}= String string="[{\"shape\":\"Union\",\"arms\":[1,2],\"remembers\":true},{\"shape\":\"Object\",\"members\":[{\"key\":\"left\",\"node\":0,\"isOptional\":true,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"},{\"shape\":\"Object\",\"members\":[{\"key\":\"right\",\"node\":0,\"isOptional\":true,\"mustBeOwn\":false}],\"undeclared\":\"Allowed\"}]"
+# CHECK-NEXT: [[pair]]: anything = CallBuiltin -, [[tree]], [[plan]] overload=CompilerHelpersInterpretNode/0
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: [[accepted]]: anything = ElemGet [[pair]], [[zero]]
+# CHECK: Branch {{*}} -> taken [[isAccepted]](), notTaken [[isRefused]]()
+# CHECK-NEXT: [[isAccepted]]():
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[copyOfTree]]: anything = ElemGet [[pair]], [[one]]
+# CHECK: [[isRefused]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected]]()
+# CHECK: ([[treeObject]]: object):
+# CHECK-NEXT: = TypeTest [[n]] testedType=number
+# CHECK: = CallDirect [[inner]] function=[[validatorOfInner]]
+# CHECK-NOT: CompilerHelpersInterpretNode
+# CHECK: = CloneAs {{*}}, [[treeObject]], {{*}} layout=L0 fields=[0, 2]
+# CHECK: function [[validatorOfInner]] {{*}}creator=Validator{type=L3 layout=L3 expectedResult=x0 node=5}
+# CHECK-NOT: CompilerHelpersInterpretNode
+# CHECK-NOT: role=Validator

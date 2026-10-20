@@ -1,0 +1,56 @@
+# A split has at most as many arms as the limit: the parts that are left share the rest, and the next run splits the rest
+# FORM: Prepared
+# OPTIONS: limit=MaxDispatchCases:2
+# RUN: pass SplitUnions
+# RUN(AGAIN): pass SplitUnions SplitUnions SplitUnions
+# LOSS: MaxDispatchCases f0 v1
+# CHECK: outcome: Changed
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="five-parts" parameters=[{type=string|Array<number>|Float64Array|Int8Array|Uint8Array}] results=[{type=anything}] {
+  b0(v0: string|Array<number>|Float64Array|Int8Array|Uint8Array):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="five-parts"
+# CHECK-NEXT: b0(v0: string|Array<number>|Float64Array|Int8Array|Uint8Array):
+# CHECK-NEXT: = TypeTest v0 testedType=string
+# CHECK: ([[text]]: string):
+# CHECK-NEXT: = PropGet [[text]] key="length"
+# CHECK: ([[objects]]: Array<number>|Float64Array|Int8Array|Uint8Array):
+# CHECK-NEXT: = TypeTest [[objects]] testedType=Array
+# CHECK-NOT: TypeTest
+# CHECK: ([[list]]: Array<number>):
+# CHECK-NEXT: = PropGet [[list]] key="length"
+# CHECK: ([[views]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[views]] key="length"
+# CHECK-NOT: TypeTest
+# AGAIN-LABEL: function f0 name="five-parts"
+# AGAIN: ([[viewsAgain]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
+# AGAIN-NEXT: = TypeTest [[viewsAgain]] testedType=Float64Array
+# AGAIN: ([[doubles]]: Float64Array)
+# AGAIN-NEXT: = PropGet [[doubles]] key="length"
+# AGAIN: ([[integers]]: Int8Array|Uint8Array)
+# AGAIN-NEXT: = TypeTest [[integers]] testedType=Int8Array
+# AGAIN-NOT: TypeTest
+# AGAIN: ([[signed]]: Int8Array)
+# AGAIN-NEXT: = PropGet [[signed]] key="length"
+# AGAIN: ([[unsigned]]: Uint8Array)
+# AGAIN-NEXT: = PropGet [[unsigned]] key="length"
+function f1 name="as-many-parts-as-the-limit" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
+  b0(v0: string|Array<number>):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="as-many-parts-as-the-limit"
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK-NOT: frequency=Unlikely
+# CHECK: ([[onlyList]]: Array<number>):
+# CHECK-NEXT: = PropGet [[onlyList]] key="length"
+# AGAIN-LABEL: function f1 name="as-many-parts-as-the-limit"
+# AGAIN: = TypeTest v0 testedType=string
+# AGAIN-NOT: TypeTest

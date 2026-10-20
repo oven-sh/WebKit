@@ -147,7 +147,6 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
         return;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     unsigned argIndex = 0;
     if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
         Arg* args = inst.args().data();
@@ -158,7 +157,6 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
         }
         return;
     }
-#endif
 
     inst.forEachTmp([&] (Tmp& tmp, Arg::Role role, Bank, Width) {
         ASSERT_WITH_MESSAGE(tmp.isReg(), "This phase must be run after register allocation.");

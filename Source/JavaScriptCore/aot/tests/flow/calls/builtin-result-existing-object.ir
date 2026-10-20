@@ -1,0 +1,17 @@
+# A built-in whose result is an object that existed before the call answers the unknown object at every site, where a fresh result is an object of its site
+# RUN: flow-solve nodes
+# CHECK: f0, v2) = {Uint8Array@f0:v2{{*}}}
+# CHECK-NEXT: f0, v3) = {unknown}
+# CHECK-NEXT: f0, v4) = {unknown}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    v1 = Builtin builtin=Uint8Array
+    v2 = Construct v1, -, v0
+    v3 = PropGet v2 key="buffer"
+    v4 = PropGet v2 key="buffer"
+    Return
+}

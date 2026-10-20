@@ -1,0 +1,66 @@
+# Constructor functions that have escaped: nothing is proven about their prototype properties or about the parents of their prototype objects.
+# The class is expected to be what seen code makes it, so the class that seen code links the prototype object to is named as the base, and the link stays unproven: it is tested for.
+# Seen code that stores two objects as the prototype, or links to no prototype object of a class, names no base
+# RUN: flow
+# CHECK: layout L0 flow={{*}} classFlow={evaluations=AtMostOnce
+# CHECK-NOT: prototypeBase
+# CHECK: layout L1 flow={{*}} classFlow={evaluations=AtMostOnce {{*}}prototypeBase=L0}
+# CHECK: layout L2 flow={{*}} classFlow={evaluations=AtMostOnce {{*}}prototypeBase=L0}
+# CHECK: layout L3 flow={{*}} classFlow={evaluations=AtMostOnce
+# CHECK-NOT: prototypeBase
+# CHECK: layout L(m0)
+# RUN(LINKS): flow
+# LINKS-NOT: layout L1 flow={{*}} prototypeLink=Fixed
+# LINKS-NOT: layout L2 flow={{*}} prototypeLink=Fixed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Created" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Relinked" constructor=f3 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="TwoPrototypes" constructor=f4 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectCreate
+    v6 = Builtin builtin=ObjectSetPrototypeOf
+    v7 = NewClosure function=f1
+    v8 = PropGet v7 key="prototype"
+    v9 = NewClosure function=f2
+    v10 = Call v5, v4, v8
+    PropSet v9, v10 key="prototype" mode=Strict
+    v12 = NewClosure function=f3
+    v13 = PropGet v12 key="prototype"
+    v14 = Call v6, v4, v13, v8
+    v15 = NewClosure function=f4
+    v16 = Call v5, v4, v8
+    PropSet v15, v16 key="prototype" mode=Strict
+    v18 = Call v5, v4, v8
+    PropSet v15, v18 key="prototype" mode=Strict
+    v20 = Call v3, -, v7, v9, v12, v15
+    v21 = Construct v7
+    v22 = Construct v9
+    v23 = Construct v12
+    v24 = Construct v15
+    Return
+}
+function f1 name="Base" flags=[HasThis] thisType={type=anything predicted=L0} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Created" flags=[HasThis] thisType={type=anything predicted=L1} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Relinked" flags=[HasThis] thisType={type=anything predicted=L2} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="TwoPrototypes" flags=[HasThis] thisType={type=anything predicted=L3} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -1,0 +1,28 @@
+# Text evaluated at run time finds process from the global object and `parent` above it, so `parent` is open to it and its method is entered.
+# Without the text: flow/calls/prototype-given-to-a-builtin-object-stays-with-seen-code.ir
+# RUN: flow-links calls
+# RUN(SINKS): flow-solve sinks
+# CHECK: host - -> {{*}} f1 Host
+# SINKS: unknownJavaScript {{*}}L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Parent" fields=[{key="listen" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Process
+    v3 = Builtin builtin=ObjectGetPrototypeOf
+    v4 = Call v3, -, v2
+    v5 = Builtin builtin=ObjectSetPrototypeOf
+    v6 = Call v5, -, v4, v1
+    v7 = Builtin builtin=Function
+    v8 = PropGet v2 key="title"
+    v9 = Call v7, -, v8
+    Return
+}
+function f1 name="listen" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

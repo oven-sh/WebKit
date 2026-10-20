@@ -1,0 +1,24 @@
+# With the result switched off only always locked locations are constant
+# OPTIONS: disable=flow:ConstantBuiltinLocations
+# RUN: flow
+# CHECK: builtin-location GlobalThis."Date" Unknown
+# CHECK: builtin-location GlobalThis."Symbol" Constant
+# CHECK: builtin-location Date."now" Unknown
+# CHECK: builtin-location Symbol."iterator" Constant
+# CHECK: builtin-location ArrayPrototype."push" Constant
+# RUN(WITNESS): flow
+# WITNESS-NOT: written at
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v1 key="now"
+    v3 = PropGet v0 key="Symbol" [isFreeName]
+    v4 = PropGet v3 key="iterator"
+    v5 = Builtin builtin=ArrayPrototype
+    v6 = PropGet v5 key="push"
+    Return
+}

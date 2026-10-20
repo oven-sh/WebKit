@@ -1,0 +1,52 @@
+# A call of a built-in with a fresh result has one site however often the solve runs it again with a larger operand, and a second call has a site of its own
+# RUN: flow-sites solved
+# RUN(NODES): flow-solve nodes
+# CHECK: site {{*}} function=f0 value=v9 kind=Instance origin=BuiltinResult builtinClass=Array {{*}}object={{*}}(Array@f0:[[inLoop]])
+# CHECK-NOT: function=f0 {{*}} origin=BuiltinResult
+# CHECK: site {{*}} function=f0 value=v15 kind=Instance origin=BuiltinResult builtinClass=Array {{*}}object={{*}}(Array@f0:[[elsewhere]])
+# CHECK-NOT: function=f0 {{*}} origin=BuiltinResult
+# CHECK: object {{*}} Array@f0:[[inLoop]] kind=Instance
+# CHECK-NOT: object {{*}} Array@f0:
+# CHECK: object {{*}} Array@f0:[[elsewhere]] kind=Instance
+# CHECK-NOT: object {{*}} Array@f0:
+# NODES: Variable(g0) = {Array@f0:[[inLoop]]}
+# NODES-NEXT: Variable(g1) = {Array@f0:[[elsewhere]]}
+# NODES: , f0, v7) = {L0#[[first]]|L1#[[later]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Later" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="keysInLoop" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="keysElsewhere" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="keys"
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    Jump -> next b1(v5)
+  b1(v7):
+    LoopHint
+    v9 = Call v2, v1, v7
+    PutModuleVariable v9 variable=g0
+    v11 = Call v6
+    v12 = Builtin builtin=MathRandom
+    v13 = Call v12
+    v14 = ToBoolean v13
+    Branch v14 -> taken b1(v11), notTaken b2()
+  b2():
+    v15 = Call v2, v1, v5
+    PutModuleVariable v15 variable=g1
+    Return
+}
+function f1 name="later" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}

@@ -1,0 +1,29 @@
+# A call whose caller tests the result says so in its code, at the return address, and an entrypoint that a tail call of the callee enters relies on it. The tail calls of a copy of the callee
+# would return to code that says nothing, so such a call is not inlined. In tail position nothing returns here, and the call is inlined like any other
+# FORM: Prepared
+# RUN: pass InlineCalls
+# CHECK-LABEL: function f0 name="receives"
+# CHECK: = CallDirect v0 function=f2 resultCheck=ByCallers
+# CHECK-LABEL: function f1 name="passesOn"
+# CHECK-NOT: CallDirect
+# CHECK: = Call v0, -, v0
+# CHECK-LABEL: function f2 name="small"
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Result
+function f0 name="receives" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2 resultCheck=ByCallers
+    v2 = Claim v1 castType=number site=w0
+    Return v2
+}
+function f1 name="passesOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2 resultCheck=ByCallers
+    ReturnCall v1
+}
+function f2 name="small" parameters=[{type=anything}] results=[{type=anything written=number site=w0}] {
+  b0(v0: anything):
+    v1 = Call v0, -, v0
+    ReturnCall v1
+}

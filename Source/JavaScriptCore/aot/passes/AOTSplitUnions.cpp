@@ -1,0 +1,567 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTSplitUnions.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
+#include "AOTBuiltinUses.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTMethodDispatch.h"
+#include "AOTPropertyAccessElements.h"
+#include "AOTResolveCalls.h"
+#include "AOTTypeRelations.h"
+#include "AOTValueSubstitution.h"
+#include <algorithm>
+#include <ranges>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+struct ChosenPart {
+    const UnionPart* part { nullptr };
+    bool isLikely { false };
+    unsigned numberOfResolvedAccesses { 0 };
+};
+
+} // anonymous namespace
+
+static std::optional<PropertyAccessQuery> namedAccessQueryOf(const FunctionPassContext& context, const Value& access)
+{
+    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(context.program, context.function, access);
+    if (query)
+        query->maxMembers = context.limit(LimitID::MaxAccessPlanMembers);
+    return query;
+}
+
+static PropertyAccessPlan planNamedAccess(const FunctionPassContext& context, const PropertyAccessQuery& query)
+{
+    return planPropertyAccess({ context.program, &context.inputs.flow }, query);
+}
+
+static PropertyAccessPlan planWithReceivers(const FunctionPassContext& context, const PropertyAccessQuery& query, MemberStart start, ReceiverCandidates&& receivers)
+{
+    PropertyAccessQuery narrowed = query;
+    narrowed.start = start;
+    narrowed.receivers = WTF::move(receivers);
+    return planNamedAccess(context, narrowed);
+}
+
+static PropertyAccessPlan planWithReceivers(const FunctionPassContext& context, const Value& access, MemberStart start, ReceiverCandidates&& receivers)
+{
+    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, access);
+    if (!query)
+        return { };
+    return planWithReceivers(context, *query, start, WTF::move(receivers));
+}
+
+static LayoutSetID receiversStampOf(const Value& access)
+{
+    return PayloadWord::receivers(access.opcode) ? access.receivers() : LayoutSetID();
+}
+
+static const Type* findPredictedType(const Program& program, const Function& function, ValueID id)
+{
+    TypeID prediction = function.at(id).prediction();
+    return prediction ? &program.at(prediction) : nullptr;
+}
+
+static bool isAccessArmForm(AccessForm form)
+{
+    switch (form) {
+    case AccessForm::Slot:
+    case AccessForm::Constant:
+    case AccessForm::Variable:
+    case AccessForm::Namespace:
+    case AccessForm::Builtin:
+        return true;
+    case AccessForm::ByName:
+    case AccessForm::Method:
+    case AccessForm::Call:
+    case AccessForm::Split:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isResolvableForm(ElementAccessForm form)
+{
+    switch (form) {
+    case ElementAccessForm::Array:
+    case ElementAccessForm::TypedArray:
+    case ElementAccessForm::String:
+        return true;
+    case ElementAccessForm::ByKey:
+    case ElementAccessForm::NamedKey:
+    case ElementAccessForm::Split:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool canResolveNamedAccess(const FunctionPassContext& context, const Value& access, const UnionPart& part)
+{
+    const Program& program = context.program;
+    switch (part.kind) {
+    case UnionPartKind::Layouts: {
+        PropertyAccessPlan plan = planWithReceivers(context, access, MemberStart::Instance, candidatesOf(program, part.type, nullptr, receiversStampOf(access)));
+        return plan.isResolved() || plan.form == AccessForm::Split;
+    }
+    case UnionPartKind::Functions: {
+        LayoutID classLayout = classOfClassObject(program, part.type);
+        if (!classLayout)
+            return false;
+        return planWithReceivers(context, access, MemberStart::ClassObject, { .proof = ReceiverProof::Type, .level = KnowledgeLevel::Proven, .proven = { classLayout } }).isResolved();
+    }
+    case UnionPartKind::Boolean:
+    case UnionPartKind::Number:
+    case UnionPartKind::String:
+    case UnionPartKind::Symbol:
+    case UnionPartKind::BigInt:
+    case UnionPartKind::BuiltinClass:
+    case UnionPartKind::Builtins: {
+        BuiltinUseInputs inputs { program, context.function, context.types, context.inputs.flow, context.analyses.effectContext(), &context.analyses, { } };
+        return resolutionWithReceiver(inputs, access, part.type) == BuiltinUseResolution::Resolves;
+    }
+    case UnionPartKind::OtherObjects:
+    case UnionPartKind::Nullish:
+    case UnionPartKind::Absent:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool canResolveElementAccess(const Program& program, const Function& function, const Value& access, const UnionPart& part)
+{
+    switch (part.kind) {
+    case UnionPartKind::String:
+    case UnionPartKind::BuiltinClass: {
+        ValueID key = access.propertyOperand();
+        ElementAccessPlan plan = planElementAccess(program, {
+            .access = *elementAccessOf(access.opcode),
+            .receiver = part.type,
+            .receiverPrediction = nullptr,
+            .key = program.typeOf(function, key),
+            .keyPrediction = findPredictedType(program, function, key),
+            .stored = OperandPosition::value(access.opcode) ? &program.typeOf(function, access.valueOperand()) : nullptr,
+        });
+        return isResolvableForm(plan.form);
+    }
+    case UnionPartKind::OtherObjects:
+    case UnionPartKind::Nullish:
+    case UnionPartKind::Boolean:
+    case UnionPartKind::Number:
+    case UnionPartKind::Symbol:
+    case UnionPartKind::BigInt:
+    case UnionPartKind::Absent:
+    case UnionPartKind::Layouts:
+    case UnionPartKind::Functions:
+    case UnionPartKind::Builtins:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<uint32_t> splitOperandOf(const Value& value)
+{
+    if (isNamedAccess(value.opcode))
+        return *receiverOf(value.opcode);
+    if (elementAccessOf(value.opcode))
+        return OperandPosition::object(value.opcode);
+    return std::nullopt;
+}
+
+static bool resolvesOnPart(const FunctionPassContext& context, const Value& access, const UnionPart& part)
+{
+    if (isNamedAccess(access.opcode))
+        return canResolveNamedAccess(context, access, part);
+    return canResolveElementAccess(context.program, context.function, access, part);
+}
+
+AccessesResolvedOnParts countAccessesResolvedOnParts(FunctionPassContext& context, std::span<const ValueID> receivers, const UnionParts& parts)
+{
+    AccessesResolvedOnParts result;
+    result.countOfPart.fill(0, parts.size());
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    for (ValueID receiver : receivers) {
+        for (const Use& use : context.analyses.useLists().usesOf(receiver)) {
+            if (use.kind != Use::Kind::Operand || frequencies.classOf(use.block) == BlockFrequency::Rare)
+                continue;
+            const Value& access = context.function.at(use.user);
+            if (splitOperandOf(access) != use.operandIndex)
+                continue;
+            ++result.numberOfAccesses;
+            bool isResolvable = false;
+            for (size_t index = 0; index < parts.size(); ++index) {
+                if (!resolvesOnPart(context, access, parts[index]))
+                    continue;
+                ++result.countOfPart[index];
+                isResolvable = true;
+            }
+            result.numberOfResolvableAccesses += isResolvable;
+            result.numberOfResolvableElementAccesses += isResolvable && !isNamedAccess(access.opcode);
+        }
+    }
+    return result;
+}
+
+static bool isClassWithoutInstanceTest(const Program& program, const UnionPart& part)
+{
+    return part.kind == UnionPartKind::BuiltinClass && program.builtins().at(part.type.classes[0].builtinClass).instanceTest == BuiltinInstanceTest::None;
+}
+
+// The object of such a built-in is no constant of the realm, so a test for it never passes.
+static bool hasUntestableBuiltin(const Program& program, const UnionPart& part)
+{
+    return std::ranges::any_of(part.type.builtins, [&](BuiltinID builtin) {
+        return !isTestableBuiltin(program.builtins(), builtin);
+    });
+}
+
+static Type testedTypeOf(const UnionPart& part)
+{
+    // A cast takes contents and storage kind from a tested type that names contents, so the bare class keeps what the value's own part says.
+    return part.kind == UnionPartKind::BuiltinClass ? Type::builtinClass(part.type.classes[0].builtinClass).withoutClassProofs() : part.type;
+}
+
+// A class without an instance test overlaps every class, so a class is expected where the prediction names it.
+static bool isExpected(const Program& program, const UnionPart& part, const Type& prediction)
+{
+    if (part.kind == UnionPartKind::BuiltinClass)
+        return prediction.findClassPart(part.type.classes[0].builtinClass);
+    return part.type.overlaps(prediction, program);
+}
+
+static bool canSeparateByTest(const Program& program, TypeArena& types, const Type& whole, const UnionParts& parts, const UnionPart& part)
+{
+    if (hasUntestableBuiltin(program, part))
+        return false;
+    if (isClassWithoutInstanceTest(program, part)) {
+        return std::ranges::none_of(parts, [&](const UnionPart& other) {
+            return &other != &part && other.type.hasObjects();
+        });
+    }
+    // Where another part passes the test too (a subclass of the tested class), the test narrows nothing, and the arm would be split again.
+    return unionPartsOf(whole.castTo(testedTypeOf(part), types)).size() == 1;
+}
+
+PassOutcome splitUnions(FunctionPassContext& context)
+{
+    return UnionSplitter(context).run();
+}
+
+UnionSplitter::UnionSplitter(FunctionPassContext& context)
+    : m_context(context)
+    , m_program(context.program)
+    , m_function(context.function)
+    , m_builder({ context.build, context.program, &context.inputs.flow, &context.inputs.effects, context.id }, context.function, context.types, &context.analyses)
+    , m_expansion(context, m_builder)
+{
+}
+
+PassOutcome UnionSplitter::run()
+{
+    Vector<PlannedSplit> plans = planSplits();
+    if (plans.isEmpty())
+        return PassOutcome::Unchanged;
+
+    for (const PlannedSplit& plan : plans | std::views::reverse)
+        rewrite(plan);
+
+    m_context.build.statistics().count(StatisticID::UnionsSplit, plans.size());
+    return PassOutcome::Changed;
+}
+
+Vector<PlannedSplit> UnionSplitter::planSplits()
+{
+    Vector<PlannedSplit> plans;
+    const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
+    forEachValueSite(m_context.analyses, m_function, [&](const ValueSite& site) {
+        if (frequencies.classOf(site.block) == BlockFrequency::Rare)
+            return;
+        if (std::optional<PlannedSplit> plan = planSplit(site)) {
+            moveToMemberCall(*plan);
+            plans.append(WTF::move(*plan));
+        }
+    });
+
+    const CFG& cfg = m_context.analyses.cfg();
+    std::ranges::stable_sort(plans, { }, [&](const PlannedSplit& plan) {
+        return std::pair { cfg.reversePostOrderIndex(plan.site.block), plan.site.index };
+    });
+    return plans;
+}
+
+// Behind a join of the arms nobody knows any more which method belongs to which receiver. `x.m()` is split as a whole where the read may move down to the call.
+void UnionSplitter::moveToMemberCall(PlannedSplit& plan)
+{
+    const Value& read = m_function.at(plan.site.value);
+    if (read.opcode != Opcode::PropGet || plan.split.value != read.objectOperand())
+        return;
+
+    const UseLists& useLists = m_context.analyses.useLists();
+    ValueID callee = plan.site.value;
+    std::optional<Use> use = useLists.singleUse(callee);
+    while (use && use->kind == Use::Kind::Operand && isCast(m_function.at(use->user).opcode)) {
+        callee = use->user;
+        use = useLists.singleUse(callee);
+    }
+    if (!use || use->kind != Use::Kind::Operand || m_function.at(use->user).opcode != Opcode::Call || use->operandIndex != OperandIndex::Call::callee)
+        return;
+
+    const Value& call = m_function.at(use->user);
+    if (call.thisValueOperand() != plan.split.value)
+        return;
+    ValueLocation location = useLists.locationOf(use->user);
+    ValueSite callSite { location.block, location.index, use->user };
+    MemberRead memberRead = findMemberRead(m_context, callSite);
+    if (memberRead.isEmpty() || !memberRead.canSinkToCall || memberRead.read().value != plan.site.value)
+        return;
+
+    plan.site = callSite;
+    plan.operandIndex = OperandIndex::Call::thisValue;
+    plan.memberRead = WTF::move(memberRead.links);
+}
+
+std::optional<PlannedSplit> UnionSplitter::planSplit(const ValueSite& site)
+{
+    const Value& value = m_function.at(site.value);
+    std::optional<uint32_t> operandIndex = splitOperandOf(value);
+    if (!operandIndex)
+        return std::nullopt;
+    // Nothing is proven about the objects of such a type, and testing every unknown value for its primitive parts would only grow the code.
+    if (m_program.typeOf(m_function, value.operand(*operandIndex)).anyObject)
+        return std::nullopt;
+
+    if (!isNamedAccess(value.opcode)) {
+        std::optional<ElementAccessPlan> plan = planElementAccessOf(m_program, m_function, value);
+        if (!plan)
+            return std::nullopt;
+        if (plan->form == ElementAccessForm::ByKey)
+            return planSplitByKeys(site);
+        if (plan->form != ElementAccessForm::Split)
+            return std::nullopt;
+        return planSplitByParts(site, *operandIndex);
+    }
+
+    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(m_context, value);
+    if (!query)
+        return std::nullopt;
+    const ReceiverCandidates& receivers = query->receivers;
+    if (receivers.mayBeNullish || (!receivers.hasOtherParts && receivers.proven.size() < 2))
+        return std::nullopt;
+
+    switch (planNamedAccess(m_context, *query).form) {
+    case AccessForm::Split:
+        if (receivers.hasOtherParts)
+            return planSplitByParts(site, *operandIndex);
+        return planSplitByArms(site);
+    case AccessForm::ByName:
+        if (receivers.isProven())
+            return std::nullopt;
+        return planSplitByParts(site, *operandIndex);
+    case AccessForm::Slot:
+    case AccessForm::Constant:
+    case AccessForm::Variable:
+    case AccessForm::Namespace:
+    case AccessForm::Builtin:
+    case AccessForm::Method:
+    case AccessForm::Call:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<PlannedSplit> UnionSplitter::planSplitByParts(const ValueSite& site, uint32_t operandIndex)
+{
+    const Value& value = m_function.at(site.value);
+    ValueID receiver = value.operand(operandIndex);
+    const Type& whole = m_program.typeOf(m_function, receiver);
+    UnionParts parts = unionPartsOf(whole);
+    if (parts.size() < 2)
+        return std::nullopt;
+
+    const Type& prediction = m_program.predictionOrTypeOf(m_function, receiver);
+    AccessesResolvedOnParts evidence = countAccessesResolvedOnParts(m_context, singleElementSpan(receiver), parts);
+    Vector<ChosenPart, 4> chosen;
+    for (size_t index = 0; index < parts.size(); ++index) {
+        const UnionPart& part = parts[index];
+        if (canSeparateByTest(m_program, m_context.types, whole, parts, part) && resolvesOnPart(m_context, value, part))
+            chosen.append(ChosenPart { &part, isExpected(m_program, part, prediction), evidence.countOfPart[index] });
+    }
+    // What is expected is tested first, then the part that serves most of what the function does with the value. What is read under a number is
+    // expected to be an array where a string would serve as well: what a parser may answer has every primitive in its type.
+    bool isAccessedByNumber = evidence.numberOfResolvableElementAccesses;
+    std::ranges::stable_sort(chosen, [&](const ChosenPart& a, const ChosenPart& b) {
+        if (a.isLikely != b.isLikely)
+            return a.isLikely;
+        if (a.numberOfResolvedAccesses != b.numberOfResolvedAccesses)
+            return a.numberOfResolvedAccesses > b.numberOfResolvedAccesses;
+        return isAccessedByNumber && a.part->type.hasObjects() && !b.part->type.hasObjects();
+    });
+    if (m_context.exceeds(LimitID::MaxDispatchCases, chosen.size(), site.value))
+        chosen.shrink(static_cast<size_t>(m_context.limit(LimitID::MaxDispatchCases)));
+    if (chosen.isEmpty())
+        return std::nullopt;
+
+    BlockFrequency frequency = m_function.at(site.block).frequency;
+    BlockFrequency unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+    LayoutSetID stamp = receiversStampOf(value);
+    bool hasCompleteStamp = stamp && m_program.at(stamp).isComplete;
+
+    PlannedSplit plan;
+    plan.site = site;
+    plan.reason = SplitReason::UnionParts;
+    plan.operandIndex = operandIndex;
+    plan.split.value = receiver;
+    for (const ChosenPart& arm : chosen) {
+        plan.split.arms.append(SplitArm { m_context.types.intern(testedTypeOf(*arm.part)), arm.isLikely ? frequency : unlikelyFrequency });
+        bool stampsLayouts = arm.part->kind == UnionPartKind::Layouts && !hasCompleteStamp;
+        plan.armReceivers.append(stampsLayouts ? arm.part->type.layouts : LayoutSetID());
+    }
+    plan.split.hasRest = chosen.size() < parts.size();
+    // What is predicted goes somewhere: where no arm takes it, the rest does.
+    plan.split.restFrequency = chosen.first().isLikely ? unlikelyFrequency : frequency;
+    return plan;
+}
+
+std::optional<PlannedSplit> UnionSplitter::planSplitByArms(const ValueSite& site)
+{
+    const Value& value = m_function.at(site.value);
+    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(m_context, value);
+    if (!query)
+        return std::nullopt;
+    PropertyAccessPlan access = planNamedAccess(m_context, *query);
+    const MemberPartition& partition = access.partition;
+
+    DispatchPlan dispatch = planDispatch(m_context, partition, query->receivers, site.value, [&](const MemberArm& arm) {
+        ReceiverCandidates receivers { .proof = query->receivers.proof, .level = query->receivers.level, .proven = arm.layouts };
+        return isAccessArmForm(planWithReceivers(m_context, *query, query->start, WTF::move(receivers)).form);
+    });
+    if (dispatch.arms.isEmpty())
+        return std::nullopt;
+
+    PlannedSplit plan;
+    plan.site = site;
+    plan.reason = SplitReason::MemberArms;
+    plan.operandIndex = *receiverOf(value.opcode);
+    plan.split = createSplit(m_context, dispatch, partition, value.operand(plan.operandIndex), m_function.at(site.block).frequency);
+    for (uint32_t armIndex : dispatch.arms)
+        plan.armReceivers.append(m_context.types.completeLayoutSet(partition.arms[armIndex].layouts.span()));
+    if (dispatch.hasRest())
+        plan.restReceivers = m_context.types.completeLayoutSet(dispatch.rest.span());
+    return plan;
+}
+
+// With one of its keys the access is an access by name. It is split where each of those is resolved, so that no arm looks a name up.
+// A key that was read past the end of a list of names is undefined, and that is rare.
+std::optional<PlannedSplit> UnionSplitter::planSplitByKeys(const ValueSite& site)
+{
+    const Value& value = m_function.at(site.value);
+    ValueID key = value.propertyOperand();
+    const Type& keyType = m_program.typeOf(m_function, key);
+    if (keyType.primitives & Primitive::Number)
+        return planSplitOfNumberKey(site);
+    bool mayBeNullish = keyType.mayBeUndefinedOrNull();
+    if (!keyType.hasOnlyPrimitives(Primitive::LiteralString | Primitive::UndefinedOrNull) || keyType.stringLiterals.size() + mayBeNullish < 2)
+        return std::nullopt;
+
+    for (StringID text : keyType.stringLiterals) {
+        ConstantKey constantKey = constantKeyOf(m_program, Type::stringLiteral(text));
+        if (!constantKey)
+            return std::nullopt;
+        Value named = value;
+        becomeNamedAccess(named, internKey(m_context.types, constantKey));
+        std::optional<PropertyAccessQuery> query = namedAccessQueryOf(m_context, named);
+        if (!query || !planNamedAccess(m_context, *query).isResolved())
+            return std::nullopt;
+    }
+    if (m_context.exceeds(LimitID::MaxDispatchCases, keyType.stringLiterals.size(), site.value))
+        return std::nullopt;
+
+    PlannedSplit plan;
+    plan.site = site;
+    plan.reason = SplitReason::ConstantKeys;
+    plan.operandIndex = *OperandPosition::property(value.opcode);
+    plan.split.value = key;
+    BlockFrequency frequency = m_function.at(site.block).frequency;
+    plan.split.hasRest = mayBeNullish;
+    plan.split.restFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+    for (StringID text : keyType.stringLiterals) {
+        plan.split.arms.append(SplitArm { m_context.types.intern(Type::stringLiteral(text)), frequency });
+        plan.armReceivers.append(LayoutSetID());
+    }
+    return plan;
+}
+
+// With a number the access reads or writes an element. What else the key may be names a property, and that is rare: the key of an element is undefined where it was read past the end.
+std::optional<PlannedSplit> UnionSplitter::planSplitOfNumberKey(const ValueSite& site)
+{
+    const Value& value = m_function.at(site.value);
+    ValueID key = value.propertyOperand();
+    ValueID receiver = value.objectOperand();
+    UnionParts parts = unionPartsOf(m_program.typeOf(m_function, key));
+    auto number = std::ranges::find(parts, UnionPartKind::Number, &UnionPart::kind);
+    if (parts.size() < 2 || !isClosedUnion(parts) || number == parts.end())
+        return std::nullopt;
+
+    ValueID stored = OperandPosition::value(value.opcode) ? value.valueOperand() : ValueID();
+    const Type* storedType = stored == key ? &number->type : stored ? &m_program.typeOf(m_function, stored) : nullptr;
+    ElementAccessPlan element = planElementAccess(m_program, {
+        .access = *elementAccessOf(value.opcode),
+        .receiver = m_program.typeOf(m_function, receiver),
+        .receiverPrediction = findPredictedType(m_program, m_function, receiver),
+        .key = number->type,
+        .keyPrediction = nullptr,
+        .stored = storedType,
+        .storedPrediction = stored && stored != key ? findPredictedType(m_program, m_function, stored) : nullptr,
+    });
+    if (!isResolvableForm(element.form))
+        return std::nullopt;
+
+    BlockFrequency frequency = m_function.at(site.block).frequency;
+    PlannedSplit plan;
+    plan.site = site;
+    plan.reason = SplitReason::NumberKey;
+    plan.operandIndex = *OperandPosition::property(value.opcode);
+    plan.split.value = key;
+    plan.split.arms.append(SplitArm { m_context.types.intern(number->type), frequency });
+    plan.armReceivers.append(LayoutSetID());
+    plan.split.hasRest = true;
+    plan.split.restFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+    return plan;
+}
+
+void UnionSplitter::rewrite(const PlannedSplit& plan)
+{
+    RELEASE_ASSERT(plan.split.hasRest || plan.split.arms.size() > 1);
+    m_expansion.begin(plan.site);
+    if (!plan.memberRead.isEmpty()) {
+        Vector<Value, 2> copies;
+        for (const ValueSite& link : plan.memberRead) {
+            copies.append(m_function.at(link.value));
+            becomeUndefined(m_function, link.value);
+        }
+        m_expansion.addReplaced(copies.first());
+        m_expansion.setOperationsBeforeOriginal(WTF::move(copies), OperandIndex::Call::callee);
+        m_context.analyses.didChangeValues();
+    }
+    emitSplit(m_expansion, plan.split,
+        [&](uint32_t armIndex, ValueID narrowed) {
+            m_expansion.finishArm(m_expansion.appendOriginal({ plan.operandIndex, narrowed, plan.armReceivers[armIndex], { }, true }));
+        },
+        [&](ValueID narrowed) {
+            m_expansion.finishArm(m_expansion.appendOriginal({ plan.operandIndex, narrowed, plan.restReceivers, { }, true }));
+        });
+    m_expansion.end();
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

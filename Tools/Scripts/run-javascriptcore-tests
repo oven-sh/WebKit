@@ -100,6 +100,7 @@ use constant {
 my $runTestMasm = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestAir = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestB3 = RUN_IF_NO_TESTS_SPECIFIED;
+my $runTestAOT = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestDFG = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestAPI = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestWasmDebugger = RUN_IF_NO_TESTS_SPECIFIED;
@@ -177,6 +178,17 @@ if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTB3}) {
     } else {
         print "Don't recognize value for RUN_JAVASCRIPTCORE_TESTS_TESTB3 environment variable: '"
             . $ENV{RUN_JAVASCRIPTCORE_TESTS_TESTB3} . "'. Should be set to 'true' or 'false'.\n";
+    }
+}
+
+if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT}) {
+    if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} eq "true") {
+        $runTestAOT = ENV_VAR_SAYS_DO_RUN;
+    } elsif ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} eq "false") {
+        $runTestAOT = ENV_VAR_SAYS_DONT_RUN;
+    } else {
+        print "Don't recognize value for RUN_JAVASCRIPTCORE_TESTS_TESTAOT environment variable: '"
+            . $ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} . "'. Should be set to 'true' or 'false'.\n";
     }
 }
 
@@ -269,6 +281,7 @@ my $buildJSCDefault = $buildJSC ? "will check" : "will not check";
 my $testmasmDefault = defaultStringForTestState($runTestMasm);
 my $testairDefault = defaultStringForTestState($runTestAir);
 my $testb3Default = defaultStringForTestState($runTestB3);
+my $testaotDefault = defaultStringForTestState($runTestAOT);
 my $testDFGDefault = defaultStringForTestState($runTestDFG);
 my $testapiDefault = defaultStringForTestState($runTestAPI);
 my $testWasmDebuggerDefault = defaultStringForTestState($runTestWasmDebugger);
@@ -295,6 +308,7 @@ Usage: $programName [options] [options to pass to build system]
   --[no-]testmasm               Only run (or don't run) testmasm (default: $testmasmDefault)
   --[no-]testair                Only run (or don't run) testair (default: $testairDefault)
   --[no-]testb3                 Only run (or don't run) testb3 (default: $testb3Default)
+  --[no-]testaot                Only run (or don't run) testaot (default: $testaotDefault)
   --[no-]testdfg                Only run (or don't run) testdfg (default: $testDFGDefault)
   --[no-]testapi                Only run (or don't run) testapi (default: $testapiDefault)
   --[no-]testwasmdebugger       Only run (or don't run) testwasmdebugger (default: $testWasmDebuggerDefault)
@@ -365,6 +379,7 @@ Environment Variables:
   - set RUN_JAVASCRIPTCORE_TESTS_TESTMASM to "true" or "false" (no quotes) to determine if we run testmasm by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTAIR to "true" or "false" (no quotes) to determine if we run testair by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTB3 to "true" or "false" (no quotes) to determine if we run testb3 by default.
+  - set RUN_JAVASCRIPTCORE_TESTS_TESTAOT to "true" or "false" (no quotes) to determine if we run testaot by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTDFG to "true" or "false" (no quotes) to determine if we run testdfg by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTAPI to "true" or "false" (no quotes) to determine if we run testapi by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTWASMDEBUGGER to "true" or "false" (no quotes) to determine if we run testwasmdebugger by default.
@@ -387,6 +402,7 @@ GetOptions(
     'testmasm!' => \$runTestMasm,
     'testair!' => \$runTestAir,
     'testb3!' => \$runTestB3,
+    'testaot!' => \$runTestAOT,
     'testdfg!' => \$runTestDFG,
     'testapi!' => \$runTestAPI,
     'testwasmdebugger!' => \$runTestWasmDebugger,
@@ -452,6 +468,7 @@ my $specificTestsSpecified = 0;
 if ($runTestMasm == DO_RUN
    || $runTestAir == DO_RUN
    || $runTestB3 == DO_RUN
+   || $runTestAOT == DO_RUN
    || $runTestDFG == DO_RUN
    || $runTestAPI == DO_RUN
    || $runTestWasmDebugger == DO_RUN
@@ -579,6 +596,7 @@ sub computeFullConfiguration()
 $runTestMasm = enableTestOrNot($runTestMasm);
 $runTestAir = enableTestOrNot($runTestAir);
 $runTestB3 = enableTestOrNot($runTestB3);
+$runTestAOT = enableTestOrNot($runTestAOT);
 $runTestDFG = enableTestOrNot($runTestDFG);
 $runTestAPI = enableTestOrNot($runTestAPI);
 $runTestWasmDebugger = enableTestOrNot($runTestWasmDebugger);
@@ -789,6 +807,52 @@ sub runTest {
     }
 }
 
+sub runCodeRules {
+    my ($jscSourceDir) = @_;
+
+    my $testName = "check-code-rules";
+    my $interpreter = isWindows() ? "python" : "python3";
+    my $script = File::Spec->catfile(sourceDir(), "Tools", "Scripts", "aot", "check-code-rules.py");
+
+    my $testResult = 0;
+
+    foreach my $argument ("--self-test", $jscSourceDir) {
+        my @command = ($interpreter, $script, $argument);
+        my $testOutput = "";
+
+        open(TEST, "-|", "@command 2>&1") or die "Failed to run @command";
+        while ( my $line = <TEST> ) {
+            $testOutput .= $line;
+        }
+        my $commandResult = close(TEST) ? 0 : $?;
+        print "$testOutput" if ($verbose or $commandResult);
+        $testResult ||= $commandResult;
+    }
+    $reportData{$testName} = $testResult ? {actual => "FAIL"} : {actual => "PASS"};
+
+    my $exitStatus = exitStatus($testResult);
+
+    print "$testName completed with rc=$testResult ($exitStatus)\n\n";
+
+    if ($testResult) {
+        $isTestFailed = 1;
+        push @testResults, $testName;
+    }
+    if (defined($jsonFileName)) {
+        my $testStatus = ($exitStatus == 0)? JSON::PP::true: JSON::PP::false;
+        $jsonData{allAOTCodeRulesPassed} = $testStatus;
+    }
+
+    if ($testResult && $failFast) {
+        reportTestFailures();
+        writeJsonDataIfApplicable();
+
+        $endTime = time();
+        uploadResults();
+        exit $exitStatus;
+    }
+}
+
 sub reportTestFailures {
   my $numJSCtestFailures = @testResults;
   if ($numJSCtestFailures) {
@@ -850,6 +914,11 @@ setupEnvironment();
 if ($runTestMasm) { runTest("testmasm", "allMasmTestsPassed") }
 if ($runTestAir) { runTest("testair", "allAirTestsPassed") }
 if ($runTestB3) { runTest("testb3", "allB3TestsPassed") }
+if ($runTestAOT) {
+    my $jscSourceDir = File::Spec->catdir(sourceDir(), "Source", "JavaScriptCore");
+    runTest("testaot", "allAOTTestsPassed", "", "all " . File::Spec->catdir($jscSourceDir, "aot", "tests"));
+    runCodeRules($jscSourceDir);
+}
 if ($runTestDFG) { runTest("testdfg", "allDFGTestsPassed") }
 if ($runTestAPI) {
     runTest("testapi", "allApiTestsPassed");

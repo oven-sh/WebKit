@@ -1,0 +1,57 @@
+# A build that logs type errors goes through every stage: after selection each written type is still only reported, and an image comes out
+# FORM: AsRead
+# OPTIONS: type-errors=log
+# RUN: pipeline Select
+# RUN(IMAGE): compile
+# IMAGE: image not empty
+# CHECK-NOT: Claim {{*}}site=
+# CHECK-NOT: PropGetChecked
+# CHECK: ReportMismatch {{*}}site=w
+# CHECK-NOT: Claim {{*}}site=
+# CHECK-NOT: PropGetChecked
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=PropertyRead
+typesite w3 module=m0 position=40 kind=Parameter
+typesite w4 module=m0 position=50 kind=Variable
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|null|number} flags=[IsRequired]}, {key="y" declared={type=undefined|null|number} flags=[IsRequired]}]
+variable g0 name="total" module=m0 declared={type=undefined|null|number site=w4} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v7 = CallDirect v6 function=f2
+    v8 = ClaimDeclared v3 declared={type=undefined|null|number site=w4}
+    PutModuleVariable v8 variable=g0
+    v10 = GetModuleVariable variable=g0
+    v11 = Add v10, v7
+    v12 = PropGet v0 key="publish" [isFreeName]
+    v13 = Call v12, -, v11
+    v14 = NewClosure function=f1
+    v15 = Call v12, -, v14
+    Return
+}
+function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=undefined|null|number site=w1}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    v3 = ClaimDeclared v2 declared={type=undefined|null|number site=w1}
+    Return v3
+}
+function f2 name="sum" parameters=[{type=undefined|null|L0 site=w3}] results=[{type=anything}] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="x"
+    v2 = ClaimRead v1, v0 source=Field{key="x"} site=w2
+    v3 = PropGet v0 key="y"
+    v4 = ClaimRead v3, v0 source=Field{key="y"} site=w2
+    v5 = Add v2, v4
+    Return v5
+}

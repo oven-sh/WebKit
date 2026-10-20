@@ -38,9 +38,7 @@ BlockInsertionSet::BlockInsertionSet(Procedure &proc)
     : GenericBlockInsertionSet(proc.m_blocks)
     , m_proc(proc)
 {
-#if USE(BUN_JSC_ADDITIONS)
     m_arena = proc.arenaOrNull();
-#endif
 }
 
 BlockInsertionSet::~BlockInsertionSet() = default;

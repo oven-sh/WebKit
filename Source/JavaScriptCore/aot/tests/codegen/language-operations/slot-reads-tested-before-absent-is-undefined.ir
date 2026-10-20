@@ -1,0 +1,81 @@
+# A test that does not tell `undefined` from an absent field works on the word of the slot, and so does what is read behind it where the test excludes both: the marker of `undefined` that a missing field reads as is not among the constants
+# FORM: Selected
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# CHECK: f1: size={{*}} constants=0
+# CHECK: f2: size={{*}} constants=0
+# CHECK: f3: size={{*}} constants=0
+# CHECK: f4: size={{*}} constants=1
+# CHECK: f6: size={{*}} constants=0
+# CHECK: f7: size={{*}} constants=0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Copy" fields=[{key="x" declared={type=undefined|number} flags=[IsRequired]}]
+function f0 name="allocate" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[1] [keepsShape]
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    Return v1
+}
+function f1 name="isTruthy" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    v2 = ToBoolean v1 form=Numbers
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f2 name="isUndefined" parameters=[{type=L0}] results=[{type=i32}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    v2 = TypeTest v1 testedType=undefined
+    TestAndBranch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f3 name="isNumber" parameters=[{type=L0}] results=[{type=boolean}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    v2 = TypeTest v1 testedType=number
+    Return v2
+}
+function f4 name="isStored" parameters=[{type=L0}, {type=L1}] results=[{type=anything}] {
+  b0(v0: L0, v1: L1):
+    v2 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    PutSlot v1, -, v2 key="x" receivers=[L1] level=Proven
+    Return
+}
+function f5 name="allocateCopy" parameters=[{type=undefined|number}] results=[{type=L1}] {
+  b0(v0: undefined|number):
+    v1 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    Return v1
+}
+function f6 name="hasDefault" parameters=[{type=L0}] results=[{type=number}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    v2 = TypeTest v1 testedType=undefined
+    TestAndBranch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v3 = Integer integer=0
+    Jump -> next b3(v3)
+  b2(v4: number):
+    Jump -> next b3(v4)
+  b3(v5: number):
+    v6 = Integer integer=1
+    v7 = Add v5, v6 form=Numbers
+    Return v7
+}
+function f7 name="isBoxed" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}

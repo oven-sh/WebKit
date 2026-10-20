@@ -32,6 +32,7 @@
 #include "Scribble.h"
 #include "SuperSampler.h"
 #include "VM.h"
+#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -358,12 +359,18 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     if (isMarking)
         header.m_lock.unlock();
 
+    bool validatesIntervals = ASSERT_ENABLED || Options::verifyGC();
+    Vector<std::pair<unsigned, unsigned>, 16> pushedIntervals;
+
     auto sweepBlock = [&]<bool needsDestruction>() ALWAYS_INLINE_LAMBDA {
         size_t freedBytes = 0;
         FreeCell* head = nullptr;
         FreeCell* cursor = nullptr;
         size_t cursorIntervalBytes = 0;
         auto pushInterval = [&](FreeCell* cell, size_t intervalBytes) {
+            if (validatesIntervals) [[unlikely]]
+                pushedIntervals.append({ static_cast<unsigned>(block.candidateAtomNumber(cell)), static_cast<unsigned>(intervalBytes / atomSize) });
+
             if constexpr (needsDestruction) {
                 for (char* target = std::bit_cast<char*>(cell); target < (std::bit_cast<char*>(cell) + intervalBytes); target += cellSize)
                     destroy(target);
@@ -398,7 +405,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         using Word = std::remove_cvref_t<decltype(words[0])>;
         constexpr unsigned wordSize = sizeof(Word) * 8;
         constexpr int minMarkedCellsToWalkRuns = 48;
-        if (m_atomsPerCell < wordSize && marksMode == MarksNotStale && header.m_biasedMarkCount - header.m_markCountBias >= minMarkedCellsToWalkRuns) {
+        if (Options::useAOT() && m_atomsPerCell < wordSize && marksMode == MarksNotStale && header.m_biasedMarkCount - header.m_markCountBias >= minMarkedCellsToWalkRuns) {
             Word everyCell = 1;
             for (unsigned shift = m_atomsPerCell; shift < wordSize; shift *= 2)
                 everyCell |= everyCell << shift;
@@ -429,6 +436,19 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
             });
         }
         handleLiveCell(endAtom);
+
+        if (validatesIntervals) [[unlikely]] {
+            Vector<std::pair<unsigned, unsigned>, 16> expectedIntervals;
+            unsigned firstFreeAtom = m_startAtom;
+            auto endInterval = [&](unsigned index) {
+                if (firstFreeAtom != index)
+                    expectedIntervals.append({ firstFreeAtom, index - firstFreeAtom });
+                firstFreeAtom = index + m_atomsPerCell;
+            };
+            live.forEachSetBit(endInterval);
+            endInterval(endAtom);
+            RELEASE_ASSERT(pushedIntervals == expectedIntervals);
+        }
 
         if (sweepMode == SweepToFreeList) {
             if (cursor)

@@ -1,0 +1,43 @@
+# A bound function whose closure is a value has a row: its generic entrypoint, the one of its target, the bound arguments and the slot of the target's closure. One that is only called has none
+# RUN: tables
+# RUN(BOUND): tables functions
+# RUN(TARGET): tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="bind"
+    v2 = Undefined
+    v3 = Integer integer=1
+    v4 = Call v1, v0, v2, v3 calleeKey="bind"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = NewClosure function=f2
+    v9 = PropGet v8 key="bind"
+    v10 = Call v9, v8, v2, v3 calleeKey="bind"
+    v11 = Call v10, -, v3
+    Return
+}
+function f1 name="published" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="onlyCalled" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+
+# CHECK: magic ok
+# CHECK: boundFunctions 1 12
+# BOUND: function [[bound]] name="published" callable=Bound {{*}}captures=2
+# BOUND: bound function=[[bound]] target={{*}} arguments=1 targetClosureSlot=[[slot]]
+# BOUND-NOT: bound function=
+# TARGET: function [[target]] name="published" callable=Arrow {{*}}length=
+# TARGET: bound function={{*}} target=[[target]] arguments=1

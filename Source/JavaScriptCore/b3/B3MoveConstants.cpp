@@ -26,20 +26,15 @@
 #include "config.h"
 #include "B3MoveConstants.h"
 
-#include "AirArg.h"
-#include <wtf/Scope.h>
-
 #if ENABLE(B3_JIT)
 
+#include "AirArg.h"
 #include "B3Dominators.h"
-#include "AllowMacroScratchRegisterUsage.h"
 #include "B3InsertionSetInlines.h"
-#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
+#include "B3PlaceConstantsByFrequency.h"
 #include "B3ProcedureInlines.h"
-#include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
-#include "CCallHelpers.h"
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
@@ -59,12 +54,7 @@ public:
 
     void run()
     {
-        bool mayHaveWideConstants = !m_proc.positionIndependent();
-        for (Value* value : m_proc.values()) {
-            if (mayHaveWideConstants)
-                break;
-            mayHaveWideConstants = value->opcode() == ConstDouble || value->opcode() == Const128;
-        }
+        bool mayHaveWideConstants = m_proc.hasEverAdded(ConstDouble) || m_proc.hasEverAdded(Const128);
         if (mayHaveWideConstants) {
             hoistConstants(
                 [&] (const Value* value) -> bool {
@@ -76,396 +66,24 @@ public:
 
         hoistConstants(
             [&] (const Value* value) -> bool {
-                return value->opcode() == Const32 || value->opcode() == ConstFloat || value->opcode() == Const64 || value->opcode() == ArgumentReg;
+                return value->opcode() == Const32 || value->opcode() == ConstFloat || value->opcode() == Const64 || value->opcode() == ArgumentReg || value->opcode() == Relocatable;
             });
     }
 
 private:
-    using ValuesForConstant = UncheckedKeyHashMap<ValueKey, Vector<Value*, 1>>;
-
-    struct ConstantUse {
-        BasicBlock* block;
-        Value* user;
-        Value** child;
-        unsigned userIndex;
-    };
-
     struct ConstantLocation {
         BasicBlock* block;
         unsigned index;
     };
-
-    // On the dominator tree above the uses of a constant, bottom up: materialize it at a block, or separately in the subtrees below the
-    // block, whichever runs less often in total.
-    template<typename Filter>
-    void placeByFrequency(NOESCAPE const Filter& filter, const Vector<ConstantUse>& orderedUses, IndexMap<BasicBlock*, Vector<Value*>>& materializations, UncheckedKeyHashMap<Value*, BasicBlock*>& materializationBlocks, ValuesForConstant& valuesForConstant)
-    {
-        Dominators& dominators = m_proc.dominators();
-
-        struct Use {
-            BasicBlock* block;
-            Value** child;
-        };
-        auto isUsedAsImmediate = [](const Value* user, const Value* child) {
-            if (!child->hasInt() || user->numChildren() != 2 || (user->child(0)->hasInt() && user->child(1)->hasInt()))
-                return false;
-            switch (user->opcode()) {
-            case Sub:
-            case Equal:
-            case NotEqual:
-            case LessThan:
-            case GreaterThan:
-            case LessEqual:
-            case GreaterEqual:
-            case Above:
-            case Below:
-            case AboveEqual:
-            case BelowEqual:
-                if (child != user->child(1))
-                    return false;
-                [[fallthrough]];
-            case Add:
-                return Air::Arg::isValidImmForm(child->asInt());
-            case BitAnd:
-            case BitOr:
-            case BitXor:
-                return user->type() == Int64 ? Air::Arg::isValidBitImm64Form(child->asInt()) : Air::Arg::isValidBitImmForm(child->asInt());
-            case Shl:
-            case SShr:
-            case ZShr:
-            case RotR:
-            case RotL:
-                return child == user->child(1);
-            default:
-                return false;
-            }
-        };
-        constexpr unsigned blocksPerConstant = 1024;
-        constexpr unsigned maxBlocksPerConstant = 8192;
-        IndexMap<BasicBlock*, unsigned> stretch(m_proc.size(), 1u);
-        if (isARM64() && m_proc.size() > maxBlocksPerConstant) {
-            unsigned next = 0;
-            for (BasicBlock* block : m_proc.blocksInPreOrder())
-                stretch[block] = 1 + next++ / blocksPerConstant;
-        }
-        UncheckedKeyHashMap<std::pair<ValueKey, unsigned>, unsigned> indexForConstant;
-        auto take = [&](Value* original) {
-            return materializationBlocks.contains(original) ? m_proc.clone(original) : original;
-        };
-        Vector<Vector<Use, 2>> constantUses;
-        Vector<Vector<Use, 2>> usesAsImmediates;
-        for (const ConstantUse& use : orderedUses) {
-            Value* child = *use.child;
-            if (!filter(child))
-                continue;
-            auto result = indexForConstant.add({ child->key(), stretch[use.block] }, constantUses.size());
-            if (result.isNewEntry) {
-                constantUses.append(Vector<Use, 2> { });
-                usesAsImmediates.append(Vector<Use, 2> { });
-            }
-            (isUsedAsImmediate(use.user, child) ? usesAsImmediates : constantUses)[result.iterator->value].append(Use { use.block, use.child });
-        }
-
-        IndexMap<BasicBlock*, unsigned> preOrderIndex(m_proc.size(), 0u);
-        // Among a block and its dominators: the one that runs least often, the nearest of those that tie. For a constant that is used in one block alone the walk below comes to that. The walk is as long as the
-        // dominator tree is deep: in a function that makes a table of n records that is n, for each of n constants.
-        IndexMap<BasicBlock*, BasicBlock*> leastFrequentDominator(m_proc.size(), nullptr);
-        unsigned nextPreOrderIndex = 0;
-        bool hasNaNFrequency = false;
-        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
-            preOrderIndex[block] = nextPreOrderIndex++;
-            hasNaNFrequency |= std::isnan(block->frequency());
-            BasicBlock* parent = dominators.idom(block);
-            BasicBlock* above = parent ? leastFrequentDominator[parent] : nullptr;
-            leastFrequentDominator[block] = above && above->frequency() < block->frequency() ? above : block;
-        }
-        // Past a dominator whose frequency is no number the walk hands on what has come up, and a block above it may still be chosen; this table would end at it. Then nobody goes by the table.
-        if (hasNaNFrequency)
-            leastFrequentDominator.clear(nullptr);
-
-        constexpr unsigned maxLinearSteps = 32;
-        IndexMap<BasicBlock*, BasicBlock*> jump;
-        IndexMap<BasicBlock*, BasicBlock*> leastBelowJump;
-        IndexMap<BasicBlock*, unsigned> depth;
-        IndexMap<BasicBlock*, unsigned> preOrderIndexInDominatorTree;
-        auto prepareJumps = [&] {
-            if (jump.size())
-                return;
-            jump.resize(m_proc.size());
-            leastBelowJump.resize(m_proc.size());
-            depth.resize(m_proc.size());
-            preOrderIndexInDominatorTree.resize(m_proc.size());
-            Vector<BasicBlock*> blocks = m_proc.blocksInPreOrder();
-            IndexMap<BasicBlock*, BasicBlock*> firstKid(m_proc.size(), nullptr);
-            IndexMap<BasicBlock*, BasicBlock*> nextKid(m_proc.size(), nullptr);
-            for (BasicBlock* block : blocks) {
-                if (BasicBlock* parent = dominators.idom(block))
-                    nextKid[block] = std::exchange(firstKid[parent], block);
-            }
-            Vector<BasicBlock*, 16> worklist { m_proc.at(0) };
-            for (unsigned next = 0; !worklist.isEmpty(); ++next) {
-                BasicBlock* block = worklist.takeLast();
-                preOrderIndexInDominatorTree[block] = next;
-                for (BasicBlock* kid = firstKid[block]; kid; kid = nextKid[kid])
-                    worklist.append(kid);
-            }
-            for (BasicBlock* block : blocks) {
-                BasicBlock* parent = dominators.idom(block);
-                leastBelowJump[block] = block;
-                if (!parent) {
-                    jump[block] = block;
-                    continue;
-                }
-                depth[block] = depth[parent] + 1;
-                BasicBlock* middle = jump[parent];
-                if (depth[parent] - depth[middle] != depth[middle] - depth[jump[middle]]) {
-                    jump[block] = parent;
-                    continue;
-                }
-                jump[block] = jump[middle];
-                if (parent == middle)
-                    continue;
-                if (leastBelowJump[parent]->frequency() < leastBelowJump[block]->frequency())
-                    leastBelowJump[block] = leastBelowJump[parent];
-                if (leastBelowJump[middle]->frequency() < leastBelowJump[block]->frequency())
-                    leastBelowJump[block] = leastBelowJump[middle];
-            }
-        };
-        auto nearestCommonDominator = [&](BasicBlock* a, BasicBlock* b) {
-            while (!dominators.dominates(a, b))
-                a = dominators.dominates(jump[a], b) ? dominators.idom(a) : jump[a];
-            return a;
-        };
-        auto dominatorAtDepth = [&](BasicBlock* block, unsigned wanted) {
-            while (depth[block] > wanted)
-                block = depth[jump[block]] >= wanted ? jump[block] : dominators.idom(block);
-            return block;
-        };
-        auto leastFrequentBetween = [&](BasicBlock* from, BasicBlock* to) {
-            BasicBlock* least = nullptr;
-            while (from != to) {
-                bool jumps = depth[jump[from]] >= depth[to];
-                BasicBlock* candidate = jumps ? leastBelowJump[from] : from;
-                if (!least || candidate->frequency() < least->frequency())
-                    least = candidate;
-                from = jumps ? jump[from] : dominators.idom(from);
-            }
-            return least;
-        };
-
-        struct Candidate {
-            unsigned epoch { 0 };
-            unsigned numberOfMaterializations { 0 };
-            double frequency { 0 };
-            bool isChosen { false };
-            unsigned order { 0 };
-            BasicBlock* parent { nullptr };
-            BasicBlock* where { nullptr };
-            Value* value { nullptr };
-        };
-        IndexMap<BasicBlock*, Candidate> data(m_proc.size());
-        Vector<BasicBlock*> candidates;
-        unsigned epoch = 0;
-        for (unsigned constant = 0; constant < constantUses.size(); ++constant) {
-            auto& uses = constantUses[constant];
-            Vector<Value*, 4> placed;
-            auto placeImmediates = makeScopeExit([&] {
-                BasicBlock* top = nullptr;
-                Vector<Use*, 4> left;
-                for (Use& use : usesAsImmediates[constant]) {
-                    size_t index = placed.findIf([&](Value* value) {
-                        return dominators.dominates(materializationBlocks.get(value), use.block);
-                    });
-                    if (index != notFound) {
-                        *use.child = placed[index];
-                        continue;
-                    }
-                    left.append(&use);
-                    if (!top)
-                        top = use.block;
-                    for (unsigned steps = 0; top != m_proc.at(0) && !dominators.dominates(top, use.block); ++steps) {
-                        if (steps == maxLinearSteps && dominators.dominates(m_proc.at(0), top) && dominators.dominates(m_proc.at(0), use.block)) {
-                            prepareJumps();
-                            top = nearestCommonDominator(top, use.block);
-                            break;
-                        }
-                        top = dominators.idom(top) ? dominators.idom(top) : m_proc.at(0);
-                    }
-                }
-                if (left.isEmpty())
-                    return;
-                Value* value = take(*left[0]->child);
-                value->owner = top;
-                materializations[top].append(value);
-                materializationBlocks.add(value, top);
-                for (Use* use : left)
-                    *use->child = value;
-            });
-            if (uses.isEmpty())
-                continue;
-            bool isUsedInOneBlock = std::ranges::all_of(uses, [&](Use& use) {
-                return use.block == uses[0].block;
-            });
-            if (BasicBlock* where = isUsedInOneBlock ? leastFrequentDominator[uses[0].block] : nullptr) {
-                Value* value = take(*uses[0].child);
-                value->owner = where;
-                placed.append(value);
-                valuesForConstant.add(value->key(), Vector<Value*, 1> { }).iterator->value.append(value);
-                materializations[where].append(value);
-                materializationBlocks.add(value, where);
-                for (Use& use : uses)
-                    *use.child = value;
-                continue;
-            }
-
-            // The nearest block that dominates all the uses. Above it there is a chain, and what the walk would come to on that is known beforehand too: so it ends there. None: some use is in a block that
-            // is not reached, and the walk goes to the root.
-            BasicBlock* top = uses[0].block;
-            for (Use& use : uses) {
-                if (!leastFrequentDominator[use.block]) {
-                    top = nullptr;
-                    break;
-                }
-                for (unsigned steps = 0; !dominators.dominates(top, use.block); ++steps) {
-                    if (steps == maxLinearSteps) {
-                        prepareJumps();
-                        top = nearestCommonDominator(top, use.block);
-                        break;
-                    }
-                    top = dominators.idom(top);
-                }
-            }
-
-            ++epoch;
-            candidates.shrink(0);
-            const size_t most = top ? 64 + 4 * uses.size() : std::numeric_limits<size_t>::max();
-            for (Use& use : uses) {
-                for (BasicBlock* block = use.block; block && data[block].epoch != epoch && candidates.size() <= most; block = dominators.idom(block)) {
-                    data[block] = Candidate { };
-                    data[block].epoch = epoch;
-                    candidates.append(block);
-                    if (block == top)
-                        break;
-                }
-                data[use.block].isChosen = true;
-            }
-            const bool hasTooMany = candidates.size() > most;
-            if (hasTooMany) {
-                prepareJumps();
-                ++epoch;
-                candidates.shrink(0);
-                auto addCandidate = [&](BasicBlock* block, BasicBlock* parent, unsigned order) {
-                    data[block] = Candidate { };
-                    data[block].epoch = epoch;
-                    data[block].parent = parent;
-                    data[block].order = order;
-                    candidates.append(block);
-                };
-                auto ordersFirst = [&](BasicBlock* a, BasicBlock* b) {
-                    return preOrderIndexInDominatorTree[a] < preOrderIndexInDominatorTree[b];
-                };
-                Vector<BasicBlock*, 16> nodes;
-                for (Use& use : uses)
-                    nodes.append(use.block);
-                std::ranges::sort(nodes, ordersFirst);
-                nodes.shrink(std::ranges::unique(nodes).begin() - nodes.begin());
-                for (size_t i = 1, count = nodes.size(); i < count; ++i)
-                    nodes.append(nearestCommonDominator(nodes[i - 1], nodes[i]));
-                std::ranges::sort(nodes, ordersFirst);
-                nodes.shrink(std::ranges::unique(nodes).begin() - nodes.begin());
-                RELEASE_ASSERT(nodes[0] == top);
-                Vector<BasicBlock*, 16> path;
-                for (BasicBlock* node : nodes) {
-                    while (!path.isEmpty() && !dominators.dominates(path.last(), node))
-                        path.removeLast();
-                    BasicBlock* parent = path.isEmpty() ? nullptr : path.last();
-                    path.append(node);
-                    if (parent && dominators.idom(node) != parent) {
-                        BasicBlock* least = leastFrequentBetween(dominators.idom(node), parent);
-                        addCandidate(least, parent, preOrderIndex[dominatorAtDepth(node, depth[parent] + 1)]);
-                        parent = least;
-                    }
-                    addCandidate(node, parent, preOrderIndex[node]);
-                }
-                for (Use& use : uses)
-                    data[use.block].isChosen = true;
-                std::ranges::sort(candidates, [&](BasicBlock* a, BasicBlock* b) {
-                    return data[a].order > data[b].order;
-                });
-            }
-
-            // A block comes after its dominators in pre-order.
-            if (!hasTooMany) {
-                std::ranges::sort(candidates, [&](BasicBlock* a, BasicBlock* b) {
-                    return preOrderIndex[a] > preOrderIndex[b];
-                });
-            }
-            for (BasicBlock* block : candidates) {
-                Candidate& candidate = data[block];
-                if (candidate.isChosen || candidate.frequency > block->frequency() || (candidate.frequency == block->frequency() && candidate.numberOfMaterializations > 1)) {
-                    candidate.isChosen = true;
-                    candidate.frequency = block->frequency();
-                    candidate.numberOfMaterializations = 1;
-                }
-                if (BasicBlock* parent = hasTooMany ? candidate.parent : block == top ? nullptr : dominators.idom(block)) {
-                    data[parent].frequency += candidate.frequency;
-                    data[parent].numberOfMaterializations += candidate.numberOfMaterializations;
-                }
-            }
-            // On the chain above, going up, a block is chosen if it runs less often than what has come up, or as often where that is more than one materialization; from then on only if it runs less often
-            // still; and the topmost one that is chosen is where everything below is materialized. That is the one that runs least often, the nearest of those that tie, if any is chosen at all.
-            BasicBlock* above = nullptr;
-            if (BasicBlock* parent = top ? dominators.idom(top) : nullptr) {
-                BasicBlock* least = leastFrequentDominator[parent];
-                Candidate& candidate = data[top];
-                if (candidate.frequency > least->frequency() || (candidate.frequency == least->frequency() && candidate.numberOfMaterializations > 1)) {
-                    above = least;
-                    data[above] = Candidate { };
-                    data[above].epoch = epoch;
-                    data[above].where = above;
-                }
-            }
-            for (unsigned i = candidates.size(); i--;) {
-                BasicBlock* block = candidates[i];
-                BasicBlock* parent = hasTooMany ? data[block].parent : block == top ? nullptr : dominators.idom(block);
-                BasicBlock* inherited = block == top ? above : parent ? data[parent].where : nullptr;
-                if (inherited)
-                    data[block].where = inherited;
-                else if (data[block].isChosen)
-                    data[block].where = block;
-            }
-
-            Value* original = *uses[0].child;
-            auto& values = valuesForConstant.add(original->key(), Vector<Value*, 1> { }).iterator->value;
-            for (Use& use : uses) {
-                BasicBlock* where = data[use.block].where;
-                Value*& value = data[where].value;
-                if (!value) {
-                    value = take(original);
-                    placed.append(value);
-                    value->owner = where;
-                    values.append(value);
-                    materializations[where].append(value);
-                    materializationBlocks.add(value, where);
-                }
-                *use.child = value;
-            }
-        }
-    }
 
     template<typename Filter>
     void hoistConstants(NOESCAPE const Filter& filter)
     {
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
-        IndexMap<BasicBlock*, Vector<Value*>> materializations(m_proc.size());
-        UncheckedKeyHashMap<Value*, BasicBlock*> materializationBlocks;
-        ValuesForConstant valuesForConstantByFrequency;
+        ConstantPlacement placement(m_proc);
+        const bool placesByFrequency = m_proc.policy().optimization.placesConstantsByFrequency;
 
-        // Air reads an ArgumentReg in the prologue, wherever it stands.
-        auto isPlacedByFrequency = [&](const Value* value) {
-            return m_proc.materializesConstantsByFrequency() && value->opcode() != ArgumentReg;
-        };
         Vector<ConstantUse> orderedUses;
         Vector<ConstantLocation> orderedLocations;
         for (BasicBlock* block : m_proc) {
@@ -480,17 +98,14 @@ private:
             }
         }
 
-        if (m_proc.materializesConstantsByFrequency()) {
-            placeByFrequency([&](const Value* value) {
-                return isPlacedByFrequency(value);
-            }, orderedUses, materializations, materializationBlocks, valuesForConstantByFrequency);
-        }
+        if (placesByFrequency)
+            placeConstantsByFrequency(m_proc, orderedUses.span(), placement);
 
         // We determine where things get materialized based on where they are used.
         for (const ConstantUse& use : orderedUses) {
             BasicBlock* block = use.block;
             Value*& child = *use.child;
-            if (isPlacedByFrequency(child))
+            if (placesByFrequency && isPlacedByFrequency(child))
                 continue;
 
             ValueKey key = child->key();
@@ -521,15 +136,14 @@ private:
                 if (block->frequency() < value->owner->frequency())
                     value->owner = block;
             }
-            materializations[value->owner].append(value);
-            materializationBlocks.add(value, value->owner);
+            placement.add(value, value->owner);
         }
 
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
         // ones from the CFG, since we're going to reinsert them elsewhere.
-        for (ConstantLocation place : orderedLocations) {
-            Value*& value = place.block->at(place.index);
-            if (materializationBlocks.contains(value))
+        for (ConstantLocation location : orderedLocations) {
+            Value*& value = location.block->at(location.index);
+            if (placement.blockOf.contains(value))
                 value = m_proc.add<Value>(Nop, value->origin());
             else
                 value->replaceWithNopIgnoringType();
@@ -552,7 +166,7 @@ private:
                     dominators.forAllDominatorsOf(
                         block,
                         [&] (BasicBlock* dominator) {
-                            for (Value* value : materializations[dominator]) {
+                            for (Value* value : placement.materializations[dominator]) {
                                 if (predicate(value)) {
                                     result = value;
                                     break;
@@ -571,7 +185,7 @@ private:
 
                     // If we encounter a fast constant, then it must be canonical, since we already
                     // got rid of the non-canonical ones.
-                    ASSERT(materializationBlocks.contains(child));
+                    ASSERT(placement.blockOf.contains(child));
 
                     if (child->owner != block) {
                         // This constant isn't our problem. It's going to be materialized in another
@@ -630,21 +244,21 @@ private:
                         int64_t addendConst = addend->asInt();
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
-                        // Bun: only the constant's negation can take its place, so look that up. findBestConstant() would go through
-                        ValueKey negated(addend->kind(), addend->type(), static_cast<int64_t>(-static_cast<uint64_t>(addendConst)));
+                        int64_t negatedConst = static_cast<int64_t>(-static_cast<uint64_t>(addendConst));
+                        ValueKey negated(addend->kind(), addend->type(), negatedConst);
                         Value* bestAddend = valueForConstant.get(negated);
-                        if (auto iterator = valuesForConstantByFrequency.find(negated); iterator != valuesForConstantByFrequency.end()) {
+                        if (auto iterator = placement.valuesByKey.find(negated); iterator != placement.valuesByKey.end()) {
                             for (Value* candidate : iterator->value) {
-                                if (dominators.dominates(materializationBlocks.get(candidate), block)) {
+                                if (dominators.dominates(placement.blockOf.get(candidate), block)) {
                                     bestAddend = candidate;
                                     break;
                                 }
                             }
                         }
-                        if (!bestAddend || bestAddend == addend || bestAddend->asInt() != -addendConst)
+                        if (!bestAddend || bestAddend == addend || bestAddend->asInt() != negatedConst)
                             break;
-                        BasicBlock* bestBlock = materializationBlocks.get(bestAddend);
-                        BasicBlock* addendBlock = materializationBlocks.get(addend);
+                        BasicBlock* bestBlock = placement.blockOf.get(bestAddend);
+                        BasicBlock* addendBlock = placement.blockOf.get(addend);
                         if (!dominators.dominates(bestBlock, block))
                             break;
                         if (bestBlock == addendBlock ? addendConst > 0 : dominators.dominates(addendBlock, bestBlock))
@@ -668,7 +282,7 @@ private:
 
             // We may have some constants that need to be materialized right at the end of this
             // block.
-            for (Value* value : materializations[block]) {
+            for (Value* value : placement.materializations[block]) {
                 if (!value->owner) {
                     // It's already materialized in this block.
                     continue;
@@ -682,32 +296,6 @@ private:
 
     void lowerMaterializationCostHeavyConstants()
     {
-        if (m_proc.keepsDataInCode()) {
-            for (BasicBlock* block : m_proc) {
-                for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-                    Value* value = block->at(valueIndex);
-                    if (!goesInTable(value))
-                        continue;
-                    if (value->opcode() == Const128) {
-                        auto* patchpoint = m_insertionSet.insert<PatchpointValue>(valueIndex, V128, value->origin());
-                        patchpoint->effects = Effects::none();
-                        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-                        patchpoint->clobber(RegisterSet::macroClobberedFPRs());
-                        patchpoint->setGenerator([constant = value->asV128()](CCallHelpers& jit, const StackmapGenerationParams& params) {
-                            AllowMacroScratchRegisterUsage allowScratch(jit);
-                            jit.move128ToVector(constant, params[0].fpr());
-                        });
-                        value->replaceWithIdentity(patchpoint);
-                        continue;
-                    }
-                    Value* bits = m_insertionSet.insertIntConstant(valueIndex, value->origin(), Int64, std::bit_cast<int64_t>(value->asDouble()));
-                    value->replaceWithIdentity(m_insertionSet.insert<Value>(valueIndex, BitwiseCast, value->origin(), bits));
-                }
-                m_insertionSet.execute(block);
-            }
-            return;
-        }
-
         unsigned doubleSize = 0;
         unsigned v128Size = 0;
         UncheckedKeyHashMap<ValueKey, unsigned> constTable;
@@ -799,9 +387,8 @@ private:
                 if (!isRepresentableAs<Value::OffsetType>(offset))
                     continue;
 
-                Value* tableBase = m_insertionSet.insertIntConstant(
-                    valueIndex, value->origin(), pointerType(),
-                    std::bit_cast<intptr_t>(dataSection));
+                Value* tableBase = m_insertionSet.insertValue(
+                    valueIndex, m_proc.addDataSectionAddress(value->origin(), dataSection));
                 Value* result = m_insertionSet.insert<MemoryValue>(
                     valueIndex, Load, value->type(), value->origin(), tableBase,
                     static_cast<Value::OffsetType>(offset));

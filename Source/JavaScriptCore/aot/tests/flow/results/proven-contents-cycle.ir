@@ -1,0 +1,26 @@
+# An array that holds itself has a finite type: the inner occurrence is an array with unknown contents, and an array outside the cycle names the finished type
+# RUN: flow
+# CHECK: variable g0 type=Array<1|Array<anything, pristine{{*}}>, proven, 
+# CHECK: variable g1 type=Array<Array<anything, pristine{{*}}>, proven, 
+# CHECK: variable g2 type=Array<Array<1|Array<anything, pristine{{*}}>, proven, {{*}}>, proven, 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="holdsItself" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="holdsItsHolder" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="outsideTheCycle" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0, v0 contents=anything holes=[]
+    v2 = Integer integer=0
+    ElemSet v1, v2, v1 mode=Strict
+    PutModuleVariable v1 variable=g0
+    v5 = NewArray contents=anything holes=[]
+    v6 = NewArray v5 contents=anything holes=[]
+    ElemSet v5, v2, v6 mode=Strict
+    PutModuleVariable v5 variable=g1
+    v9 = NewArray v1 contents=anything holes=[]
+    PutModuleVariable v9 variable=g2
+    Return
+}

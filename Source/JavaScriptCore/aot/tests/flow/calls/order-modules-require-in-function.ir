@@ -1,0 +1,62 @@
+# A require in a function closes a cycle with the importer of its module once the function is reached; an unreached require and a reached import() close none
+# RUN: flow-order modules before m0 m1 before m2 m3 before m4 m5
+# CHECK: m0: component [[reached]] cycle after
+# CHECK-NEXT: m1: component [[reached]] cycle after
+# CHECK-NEXT: m2: component [[unreached]] after {}
+# CHECK-NEXT: m3: component [[aboveUnreached]] after {[[unreached]]}
+# CHECK-NEXT: m4: component [[importing]] after {}
+# CHECK-NEXT: m5: component [[aboveImporting]] after {[[importing]]}
+# CHECK-NEXT: before m0 m1 Unknown
+# CHECK-NEXT: before m2 m3 CompletesBefore
+# CHECK-NEXT: before m4 m5 CompletesBefore
+
+module m0 path="reached.js" displayPath="reached.js" body=f0
+module m1 path="above-reached.js" displayPath="above-reached.js" body=f1 requests=[{target=m0}]
+module m2 path="unreached.js" displayPath="unreached.js" body=f2
+module m3 path="above-unreached.js" displayPath="above-unreached.js" body=f3 requests=[{target=m2}]
+module m4 path="importing.js" displayPath="importing.js" body=f4
+module m5 path="above-importing.js" displayPath="above-importing.js" body=f5 requests=[{target=m4}]
+entry module=m1
+entry module=m3
+entry module=m5
+function f0 name="reached" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f6
+    Return
+}
+function f1 name="aboveReached" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="unreached" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="aboveUnreached" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="importing" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f8
+    Return
+}
+function f5 name="aboveImporting" module=m5 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="requireWhenCalled" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./above-reached.js"
+    Return v0
+}
+function f7 name="requireNeverCalled" module=m2 results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m3 referrer=m2 specifier="./above-unreached.js"
+    Return v0
+}
+function f8 name="importWhenCalled" module=m4 results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m5 referrer=m4
+    Return v0
+}

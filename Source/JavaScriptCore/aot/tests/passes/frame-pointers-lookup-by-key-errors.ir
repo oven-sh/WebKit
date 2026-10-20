@@ -1,0 +1,29 @@
+# The run time looks a computed key up and takes cells of the heap only: a cell of the frame may be read by name and may not be read or tested under a key nobody knows, although the lookup runs no code of the program and keeps nothing
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: FramePointerRetained 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+
+function f0 name="readByName" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+
+function f1 name="readByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v3 = ElemGet v2, v1
+    v4 = TypeOf v3
+    Return v4
+}
+
+function f2 name="testedByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v3 = ElemHas v2, v1
+    Return v3
+}

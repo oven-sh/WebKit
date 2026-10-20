@@ -56,9 +56,5 @@ protected:
 
 bool promiseSpeciesWatchpointIsValid(VM&, JSPromise*);
 JSC_DECLARE_HOST_FUNCTION(promiseProtoFuncThen);
-JSC_DECLARE_HOST_FUNCTION(promiseFinallyThenFinallyFunc);
-JSC_DECLARE_HOST_FUNCTION(promiseFinallyCatchFinallyFunc);
-JSC_DECLARE_HOST_FUNCTION(promiseFinallyValueThunkFunc);
-JSC_DECLARE_HOST_FUNCTION(promiseFinallyThrowerFunc);
 
 } // namespace JSC

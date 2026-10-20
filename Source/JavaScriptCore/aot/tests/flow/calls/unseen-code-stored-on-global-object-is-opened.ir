@@ -1,0 +1,29 @@
+# Evaluated text names the global object, so what the program puts there is opened, before or after the call that evaluates
+# RUN: flow-links unseen
+# RUN(SINKS): flow-solve sinks
+# RUN(NEIGHBOR): flow-solve sinks
+# CHECK: unseen EvaluatesText Eval f0:v8
+# CHECK: unknown-javascript yes
+# CHECK: whole-program-open no
+# SINKS: unknownJavaScript {{*}}L0#
+# NEIGHBOR-NOT: unknownJavaScript {{*}}L1#
+# NEIGHBOR-NOT: nativeCode {{*}}L1#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Neighbor" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v1 key="shared"
+    v6 = PropGet v4 key="input" [isFreeName]
+    v7 = PropGet v4 key="eval" [isFreeName]
+    v8 = Call v7, -, v6
+    Return
+}

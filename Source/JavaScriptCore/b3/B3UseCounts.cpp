@@ -38,7 +38,6 @@ UseCounts::UseCounts(Procedure& procedure)
 {
     Vector<Value*, 64> children;
     for (Value* value : procedure.values()) {
-#if USE(BUN_JSC_ADDITIONS)
         if (unsigned numberOfChildren = value->numChildren(); numberOfChildren <= 2) {
             if (!numberOfChildren)
                 continue;
@@ -53,7 +52,6 @@ UseCounts::UseCounts(Procedure& procedure)
                 m_counts[second].numUsingInstructions++;
             continue;
         }
-#endif
         children.shrink(0);
         for (Value* child : value->children()) {
             m_counts[child].numUses++;

@@ -1,0 +1,41 @@
+# The host enters an async handler as it enters any other: with what the table declares and with nothing else. The promise of the call and the value it settles with reach native code. The handler, a function of the options that the table does not name and the options themselves do not, so the handler has one version.
+# RUN: flow-solve sinks
+# RUN(PROMISE): flow-solve sinks
+# RUN(VALUE): flow-solve sinks
+# RUN(INSTANCES): flow-solve instances
+# RUN(NODES): flow-solve nodes
+# RUN(RESULTS): flow
+# CHECK-NOT: L0#
+# CHECK-NOT: f1,
+# CHECK-NOT: f2
+# CHECK-NOT: FunctionPrototype
+# PROMISE: nativeCode {{*}}Promise@f1:result
+# VALUE: nativeCode {{*}}Response@f1:v3
+# INSTANCES-NOT: f1 Generic
+# NODES: , f1, parameter 0) = {Request@f0:v5{{*}}}
+# NODES-NOT: , f1, parameter 0) = {{*}}unknown
+# RESULTS-NOT: genericVersion
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}, {key="helper" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=BunServe
+    v4 = Builtin builtin=Bun
+    v5 = Call v3, v4, v2
+    Return
+}
+function f1 name="fetch" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Response
+    v3 = Construct v2, -
+    Return v3
+}
+function f2 name="helper" results=[{type=anything}] {
+  b0():
+    Return
+}

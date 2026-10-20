@@ -1,0 +1,24 @@
+# A guard on the fresh result of a built-in lasts across unknown code while nothing else holds the result, and the form with a miss edge does not end it
+# FORM: Prepared
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+  b0(v0: object, v1: object):
+    v2 = CallBuiltin -, v0 overload=ObjectKeys/0
+    v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = Integer integer=1
+    v6 = GetArrayElement v2, v5, v4 level=Predicted [keyIsIntegral]
+    PropSet v1, v6 key="first"
+    v8 = GetArrayElement v2, v5, v4 level=Predicted [keyIsIntegral]
+    Return v8
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0 name="resultStaysLocal"
+# CHECK: TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done [[done]](), miss [[miss]]()
+# CHECK: PropSet v1, v6 key="first"
+# CHECK-NEXT: v8: anything = GetArrayElement v2, v5, v4 level=Predicted
+# CHECK: [[done]](v2: Array<string>):

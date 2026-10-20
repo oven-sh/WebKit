@@ -1,0 +1,19 @@
+# A generic entrypoint is shown as its target, so it tests this and a written parameter at their positions without an inline frame
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=17 kind=Parameter
+typesite w1 module=m0 position=9 kind=This
+function f0 name="double" position=1 flags=[HasThis] thisType={type=number site=w1} parameters=[{type=number site=w0}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    Return
+}
+# CHECK: name="double" module=m0 position=1 role=GenericEntrypoint
+# CHECK-NOT: inlineFrames=
+# CHECK: b0([[closure]]: f0, [[receiver]]: anything, [[argument]]: anything):
+# CHECK-NEXT: [[claimedReceiver]]: number = Claim [[receiver]] castType=number site=w1 cause=UnknownObject @9
+# CHECK-NEXT: [[claimedArgument]]: number = Claim [[argument]] castType=number site=w0 cause=UnknownObject @17
+# CHECK-NEXT: [[result]]: anything = CallDirect [[claimedReceiver]], [[claimedArgument]] function=f0 @1
+# CHECK-NEXT: ReturnCall [[result]] requirement=Allowed @1

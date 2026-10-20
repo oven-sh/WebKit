@@ -1,0 +1,53 @@
+# The block that stands for two equal blocks has the more frequent of their two frequencies
+# FORM: Prepared
+# RUN: pass MergeDuplicateBlocks
+# STATISTIC: MergeDuplicateBlocksChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bothUnlikely" parameters=[{type=boolean}] results=[{type=boolean}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2() frequency=Unlikely:
+    v2 = Boolean boolean=true
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f0 name="bothUnlikely"
+# CHECK: Branch v0 -> taken b1(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Unlikely:
+
+function f1 name="secondIsUnlikely" parameters=[{type=boolean}] results=[{type=boolean}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2() frequency=Unlikely:
+    v2 = Boolean boolean=true
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f1 name="secondIsUnlikely"
+# CHECK: Branch v0 -> taken b1(), notTaken b1()
+# CHECK-NEXT: b1():
+
+function f2 name="firstIsRare" parameters=[{type=boolean}] results=[{type=boolean}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2() frequency=Unlikely:
+    v2 = Boolean boolean=true
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+}
+# CHECK-LABEL: function f2 name="firstIsRare"
+# CHECK: Branch v0 -> taken b1(), notTaken b1()
+# CHECK-NEXT: b1() frequency=Unlikely:

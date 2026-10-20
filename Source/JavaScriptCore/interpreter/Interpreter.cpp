@@ -30,9 +30,13 @@
 #include "config.h"
 #include "Interpreter.h"
 
-#include "AOTRuntime.h"
-#include "AOTTypedObject.h"
-
+#include "AOTAsyncResumption.h"
+#include "AOTCompiledCall.h"
+#include "AOTCompiledFrame.h"
+#include "AOTNativeCallValidation.h"
+#include "AOTRemovableFeature.h"
+#include "AOTStackTrace.h"
+#include "AOTUnwinding.h"
 #include "AbortReason.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
@@ -109,13 +113,17 @@
 
 namespace JSC {
 
-JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain, CodeBlock* callerBaselineCodeBlock, BytecodeIndex bytecodeIndex, LexicallyScopedFeatures lexicallyScopedFeatures)
+struct DirectEvalSite {
+    CallFrame* callFrame;
+    JSScope* scope;
+    JSValue thisValue;
+    CodeBlock* codeBlockWithCache;
+    BytecodeIndex callSite;
+};
+
+template<typename DescribeCaller>
+static ALWAYS_INLINE JSValue evaluateDirectEvalAt(JSGlobalObject* globalObject, JSValue program, const DirectEvalSite& site, NOESCAPE const DescribeCaller& describeCaller)
 {
-    JSGlobalObject* globalObject = callerBaselineCodeBlock->globalObject();
-
-    if (callFrame->guaranteedJSValueCallee() != globalObject->evalFunction()) [[unlikely]]
-        return { };
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -123,10 +131,6 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         vm.didEnterVM = true;
     });
 
-    if (!callFrame->argumentCount())
-        return jsUndefined();
-
-    JSValue program = callFrame->uncheckedArgument(0);
     JSString* programString = nullptr;
     bool isTrusted = false;
     if (program.isString()) [[likely]]
@@ -161,7 +165,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         }
     }
 
-    TopCallFrameSetter topCallFrame(vm, callFrame);
+    TopCallFrameSetter topCallFrame(vm, site.callFrame);
     if (!globalObject->evalEnabled() && globalObject->trustedTypesEnforcement() != TrustedTypesEnforcement::EnforcedWithEvalEnabled) [[unlikely]] {
         globalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(globalObject, programString->value(globalObject).data);
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
@@ -170,12 +174,8 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
 
     auto programStr = programString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::recordSample(globalObject, "direct-eval", { }, programStr.data);
-#endif
-    auto cacheKey = DirectEvalCodeCache::CacheLookupKey(programStr.data.impl(), bytecodeIndex);
-    DirectEvalExecutable* eval = callerBaselineCodeBlock->directEvalCodeCache().get(cacheKey);
+    auto cacheKey = DirectEvalCodeCache::CacheLookupKey(programStr.data.impl(), site.callSite);
+    DirectEvalExecutable* eval = site.codeBlockWithCache ? site.codeBlockWithCache->directEvalCodeCache().get(cacheKey) : nullptr;
     if (!eval) {
         // GC needs to be deferred as it's possible cacheKey holds one of programString's fibers'
         // contents as a raw StringImpl*. Even though programString is on the stack, rope
@@ -183,15 +183,16 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         // content StringImpl to be deref'd if when the JSString is swept.
         DeferGC deferGC(vm);
 
+        const DirectEvalCaller& caller = describeCaller();
         auto programSource = programStr.data;
         if (SourceProfiler::g_profilerHook) [[unlikely]] {
-            SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
-            auto source = makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin);
+            SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, caller.callFrame);
+            auto source = makeSource(programSource, caller.sourceOrigin, sourceTaintedOrigin);
             SourceProfiler::profile(SourceProfiler::Type::Eval, source);
         }
 
-        if (!(lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)) {
-            JSValue parsedValue = tryEvalAsJSON(globalObject, programSource, callerBaselineCodeBlock);
+        if (!(caller.lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)) {
+            JSValue parsedValue = tryEvalAsJSON(globalObject, programSource, caller.codeBlockWithCache);
             RETURN_IF_EXCEPTION(scope, { });
             if (parsedValue)
                 RELEASE_AND_RETURN(scope, parsedValue);
@@ -199,9 +200,42 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         
         TDZEnvironment variablesUnderTDZ;
         PrivateNameEnvironment privateNameEnvironment;
-        JSScope::collectClosureVariablesUnderTDZ(callerScopeChain, variablesUnderTDZ, privateNameEnvironment);
-        SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
+        JSScope::collectClosureVariablesUnderTDZ(caller.scope, variablesUnderTDZ, privateNameEnvironment);
+        SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, caller.callFrame);
 
+        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, caller.sourceOrigin, sourceTaintedOrigin), caller.lexicallyScopedFeatures, caller.derivedContextType, caller.needsClassFieldInitializer, caller.privateBrandRequirement, caller.isArrowFunctionContext, caller.isInsideOrdinaryFunction, caller.evalContextType, &variablesUnderTDZ, caller.privateNames ? caller.privateNames : &privateNameEnvironment);
+        EXCEPTION_ASSERT(!!scope.exception() == !eval);
+        if (!eval) [[unlikely]]
+            return { };
+
+        // Skip the eval cache if tainted since another eval call could have a different taintedness.
+        if (caller.codeBlockWithCache && !sourceTaintedOrigin.couldBeTainted())
+            caller.codeBlockWithCache->directEvalCodeCache().set(globalObject, caller.codeBlockWithCache, cacheKey, eval);
+    }
+
+    RELEASE_AND_RETURN(scope, vm.interpreter.executeEval(eval, site.thisValue, site.scope));
+}
+
+JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain, CodeBlock* callerBaselineCodeBlock, BytecodeIndex bytecodeIndex, LexicallyScopedFeatures lexicallyScopedFeatures)
+{
+    JSGlobalObject* globalObject = callerBaselineCodeBlock->globalObject();
+
+    if (callFrame->guaranteedJSValueCallee() != globalObject->evalFunction()) [[unlikely]]
+        return { };
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto clobberizeValidator = makeScopeExit([&] {
+        vm.didEnterVM = true;
+    });
+
+    if (!callFrame->argumentCount())
+        return jsUndefined();
+
+    JSValue program = callFrame->uncheckedArgument(0);
+
+    auto describeCaller = [&]() -> DirectEvalCaller {
         UnlinkedCodeBlock* callerUnlinkedCodeBlock = callerBaselineCodeBlock->unlinkedCodeBlock();
 
         bool isArrowFunctionContext = callerUnlinkedCodeBlock->isArrowFunction() || callerUnlinkedCodeBlock->isArrowFunctionContext();
@@ -219,17 +253,33 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         else
             evalContextType = EvalContextType::None;
 
-        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin), lexicallyScopedFeatures, derivedContextType, callerUnlinkedCodeBlock->needsClassFieldInitializer(), callerUnlinkedCodeBlock->privateBrandRequirement(), isArrowFunctionContext, callerBaselineCodeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, &variablesUnderTDZ, &privateNameEnvironment);
-        EXCEPTION_ASSERT(!!scope.exception() == !eval);
-        if (!eval) [[unlikely]]
-            return { };
+        return DirectEvalCaller {
+            .callFrame = callFrame,
+            .scope = callerScopeChain,
+            .thisValue = thisValue,
+            .sourceOrigin = callerBaselineCodeBlock->source().provider()->sourceOrigin(),
+            .lexicallyScopedFeatures = lexicallyScopedFeatures,
+            .derivedContextType = derivedContextType,
+            .evalContextType = evalContextType,
+            .needsClassFieldInitializer = callerUnlinkedCodeBlock->needsClassFieldInitializer(),
+            .privateBrandRequirement = callerUnlinkedCodeBlock->privateBrandRequirement(),
+            .isArrowFunctionContext = isArrowFunctionContext,
+            .isInsideOrdinaryFunction = callerBaselineCodeBlock->ownerExecutable()->isInsideOrdinaryFunction(),
+            .privateNames = nullptr,
+            .codeBlockWithCache = callerBaselineCodeBlock,
+            .callSite = bytecodeIndex,
+        };
+    };
+    DirectEvalSite site { callFrame, callerScopeChain, thisValue, callerBaselineCodeBlock, bytecodeIndex };
+    RELEASE_AND_RETURN(scope, evaluateDirectEvalAt(globalObject, program, site, describeCaller));
+}
 
-        // Skip the eval cache if tainted since another eval call could have a different taintedness.
-        if (!sourceTaintedOrigin.couldBeTainted())
-            callerBaselineCodeBlock->directEvalCodeCache().set(globalObject, callerBaselineCodeBlock, cacheKey, eval);
-    }
-
-    RELEASE_AND_RETURN(scope, vm.interpreter.executeEval(eval, thisValue, callerScopeChain));
+JSValue evaluateDirectEval(JSGlobalObject* globalObject, JSValue program, const DirectEvalCaller& caller)
+{
+    DirectEvalSite site { caller.callFrame, caller.scope, caller.thisValue, caller.codeBlockWithCache, caller.callSite };
+    return evaluateDirectEvalAt(globalObject, program, site, [&]() -> const DirectEvalCaller& {
+        return caller;
+    });
 }
 
 unsigned sizeOfVarargs(JSGlobalObject* globalObject, JSValue arguments, uint32_t firstVarArgOffset)
@@ -432,7 +482,8 @@ Interpreter::Interpreter()
 #if ASSERT_ENABLED
     static std::once_flag assertOnceKey;
     std::call_once(assertOnceKey, [] {
-        if (g_jscConfig.vmEntryDisallowed)
+        // The handlers that LLInt::initialize() installs under useAOT have no embedded OpcodeID.
+        if (g_jscConfig.vmEntryDisallowed || Options::useAOT())
             return;
         for (unsigned i = 0; i < NUMBER_OF_BYTECODE_IDS; ++i) {
             OpcodeID opcodeID = static_cast<OpcodeID>(i);
@@ -513,13 +564,15 @@ void Interpreter::appendAsyncStackFrame(VM& vm, JSCell* owner, Vector<StackFrame
     }
 }
 
-#if ENABLE(AOT)
-void Interpreter::appendAsyncStackFrame(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure)
+void Interpreter::appendAsyncStackFrame(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter)
 {
-    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(generatorOrResumeClosure))
+    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(awaiter)) {
         appendAsyncStackFrame(vm, owner, results, generator);
-    else
-        AOT::Typed::appendSuspendedAsyncFunction(vm, owner, results, generatorOrResumeClosure);
+        return;
+    }
+#if ENABLE(AOT)
+    AOT::appendSuspendedAsyncFunction(vm, owner, results, awaiter);
+#endif
 }
 
 JSCell* Interpreter::asyncFunctionIn(JSValue context)
@@ -527,32 +580,47 @@ JSCell* Interpreter::asyncFunctionIn(JSValue context)
     if (!context || !context.isCell())
         return nullptr;
     JSCell* cell = context.asCell();
-    return dynamicDowncast<JSAsyncFunctionGenerator>(cell) || AOT::Typed::isAsyncFunctionResumeClosure(cell) ? cell : nullptr;
+    if (dynamicDowncast<JSAsyncFunctionGenerator>(cell))
+        return cell;
+#if ENABLE(AOT)
+    if (AOT::isSuspendedAsyncFunction(cell))
+        return cell;
+#endif
+    return nullptr;
 }
 
-JSPromise* Interpreter::asyncFunctionPromise(JSCell* generatorOrResumeClosure)
+JSPromise* Interpreter::asyncFunctionPromise(JSCell* awaiter)
 {
-    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(generatorOrResumeClosure)) {
+    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(awaiter)) {
         JSValue context = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
         return context ? dynamicDowncast<JSPromise>(context) : nullptr;
     }
-    return AOT::Typed::asyncFunctionPromise(generatorOrResumeClosure);
-}
-
-JSCell* Interpreter::appendDirectAsyncCallers(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure, size_t maxStackSize)
-{
-    if (dynamicDowncast<JSAsyncFunctionGenerator>(generatorOrResumeClosure))
-        return generatorOrResumeClosure;
-    return AOT::Typed::appendDirectAsyncCallers(vm, owner, results, generatorOrResumeClosure, maxStackSize);
-}
-
-void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* generator, size_t maxStackSize)
+#if ENABLE(AOT)
+    return AOT::asyncFunctionPromise(awaiter);
 #else
-void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
+    return nullptr;
 #endif
+}
+
+JSCell* Interpreter::appendDirectAsyncCallers(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize)
+{
+    if (dynamicDowncast<JSAsyncFunctionGenerator>(awaiter))
+        return awaiter;
+#if ENABLE(AOT)
+    return AOT::appendDirectAsyncCallers(vm, owner, results, awaiter, maxStackSize);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(owner);
+    UNUSED_PARAM(results);
+    UNUSED_PARAM(maxStackSize);
+    return awaiter;
+#endif
+}
+
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize)
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
-    ASSERT(generator);
+    ASSERT(awaiter);
 
     AssertNoGC assertNoGC;
 
@@ -573,32 +641,15 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
-#if ENABLE(AOT)
-    using Awaiter = JSCell;
-    auto asAwaiter = asyncFunctionIn;
-    auto promiseOf = asyncFunctionPromise;
-#else
-    using Awaiter = JSAsyncFunctionGenerator;
-    auto asAwaiter = [](JSValue context) -> JSAsyncFunctionGenerator* {
-        return dynamicDowncast<JSAsyncFunctionGenerator>(context);
-    };
-    auto promiseOf = [](JSAsyncFunctionGenerator* generator) -> JSPromise* {
-        return dynamicDowncast<JSPromise>(generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get());
-    };
-#endif
-    auto getParentGenerator = [&](Awaiter* gen) -> Awaiter* {
-        JSPromise* awaitedPromise = promiseOf(gen);
+    auto getParentGenerator = [&](JSCell* gen) -> JSCell* {
+        JSPromise* awaitedPromise = asyncFunctionPromise(gen);
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
-#if ENABLE(AOT)
-        if (!awaitedPromise)
-            promiseContext = AOT::Typed::promiseAllContextAwaiting(gen);
-#endif
 
         if (!promiseContext)
             return nullptr;
 
         // handle simple `await`
-        if (auto* generator = asAwaiter(promiseContext))
+        if (auto* generator = asyncFunctionIn(promiseContext))
             return generator;
 
         // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
@@ -607,7 +658,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
             ASSERT(promiseValue);
             if (auto* promise = dynamicDowncast<JSPromise>(promiseValue)) {
                 if (JSValue promiseContext = getContextValueFromPromise(promise)) {
-                    if (auto* generator = asAwaiter(promiseContext))
+                    if (auto* generator = asyncFunctionIn(promiseContext))
                         return generator;
                 }
             }
@@ -616,7 +667,7 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         // handle and `Promise.race`
         if (auto* contextPromise = dynamicDowncast<JSPromise>(promiseContext)) {
             if (JSValue parentContext = getContextValueFromPromise(contextPromise)) {
-                if (auto* generator = asAwaiter(parentContext))
+                if (auto* generator = asyncFunctionIn(parentContext))
                     return generator;
             }
         }
@@ -624,375 +675,26 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return nullptr;
     };
 
-#if ENABLE(AOT)
-    auto appendDirectCallers = [&](JSCell* awaiter) -> JSCell* {
-        return appendDirectAsyncCallers(vm, owner, results, awaiter, maxStackSize);
-    };
-#else
-    auto appendDirectCallers = [](JSAsyncFunctionGenerator* awaiter) {
-        return awaiter;
-    };
-#endif
-    auto next = [&](Awaiter* awaiter) -> Awaiter* {
-        Awaiter* last = appendDirectCallers(awaiter);
+    auto next = [&](JSCell* current) -> JSCell* {
+        JSCell* last = appendDirectAsyncCallers(vm, owner, results, current, maxStackSize);
         return last ? getParentGenerator(last) : nullptr;
     };
-    Awaiter* currentGenerator = next(generator);
+    JSCell* currentGenerator = next(awaiter);
     while (currentGenerator && results.size() < maxStackSize) {
         appendAsyncStackFrame(vm, owner, results, currentGenerator);
         currentGenerator = next(currentGenerator);
     }
+    if (results.size() > maxStackSize)
+        results.shrink(maxStackSize);
 }
 
-#if ENABLE(AOT)
-static NEVER_INLINE void markLastAsConstructed(AOT::Instance* instance, Vector<uint32_t, 32>& returnAddresses, const void* calleeReturnAddress)
-{
-    if (returnAddresses.isEmpty())
-        return;
-    const void* last = AOT::ReturnAddressTrace::addressOf(returnAddresses.last(), AOT::imageCodeStart());
-    auto typedFunctionAt = [&](const void* returnAddress) {
-        return AOT::FunctionRef { instance, AOT::classifyAddress(returnAddress).index }.info().typedFunction();
-    };
-    if (last == calleeReturnAddress || AOT::typedFunctionWraps(typedFunctionAt(calleeReturnAddress), typedFunctionAt(last)))
-        returnAddresses.last() |= AOT::ReturnAddressTrace::isConstructedRoot;
-}
-
-static NEVER_INLINE bool wasEnteredByConstruct(VM& vm, AOT::Instance* instance, CallFrame* entryStubFrame, void* returnPC)
-{
-    return returnPC && entryStubFrame->callerFrameOrEntryFrame() == vm.topEntryFrame
-        && AOT::wasEnteredByConstruct(instance, vmEntryRecord(vm.topEntryFrame)->prevTopCallFrame())
-        && (AOT::addressKind(returnPC) == AOT::ImageAddressInfo::Adapter || AOT::addressKind(returnPC) == AOT::ImageAddressInfo::Stub);
-}
-
-static NEVER_INLINE bool isCalledByConstruction(VM& vm, AOT::Instance* instance, const void* returnAddressInCallee, CallFrame* callFrame, void* returnPC)
-{
-    using Place = AOT::Instance::StackTraceInfo;
-    const AOT::Instance::CachedAddressInfo* knownCallee = instance->findCachedReturnAddress(returnAddressInCallee);
-    uint32_t callee = AOT::FunctionRef { instance, knownCallee ? knownCallee->function : AOT::classifyAddress(returnAddressInCallee).index }.info().typedFunction();
-    for (;; returnPC = removeCodePtrTag(callFrame->rawReturnPC()), callFrame = callFrame->callerFrame()) {
-        const AOT::Instance::CachedAddressInfo* asked = returnPC ? instance->resolveReturnAddress(returnPC) : nullptr;
-        if (!asked) {
-            if (!returnPC || callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
-                return wasEnteredByConstruct(vm, instance, callFrame, returnPC);
-            if (AOT::addressKind(returnPC) != AOT::ImageAddressInfo::Stub)
-                return false;
-            continue;
-        }
-        const Place& place = instance->stackTraceInfos()[asked - instance->cachedReturnAddresses];
-        if (place.kind == Place::IsInInlinedBody && !place.isConstructCall()) {
-            AOT::Instance::CachedAddressInfo& innermost = instance->cachedAddressInfo(returnPC);
-            if (!instance->callSiteOverrides && innermost.address == returnPC && innermost.site != AOT::Instance::CachedAddressInfo::siteNotResolved
-                && (!AOT::typedFunctionIsHiddenInStackTraces(innermost.site) || !AOT::typedFunctionWraps(innermost.site, callee)))
-                return false;
-            AOT::FunctionRef function { instance, asked->function };
-            AOT::InlineFrameReader inlineFramesRead;
-            auto location = function.locationForReturnAddress(returnPC, nullptr, &inlineFramesRead);
-            if (!instance->callSiteOverrides)
-                innermost = { returnPC, asked->function, location.typedFunction };
-            for (;; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
-                if (!AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction) || !AOT::typedFunctionWraps(location.typedFunction, callee))
-                    return false;
-                if (!location.inlineFrame)
-                    break;
-                if (location.isConstructed)
-                    return true;
-            }
-            continue;
-        }
-        if (place.kind != Place::IsHidden || !AOT::typedFunctionWraps(place.typedFunction, callee))
-            return place.isConstructCall();
-    }
-}
-
-static NEVER_INLINE bool isBottomFrame(VM& vm, CallFrame* frameUnderEntryFrame, void* returnPC)
-{
-    if (!returnPC || frameUnderEntryFrame->callerFrameOrEntryFrame() != vm.topEntryFrame || vmEntryRecord(vm.topEntryFrame)->prevTopCallFrame() || vm.onAppendStackTrace())
-        return false;
-    auto kind = AOT::addressKind(returnPC);
-    if (kind == AOT::ImageAddressInfo::Adapter)
-        return true;
-    if (kind != AOT::ImageAddressInfo::Stub || *frameUnderEntryFrame->addressOfCodeBlock() || !frameUnderEntryFrame->callee().isCell())
-        return false;
-    JSCell* callee = frameUnderEntryFrame->callee().asCell();
-    if (auto* function = dynamicDowncast<JSFunction>(callee); function && !function->isHostOrBuiltinFunction())
-        return true;
-    return isSlimClosureType(callee->type());
-}
-
-static JSFunction* hostFunctionCalledFromCompiledCode(CallFrame* callFrame)
-{
-    if (*callFrame->addressOfCodeBlock() || AOT::addressKind(removeCodePtrTag(callFrame->rawReturnPC())) != AOT::ImageAddressInfo::Stub || !callFrame->callee().isCell())
-        return nullptr;
-    auto* function = dynamicDowncast<JSFunction>(callFrame->callee().asCell());
-    if (!function || !function->isHostFunction() || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
-        return nullptr;
-    return function;
-}
-
-static constexpr unsigned shownFrameCountBits = 12;
-static constexpr uint32_t shownFrameCountMask = (1u << shownFrameCountBits) - 1;
-
-template<bool isUnderHostFunction, bool skipsConstructors>
-ALWAYS_INLINE AOT::ReturnAddressTrace* Interpreter::getStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame* callFrame, void* returnPC, JSFunction* hostFunctionOnTop, JSCell* lastConstructor)
-{
-    using Place = AOT::Instance::StackTraceInfo;
-    std::optional<AssertNoGC> assertNoGC { std::in_place };
-    VM& vm = this->vm();
-    AOT::Instance* instance = vm.m_aotInstances[0];
-    Place* places = instance->stackTraceInfos();
-    Vector<uint32_t, 32> returnAddresses;
-    uintptr_t imageCodeStart = AOT::imageCodeStart();
-    FramesAlreadyInTrace alreadyInTrace;
-    size_t numberShown = isUnderHostFunction;
-    size_t omittedCount = 0;
-    bool isAtTheTop = !isUnderHostFunction && !skipsConstructors;
-    while (numberShown < maxStackSize) {
-        const AOT::Instance::CachedAddressInfo* asked = returnPC ? instance->findCachedReturnAddress(returnPC) : nullptr;
-        if (!asked && returnPC) [[unlikely]]
-            asked = instance->resolveReturnAddress(returnPC);
-        if (!asked) {
-            if (!returnPC)
-                break;
-            AOT::ImageAddressInfo inStubs = AOT::classifyAddress(returnPC);
-            if (inStubs.kind != AOT::ImageAddressInfo::Stub || inStubs.index == AOT::ImageAddressInfo::frameMayBeHostFunction || callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
-                break;
-            returnPC = removeCodePtrTag(callFrame->rawReturnPC());
-            callFrame = callFrame->callerFrame();
-            continue;
-        }
-        Place place = places[asked - instance->cachedReturnAddresses];
-        if (place.kind == Place::NeedsResolution) [[unlikely]] {
-            if (!place.isConstructCall())
-                break;
-            markLastAsConstructed(instance, returnAddresses, alreadyInTrace.lastReturnPC);
-            place = place.withoutConstructedCallee();
-            if (place.kind == Place::NeedsResolution)
-                break;
-        }
-        size_t numberShownHere = 0;
-        size_t previousOmittedCount = omittedCount;
-        uint32_t topShownFrameCountPlusOne = place.kind == Place::IsInInlinedBody && !place.isConstructCall() ? place.callSiteBits >> shownFrameCountBits & shownFrameCountMask : 0;
-        if (isAtTheTop && (place.kind == Place::IsVisible || place.kind == Place::IsHidden)) {
-            if (!AOT::typedFunctionIsSynthetic(place.typedFunction)) {
-                isAtTheTop = false;
-                numberShownHere = 1;
-            }
-        } else if (isAtTheTop && topShownFrameCountPlusOne) {
-            numberShownHere = topShownFrameCountPlusOne - 1;
-            isAtTheTop = !numberShownHere;
-        } else if (isAtTheTop || (skipsConstructors && lastConstructor)) {
-            bool wasAtTheTop = isAtTheTop;
-            AOT::FunctionRef function { instance, asked->function };
-            AOT::InlineFrameReader inlineFramesRead;
-            for (auto location = function.locationForReturnAddress(returnPC, nullptr, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
-                bool isHidden = isAtTheTop ? AOT::typedFunctionIsSynthetic(location.typedFunction) : AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction);
-                if (!location.isTailDeleted && !isHidden) {
-                    isAtTheTop = false;
-                    if (skipsConstructors && lastConstructor) {
-                        ++omittedCount;
-                        if (AOT::isTypedFunctionClosure(lastConstructor, location.typedFunction))
-                            lastConstructor = nullptr;
-                    } else
-                        ++numberShownHere;
-                }
-                if (!location.inlineFrame)
-                    break;
-            }
-            if (wasAtTheTop && place.kind == Place::IsInInlinedBody && !place.isConstructCall() && numberShownHere < shownFrameCountMask)
-                places[asked - instance->cachedReturnAddresses].callSiteBits |= static_cast<uint32_t>(numberShownHere + 1) << shownFrameCountBits;
-        } else if (place.kind == Place::IsVisible)
-            numberShownHere = 1;
-        else if (place.kind == Place::IsInInlinedBody) {
-            if (place.isConstructCall()) [[unlikely]] {
-                markLastAsConstructed(instance, returnAddresses, alreadyInTrace.lastReturnPC);
-                place = place.withoutConstructedCallee();
-            }
-            uint32_t framesShownPlusOne = place.callSiteBits & shownFrameCountMask;
-            if (!framesShownPlusOne) {
-                AOT::FunctionRef function { instance, asked->function };
-                AOT::InlineFrameReader inlineFramesRead;
-                unsigned numberOfShownFrames = 0;
-                for (auto location = function.locationForReturnAddress(returnPC, nullptr, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
-                    if (!location.isTailDeleted && !AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction))
-                        ++numberOfShownFrames;
-                    if (!location.inlineFrame)
-                        break;
-                }
-                framesShownPlusOne = numberOfShownFrames + 1;
-                if (framesShownPlusOne <= shownFrameCountMask)
-                    places[asked - instance->cachedReturnAddresses].callSiteBits |= framesShownPlusOne;
-            }
-            numberShownHere = framesShownPlusOne - 1;
-        }
-        numberShown += numberShownHere;
-        if (numberShownHere || omittedCount != previousOmittedCount)
-            returnAddresses.append(AOT::ReturnAddressTrace::keep(returnPC, imageCodeStart));
-        alreadyInTrace.lastCallFrame = callFrame;
-        alreadyInTrace.lastReturnPC = returnPC;
-        returnPC = removeCodePtrTag(callFrame->rawReturnPC());
-        callFrame = callFrame->callerFrame();
-    }
-    auto callerIsShown = [&] {
-        const AOT::Instance::CachedAddressInfo* asked = returnPC ? instance->findCachedReturnAddress(returnPC) : nullptr;
-        return asked && places[asked - instance->cachedReturnAddresses].kind == Place::IsVisible;
-    };
-    if (numberShown >= maxStackSize && !callerIsShown() && isCalledByConstruction(vm, instance, alreadyInTrace.lastReturnPC, callFrame, returnPC)) [[unlikely]]
-        returnAddresses.last() |= AOT::ReturnAddressTrace::isConstructedRoot;
-    else if (numberShown < maxStackSize && wasEnteredByConstruct(vm, instance, callFrame, returnPC)) [[unlikely]]
-        markLastAsConstructed(instance, returnAddresses, alreadyInTrace.lastReturnPC);
-    if (returnAddresses.isEmpty() || lastConstructor || omittedCount > AOT::ReturnAddressTrace::maxOmittedFrames)
-        return nullptr;
-    bool continuesWalking = numberShown < maxStackSize && !isBottomFrame(vm, callFrame, returnPC);
-    if (vm.m_aotInstances.size() > 1) {
-        instance = AOT::tryInstanceForFrame(alreadyInTrace.lastCallFrame);
-        if (!instance)
-            return nullptr;
-    }
-    assertNoGC.reset();
-    auto* trace = static_cast<AOT::ReturnAddressTrace*>(vm.auxiliarySpace().allocate(vm, AOT::ReturnAddressTrace::allocationSize(returnAddresses.size()), nullptr, AllocationFailureMode::ReturnNull));
-    if (!trace)
-        return nullptr;
-    assertNoGC.emplace();
-    trace->instance = instance;
-    trace->limit = static_cast<uint32_t>(std::min<size_t>(maxStackSize, (1u << AOT::ReturnAddressTrace::limitBits) - 1));
-    trace->omittedFrameCount = omittedCount;
-    trace->numberOfReturnAddresses = returnAddresses.size();
-    trace->topIsAtStackTraceItemSite = false;
-    trace->hasHostFunctionFrameOnTop = isUnderHostFunction;
-    memcpySpan(trace->returnAddresses(), returnAddresses.span());
-    if (continuesWalking) {
-        alreadyInTrace.numberShown = numberShown;
-        otherFrames = makeUnique<Vector<StackFrame>>();
-        getStackTrace(owner, *otherFrames, 0, maxStackSize, nullptr, nullptr, nullptr, &alreadyInTrace);
-        if (otherFrames->isEmpty())
-            otherFrames = nullptr;
-    } else if (Options::useAsyncStackTrace()) {
-        if (JSCell* awaiter = asyncFunctionIn(vmEntryRecord(vm.topEntryFrame)->m_context)) {
-            otherFrames = makeUnique<Vector<StackFrame>>();
-            getAsyncStackTrace(owner, *otherFrames, awaiter, maxStackSize);
-        }
-    }
-    if constexpr (isUnderHostFunction) {
-        if (!otherFrames) {
-            otherFrames = makeUnique<Vector<StackFrame>>();
-            otherFrames->reserveInitialCapacity(1);
-        }
-        otherFrames->insert(0, StackFrame(vm, owner, hostFunctionOnTop));
-    }
-    if (otherFrames)
-        otherFrames->shrinkToFit();
-    return trace;
-}
-
-NEVER_INLINE AOT::ReturnAddressTrace* Interpreter::tryGetStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame* callFrame)
-{
-    JSFunction* hostFunctionOnTop = maxStackSize > 1 ? hostFunctionCalledFromCompiledCode(callFrame) : nullptr;
-    if (!hostFunctionOnTop)
-        return nullptr;
-    CallFrame* thunkFrame = callFrame->callerFrame();
-    return getStackTraceAsReturnAddresses<true>(owner, maxStackSize, otherFrames, thunkFrame->callerFrame(), removeCodePtrTag(thunkFrame->rawReturnPC()), hostFunctionOnTop);
-}
-
-bool Interpreter::tryDeferStackCapture(Exception* exception)
-{
-    using Place = AOT::Instance::StackTraceInfo;
-    VM& vm = this->vm();
-    CallFrame* callFrame = vm.topCallFrame;
-    if (!callFrame || Options::exceptionStackTraceLimit() <= 1 || vm.m_aotInstances.size() != 1 || vm.m_aotInstances[0]->callSiteOverrides)
-        return false;
-    JSFunction* hostFunction = nullptr;
-    CallFrame* thunkFrame = callFrame;
-    if (void* returnPCInStub = AOT::returnAddressForFrame(callFrame, __builtin_frame_address(0))) {
-        AOT::ImageAddressInfo inStubs = AOT::classifyAddress(returnPCInStub);
-        if (inStubs.kind != AOT::ImageAddressInfo::Stub || inStubs.index == AOT::ImageAddressInfo::frameMayBeHostFunction || callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
-            return false;
-    } else {
-        hostFunction = hostFunctionCalledFromCompiledCode(callFrame);
-        if (!hostFunction)
-            return false;
-        thunkFrame = callFrame->callerFrame();
-    }
-    void* returnPC = removeCodePtrTag(thunkFrame->rawReturnPC());
-    AOT::Instance* instance = vm.m_aotInstances[0];
-    const AOT::Instance::CachedAddressInfo* asked = instance->resolveReturnAddress(returnPC);
-    if (!asked)
-        return false;
-    Place place = instance->stackTraceInfos()[asked - instance->cachedReturnAddresses];
-    bool callerIsShown;
-    if (hostFunction)
-        callerIsShown = place.kind == Place::IsVisible || (place.kind == Place::IsInInlinedBody && !place.isConstructCall() && (place.callSiteBits & shownFrameCountMask) > 1);
-    else
-        callerIsShown = (place.kind == Place::IsVisible && !AOT::typedFunctionIsSynthetic(place.typedFunction)) || (place.kind == Place::IsInInlinedBody && !place.isConstructCall() && (place.callSiteBits >> shownFrameCountBits & shownFrameCountMask) > 1);
-    if (!callerIsShown)
-        return false;
-    vm.finishDeferredStackCapture();
-    vm.deferredStackCapture = { exception, hostFunction, thunkFrame->callerFrame(), returnPC };
-    return true;
-}
-
-bool Interpreter::hostFunctionThrownValueIsIgnored()
-{
-    VM& vm = this->vm();
-    CallFrame* callFrame = vm.topCallFrame;
-    if (!vm.useImmutableIntrinsics || !callFrame || vm.m_aotInstances.size() != 1 || vm.exceptionForInspection() || Options::breakOnThrow())
-        return false;
-    AOT::Instance* instance = vm.m_aotInstances[0];
-    if (instance->callSiteOverrides || instance->globalObject->debugger() || AOT::returnAddressForFrame(callFrame, __builtin_frame_address(0)) || !hostFunctionCalledFromCompiledCode(callFrame))
-        return false;
-    CallFrame* thunkFrame = callFrame->callerFrame();
-    return instance->nearestHandlerIgnoresValue(vm, thunkFrame->callerFrame(), removeCodePtrTag(thunkFrame->rawReturnPC()));
-}
-
-AOT::ReturnAddressTrace* Interpreter::getStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC)
-{
-    if (!hostFunction)
-        return getStackTraceAsReturnAddresses<false>(owner, maxStackSize, otherFrames, callerFrame, returnPC, nullptr);
-    return getStackTraceAsReturnAddresses<true>(owner, maxStackSize, otherFrames, callerFrame, returnPC, hostFunction);
-}
-
-AOT::ReturnAddressTrace* Interpreter::tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames)
-{
-    VM& vm = this->vm();
-    CallFrame* callFrame = vm.topCallFrame;
-    if (!callFrame || !maxStackSize || vm.m_aotInstances.isEmpty())
-        return nullptr;
-    for (AOT::Instance* each : vm.m_aotInstances) {
-        if (each->callSiteOverrides)
-            return nullptr;
-    }
-    void* returnPC = AOT::returnAddressForFrame(callFrame, __builtin_frame_address(0));
-    if (!returnPC) [[unlikely]]
-        return tryGetStackTraceUnderHostFunction(owner, maxStackSize, otherFrames, callFrame);
-    return getStackTraceAsReturnAddresses<false>(owner, maxStackSize, otherFrames, callFrame, returnPC, nullptr);
-}
-
-AOT::ReturnAddressTrace* Interpreter::tryGetStackTraceSkippingConstructors(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructor)
-{
-    VM& vm = this->vm();
-    CallFrame* callFrame = vm.topCallFrame;
-    if (!callFrame || !maxStackSize || vm.m_aotInstances.isEmpty())
-        return nullptr;
-    for (AOT::Instance* each : vm.m_aotInstances) {
-        if (each->callSiteOverrides)
-            return nullptr;
-    }
-    void* returnPC = AOT::returnAddressForFrame(callFrame, __builtin_frame_address(0));
-    if (!returnPC)
-        return nullptr;
-    return getStackTraceAsReturnAddresses<false, true>(owner, maxStackSize, otherFrames, callFrame, returnPC, nullptr, lastConstructor);
-}
-#endif
-
-void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo, const FramesAlreadyInTrace* alreadyInTrace)
+void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo)
 {
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
     CallFrame* callFrame = vm.topCallFrame;
     if (!callFrame || !maxStackSize)
         return;
-    size_t maxAsyncStackSize = maxStackSize;
-    if (alreadyInTrace)
-        maxStackSize -= alreadyInTrace->numberShown;
 
     size_t skippedFrames = 0;
 
@@ -1034,50 +736,35 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     }
 
+    appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller }, maxStackSize);
+}
+
+void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, const StackTraceStart& start, size_t maxStackSize)
+{
+    AssertNoGC assertNoGC;
+    VM& vm = this->vm();
+
+    ASSERT(start.numberOfFramesAbove <= maxStackSize);
+    size_t maxResultsSize = maxStackSize - start.numberOfFramesAbove;
+    size_t skippedFrames = 0;
+    size_t framesToSkip = start.framesToSkip;
+    JSCell* caller = start.caller;
     bool foundCaller = !caller;
-#if ENABLE(AOT)
     JSCell* asyncStackTraceOriginGenerator = nullptr;
-#else
-    JSAsyncFunctionGenerator* asyncStackTraceOriginGenerator = nullptr;
-#endif
     size_t asyncStackTraceInsertPos = 0;
-    EntryFrame* previousEntryFrame = alreadyInTrace ? vm.topEntryFrame : nullptr;
-    size_t previousEntryFrameStackTraceInsertPos = 0;
+    EntryFrame* previousEntryFrame = start.entryFrameOfFramesAbove;
+    size_t previousEntryFrameStackTraceInsertPos = results.size();
     auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
         ASSERT(Options::useAsyncStackTrace());
-        auto* record = vmEntryRecord(previousEntryFrame);
-        if (record->m_context) {
-            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(record->m_context)) {
-                asyncStackTraceOriginGenerator = generator;
-                asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
-            }
-#if ENABLE(AOT)
-            else if (AOT::Typed::isAsyncFunctionResumeClosure(record->m_context)) {
-                asyncStackTraceOriginGenerator = record->m_context;
-                asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
-            }
-#endif
+        if (JSCell* awaiter = asyncFunctionIn(vmEntryRecord(previousEntryFrame)->m_context)) {
+            asyncStackTraceOriginGenerator = awaiter;
+            asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
         }
     };
 
-#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
-    constexpr bool builtinsHaveLinesAndColumns = true;
-#else
-    constexpr bool builtinsHaveLinesAndColumns = false;
-#endif
-    bool isAtTheTop = !alreadyInTrace && (!caller || framesToSkip);
-    auto appendFrameOf = [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
-        if (results.size() >= maxStackSize)
+    auto appendFrame = [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+        if (results.size() >= maxResultsSize)
             return IterationStatus::Done;
-        if (visitor->isTailDeleted() || (visitor->aotFunction() && visitor->isHiddenAOTFrame(isAtTheTop)))
-            return IterationStatus::Continue;
-        isAtTheTop = false;
-        if (!visitor->aotFunction() && !visitor->isNativeCalleeFrame() && visitor->callee().isCell() && !*visitor->callFrame()->addressOfCodeBlock()) {
-            if (auto* function = dynamicDowncast<JSFunction>(visitor->callee().asCell()); function && !function->isHostOrBuiltinFunction())
-                return IterationStatus::Continue;
-            if (isSlimClosureType(visitor->callee().asCell()->type()))
-                return IterationStatus::Continue;
-        }
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;
@@ -1097,87 +784,13 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 updateAsyncStackTraceOriginGenerator();
         }
 
-        if (!visitor->isImplementationVisibilityPrivate()) {
-            if (visitor->isNativeCalleeFrame()) {
-                auto* nativeCallee = visitor->callee().asNativeCallee();
-                switch (nativeCallee->category()) {
-                case NativeCallee::Category::Wasm: {
-                    results.append(StackFrame(visitor->wasmFunctionIndexOrName(), visitor->wasmFunctionIndex()));
-                    break;
-                }
-                case NativeCallee::Category::InlineCache: {
-                    break;
-                }
-                }
 #if ENABLE(AOT)
-            } else if (visitor->isTypedAOTFrame()) {
-                AOT::FunctionRef function = visitor->aotFunction();
-                results.append(StackFrame(vm, owner, AOT::livenessToken(function.instance), function.index, visitor->typedAOTFunction(), visitor->bytecodeIndex()));
-                if (visitor.isAtConstructedCompiledFrame()) [[unlikely]]
-                    results.last().setIsConstructed();
-            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
-                if (CodeBlock* codeBlock = function.codeBlockIfExists())
-                    results.append(StackFrame(vm, owner, codeBlock, visitor->bytecodeIndex()));
-                else
-                    results.append(StackFrame(vm, owner, nullptr, function.executable(), function.info().kind(), AOT::livenessToken(function.instance), visitor->bytecodeIndex()));
-#endif
-#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
-            } else if (!!visitor->codeBlock())
-#else
-            } else if (visitor->hasCode() && !visitor->isBuiltinFunction())
-#endif
-                results.append(visitor->callee().asCell() ? StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()) : StackFrame(vm, owner, visitor->codeBlock(), visitor->bytecodeIndex()));
-            else
-                results.append(StackFrame(vm, owner, visitor->callee().asCell()));
-
-            previousEntryFrame = currentEntryFrame;
-            previousEntryFrameStackTraceInsertPos = results.size();
-#if ENABLE(AOT)
-            if (visitor->isTypedAOTFrame()) {
-                alignas(AOT::StackTraceFrame) std::array<std::byte, 64 * sizeof(AOT::StackTraceFrame)> storage;
-                auto frames = spanReinterpretCast<AOT::StackTraceFrame>(std::span { storage });
-                JSCell* token = AOT::livenessToken(visitor->aotFunction().instance);
-                while (results.size() < maxStackSize) {
-                    size_t room = std::min<size_t>(maxStackSize - results.size(), frames.size());
-                    unsigned count = visitor.gotoLastPlainCompiledCaller(frames.first(room));
-                    StackFrame::appendTypedFrames(vm, owner, token, frames.first(count), results, count == frames.size());
-                    if (count < room)
-                        break;
-                }
-                previousEntryFrameStackTraceInsertPos = results.size();
-            }
-#endif
-        }
-        return IterationStatus::Continue;
-    };
-#if ENABLE(AOT)
-    if (alreadyInTrace)
-        StackVisitor::visitCompiledFrameCallers(vm, alreadyInTrace->lastCallFrame, alreadyInTrace->lastReturnPC, appendFrameOf);
-    else if (vm.useImmutableIntrinsics)
-        StackVisitor::visit(callFrame, vm, appendFrameOf);
-    else
-#endif
-    StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
-        if (results.size() >= maxStackSize)
+        if (start.compiledFramesBelow && visitor->isCompiledFrame()) {
+            if (!asyncStackTraceOriginGenerator)
+                start.compiledFramesBelow->emplace(visitor.compiledFrames());
             return IterationStatus::Done;
-
-        if (skippedFrames < framesToSkip) {
-            skippedFrames++;
-            return IterationStatus::Continue;
         }
-
-        if (!foundCaller) {
-            if (!visitor->callee().isNativeCallee() && visitor->callee().asCell() == caller)
-                foundCaller = true;
-            skippedFrames++;
-            return IterationStatus::Continue;
-        }
-
-        auto* currentEntryFrame = visitor->entryFrame();
-        if (Options::useAsyncStackTrace()) {
-            if (currentEntryFrame != previousEntryFrame && previousEntryFrame)
-                updateAsyncStackTraceOriginGenerator();
-        }
+#endif
 
         if (!visitor->isImplementationVisibilityPrivate()) {
             if (visitor->isNativeCalleeFrame()) {
@@ -1191,6 +804,11 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                     break;
                 }
                 }
+#if ENABLE(AOT)
+            } else if (visitor->isCompiledFrame()) {
+                const AOT::CompiledFrame& frame = visitor->compiledFrame();
+                results.append(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }));
+#endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
 #else
@@ -1204,14 +822,25 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             previousEntryFrameStackTraceInsertPos = results.size();
         }
         return IterationStatus::Continue;
-    });
+    };
+#if ENABLE(AOT)
+    if (start.compiledFrameExit)
+        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame);
+    else
+#endif
+        StackVisitor::visit(start.callFrame, vm, appendFrame);
+
+#if ENABLE(AOT)
+    if (start.compiledFramesBelow)
+        return;
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // Add the single async frame if it exists and we have space
-    if (maxStackSize > results.size()) {
+    if (maxResultsSize > results.size()) {
         const auto& appender = vm.onAppendStackTrace();
         if (appender)
-            appender(vm, owner, results, maxStackSize - results.size());
+            appender(vm, owner, results, maxResultsSize - results.size());
     }
 #endif
 
@@ -1220,15 +849,9 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         // that wasn't captured during stack traversal (e.g. TLA)
         if (!asyncStackTraceOriginGenerator && previousEntryFrame)
             updateAsyncStackTraceOriginGenerator();
-#if ENABLE(AOT)
-        if (asyncStackTraceOriginGenerator && asyncStackTraceOriginGenerator->type() == JSFunctionType && asyncStackTraceInsertPos == results.size()) {
-            getAsyncStackTrace(owner, results, asyncStackTraceOriginGenerator, maxAsyncStackSize > std::numeric_limits<size_t>::max() - results.size() ? maxAsyncStackSize : results.size() + maxAsyncStackSize);
-            return;
-        }
-#endif
         if (asyncStackTraceOriginGenerator) {
             Vector<StackFrame> asyncFrames;
-            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxAsyncStackSize);
+            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
             if (!asyncFrames.isEmpty())
                 results.insertVector(asyncStackTraceInsertPos, asyncFrames);
         }
@@ -1321,6 +944,12 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     VM& vm = this->vm();
     bool result = false;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+#if ENABLE(AOT)
+        if (visitor->isCompiledFrame()) {
+            result = AOT::isCaughtByCompiledCode(vm, visitor.compiledFrames());
+            return IterationStatus::Done;
+        }
+#endif
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Done;
 
@@ -1362,20 +991,6 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
             m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
     }
 }
-
-#if ENABLE(AOT)
-CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, const AOT::FunctionRef& function)
-{
-    m_valid = !!handler;
-    if (!m_valid)
-        return;
-    m_type = handler->type();
-    m_isAOT = true;
-    m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(function.catchEntrypointAddress(handler->target)));
-    RELEASE_ASSERT(m_nativeCode);
-    m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
-}
-#endif
 
 #if ENABLE(WEBASSEMBLY)
 CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* callee)
@@ -1434,76 +1049,38 @@ public:
 #endif
 
 #if ENABLE(AOT)
-    static constexpr bool wantsOnlyHandlers = true;
-
-    void didSkipAOTAdapterAtTop(CallFrame* adapter) const
+    NEVER_INLINE IterationStatus unwindCompiledFrames(AOT::CompiledFrameIterator& frames) const
     {
-        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
-    }
-
-    bool rejectsInFrame(StackVisitor& visitor, const AOT::FunctionRef& function) const
-    {
-        if (m_isTermination || visitor->isInlinedAOTFrame() || !function.info().isTyped || !AOT::typedFunctionRejectsOnThrow(function.info().typedFunction()))
-            return false;
-        m_handler.m_valid = true;
-        m_handler.m_isAOT = true;
-        m_handler.m_type = HandlerType::Catch;
-        m_handler.m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(AOT::rejectInFrameThunk());
-        m_handler.m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
-        return true;
-    }
-
-    NEVER_INLINE IterationStatus unwindCompiledFrame(StackVisitor& visitor) const
-    {
-        AOT::FunctionRef function = visitor->aotFunction();
         m_codeBlock = nullptr;
-        if (function.info().hasNoHandlers) {
-            bool rejects = rejectsInFrame(visitor, function);
-            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
-            if (rejects || visitor->callerIsEntryFrame())
-                return IterationStatus::Done;
-            if (visitor.gotoLastCompiledCallerWithoutHandlers(m_vmEntryRecord->calleeSaveRegistersBuffer, m_vmCalleeSaveBufferSlotsByRegIndex)) {
-                m_callFrame = visitor->callFrame();
-                if (CallFrame* adapter = visitor->aotAdapterFrame())
-                    copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
-                if (visitor->callerIsEntryFrame())
-                    return IterationStatus::Done;
-            }
-            return IterationStatus::Continue;
+        AOT::CompiledUnwindResult result = AOT::unwindCompiledFrames(m_vm, frames, *m_vmEntryRecord, m_isTermination);
+        switch (result.status) {
+        case AOT::CompiledUnwindStatus::FoundHandler:
+            m_callFrame = result.handler.callFrame;
+            m_handler = CatchInfo(result.handler);
+            break;
+        case AOT::CompiledUnwindStatus::LeftCompiledCode:
+            m_exitFromCompiledCode = frames.exit();
+            break;
+        case AOT::CompiledUnwindStatus::ReachedEntryFrame:
+            break;
         }
-        if (visitor->isInlinedAOTFrame() && !visitor->isTypedAOTFrame())
-            return IterationStatus::Continue;
-        RELEASE_ASSERT(visitor->bytecodeIndex());
-        if (!m_isTermination) {
-            UnlinkedHandlerInfo scratchHandler;
-            m_handler = { function.handlerFor(visitor->bytecodeIndex().offset(), scratchHandler), function };
-            if (m_handler.m_valid)
-                return IterationStatus::Done;
-        }
-        if (visitor->isInlinedAOTFrame())
-            return IterationStatus::Continue;
-        bool rejects = rejectsInFrame(visitor, function);
-        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
-        return rejects || visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+        return IterationStatus::Done;
     }
 
-    NEVER_INLINE void copyAdapterCalleeSaves(CallFrame* adapter) const
-    {
-        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
-    }
+    std::optional<AOT::CompiledFrameIterator::Exit> takeExitFromCompiledCode() const { return std::exchange(m_exitFromCompiledCode, std::nullopt); }
 #endif
 
     IterationStatus operator()(StackVisitor& visitor) const
     {
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
-        m_handler.m_valid = false;
 #if ENABLE(AOT)
-        if (visitor->aotFunction()) [[unlikely]]
-            return unwindCompiledFrame(visitor);
+        if (visitor->isCompiledFrame()) [[unlikely]]
+            return unwindCompiledFrames(visitor.compiledFrames());
 #endif
         m_codeBlock = visitor->codeBlock();
 
+        m_handler.m_valid = false;
         if (m_codeBlock) {
             if (!m_isTermination) {
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
@@ -1545,7 +1122,7 @@ public:
             }
         }
 
-        if (!m_callFrame->isNativeCalleeFrame() && m_callFrame->jsCallee() && JSC::isRemoteFunction(m_callFrame->jsCallee()) && !m_isTermination) {
+        if (!m_callFrame->isNativeCalleeFrame() && JSC::isRemoteFunction(m_callFrame->jsCallee()) && !m_isTermination) {
             // Continue searching for a handler, but mark that a marshalling function was on the stack so that we can
             // translate the exception before jumping to the handler.
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
@@ -1554,11 +1131,7 @@ public:
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
 
-        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
-#if ENABLE(AOT)
-        if (CallFrame* adapter = visitor->aotAdapterFrame(); adapter && std::bit_cast<uintptr_t>(adapter) < std::bit_cast<uintptr_t>(m_vm.topEntryFrame)) [[unlikely]]
-            copyAdapterCalleeSaves(adapter);
-#endif
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
 
         bool shouldStopUnwinding = visitor->callerIsEntryFrame();
         if (shouldStopUnwinding)
@@ -1578,6 +1151,9 @@ private:
     Exception* m_exception;
     mutable RefPtr<const Wasm::Tag> m_wasmTag;
     bool m_catchableFromWasm { false };
+#endif
+#if ENABLE(AOT)
+    mutable std::optional<AOT::CompiledFrameIterator::Exit> m_exitFromCompiledCode;
 #endif
 };
 
@@ -1637,7 +1213,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ASSERT(reinterpret_cast<void*>(callFrame) != vm.topEntryFrame);
-    CodeBlock* codeBlock = nullptr;
+    CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
 
     JSValue exceptionValue = exception->value();
     ASSERT(!exceptionValue.isEmpty());
@@ -1654,6 +1230,10 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
     StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
+#if ENABLE(AOT)
+    while (auto exit = functor.takeExitFromCompiledCode())
+        StackVisitor::visitFrom(vm, *exit, functor);
+#endif
 
     if (seenRemoteFunction) {
         ASSERT(!vm.isTerminationException(exception));
@@ -1698,7 +1278,7 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-NEVER_INLINE JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
+JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
 #else
 JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj)
 #endif
@@ -1740,6 +1320,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
         return throwNonStaticCodeError(globalObject, throwScope);
 #endif
 
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Interpreter, Abort, JSValue)
     // First check if the "program" is actually just a JSON object. If so,
     // we'll handle the JSON object here. Else, we'll handle real JS code
     // below at failedJSONP.
@@ -1927,7 +1508,23 @@ failedJSONP:
     if (Options::useRunOnceCodeRelease() && program->canReleaseLinkedCodeNow(vm))
         program->clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*program->subspace()));
     return result;
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
+
+#if ENABLE(AOT)
+// Never inlined: executeCall and executeConstruct would otherwise have words in their frames that only a validated call writes, and the
+// conservative scan reads whatever an earlier call left in them.
+template<CodeSpecializationKind kind>
+static NEVER_INLINE EncodedJSValue enterNativeFunctionUnderValidation(JSGlobalObject* globalObject, JSObject* callee, JSValue thisValueOrNewTarget, const ArgList& args, TaggedNativeFunction nativeFunction, ProtoCallFrame& protoCallFrame)
+{
+    VM& vm = globalObject->vm();
+    AOT::NativeCallValidationScope validation(vm, { globalObject, callee, kind, thisValueOrNewTarget, args });
+    EncodedJSValue result = vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame);
+    if constexpr (kind == CodeSpecializationKind::CodeForCall)
+        validation.didReturn(JSValue::decode(result));
+    return result;
+}
+#endif
 
 JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
 {
@@ -1955,44 +1552,6 @@ JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell*
     RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, combinedArgs));
 }
 
-#if ENABLE(AOT)
-static ALWAYS_INLINE JSValue callAOTClosure(VM& vm, JSObject* closure, JSGlobalObject* globalObject, JSValue thisValue, JSCell* context, const ArgList& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    VMEntryScope entryScope(vm, globalObject);
-    if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]]
-        return throwStackOverflowError(globalObject, scope);
-
-    if (vm.disallowVMEntryCount) [[unlikely]]
-        return VM::checkVMEntryPermission();
-
-    scope.release();
-    void* entry = (closure->type() == JSFunctionType ? AOT::closureEntrypoint() : AOT::slimClosureEntrypoint()).taggedPtr();
-    switch (args.size()) {
-    case 0:
-        return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, nullptr, closure, thisValue, context));
-    case 1:
-        return JSValue::decode(vmEntryToJavaScriptWith1Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0)));
-    case 2:
-        return JSValue::decode(vmEntryToJavaScriptWith2Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1)));
-    case 3:
-        return JSValue::decode(vmEntryToJavaScriptWith3Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2)));
-    case 4:
-        return JSValue::decode(vmEntryToJavaScriptWith4Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3)));
-    case 5:
-        return JSValue::decode(vmEntryToJavaScriptWith5Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4)));
-    case 6:
-        return JSValue::decode(vmEntryToJavaScriptWith6Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4), args.at(5)));
-    default:
-        break;
-    }
-    ProtoCallFrame protoCallFrame;
-    protoCallFrame.init(nullptr, globalObject, closure, thisValue, context, 1 + args.size(), args.data());
-    return JSValue::decode(vmEntryToJavaScript(entry, &vm, &protoCallFrame));
-}
-#endif
-
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     auto clobberizeValidator = makeScopeExit([&] {
@@ -2005,11 +1564,12 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
-    bool isJSCall = callData.type == CallData::Type::JS;
 #if ENABLE(AOT)
-    if (isJSCall && !callData.js.functionExecutable)
-        RELEASE_AND_RETURN(scope, callAOTClosure(vm, function, callData.js.scope->realm(), thisValue, context, args));
+    if (callData.type == CallData::Type::Compiled)
+        RELEASE_AND_RETURN(scope, AOT::callCompiledCode(vm, function, callData, thisValue, context, args));
 #endif
+
+    bool isJSCall = callData.type == CallData::Type::JS;
     JSScope* functionScope = nullptr;
     FunctionExecutable* functionExecutable = nullptr;
     TaggedNativeFunction nativeFunction;
@@ -2067,13 +1627,17 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
         return JSValue::decode(vmEntryToWasm(uncheckedDowncast<WebAssemblyFunction>(function)->jsToWasm(ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
 #endif
 
+#if ENABLE(AOT)
+    if (AOT::validatesRuntime(vm)) [[unlikely]]
+        return JSValue::decode(enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForCall>(globalObject, function, thisValue, args, nativeFunction, protoCallFrame));
+#endif
     return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
 }
 
 JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     VM& vm = this->vm();
-    if (callData.type == CallData::Type::JS || !callData.native.isBoundFunction)
+    if (callData.type != CallData::Type::Native || !callData.native.isBoundFunction)
         return executeCallImpl(vm, function, callData, thisValue, context, args);
 
     // Only one-level unwrap is enough! We already made JSBoundFunction's nest smaller.
@@ -2103,6 +1667,11 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
 
     throwScope.assertNoException();
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
+
+#if ENABLE(AOT)
+    if (constructData.type == CallData::Type::Compiled)
+        RELEASE_AND_RETURN(throwScope, AOT::constructCompiledCode(vm, constructor, constructData, args, newTarget));
+#endif
 
     bool isJSConstruct = (constructData.type == CallData::Type::JS);
     JSScope* scope = nullptr;
@@ -2155,8 +1724,14 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     if (isJSConstruct) {
         ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
         result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
-    } else
-        result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
+    } else {
+#if ENABLE(AOT)
+        if (AOT::validatesRuntime(vm)) [[unlikely]]
+            result = enterNativeFunctionUnderValidation<CodeSpecializationKind::CodeForConstruct>(globalObject, constructor, newTarget, args, constructData.native.function, protoCallFrame);
+        else
+#endif
+            result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
+    }
 
     // We need to do an explicit exception check so that we don't return a non-null JSObject*
     // if an exception was thrown.
@@ -2199,8 +1774,9 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     return newCodeBlock;
 }
 
-JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScope* scope)
+NEVER_INLINE JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScope* scope)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &Interpreter::executeEval);
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -2437,31 +2013,13 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     RefPtr<JSC::JITCode> jitCode;
 
     ProtoCallFrame protoCallFrame;
-    EncodedJSValue args[numberOfArguments + 2] = {
+    EncodedJSValue args[numberOfArguments] = {
         JSValue::encode(record),
         JSValue::encode(record->internalField(JSModuleRecord::Field::State).get()),
         JSValue::encode(sentValue),
         JSValue::encode(resumeMode),
         JSValue::encode(scope),
     };
-
-#if ENABLE(AOT)
-    if (executable->programModule()) {
-        {
-            DeferTraps deferTraps(vm);
-            AOT::Instance& instance = AOT::Instance::ensure(record->moduleLoader());
-            uint64_t entry = instance.prepareModuleCode(executable, scope);
-            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, throwScope.exception());
-            args[numberOfArguments] = std::bit_cast<EncodedJSValue>(&instance);
-            args[numberOfArguments + 1] = static_cast<EncodedJSValue>(entry);
-            protoCallFrame.init(nullptr, globalObject, callee, jsUndefined(), nullptr, numberOfArguments + 3, args);
-            record->internalField(JSModuleRecord::Field::State).set(vm, record, jsNumber(static_cast<int>(JSModuleRecord::State::Executing)));
-        }
-        JSValue yielded = JSValue::decode(vmEntryToJavaScript(AOT::moduleCodeEntrypoint().taggedPtr(), &vm, &protoCallFrame));
-        RETURN_IF_EXCEPTION(throwScope, { });
-        return AOT::Instance::ensure(record->moduleLoader()).didRunModuleCode(record, executable, yielded);
-    }
-#endif
 
     {
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.

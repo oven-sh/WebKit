@@ -56,9 +56,6 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*);
 
-    static constexpr ScopeOffset starNamespaceScopeOffset() { return ScopeOffset(0); }
-    static constexpr ScopeOffset moduleLoaderScopeOffset() { return ScopeOffset(1); }
-
     static size_t offsetOfModuleRecord(SymbolTable* symbolTable)
     {
         size_t offset = Base::allocationSize(symbolTable);

@@ -1,0 +1,120 @@
+# `out += text.slice(a, b)`: a range of a string that is only appended is copied from the string into the builder, and no substring is created
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number, v2: number):
+    v3 = StringBuilderBegin
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2 method=Slice
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    StringBuilderAppend v3, v8
+    v10 = StringBuilderFinish v3
+    Return v10
+}
+# CHECK-LABEL: function f0 name="slice"
+# CHECK-NOT: = Substring
+# CHECK: StringBuilderAppendStringRange v3, v0, v6, v7
+# CHECK-NOT: = Substring
+
+function f1 name="substring" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number, v2: number):
+    v3 = StringBuilderBegin
+    v4 = GetStringLength v0
+    v5 = StringRange v4, v1, v2 method=Substring
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Substring v0, v6, v7
+    v9 = String string="<"
+    v10 = String string=">"
+    StringBuilderAppend v3, v9, v8, v10
+    v12 = StringBuilderFinish v3
+    Return v12
+}
+# CHECK-LABEL: function f1 name="substring"
+# CHECK-NOT: = Substring
+# CHECK: StringBuilderAppendConstant v3 string="<"
+# CHECK-NEXT: StringBuilderAppendStringRange v3, v0, v6, v7
+# CHECK-NEXT: StringBuilderAppendConstant v3 string=">"
+# CHECK-NOT: = Substring
+
+function f2 name="usedTwice" parameters=[{type=string}, {type=int[0, 10]}, {type=int[0, 10]}] results=[{type=string}] {
+  b0(v0: string, v1: int[0, 10], v2: int[0, 10]):
+    v3 = StringBuilderBegin
+    v4 = Substring v0, v1, v2
+    StringBuilderAppend v3, v4
+    StringBuilderDiscard v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="usedTwice"
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: v4: string = Substring v0, v1, v2
+# CHECK-NEXT: StringBuilderAppendString v3, v4
+# CHECK-NOT: StringBuilderAppendStringRange
+
+# The substring is created, or the creation throws, before the call
+function f3 name="callBetween" parameters=[{type=string}, {type=int[0, 10]}, {type=int[0, 10]}, {type=anything}] results=[{type=string}] {
+  b0(v0: string, v1: int[0, 10], v2: int[0, 10], v3: anything):
+    v4 = StringBuilderBegin
+    v5 = Substring v0, v1, v2
+    v6 = Call v3
+    StringBuilderAppend v4, v5
+    v8 = StringBuilderFinish v4
+    Return v8
+}
+# CHECK-LABEL: function f3 name="callBetween"
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: v5: string = Substring v0, v1, v2
+# CHECK: StringBuilderAppendString v4, v5
+# CHECK-NOT: StringBuilderAppendStringRange
+
+function f4 name="createdInOtherBlock" parameters=[{type=string}, {type=int[0, 10]}, {type=int[0, 10]}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: int[0, 10], v2: int[0, 10], v3: boolean):
+    v4 = StringBuilderBegin
+    v5 = Substring v0, v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    StringBuilderAppend v4, v5
+    Jump -> next b2()
+  b2():
+    v7 = StringBuilderFinish v4
+    Return v7
+}
+# CHECK-LABEL: function f4 name="createdInOtherBlock"
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: v5: string = Substring v0, v1, v2
+# CHECK: StringBuilderAppendString v4, v5
+# CHECK-NOT: StringBuilderAppendStringRange
+
+# `out += text.at(i)` appends "undefined" where the range is empty
+function f5 name="mayBeUndefined" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = StringBuilderBegin
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
+    StringBuilderAppend v2, v3
+    v5 = StringBuilderFinish v2
+    Return v5
+}
+# CHECK-LABEL: function f5 name="mayBeUndefined"
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: StringBuilderAppendStringOrNullish v2, v3
+# CHECK-NOT: StringBuilderAppendStringRange
+
+# The rule for inline built-ins comes first and takes a call that is still a call
+function f6 name="callNotExpanded" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number, v2: number):
+    v3 = StringBuilderBegin
+    v4 = CallBuiltin v0, v1, v2 overload=StringPrototypeSubstr/0
+    StringBuilderAppend v3, v4
+    v6 = StringBuilderFinish v3
+    Return v6
+}
+# CHECK-LABEL: function f6 name="callNotExpanded"
+# CHECK-NOT: StringBuilderAppendStringRange
+# CHECK: v4: string = CallInline v0, v1, v2 inlineBuiltin=StringSubstr
+# CHECK-NEXT: StringBuilderAppendString v3, v4
+# CHECK-NOT: StringBuilderAppendStringRange

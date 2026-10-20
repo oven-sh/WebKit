@@ -1,0 +1,153 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTFunctionTables.h"
+#include "JSObject.h"
+#include <span>
+#include <wtf/Atomics.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC { namespace AOT {
+
+struct State;
+class ReifiedSlimClosure;
+
+template<typename Visitor>
+ALWAYS_INLINE void visitSlimClosureCaptures(const JSCell* cell, FunctionID function, Visitor& visitor)
+{
+    const EncodedJSValue* captures = reinterpret_cast<const EncodedJSValue*>(reinterpret_cast<const uint8_t*>(cell) + offsetOfSlimClosureCaptures);
+    unsigned numberOfReferences = captureCountsOf(function).references;
+    for (unsigned i = 0; i < numberOfReferences; ++i)
+        visitor.appendUnbarriered(JSValue::decode(captures[i]));
+}
+
+class SlimClosure final : public JSObject {
+public:
+    using Base = JSObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | OverridesGetOwnPropertyNames | OverridesPut | OverridesIsExtensible | OverridesGetCallData | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ImplementsHasInstance | ImplementsDefaultHasInstance;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static SlimClosure* create(VM&, Structure*, FunctionID, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
+    static SlimClosure* createForCompiledCode(VM&, Structure*, size_t allocationSize);
+
+    static constexpr ptrdiff_t offsetOfWord() { return OBJECT_OFFSETOF(SlimClosure, m_word); }
+    static constexpr ptrdiff_t offsetOfCaptures() { return sizeof(SlimClosure); }
+    static constexpr size_t allocationSize(unsigned numberOfCaptures) { return sizeof(SlimClosure) + numberOfCaptures * sizeof(uint64_t); }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> ALWAYS_INLINE static bool tryVisitFields(SlimClosure*, Visitor&);
+    static void analyzeHeap(JSCell*, HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, VM&);
+    static CallData getCallData(JSCell*);
+    static CallData getConstructData(JSCell*);
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
+    static bool isExtensible(JSObject*, JSGlobalObject*);
+    static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+
+    FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_word)); }
+    FunctionKindData kind() const { return functionKindData(function()); }
+    bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
+    bool isBound() const { return kind().callable() == CallableKind::Bound; }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    State& state() const;
+    enum class PrototypeObject : bool { MadeAtFirstRead, MadeNow };
+    ReifiedSlimClosure* reify(VM&, PrototypeObject = PrototypeObject::MadeAtFirstRead);
+
+private:
+    SlimClosure(VM& vm, Structure* structure, uint64_t word)
+        : Base(vm, structure)
+        , m_word(word)
+    {
+    }
+
+    uint64_t m_word;
+};
+
+template<typename Visitor>
+ALWAYS_INLINE bool SlimClosure::tryVisitFields(SlimClosure* closure, Visitor& visitor)
+{
+    StructureID structureID = closure->structureID();
+    if (structureID.isNuked())
+        return false;
+    WTF::loadLoadFence();
+    if (structureID.decode()->typeInfo().type() != SlimClosureType)
+        return false;
+    uint64_t word = closure->m_word;
+    WTF::loadLoadFence();
+    if (closure->structureID() != structureID)
+        return false;
+    if (word)
+        visitSlimClosureCaptures(closure, FunctionID(ClosureWord::functionOf(word)), visitor);
+    return true;
+}
+
+class ReifiedSlimClosure final : public JSObjectWithButterfly {
+public:
+    using Base = JSObjectWithButterfly;
+    enum class Variant : uint8_t { Ordinary, Bound };
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesPut | ImplementsHasInstance | ImplementsDefaultHasInstance;
+    static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
+
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant);
+    static GetValueFunc prototypePropertyCreator();
+
+    static constexpr ptrdiff_t offsetOfFunctionIndexInButterfly() { return offsetInButterfly(firstOutOfLineOffset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)); }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(ReifiedSlimClosure* closure, Visitor& visitor) { visitSlimClosureCaptures(closure, closure->function(), visitor); }
+    static void analyzeHeap(JSCell*, HeapAnalyzer&);
+    static CallData getCallData(JSCell*);
+    static CallData getConstructData(JSCell*);
+
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
+
+    FunctionID function() const { return FunctionID(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
+    FunctionKindData kind() const { return functionKindData(function()); }
+    bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
+    bool isBound() const { return kind().callable() == CallableKind::Bound; }
+    std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
+    unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
+    State& state() const;
+
+private:
+    ReifiedSlimClosure() = delete;
+};
+
+static_assert(SlimClosure::offsetOfWord() == offsetOfSlimClosureWord);
+static_assert(sizeof(SlimClosure) == offsetOfSlimClosureCaptures);
+static_assert(sizeof(ReifiedSlimClosure) == sizeof(SlimClosure));
+
+} } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#endif // ENABLE(AOT)

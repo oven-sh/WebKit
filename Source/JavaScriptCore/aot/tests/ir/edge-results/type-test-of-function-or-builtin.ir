@@ -1,0 +1,101 @@
+# A test for a function of the application leaves no built-in on the edge that is taken and every built-in on the other. A built-in that is written in JavaScript passes the test for the function the program registers for it, and is a closure of that function from there on
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=12 function=f1
+function f0 name="ofTheApplication" captures=[{type=string}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: anything):
+    Return v1
+}
+function f1 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = CallList v0, v1, v2
+    Return v3
+}
+function f2 name="libraryBuiltinBesideFunction" parameters=[{type=f0|builtin(FunctionPrototypeCall)}] results=[{type=string}] {
+  b0(v0: f0|builtin(FunctionPrototypeCall)):
+    v1 = TypeTest v0 testedType=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = GetCapture v2 function=f0
+    Return v3
+  b2(v4):
+    v5 = String string=""
+    Return v5
+}
+# CHECK-LABEL: name="libraryBuiltinBesideFunction"
+# CHECK: b1(v2: f0):
+# CHECK: b2(v4: builtin(FunctionPrototypeCall)):
+function f3 name="nativeBuiltinBesideFunction" parameters=[{type=undefined|f0|builtin(FunctionPrototypeToString)}] results=[{type=undefined}] {
+  b0(v0: undefined|f0|builtin(FunctionPrototypeToString)):
+    v1 = TypeTest v0 testedType=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="nativeBuiltinBesideFunction"
+# CHECK: b1(v2: f0):
+# CHECK: b2(v3: undefined|builtin(FunctionPrototypeToString)):
+function f4 name="onlyBuiltins" parameters=[{type=builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)}] results=[{type=undefined}] {
+  b0(v0: builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)):
+    v1 = TypeTest v0 testedType=f0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Unreachable
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="onlyBuiltins"
+# CHECK: b1(v2: never):
+# CHECK: b2(v3: builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)):
+function f5 name="builtinAgainstItsOwnFunction" parameters=[{type=builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)}] results=[{type=undefined}] {
+  b0(v0: builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)):
+    v1 = TypeTest v0 testedType=f1
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="builtinAgainstItsOwnFunction"
+# CHECK: b1(v2: f1):
+# CHECK: b2(v3: builtin(FunctionPrototypeCall)|builtin(FunctionPrototypeToString)):
+function f6 name="testForBuiltin" parameters=[{type=f0|f1|builtin(FunctionPrototypeToString)}] results=[{type=undefined}] {
+  b0(v0: f0|f1|builtin(FunctionPrototypeToString)):
+    v1 = TypeTest v0 testedType=builtin(FunctionPrototypeCall)
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="testForBuiltin"
+# CHECK: b1(v2: builtin(FunctionPrototypeCall)):
+# CHECK: b2(v3: f0|f1|builtin(FunctionPrototypeToString)):
+function f7 name="testForAnyFunction" parameters=[{type=number|f0|builtin(FunctionPrototypeCall)}] results=[{type=undefined}] {
+  b0(v0: number|f0|builtin(FunctionPrototypeCall)):
+    v1 = TypeTest v0 testedType=function
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return
+  b2(v3):
+    Return
+}
+# CHECK-LABEL: name="testForAnyFunction"
+# CHECK: b1(v2: f0|builtin(FunctionPrototypeCall)):
+# CHECK: b2(v3: number):
+function f8 name="compared" parameters=[{type=f0|builtin(FunctionPrototypeCall)}, {type=f0}] results=[{type=undefined}] {
+  b0(v0: f0|builtin(FunctionPrototypeCall), v1: f0):
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="compared"
+# CHECK: b1(v3: f0):
+# CHECK: b2(v4: f0|builtin(FunctionPrototypeCall)):

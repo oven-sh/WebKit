@@ -25,12 +25,12 @@
 
 #include "config.h"
 #include "WasmIPIntSlowPaths.h"
-#include "CompilerHooks.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
 #include "FrameTracers.h"
@@ -228,7 +228,7 @@ static inline RefPtr<Wasm::JITCallee> jitCompileAndSetHeuristics(Wasm::IPIntCall
 
     if (compile) {
         if (Wasm::BBQPlan::ensureGlobalBBQAllowlist().containsWasmFunction(functionIndex)) {
-            auto plan = reinterpret_cast<decltype(&Wasm::BBQPlan::create)>(g_compilerHooks.newBBQPlan)(instance->vm(), const_cast<Wasm::ModuleInformation&>(moduleInformation), functionIndex, Ref { callee }, Ref { instance->module() }, Ref(*instance->calleeGroup()), Wasm::Plan::dontFinalize());
+            auto plan = callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &Wasm::BBQPlan::create>(instance->vm(), const_cast<Wasm::ModuleInformation&>(moduleInformation), functionIndex, Ref { callee }, Ref { instance->module() }, Ref(*instance->calleeGroup()), Wasm::Plan::dontFinalize());
             Wasm::ensureWorklist().enqueue(plan.get());
             if (!Options::useConcurrentJIT() || !Options::useWasmIPInt() || needsSIMDReplacement) [[unlikely]]
                 plan->waitForCompletion();

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GCAwareJITStubRoutine.h"
 
+#include "AOTRemovableFeature.h"
 #include "AccessCase.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
@@ -144,6 +145,7 @@ void PolymorphicAccessJITStubRoutine::invalidate()
 
 NEVER_INLINE unsigned PolymorphicAccessJITStubRoutine::computeHash(std::span<const Ref<AccessCase>> cases)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &PolymorphicAccessJITStubRoutine::computeHash);
     if (cases.size() == 1)
         return cases.front()->hash();
 

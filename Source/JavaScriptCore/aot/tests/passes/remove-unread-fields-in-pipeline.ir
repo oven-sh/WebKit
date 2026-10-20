@@ -1,0 +1,109 @@
+# From the flow analysis to the removal: a field that is never read, or only called with every call direct, does not exist
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="onlyCalled" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="neverRead" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="widget" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="observed" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="OnlyCalled" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="NeverRead" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything}}]
+layout L3 kind=Instance name="Widget" constructor=f6 fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="PresenceObserved" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="OnlyCalled" fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead{{*}}{key="n"
+# CHECK: layout L1 name="NeverRead" fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead{{*}}{key="n"
+# CHECK: layout L2 kind=Environment name="scope"{{*}}{key="unused"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: layout L3 kind=Instance name="Widget"{{*}}fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead{{*}}{key="n"
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f7
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f7
+    v7 = NewObject -, v6, v1 layout=L1 fields=[0, 1]
+    PutModuleVariable v7 variable=g1
+    v9 = NewObject -, v1, v2 layout=L2 fields=[0, 1]
+    v10 = NewClosure function=f6
+    v11 = NewClass v10 layout=L3
+    v12 = FinishClass v11 layout=L3
+    v13 = Construct v12, -, v1
+    PutModuleVariable v13 variable=g2
+    v15 = NewClosure function=f7
+    v16 = NewObject -, v15, v1 layout=L4 fields=[0, 1]
+    PutModuleVariable v16 variable=g3
+    v18 = CallDirect function=f1
+    v19 = CallDirect function=f2
+    v20 = CallDirect v9 function=f3
+    v21 = CallDirect function=f4
+    v22 = CallDirect function=f5
+    v23 = PropGet v0 key="print" [isFreeName]
+    v24 = Call v23, -, v18, v19, v20, v21, v22
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: layout=L0 fields=[1]
+# CHECK: layout=L1 fields=[1]
+# CHECK: layout=L2 fields=[0]
+# CHECK: layout=L4 fields=[0, 1]
+
+function f1 name="callsField" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="n"
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0
+    Return v1
+}
+function f2 name="readsOtherField" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="n"
+    Return v1
+}
+function f3 name="readsScope" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+}
+function f4 name="callsFieldOfInstance" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = PropGet v0 key="n"
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0
+    Return v1
+}
+function f5 name="asksForField" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = PropHas v0 key="run"
+    v2 = PropGet v0 key="n"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+function f6 name="Widget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3 fields=[]
+    v4 = NewClosure function=f7
+    PropSet v3, v4 key="run" mode=Strict
+    PropSet v3, v1 key="n" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: function f6 name="Widget"
+# CHECK-NOT: key="run"
+# CHECK: key="n"
+
+function f7 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

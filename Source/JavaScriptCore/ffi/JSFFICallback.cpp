@@ -30,12 +30,19 @@
 
 #include "Error.h"
 #include "ExceptionHelpers.h"
+#include "FFICallbackEntryPool.h"
 #include "FFICallbackThunk.h"
 #include "FFIConversions.h"
+#include "FFIStubs.h"
 #include "JSCInlines.h"
 #include "Options.h"
 #include <wtf/DataLog.h>
 #include <wtf/RawPointer.h>
+#include <wtf/text/MakeString.h>
+
+#if ENABLE(AOT)
+#include "AOTRuntimeCounters.h"
+#endif
 
 namespace JSC {
 
@@ -60,7 +67,10 @@ JSFFICallback::JSFFICallback(VM& vm, Structure* structure, Ref<FFI::Signature>&&
 {
 }
 
-NEVER_INLINE JSFFICallback::~JSFFICallback() = default;
+NEVER_INLINE JSFFICallback::~JSFFICallback()
+{
+    releasePoolEntry();
+}
 
 void JSFFICallback::destroy(JSCell* cell)
 {
@@ -80,13 +90,35 @@ Structure* JSFFICallback::createStructure(VM& vm, JSGlobalObject* globalObject, 
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
+#if FFI_CALLBACK_THUNK_SUPPORTED
+static void throwPoolFailure(JSGlobalObject* globalObject, ThrowScope& scope, FFI::CallbackEntryPool::Failure failure)
+{
+    switch (failure) {
+    case FFI::CallbackEntryPool::Failure::NoStubs:
+        throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
+        return;
+    case FFI::CallbackEntryPool::Failure::CannotPrepareContext:
+        throwTypeError(globalObject, scope, "bun:ffi: this process may not set up the entry points of JSCallback"_s);
+        return;
+    case FFI::CallbackEntryPool::Failure::NoFreeEntry:
+#if ENABLE(AOT)
+        AOT::countLimitHit(globalObject->vm(), AOT::LimitID::ForeignCallbackStubs);
+#endif
+        throwRangeError(globalObject, scope, makeString("bun:ffi: a compiled executable can have "_s, FFI::CallbackEntryPool::singleton().numberOfEntries(), " JSCallbacks open at a time. Close the ones that are no longer used"_s));
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif // FFI_CALLBACK_THUNK_SUPPORTED
+
 JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* callable, Ref<FFI::Signature>&& signature, bool threadsafe, void* embedderContext)
 {
     globalObject->ffiContext();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!Options::useJIT()) [[unlikely]] {
+    FFI::CodeSource source = FFI::codeSource();
+    if (source == FFI::CodeSource::None) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
         return nullptr;
     }
@@ -105,12 +137,24 @@ JSFFICallback* JSFFICallback::create(VM& vm, JSGlobalObject* globalObject, Struc
         throwTypeError(globalObject, scope, "bun:ffi: no threadsafe dispatch registered (FFIContext::setThreadsafeDispatch)"_s);
         return nullptr;
     }
+    std::optional<unsigned> poolEntry;
+    if (source == FFI::CodeSource::Stubs) {
+        auto entry = FFI::CallbackEntryPool::singleton().acquire();
+        if (!entry) [[unlikely]] {
+            throwPoolFailure(globalObject, scope, entry.error());
+            return nullptr;
+        }
+        poolEntry = *entry;
+    }
     JSFFICallback* callback = new (NotNull, allocateCell<JSFFICallback>(vm)) JSFFICallback(vm, structure, WTF::move(signature));
     callback->m_threadsafe = threadsafe;
     callback->m_embedderContext = embedderContext;
+    callback->m_poolEntry = poolEntry;
+    if (poolEntry)
+        FFI::CallbackEntryPool::singleton().bind(*poolEntry, *callback);
     callback->finishCreation(vm, callable);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!callback->m_entryCode) [[unlikely]] {
+    if (!callback->m_poolEntry && !callback->m_entryCode) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
@@ -127,9 +171,11 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
     m_callable.set(vm, this, callable);
 
 #if FFI_CALLBACK_THUNK_SUPPORTED
-    m_entryCode = FFI::generateCallbackThunk(vm, *this);
-    if (!m_entryCode) [[unlikely]]
-        return; // create() throws the OutOfMemoryError.
+    if (!m_poolEntry) {
+        m_entryCode = FFI::generateCallbackThunk(vm, *this);
+        if (!m_entryCode) [[unlikely]]
+            return; // create() throws the OutOfMemoryError.
+    }
 
     if (Options::verboseFFI()) [[unlikely]]
         dataLogLn("FFI: created JSFFICallback ", RawPointer(this), " signature ", m_signature->toString(), " entrypoint ", RawPointer(nativeEntrypoint()));
@@ -142,6 +188,8 @@ void JSFFICallback::finishCreation(VM& vm, JSObject* callable)
 
 void* JSFFICallback::nativeEntrypoint() const
 {
+    if (m_poolEntry)
+        return FFI::CallbackEntryPool::singleton().entrypoint(*m_poolEntry);
     return untagCFunctionPtr<void*, JITThunkPtrTag>(m_entryCode.code().taggedPtr());
 }
 
@@ -167,8 +215,18 @@ void JSFFICallback::close()
 
 void JSFFICallback::unroot()
 {
+    releasePoolEntry();
     if (auto* globalObject = this->globalObject())
         globalObject->ffiContext().removeLiveCallback(*globalObject, this);
+}
+
+void JSFFICallback::releasePoolEntry()
+{
+    if (!m_poolEntry)
+        return;
+    auto& pool = FFI::CallbackEntryPool::singleton();
+    if (pool.callbackAt(*m_poolEntry) == this)
+        pool.release(*m_poolEntry);
 }
 
 template<typename Visitor>

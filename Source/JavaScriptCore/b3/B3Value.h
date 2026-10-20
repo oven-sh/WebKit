@@ -35,9 +35,7 @@
 #include "B3SparseCollection.h"
 #include "B3Type.h"
 #include "B3ValueKey.h"
-#if USE(BUN_JSC_ADDITIONS)
 #include "B3Arena.h"
-#endif
 #include "B3Width.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/IteratorRange.h>
@@ -367,11 +365,7 @@ public:
 protected:
     Effects effectsSlow() const;
 
-#if USE(BUN_JSC_ADDITIONS)
     Value* cloneImpl(Arena*) const;
-#else
-    Value* cloneImpl() const;
-#endif
 
     void replaceWith(Kind, Type, BasicBlock*);
     void replaceWith(Kind, Type, BasicBlock*, Value*);
@@ -426,6 +420,7 @@ protected:
         case Fence:
         case SlotBase:
         case Get:
+        case Relocatable:
             return 0;
         case Return:
         case Identity:
@@ -433,6 +428,7 @@ protected:
         case Neg:
         case PurifyNaN:
         case Clz:
+        case PopCount:
         case Abs:
         case Ceil:
         case Floor:
@@ -614,10 +610,10 @@ protected:
     }
 
 private:
-#if USE(BUN_JSC_ADDITIONS)
     static char* allocateSpace(Arena* arena, Opcode opcode, size_t size, size_t alignment)
     {
         size_t adjacencyListSpace = Value::adjacencyListSpace(opcode);
+        // We must allocate enough space that replaceWithIdentity can work without buffer overflow.
         size_t allocIdentitySize = sizeof(Value) + sizeof(Value*);
         size_t allocSize = std::max(size + adjacencyListSpace, allocIdentitySize);
         if (!arena) [[unlikely]]
@@ -643,32 +639,6 @@ protected:
         result->m_isInArena = !!arena;
         return result;
     }
-#else
-    static char* allocateSpace(Opcode opcode, size_t size)
-    {
-        size_t adjacencyListSpace = Value::adjacencyListSpace(opcode);
-        // We must allocate enough space that replaceWithIdentity can work without buffer overflow.
-        size_t allocIdentitySize = sizeof(Value) + sizeof(Value*);
-        size_t allocSize = std::max(size + adjacencyListSpace, allocIdentitySize);
-        return static_cast<char*>(SequesteredArenaMalloc::malloc(allocSize));
-    }
-
-protected:
-    template<typename ValueType, typename... Arguments>
-    static ValueType* allocate(Arguments... arguments)
-    {
-        char* alloc = allocateSpace(ValueType::opcodeFromConstructor(arguments...), sizeof(ValueType));
-        return new (alloc) ValueType(arguments...);
-    }
-    template<typename ValueType>
-    static ValueType* allocate(const ValueType& valueToClone)
-    {
-        char* alloc = allocateSpace(valueToClone.opcode(), sizeof(ValueType));
-        ValueType* result = new (alloc) ValueType(valueToClone);
-        result->buildAdjacencyList(sizeof(ValueType), valueToClone);
-        return result;
-    }
-#endif
 
     // Protected so it will only be called from allocate above, possibly through the subclasses'copy constructors
     Value(const Value&) = default;
@@ -680,13 +650,8 @@ protected:
     size_t computeAdjacencyListOffset() const;
 
     friend class Procedure;
-#if USE(BUN_JSC_ADDITIONS)
-    friend class ProcedureFingerprint;
-#endif
     friend class SparseCollection<Value>;
-#if USE(BUN_JSC_ADDITIONS)
     friend struct ValueDestroyer;
-#endif
 
 private:
     template<typename... Arguments>
@@ -751,6 +716,7 @@ private:
         case Neg:
         case PurifyNaN:
         case Clz:
+        case PopCount:
         case Abs:
         case Ceil:
         case Floor:
@@ -981,9 +947,7 @@ private:
     Type m_type;
 protected:
     NumChildren m_numChildren;
-#if USE(BUN_JSC_ADDITIONS)
     bool m_isInArena { false };
-#endif
 private:
     Origin m_origin;
 
@@ -1008,7 +972,6 @@ public:
     BasicBlock* owner { nullptr }; // computed by Procedure::resetValueOwners().
 };
 
-#if USE(BUN_JSC_ADDITIONS)
 inline void ValueDestroyer::operator()(Value* value) const
 {
     bool isInArena = value->m_isInArena;
@@ -1016,7 +979,6 @@ inline void ValueDestroyer::operator()(Value* value) const
     if (!isInArena)
         SequesteredArenaMalloc::free(value);
 }
-#endif
 
 class DeepValueDump {
 public:

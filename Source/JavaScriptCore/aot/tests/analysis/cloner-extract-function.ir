@@ -1,0 +1,42 @@
+# Live-ins of an extracted region become parameters and constants are copied
+# FORM: Prepared
+# RUN: extract function=f0 region=b2,b3,b4
+# RUN(ENTRY): extract function=f0 region=b0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="whole" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: number):
+    v3 = Integer integer=5
+    v4 = TypeTest v1 testedType=object
+    Branch v0 -> taken b1(), notTaken b2(v2)
+  b1():
+    Return v1
+  b2(v5):
+    v6 = Add v5, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Mul v6, v3
+    Return v7
+  b4():
+    Return v1
+}
+# CHECK: check: CanClone
+# CHECK: live-ins: [v1 v4]
+# CHECK: function f1 {{*}} role=OutlinedBody {{*}} parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=anything}]
+# CHECK: b0([[A]]: anything, [[B]]: boolean, [[N]]: number):
+# CHECK-NOT: Integer
+# CHECK: Jump -> next [[H]]([[N]])
+# CHECK: [[H]]([[P]]: number):
+# CHECK: [[K1]]: 5 = Integer integer=5
+# CHECK: [[S]]: number = Add [[P]], [[K1]]
+# CHECK: Branch [[B]] -> taken [[T]](), notTaken [[F]]()
+# CHECK: [[T]]():
+# CHECK: [[K2]]: 5 = Integer integer=5
+# CHECK: [[M]]: number = Mul [[S]], [[K2]]
+# CHECK: Return [[M]]
+# CHECK: [[F]]():
+# CHECK-NOT: Integer
+# CHECK: Return [[A]]
+# ENTRY: check: Unknown
+# ENTRY-NOT: live-ins
+# ENTRY-NOT: function

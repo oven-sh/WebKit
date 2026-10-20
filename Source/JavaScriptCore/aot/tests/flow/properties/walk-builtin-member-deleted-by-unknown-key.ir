@@ -1,0 +1,19 @@
+# A delete under a key nobody knows may take any member away from its holder: every lookup on that holder goes on to the prototype. Another holder is not touched
+# RUN: flow-solve nodes
+# CHECK: , f0, v1) = {undefined|null|boolean|number|string|symbol|bigint|unknown|ConsoleLog}
+# CHECK: , f0, v3) = {MathMax}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = PropGet v0 key="log"
+    v2 = Builtin builtin=Math
+    v3 = PropGet v2 key="max"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="which" [isFreeName]
+    v6 = ToString v5
+    v7 = ElemDelete v0, v6 mode=Sloppy
+    Return
+}

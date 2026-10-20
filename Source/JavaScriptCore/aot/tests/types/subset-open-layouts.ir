@@ -1,0 +1,27 @@
+# As read, a position that names a layout promises an object and no more: two such positions are inside each other, and every object is inside them
+# FORM: AsRead
+# RUN: subset
+# RUN(PRINT): print
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t2: yes overlaps: yes
+# CHECK: t0 <= t3: no overlaps: yes
+# CHECK: t0 <= t5: no overlaps: yes
+# CHECK: t0 <= t6: yes overlaps: yes
+# CHECK: t0 <= t8: no overlaps: no
+# CHECK: t1 <= t0: yes overlaps: yes
+# CHECK: t2 <= t0: yes overlaps: yes
+# CHECK: t3 <= t0: yes overlaps: yes
+# CHECK: t4 <= t0: yes overlaps: yes
+# CHECK: t5 <= t0: yes overlaps: yes
+# CHECK: t6 <= t0: no overlaps: yes
+# CHECK: t7 <= t0: no overlaps: yes
+# CHECK: t7 <= t6: no overlaps: yes
+# CHECK: t8 <= t0: no overlaps: no
+# CHECK: laws hold
+# PRINT: parameters=[{type=object written=L0}, {type=object written=L1}, {type=object}, {type=function}, {type=f1}, {type=Array<number>}, {type=undefined|object written={{*}}L0}, {type=anything}, {type=string}]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle"
+function f0 name="types" parameters=[{type=L0}, {type=L1}, {type=object}, {type=function}, {type=f1}, {type=Array<number>}, {type=undefined|L0}, {type=anything}, {type=string}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}]

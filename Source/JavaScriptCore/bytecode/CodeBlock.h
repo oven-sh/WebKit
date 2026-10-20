@@ -50,10 +50,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 #if ENABLE(DFG_JIT)
-namespace AOT {
-class JITCode;
-struct Data;
-}
 namespace DFG {
 class JITData;
 } // namespace DFG
@@ -110,7 +106,6 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
-    enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
@@ -127,10 +122,10 @@ public:
 
 protected:
     CodeBlock(VM&, Structure*, CopyParsedBlockTag, CodeBlock& other);
-    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
+    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
 
     void finishCreation(VM&, CopyParsedBlockTag, CodeBlock& other);
-    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
+    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
 
     WriteBarrier<JSGlobalObject> m_globalObject;
 
@@ -586,20 +581,9 @@ public:
     SimpleJumpTable& baselineSwitchJumpTable(int tableIndex);
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
-#if ENABLE(AOT)
-    void installAOTCode(Ref<AOT::JITCode>&&);
-    void adoptAOTCode(AOT::JITCode&, AOT::Data*);
-    void releaseAOTData();
-    AOT::Data* aotData()
-    {
-        if (jitType() == JITType::AOTJIT)
-            return std::bit_cast<AOT::Data*>(m_jitData);
-        return nullptr;
-    }
-#endif
     BaselineJITData* baselineJITData()
     {
-        if (!JSC::JITCode::isOptimizingJIT(jitType()) && jitType() != JITType::AOTJIT)
+        if (!JSC::JITCode::isOptimizingJIT(jitType()))
             return std::bit_cast<BaselineJITData*>(m_jitData);
         return nullptr;
     }

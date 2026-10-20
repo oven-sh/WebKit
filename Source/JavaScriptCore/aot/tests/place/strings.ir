@@ -1,0 +1,44 @@
+# The tables name a string only where one of their records holds its number. The image keeps the text of those, and decides alone about a string that only code names
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables named-strings
+# RUN(UNNAMED): tables named-strings
+
+module m0 path="/src/\xc3\xb8.ts" displayPath="\xc3\xb8.ts" body=f0
+entry module=m0
+layout L0 name="AllocatedLayout" fields=[{key="fieldKey" declared={type=number} flags=[IsRequired]}]
+layout L1 name="UnallocatedLayout" fields=[{key="otherFieldKey" declared={type=number} flags=[IsRequired]}]
+variable g0 name="variableName" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="moduleBody" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = BigInt digits="12345678901234567890"
+    v7 = NewTemplateObject templateStrings=[{cooked="cookedPart" raw="rawPart"}] @10
+    v8 = String string="constantOfCode"
+    v9 = CallDirect function=f1
+    Return
+}
+function f1 name="calledFunction" results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK: "/src/\u{f8}.ts"
+# CHECK-NEXT: "\u{f8}.ts"
+# CHECK-NEXT: "AllocatedLayout"
+# CHECK-NEXT: "moduleBody"
+# CHECK-NEXT: "12345678901234567890"
+# CHECK-NEXT: "cookedPart"
+# CHECK-NEXT: "rawPart"
+# CHECK-NEXT: "calledFunction"
+
+# A key is named by its identifier number, a variable by its offset, and a layout that is never allocated has no record.
+# UNNAMED-NOT: "UnallocatedLayout"
+# UNNAMED-NOT: "fieldKey"
+# UNNAMED-NOT: "otherFieldKey"
+# UNNAMED-NOT: "variableName"
+# UNNAMED-NOT: "constantOfCode"

@@ -1,0 +1,53 @@
+# A switch over short texts compares the characters of a flat 8-bit subject in place, and calls the stub that packs a short string into a word only for other strings. Where the code is rarely run it always calls the stub, which takes fewer bytes
+# FORM: Selected
+# RUN: generate-code calls
+# STATISTIC: ShortStringsReadInPlace = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onOrdinaryPath" parameters=[{type=string}] results=[{type=i32}] {
+  b0(v0: string):
+    SwitchString v0 strings=["GET", "PUT", "POST", "DELETE"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=2
+    Return v2
+  b3():
+    v3 = Integer integer=3
+    Return v3
+  b4():
+    v4 = Integer integer=4
+    Return v4
+  b5():
+    v5 = Integer integer=5
+    Return v5
+}
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub ShortStringOfValue x1
+# CHECK-NOT: stub
+
+function f1 name="onRarePath" parameters=[{type=string}, {type=boolean}] results=[{type=i32}] {
+  b0(v0: string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b6()
+  b1() frequency=Rare:
+    SwitchString v0 strings=["GET", "PUT", "POST", "DELETE"] -> case b2(), case b3(), case b4(), case b5(), otherwise b6()
+  b2() frequency=Rare:
+    v2 = Integer integer=1
+    Return v2
+  b3() frequency=Rare:
+    v3 = Integer integer=2
+    Return v3
+  b4() frequency=Rare:
+    v4 = Integer integer=3
+    Return v4
+  b5() frequency=Rare:
+    v5 = Integer integer=4
+    Return v5
+  b6():
+    v6 = Integer integer=5
+    Return v6
+}
+# CHECK: f1: size={{*}}
+# CHECK-NEXT: stub ShortStringOfValue x1
+# CHECK-NOT: stub

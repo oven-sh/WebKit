@@ -93,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
     // What follows defines a stack property and tells an ErrorInstance that its own is materialized. For such an object the define
     // is refused, and an ErrorInstance would be left without the stack it has yet to materialize.
     if (object->hasImmutableProperties()) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, withAOTErrorNote(ImmutablePropertyDefineError));
+        return throwVMTypeError(globalObject, scope, ImmutablePropertyDefineError);
     JSValue callerArg = callFrame->argument(1);
     JSCell* caller = callerArg.isCallable() ? callerArg.asCell() : nullptr;
 
@@ -109,16 +109,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
             return encodedJSUndefined();
     }
 
-    JSString* stack = jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace));
-#if ENABLE(AOT)
-    if (object->structure()->compiledLayout()) [[unlikely]] {
-        object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->stack, PropertyDescriptor(stack, static_cast<unsigned>(PropertyAttribute::DontEnum)), true);
-        RETURN_IF_EXCEPTION(scope, { });
-        return encodedJSUndefined();
-    }
-#endif
-    object->putDirect(vm, vm.propertyNames->stack, stack, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    RETURN_IF_EXCEPTION(scope, { });
+    object->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     return encodedJSUndefined();
 }

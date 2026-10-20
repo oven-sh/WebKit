@@ -1,0 +1,40 @@
+# A delete under an index, a definition of length and a store to length may leave a hole or shrink a short list: its positions hold each other's values and undefined from then on
+# RUN(DELETED): flow-solve nodes objects
+# RUN(DEFINED): flow-solve nodes objects
+# RUN(STORED): flow-solve nodes objects
+# RUN(READ): flow-solve nodes objects
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="b"
+    v2 = Integer integer=0
+    v3 = NewArray v0, v1 contents=anything
+    v4 = ElemDelete v3, v2
+    v5 = NewArray v0, v1 contents=anything
+    v6 = Builtin builtin=ObjectDefineProperty
+    v7 = String string="length"
+    v8 = NewObject -, v2 layout=L0 fields=[0]
+    v9 = Call v6, -, v5, v7, v8
+    v10 = NewArray v0, v1 contents=anything
+    PropSet v10, v2 key="length"
+    v12 = NewArray v0, v1 contents=anything
+    v13 = ElemGet v12, v2
+    Return
+}
+# DELETED: Position(Array@f0:v3, 0) = {undefined|1|"b"}
+# DELETED-NEXT: Position(Array@f0:v3, 1) = {undefined|1|"b"}
+# DELETED: Array@f0:v3 mutations={{*}} events=[Allocated, ElementsMoved, HoleMade]
+# DEFINED: Position(Array@f0:v5, 0) = {undefined|1|"b"}
+# DEFINED-NEXT: Position(Array@f0:v5, 1) = {undefined|1|"b"}
+# DEFINED: Array@f0:v5 mutations=[{{*}}RedefineProperty{{*}} events=[Allocated, ElementsMoved, ContentsStored]
+# STORED: Position(Array@f0:v10, 0) = {undefined|1|"b"}
+# STORED-NEXT: Position(Array@f0:v10, 1) = {undefined|1|"b"}
+# STORED: Array@f0:v10 mutations={{*}} events=[Allocated, ElementsMoved, ContentsStored]
+# READ: Position(Array@f0:v12, 0) = {1}
+# READ-NEXT: Position(Array@f0:v12, 1) = {"b"}
+# READ: , f0, v13) = {1}
+# READ: Array@f0:v12 mutations=[] uses={{*}} events=[Allocated]

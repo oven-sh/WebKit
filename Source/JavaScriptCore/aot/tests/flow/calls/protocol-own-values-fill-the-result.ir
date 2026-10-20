@@ -1,0 +1,39 @@
+# The array that Object.values answers holds what the fields hold and what the getters return, and nothing else
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(Array@f0:v8{{*}}, 0) = {L1#[[field]]|L2#[[returned]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="FieldValue" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="GetterValue" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="NotPassed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure function=f1
+    DefineGetter v2, v3 key="b"
+    v5 = FinishObject v2
+    v6 = Builtin builtin=Object
+    v7 = PropGet v6 key="values"
+    v8 = Call v7, v6, v5 calleeKey="values"
+    v9 = Integer integer=0
+    v10 = ElemGet v8, v9
+    v11 = NewObject -, v0 layout=L3 fields=[0]
+    v12 = NewClosure function=f2
+    DefineGetter v11, v12 key="b"
+    v14 = FinishObject v11
+    Return
+}
+function f1 name="b" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    Return v2
+}
+function f2 name="b" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

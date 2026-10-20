@@ -32,68 +32,59 @@
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
 #include "AirCode.h"
+#include "AirDuplicateReturns.h"
 #include "AirEliminateDeadCode.h"
 #include "AirFixObviousSpills.h"
 #include "AirFixPartialRegisterStalls.h"
+#include "AirFoldTrapsIntoAccesses.h"
 #include "AirForwardRegisterCopies.h"
+#include "AirFrameStates.h"
 #include "AirGenerationContext.h"
+#include "AirHoistCommonMoves.h"
+#include "AirInstObserver.h"
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
 #include "AirLowerEntrySwitch.h"
 #include "AirLowerStackArgs.h"
+#include "AirMergeIdenticalBlocks.h"
 #include "AirOpcodeUtils.h"
 #include "AirOptimizeBlockOrder.h"
 #include "AirOptimizePairedLoadStore.h"
+#include "AirPlanFrame.h"
 #include "AirReportUsedRegisters.h"
+#include "AirResequenceMovesBeforePatches.h"
+#include "AirReuseConditionFlags.h"
+#include "AirShrinkWrapFrame.h"
+#include "AirSplitLiveRangesAroundFrame.h"
 #include "AirSimplifyCFG.h"
+#include "AirStackColoring.h"
 #include "AirValidate.h"
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "CCallHelpers.h"
 #include "CompilerTimingScope.h"
 #include "DisallowMacroScratchRegisterUsage.h"
+#include <span>
 #include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
-#if USE(BUN_JSC_ADDITIONS)
-static bool hoistMovesThatBeginBothSuccessors(Code& code)
-{
-    bool changed = false;
-    for (BasicBlock* block : code) {
-        if (block->numSuccessors() != 2 || block->last().kind.opcode == Patch)
-            continue;
-        BasicBlock* taken = block->successorBlock(0);
-        BasicBlock* notTaken = block->successorBlock(1);
-        if (taken == notTaken || taken == block || notTaken == block || taken->numPredecessors() != 1 || notTaken->numPredecessors() != 1 || code.isEntrypoint(taken) || code.isEntrypoint(notTaken))
-            continue;
-        while (taken->size() > 1 && notTaken->size() > 1) {
-            Inst move = taken->at(0);
-            Inst& other = notTaken->at(0);
-            if (move.kind != other.kind || move.kind.opcode != Move || move.args().size() != 2 || move.args()[0] != other.args()[0] || move.args()[1] != other.args()[1])
-                break;
-            if (!move.args()[1].isTmp() || !(move.args()[0].isTmp() || move.args()[0].isZeroReg()))
-                break;
-            bool mattersToBranch = false;
-            block->last().forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-                mattersToBranch |= tmp == move.args()[1].tmp() || (Arg::isAnyDef(role) && move.args()[0].isTmp() && tmp == move.args()[0].tmp());
-            });
-            if (mattersToBranch)
-                break;
-            block->insts().insert(block->size() - 1, WTF::move(move));
-            taken->insts().removeAt(0);
-            notTaken->insts().removeAt(0);
-            changed = true;
-        }
-    }
-    return changed;
-}
-#endif
+namespace {
 
-void prepareForGeneration(Code& code)
+struct PipelineState {
+    bool cfgMayHaveChanged { false };
+    StackColoring stackColoring;
+    FramePlacement framePlacement;
+};
+
+struct Step {
+    ASCIILiteral name;
+    bool (*isEnabled)(Code&, const PipelineState&);
+    void (*run)(Code&, PipelineState&);
+};
+
+void begin(Code& code)
 {
-    CompilerTimingScope timingScope("Total Air"_s, "prepareForGeneration"_s);
-    
     // If we're doing super verbose dumping, the phase scope of any phase will already do a dump.
     if (shouldDumpIR(code.proc(), AirMode) && !shouldDumpIRAtEachPhase(AirMode)) {
         dataLog(tierName, "Initial air:\n");
@@ -106,130 +97,217 @@ void prepareForGeneration(Code& code)
     if (Options::dumpIonGraph()) [[unlikely]]
         code.appendIonGraphPass("InitialCFG"_s);
 
-    if (shouldValidateIR())
+    if (shouldValidateIR(code.proc()))
+        validate(code);
+}
+
+void prepareAtOptLevel0(Code& code)
+{
+    RELEASE_ASSERT(!code.policy().frame.emitsFrame);
+
+    // FIXME: The name of this phase doesn't make much sense in O0 since we do this before
+    // register allocation.
+    lowerAfterRegAlloc(code);
+
+    // Actually create entrypoints.
+    lowerEntrySwitch(code);
+    
+    // This sorts the basic blocks in Code to achieve an ordering that maximizes the likelihood that a high
+    // frequency successor is also the fall-through target.
+    optimizeBlockOrder(code);
+
+    if (shouldValidateIR(code.proc()))
         validate(code);
 
-    if (!code.optLevel()) {
-        // FIXME: The name of this phase doesn't make much sense in O0 since we do this before
-        // register allocation.
-        lowerAfterRegAlloc(code);
-
-        // Actually create entrypoints.
-        lowerEntrySwitch(code);
-        
-        // This sorts the basic blocks in Code to achieve an ordering that maximizes the likelihood that a high
-        // frequency successor is also the fall-through target.
-        optimizeBlockOrder(code);
-
-        if (shouldValidateIR())
-            validate(code);
-
-        if (shouldDumpIR(code.proc(), AirMode)) {
-            dataLog("Air after ", code.lastPhaseName(), ", before generation:\n");
-            dataLog(code);
-        }
-
-        code.m_generateAndAllocateRegisters = makeUniqueWithoutFastMallocCheck<GenerateAndAllocateRegisters>(code);
-        code.m_generateAndAllocateRegisters->prepareForGeneration();
-
-        return;
+    if (shouldDumpIR(code.proc(), AirMode)) {
+        dataLog("Air after ", code.lastPhaseName(), ", before generation:\n");
+        dataLog(code);
     }
 
-    simplifyCFG(code);
+    code.m_generateAndAllocateRegisters = makeUniqueWithoutFastMallocCheck<GenerateAndAllocateRegisters>(code);
+    code.m_generateAndAllocateRegisters->prepareForGeneration();
+}
+
+constexpr bool always(Code&, const PipelineState&)
+{
+    return true;
+}
+
+template<auto pass>
+void runPass(Code& code, PipelineState&)
+{
+    pass(code);
+}
+
+constexpr Step simplifyCFGIfChanged {
+    "simplifyCFG"_s,
+    [](Code&, const PipelineState& state) { return state.cfgMayHaveChanged; },
+    [](Code& code, PipelineState& state) {
+        simplifyCFG(code);
+        state.cfgMayHaveChanged = false;
+    }
+};
+
+static constexpr Step steps[] = {
+    { "simplifyCFG"_s, always, runPass<simplifyCFG> },
 
     // This is where we run our optimizations and transformations.
     // FIXME: Add Air optimizations.
     // https://bugs.webkit.org/show_bug.cgi?id=150456
 
-#if !USE(BUN_JSC_ADDITIONS)
-    eliminateDeadCode(code);
-#endif
+    { "eliminateDeadCode"_s, always, runPass<eliminateDeadCode> },
+
+    {
+        "foldTrapsIntoAccesses"_s,
+        [](Code& code, const PipelineState&) { return !!code.policy().peepholes.trapReach; },
+        runPass<foldTrapsIntoAccesses>
+    },
+
+    {
+        "moveBlocksWithoutSuccessorsToEnd"_s,
+        [](Code& code, const PipelineState&) { return code.policy().layout.movesBlocksWithoutSuccessorsToEnd; },
+        runPass<moveBlocksWithoutSuccessorsToEnd>
+    },
+
+    {
+        "splitLiveRangesAroundFrame"_s,
+        [](Code& code, const PipelineState&) { return code.policy().frame.emitsFrame && code.policy().splitting.splitsAroundFrame; },
+        runPass<splitLiveRangesAroundFrame>
+    },
 
     // Register allocation for all the Tmps that do not have a corresponding machine
     // register. After this phase, every Tmp has a reg.
-    allocateRegistersByGreedy(code);
+    { "allocateRegistersByGreedy"_s, always, runPass<allocateRegistersByGreedy> },
 
-    if (Options::logAirRegisterPressure()) {
-        dataLog("Register pressure after register allocation:\n");
-        logRegisterPressure(code);
-    }
+    {
+        "logRegisterPressure"_s,
+        [](Code&, const PipelineState&) { return Options::logAirRegisterPressure(); },
+        [](Code& code, PipelineState&) {
+            dataLog("Register pressure after register allocation:\n");
+            logRegisterPressure(code);
+        }
+    },
 
-    lowerAfterRegAlloc(code);
+    { "lowerAfterRegAlloc"_s, always, runPass<lowerAfterRegAlloc> },
 
     // This replaces uses of spill slots with registers or constants if possible. It
     // does this by minimizing the amount that we perturb the already-chosen register
     // allocation. It may extend the live ranges of registers though.
-#if USE(BUN_JSC_ADDITIONS)
-    RegisterSet namedOrClobberedRegisters = fixObviousSpills(code);
-#else
-    fixObviousSpills(code);
-#endif
+    { "fixObviousSpills"_s, always, runPass<fixObviousSpills> },
 
     // This does first-fit allocation of stack slots using an interference graph plus a
     // bunch of other optimizations.
-#if USE(BUN_JSC_ADDITIONS)
-    allocateStackByGraphColoring(code, WTF::move(namedOrClobberedRegisters));
-#else
-    allocateStackByGraphColoring(code);
-#endif
+    {
+        "allocateStackByGraphColoring"_s,
+        always,
+        [](Code& code, PipelineState& state) { state.stackColoring = allocateStackByGraphColoring(code); }
+    },
+
+    {
+        "shrinkWrapFrame"_s,
+        [](Code& code, const PipelineState&) { return code.policy().frame.emitsFrame; },
+        [](Code& code, PipelineState& state) {
+            state.framePlacement = shrinkWrapFrame(code, state.stackColoring);
+            state.cfgMayHaveChanged |= state.framePlacement.didAddBlocks;
+        }
+    },
+    {
+        "planFrame"_s,
+        [](Code& code, const PipelineState&) { return code.policy().frame.emitsFrame; },
+        [](Code& code, PipelineState& state) {
+            planFrame(code, state.stackColoring, state.framePlacement);
+            state.stackColoring = { };
+            state.framePlacement = { };
+        }
+    },
 
     // This turns all Stack and CallArg Args into Addr args that use the frame pointer.
-    lowerStackArgs(code);
+    { "lowerStackArgs"_s, always, runPass<lowerStackArgs> },
 
     // If we coalesced moves then we can unbreak critical edges. This is the main reason for this
     // phase.
-    simplifyCFG(code);
+    { "simplifyCFG"_s, always, runPass<simplifyCFG> },
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (code.proc().positionIndependent() && hoistMovesThatBeginBothSuccessors(code))
-        simplifyCFG(code);
-    if (code.chargesForCalleeSaves() && code.needsUsedRegisters())
-        forwardRegisterCopies(code);
-#if CPU(X86_64)
-    if (auto& inMemory = code.maskInMemory()) {
-        for (BasicBlock* block : code) {
-            for (Inst& inst : *block) {
-                if (inst.kind.opcode != BranchTest64 || !inst.args()[1].isTmp() || !inst.args()[2].isBitImm() || inst.args()[2].value() != inMemory->mask)
-                    continue;
-                inst.args()[2] = inst.args()[1];
-                inst.args()[1] = Arg::addr(Tmp(inMemory->base), inMemory->offset);
-            }
-        }
-    }
-#endif
-#endif
+    {
+        "hoistCommonMoves"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.hoistsCommonMoves; },
+        [](Code& code, PipelineState& state) { state.cfgMayHaveChanged = hoistCommonMoves(code); }
+    },
+    simplifyCFGIfChanged,
+
+    // Only reportUsedRegisters() removes the moves that this makes dead.
+    {
+        "forwardRegisterCopies"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.forwardsRegisterCopies && code.needsUsedRegisters(); },
+        runPass<forwardRegisterCopies>
+    },
 
     // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs
     // only for the used-register set that B3::StackmapValue reports to a patchpoint's generator.
-    bool cfgMayHaveChanged = false;
-    if (code.needsUsedRegisters())
-        cfgMayHaveChanged |= reportUsedRegisters(code);
+    {
+        "reportUsedRegisters"_s,
+        [](Code& code, const PipelineState&) { return code.needsUsedRegisters(); },
+        [](Code& code, PipelineState& state) { state.cfgMayHaveChanged |= reportUsedRegisters(code); }
+    },
 
     // Attempt to remove false dependencies between instructions created by partial register changes.
     // This must be executed as late as possible as it depends on the instructions order and register
     // use, and it must follow reportUsedRegisters() when that runs, since that kills variable
     // assignments that seem dead. Luckily, this phase does not change register liveness, so that's OK.
-    fixPartialRegisterStalls(code);
+    { "fixPartialRegisterStalls"_s, always, runPass<fixPartialRegisterStalls> },
 
     // Actually create entrypoints.
-    cfgMayHaveChanged |= lowerEntrySwitch(code);
-
-    if (cfgMayHaveChanged)
-        simplifyCFG(code);
+    {
+        "lowerEntrySwitch"_s,
+        always,
+        [](Code& code, PipelineState& state) { state.cfgMayHaveChanged |= lowerEntrySwitch(code); }
+    },
+    simplifyCFGIfChanged,
 
     // We do this optimization at the very end of Air generation pipeline since it can be beneficial after
     // spills are lowered to load/store with the frame pointer or the stack pointer. And this is block-local
     // optimization, so this is more effective after simplifyCFG.
 #if CPU(ARM64)
-    if (Options::useAirOptimizePairedLoadStore())
-        optimizePairedLoadStore(code);
+    {
+        "optimizePairedLoadStore"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.pairsSpillAccesses; },
+        runPass<optimizePairedLoadStore>
+    },
 #endif
 
     // This sorts the basic blocks in Code to achieve an ordering that maximizes the likelihood that a high
     // frequency successor is also the fall-through target.
-    optimizeBlockOrder(code);
+    { "optimizeBlockOrder"_s, always, runPass<optimizeBlockOrder> },
 
-    if (shouldValidateIR())
+    // These three read the block order through findNextBlock().
+    {
+        "resequenceMovesBeforePatches"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.resequencesMovesBeforePatches; },
+        runPass<resequenceMovesBeforePatches>
+    },
+    {
+        "mergeIdenticalBlocks"_s,
+        [](Code& code, const PipelineState&) { return code.policy().layout.mergesIdenticalBlocks; },
+        runPass<mergeIdenticalBlocks>
+    },
+    {
+        "duplicateReturns"_s,
+        [](Code& code, const PipelineState&) { return code.policy().layout.duplicatesReturns; },
+        runPass<duplicateReturns>
+    },
+
+    // This has to be the last step that changes instructions: nothing may be inserted between a
+    // definition of the flags and its uses.
+    {
+        "reuseConditionFlags"_s,
+        [](Code& code, const PipelineState&) { return code.policy().peepholes.reusesConditionFlags; },
+        runPass<reuseConditionFlags>
+    },
+};
+
+void finish(Code& code)
+{
+    if (shouldValidateIR(code.proc()))
         validate(code);
 
     // Do a final dump of Air. Note that we have to do this even if we are doing per-phase dumping,
@@ -240,75 +318,40 @@ void prepareForGeneration(Code& code)
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
-static bool repeatsCompareOfOnlyPredecessor(Code& code, BasicBlock* block)
-{
-    if (!code.proc().positionIndependent() || block->size() != 1 || block->numPredecessors() != 1 || code.isEntrypoint(block))
-        return false;
-    Inst& branch = block->last();
-    if (branch.kind.opcode != Branch32 && branch.kind.opcode != Branch64)
-        return false;
-    BasicBlock* predecessor = block->predecessor(0);
-    if (predecessor == block)
-        return false;
-    Inst& before = predecessor->last();
-    return before.kind.opcode == branch.kind.opcode && before.args()[1] == branch.args()[1] && before.args()[2] == branch.args()[2];
-}
-#endif
+} // anonymous namespace
 
-#if USE(BUN_JSC_ADDITIONS)
-static bool generateConditionalMoveOnFlagsOfPrevious(Code& code, CCallHelpers& jit, BasicBlock* block, unsigned index)
+void prepareForGeneration(Code& code)
 {
-    if (!index || !code.proc().positionIndependent())
-        return false;
-    Inst& inst = block->at(index);
-    Inst& previous = block->at(index - 1);
-    bool isTest = inst.kind.opcode == MoveConditionallyTest32 || inst.kind.opcode == MoveConditionallyTest64;
-    if (!isTest && inst.kind.opcode != MoveConditionally32 && inst.kind.opcode != MoveConditionally64)
-        return false;
-    if (previous.kind.opcode != inst.kind.opcode || inst.args().size() != 6 || previous.args().size() != 6)
-        return false;
-    for (unsigned i = 0; i < 3; ++i) {
-        if (previous.args()[i] != inst.args()[i] || previous.args()[5] == inst.args()[i])
-            return false;
+    Code* codes[] = { &code };
+    prepareForGeneration(std::span<Code* const>(codes));
+}
+
+void prepareForGeneration(std::span<Code* const> codes)
+{
+    CompilerTimingScope timingScope("Total Air"_s, "prepareForGeneration"_s);
+
+    Vector<PipelineState, 16> states(codes.size());
+
+    for (Code* code : codes) {
+        begin(*code);
+        if (!code->optLevel())
+            prepareAtOptLevel0(*code);
     }
-    using Condition = Assembler::Condition;
-    Condition condition;
-    if (isTest)
-        condition = static_cast<Condition>(inst.args()[0].asResultCondition());
-    else {
-        auto relationalCondition = inst.args()[0].asRelationalCondition();
-        condition = static_cast<Condition>(relationalCondition);
-        if (inst.args()[2].isImm() && !inst.args()[2].value()) {
-            if (auto resultCondition = MacroAssembler::commuteCompareToZeroIntoTest(relationalCondition))
-                condition = static_cast<Condition>(*resultCondition);
+
+    for (const Step& step : steps) {
+        for (size_t index = 0; index < codes.size(); ++index) {
+            Code& code = *codes[index];
+            if (!code.optLevel() || code.proc().report().failure || !step.isEnabled(code, states[index]))
+                continue;
+            step.run(code, states[index]);
         }
     }
-#if CPU(ARM64)
-    auto registerOf = [](const Arg& arg) {
-        return arg.isZeroReg() ? ARM64Registers::zr : arg.gpr();
-    };
-    jit.m_assembler.csel<64>(inst.args()[5].gpr(), registerOf(inst.args()[3]), registerOf(inst.args()[4]), condition);
-#elif CPU(X86_64)
-    GPRReg thenCase = inst.args()[3].gpr();
-    GPRReg elseCase = inst.args()[4].gpr();
-    GPRReg result = inst.args()[5].gpr();
-    if (thenCase != result && elseCase != result) {
-        jit.move(elseCase, result);
-        elseCase = result;
+
+    for (Code* code : codes) {
+        if (code->optLevel() && !code->proc().report().failure)
+            finish(*code);
     }
-    if (elseCase == result)
-        jit.m_assembler.cmovq_rr(condition, thenCase, result);
-    else
-        jit.m_assembler.cmovq_rr(static_cast<Condition>(condition ^ 1), elseCase, result);
-#else
-    UNUSED_PARAM(jit);
-    UNUSED_VARIABLE(condition);
-    return false;
-#endif
-    return true;
 }
-#endif
 
 static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 {
@@ -319,8 +362,14 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     // And now, we generate code.
     GenerationContext context;
     context.code = &code;
+    const bool emitsFrame = code.policy().frame.emitsFrame;
+    std::optional<FrameStates> frameStates;
+    if (emitsFrame) {
+        frameStates.emplace(code);
+        RELEASE_ASSERT(!frameStates->violation());
+        context.frameIsSetUp = false;
+    }
     context.blockLabels.resize(code.size());
-#if USE(BUN_JSC_ADDITIONS)
     IndexMap<BasicBlock*, CCallHelpers::Label> labels(code.size());
     for (BasicBlock* block : code) {
         if (block->last().kind.opcode != Patch)
@@ -330,24 +379,13 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
                 context.blockLabels[successor] = Box<CCallHelpers::Label>::create();
         }
     }
-#else
-    for (BasicBlock* block : code)
-        context.blockLabels[block] = Box<CCallHelpers::Label>::create();
-#endif
     IndexMap<BasicBlock*, CCallHelpers::JumpList> blockJumps(code.size());
 
     auto link = [&] (CCallHelpers::Jump jump, BasicBlock* target) {
-#if USE(BUN_JSC_ADDITIONS)
         if (labels[target].isSet()) {
             jump.linkTo(labels[target], &jit);
             return;
         }
-#else
-        if (context.blockLabels[target]->isSet()) {
-            jump.linkTo(*context.blockLabels[target], &jit);
-            return;
-        }
-#endif
 
         blockJumps[target].append(jump);
     };
@@ -365,38 +403,39 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 
     Disassembler* disassembler = code.disassembler();
 
-#if USE(BUN_JSC_ADDITIONS)
-    BitVector emittedLatePaths;
-    auto emitNearbyLatePaths = [&] {
-        constexpr uint32_t maxDistance = 96;
-        if (!isX86() || !code.placesRareBlocksInGaps() || disassembler)
+    InstObserver* observer = code.instObserver();
+    const bool recordsRanges = disassembler || observer;
+    auto didGenerate = [&](Inst& inst, CCallHelpers::Label start) {
+        if (!recordsRanges)
             return;
-        for (unsigned i = 0; i < context.nearbyLatePaths.size(); ++i) {
-            auto [index, recordedOffset] = context.nearbyLatePaths[i];
-            if (jit.m_assembler.buffer().codeSize() - recordedOffset > maxDistance)
-                continue;
-            if (shouldPreserveB3Origins)
-                pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
-            Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
-            latePath->run(jit, context);
-            emittedLatePaths.set(index);
-        }
-        context.nearbyLatePaths.shrink(0);
+        CCallHelpers::Label end = jit.labelIgnoringWatchpoints();
+        if (disassembler)
+            disassembler->addInst(&inst, start, end);
+        if (observer)
+            observer->didGenerate(inst, start, end);
     };
-#endif
+
+    unsigned numberOfLatePathsNoted = 0;
+    auto noteNewLatePaths = [&] {
+        for (; numberOfLatePathsNoted < context.latePaths.size(); ++numberOfLatePathsNoted) {
+            if (!context.frameIsSetUp)
+                context.latePathsWithoutFrame.set(numberOfLatePathsNoted);
+        }
+    };
 
     for (BasicBlock* block : code) {
         context.currentBlock = block;
         context.indexInBlock = UINT_MAX;
         blockJumps[block].link(&jit);
         CCallHelpers::Label label = jit.label();
-#if USE(BUN_JSC_ADDITIONS)
         labels[block] = label;
         if (auto& sharedLabel = context.blockLabels[block])
             *sharedLabel = label;
-#else
-        *context.blockLabels[block] = label;
-#endif
+
+        if (emitsFrame)
+            context.setFrameIsSetUp(jit, frameStates->atHead(block) == FrameState::SetUp);
+        if (observer)
+            observer->willGenerate(*block);
 
         if (disassembler)
             disassembler->startBlock(block, jit); 
@@ -408,6 +447,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
                 disassembler->startEntrypoint(jit); 
 
             code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(jit, code, context);
+            noteNewLatePaths();
 
             if (disassembler)
                 disassembler->endEntrypoint(jit); 
@@ -419,15 +459,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             context.indexInBlock = i;
             Inst& inst = block->at(i);
             addItem(inst);
-            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
-#if USE(BUN_JSC_ADDITIONS)
-            CCallHelpers::Jump jump = generateConditionalMoveOnFlagsOfPrevious(code, jit, block, i) ? CCallHelpers::Jump() : inst.generate(jit, context);
-#else
+            auto start = recordsRanges ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
             CCallHelpers::Jump jump = inst.generate(jit, context);
-#endif
             ASSERT_UNUSED(jump, !jump.isSet());
-            if (disassembler)
-                disassembler->addInst(&inst, start, jit.labelIgnoringWatchpoints());
+            noteNewLatePaths();
+            didGenerate(inst, start);
         }
 
         context.indexInBlock = block->size() - 1;
@@ -436,34 +472,24 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             && block->successorBlock(0) == code.findNextBlock(block))
             continue;
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && !Options::validateAOTTypedFacts() && !Options::validateGraphAtEachPhase() && code.findNextBlock(block) && block->size() >= 2 && block->at(block->size() - 2).kind.opcode == Patch)
-            continue;
-#endif
-
         if (isReturn(block->last().kind.opcode)) {
             // We currently don't represent the full prologue/epilogue in Air, so we need to
             // have this override.
             addItem(block->last());
-            auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
-            code.emitEpilogue(jit);
-            if (disassembler)
-                disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
-#if USE(BUN_JSC_ADDITIONS)
-            emitNearbyLatePaths();
-#endif
+            auto start = recordsRanges ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
+            if (emitsFrame)
+                jit.ret();
+            else
+                code.emitEpilogue(jit);
+            didGenerate(block->last(), start);
             continue;
         }
 
         addItem(block->last());
-        auto start = disassembler ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
-#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
-        CCallHelpers::Jump jump = repeatsCompareOfOnlyPredecessor(code, block) ? CCallHelpers::Jump(jit.m_assembler.jCC(static_cast<X86Assembler::Condition>(block->last().args()[0].asRelationalCondition()))) : block->last().generate(jit, context);
-#else
+        auto start = recordsRanges ? jit.labelIgnoringWatchpoints() : CCallHelpers::Label();
         CCallHelpers::Jump jump = block->last().generate(jit, context);
-#endif
-        if (disassembler)
-            disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
+        noteNewLatePaths();
+        didGenerate(block->last(), start);
 
         // The jump won't be set for patchpoints. It won't be set for Oops because then it won't have
         // any successors.
@@ -471,18 +497,11 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             switch (block->numSuccessors()) {
             case 1:
                 link(jump, block->successorBlock(0));
-#if USE(BUN_JSC_ADDITIONS)
-                emitNearbyLatePaths();
-#endif
                 break;
             case 2:
                 link(jump, block->successorBlock(0));
-                if (block->successorBlock(1) != code.findNextBlock(block)) {
+                if (block->successorBlock(1) != code.findNextBlock(block))
                     link(jit.jump(), block->successorBlock(1));
-#if USE(BUN_JSC_ADDITIONS)
-                    emitNearbyLatePaths();
-#endif
-                }
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -494,8 +513,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     context.currentBlock = nullptr;
     context.indexInBlock = UINT_MAX;
     
-#if USE(BUN_JSC_ADDITIONS)
-    if (code.recordsRareCodeStart()) [[unlikely]] {
+    if (code.policy().layout.recordsRareCodeStart) [[unlikely]] {
         CCallHelpers::Label rareCodeStart = jit.labelIgnoringWatchpoints();
         for (unsigned index = code.size(); index-- > code.numberOfBlocksInChains();) {
             if (BasicBlock* block = code.at(index))
@@ -503,15 +521,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
         }
         code.recordRareCodeStart(rareCodeStart);
     }
-#endif
     Vector<CCallHelpers::Label> entrypointLabels(code.numEntrypoints());
-    for (unsigned i = code.numEntrypoints(); i--;) {
-#if USE(BUN_JSC_ADDITIONS)
+    for (unsigned i = code.numEntrypoints(); i--;)
         entrypointLabels[i] = labels[code.entrypoint(i).block()];
-#else
-        entrypointLabels[i] = *context.blockLabels[code.entrypoint(i).block()];
-#endif
-    }
     code.setEntrypointLabels(WTF::move(entrypointLabels));
 
     pcToOriginMap.appendItem(jit.label(), Origin());
@@ -519,22 +531,20 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     if (disassembler)
         disassembler->startLatePath(jit);
 
-#if USE(BUN_JSC_ADDITIONS)
     for (unsigned index = 0; index < context.latePaths.size(); ++index) {
-        if (emittedLatePaths.get(index))
-            continue;
         if (code.shouldPreserveB3Origins())
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
         Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
+        if (emitsFrame)
+            context.setFrameIsSetUp(jit, !context.latePathsWithoutFrame.get(index));
         latePath->run(jit, context);
+        noteNewLatePaths();
     }
-#else
-    for (auto& [origin, latePath] : context.latePaths) {
-        if (code.shouldPreserveB3Origins())
-            pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), origin);
-        latePath->run(jit, context);
+
+    if (emitsFrame) {
+        context.setFrameIsSetUp(jit, false);
+        code.setFrameRanges(WTF::move(context.frameRanges));
     }
-#endif
 
     if (disassembler)
         disassembler->endLatePath(jit);

@@ -1,0 +1,50 @@
+# The function of the library that the slow path of an inline built-in calls keeps its body and is listed, so the host never creates its ordinary built-in for it. One behind a built-in that nothing calls is not listed
+# LIBRARY: own
+# RUN: place program
+# RUN(ROWS): tables modules functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=4 function=f2
+runtimefunction id=8 function=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    v2 = PropGet v1 key="at"
+    v3 = Integer integer=0
+    v4 = Call v2, v1, v3 calleeKey="at"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f1 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=0
+    v3 = ElemGet v0, v2
+    Return v3
+}
+function f2 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0, v1
+    Return v3
+}
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: TryCallInline {{*}}overload=ArrayPrototypeAt/0 {{*}}miss [[miss]]()
+# CHECK: [[miss]]() frequency=Rare
+# CHECK-NEXT: CallBuiltin {{*}}overload=ArrayPrototypeAt/0
+# CHECK: function f1 name="at"
+# CHECK-NEXT: b0(
+# CHECK: function f2 name="apply"
+# CHECK-NEXT: function f3 name="main"
+
+# ROWS: runtimeFunction id=8 function=[[entrypoint]] visibility=Public
+# ROWS-NOT: runtimeFunction
+# ROWS: function [[entrypoint]] name="at"

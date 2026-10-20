@@ -1,0 +1,24 @@
+# A body that names the variable of a function declaration refers to the closure of that function; the variable of anything else refers to no function
+# FORM: Prepared
+# RUN: function-references function=f0
+# CHECK: f1 Closure
+# CHECK-NOT: f
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="declared" module=m0 declared={type=anything} initialization=Function function=f1 flow={stores=Never reads=OnlyCalled}
+variable g1 name="plain" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="reader" results=[{type=anything}] {
+  b0():
+    v0: anything = GetModuleVariable variable=g0
+    v1: anything = GetModuleVariable variable=g1
+    v2: boolean = StrictEq v0, v1
+    Return v2
+}
+function f1 name="declared" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f2 name="unrelated" results=[{type=undefined}] {
+  b0():
+    Return
+}

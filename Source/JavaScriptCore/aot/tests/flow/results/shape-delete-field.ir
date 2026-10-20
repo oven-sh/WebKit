@@ -1,0 +1,56 @@
+# Deleting a field costs that field of that allocation class, and the objects keep their shape
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: class C1 layout=L1 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: class C2 layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: cause=
+# CHECK: class C3
+# CHECK: layout L0 flow={
+# CHECK-NOT: cause=
+# CHECK: field L0.0 "radius" type=undefined|true written=anything flow={location={writers=AllKnown{{*}}cause=FieldDeleted witness={function=f0 value=v4}}{{*}}stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L0.1 "label" type=true written=anything flags=[IsRequired] flow={location={writers=AllKnown{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: layout L1 flow={
+# CHECK-NOT: cause=
+# CHECK: field L1.0 "text" type=undefined|true written=anything flow={location={writers=AllKnown{{*}}cause=FieldDeleted witness={function=f0 value=v8}}{{*}}stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: field L2.0 "side" type=true written=anything flags=[IsRequired] flow={location={writers=AllKnown{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: variable g0 type=undefined|true written=anything
+# CHECK: variable g1 type=undefined|true written=anything
+# CHECK: variable g2 type=true written=anything
+# CHECK: function f1 parameter 0 type=L0|L2 written=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Circle" fields=[{key="radius" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}] supertypes=[L3]
+layout L1 name="Note" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Square" fields=[{key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L3]
+layout L3 name="Shape"
+variable g0 name="deletedByName" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="deletedByUnknownKey" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = PropDelete v1 key="radius" mode=Strict
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="which" [isFreeName]
+    v7 = ToString v6
+    v8 = ElemDelete v2, v7 mode=Strict
+    v9 = CallDirect v1 function=f1
+    v10 = CallDirect v3 function=f1
+    v11 = PropGet v1 key="radius"
+    PutModuleVariable v11 variable=g0
+    v13 = PropGet v2 key="text"
+    PutModuleVariable v13 variable=g1
+    v15 = PropGet v1 key="label"
+    PutModuleVariable v15 variable=g2
+    Return
+}
+function f1 name="area" parameters=[{type=L3}] results=[{type=anything}] {
+  b0(v0: object ? L3):
+    Return v0
+}

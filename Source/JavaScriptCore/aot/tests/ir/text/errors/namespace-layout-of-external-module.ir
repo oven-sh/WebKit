@@ -1,0 +1,7 @@
+# Only a module of source text has a namespace layout
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="x" displayPath="x" kind=External referrer=m0
+variable g0 declared={type=anything predicted=L(m1)}

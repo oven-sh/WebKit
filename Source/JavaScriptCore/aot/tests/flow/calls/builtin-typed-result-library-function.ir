@@ -1,0 +1,52 @@
+# A call with a typed result is analyzed by the records of its overload. The function of the library behind the entry is entered the way native code enters it, for the call that is not expanded, and its body says nothing about the call: here it is the stand-in library, which returns undefined
+# RUN: flow-links
+# RUN(SOLVE): flow-solve instances nodes
+# RUN(RESULTS): flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+layout L1 name="Input" fields=[{key="id" declared={type=anything}}]
+variable g0 name="validated" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="unvalidated" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Builtin builtin=BunBundleValidate
+    v3 = Call v2, -, v1 expectedResult=x0
+    PutModuleVariable v3 variable=g0
+    v5 = Call v2, -, v1
+    PutModuleVariable v5 variable=g1
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    Return
+}
+
+# The entry's own function object runs the library function
+# CHECK: host - -> {{*}} f1 Host Repeatedly cycle
+# The validated call enters the general validator and its helpers with what the value reaches. The other call enters nothing
+# CHECK: f0 v3 -> {{*}} f1 BuiltinCallback Repeatedly cycle
+# CHECK-NOT: f0 v3 -> {{*}} f1 Call
+# CHECK-NOT: f0 v5 ->
+# CHECK: builtin [[main]] v3 BunBundleValidate/0 Call
+# CHECK: builtin [[main]] v5 BunBundleValidate/0 Call
+# CHECK: unknown-javascript no
+# CHECK: use CompilerHelpersValidateByPlan [Called] f0:v3
+
+# SOLVE: f1 Generic
+# The result of the validated call holds an object of the layout, which no body returned. Neither result is what the library function returns
+# SOLVE: Variable(g0) = {{*}}unknown|L1#[[input]]|L0#[[user]]|Object@f0:v3|Array@f0:v3}
+# SOLVE-NEXT: Variable(g1) = {{*}}unknown|L1#[[input]]}
+# SOLVE: DeclaredPart(L0#[[user]], 0) = {number}
+
+# RESULTS-NOT: function f1 reachability=Unreached
+# RESULTS: variable g0 type=anything
+# RESULTS: variable g1 type=anything

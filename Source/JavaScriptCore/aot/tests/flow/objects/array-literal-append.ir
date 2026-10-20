@@ -1,0 +1,35 @@
+# What an array literal appends after a spread is in its element slot like its first elements, and a spread of an unknown iterable adds the unknown object
+# RUN: flow-solve nodes
+# RUN(SITES): flow-sites solved
+# CHECK: Variable(g0) = {Array@f0:v1}
+# CHECK: Variable(g1) = {Array@f0:v11}
+# CHECK: DeclaredPart(Array@f0:v1, 0) = {undefined|null|true|7|"s"}
+# CHECK: DeclaredPart(Array@f0:v3, 0) = {7}
+# CHECK: DeclaredPart(Array@f0:v11, 0) = {{*}}null{{*}}unknown
+# SITES: site s0 function=f0 value=v1 kind=Instance origin=Operation builtinClass=Array class=
+# SITES-NOT: function=f0{{*}}positions=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="known" declared={type=anything} initialization=Uninitialized
+variable g1 name="unknown" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewArray v0 contents=anything
+    v2 = Integer integer=7
+    v3 = NewArray contents=anything
+    AppendElement v3, v2
+    AppendSpread v1, v3
+    v6 = Boolean boolean=true
+    AppendElement v1, v6
+    v8 = String string="s"
+    AppendElement v1, v8
+    PutModuleVariable v1 variable=g0
+    v11 = NewArray v0 contents=anything
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="source" [isFreeName]
+    AppendSpread v11, v13
+    PutModuleVariable v11 variable=g1
+    Return
+}

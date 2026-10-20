@@ -270,7 +270,7 @@ template<typename Func>
 void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
     auto disassembly = compilation.disassembly();
-#if USE(BUN_JSC_ADDITIONS) && !ENABLE(DISASSEMBLER)
+#if !ENABLE(DISASSEMBLER)
     return;
 #endif
     if (func(disassembly))
@@ -771,6 +771,10 @@ void testShlArgImm32(int32_t, int32_t);
 void testShlZShrArgImm32(int32_t, int32_t);
 void testClzArg64(int64_t);
 void testClzMem64(int64_t);
+void testPopCountArg64(int64_t);
+void testPopCountMem64(int64_t);
+void testPopCountArg32(int32_t);
+void testPopCountConstant64(int64_t);
 void testClzArg32(int32_t);
 void testClzMem32(int32_t);
 void testAbsArg(double);
@@ -1409,9 +1413,7 @@ void addShrTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addAtomicTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addLoadTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addTupleTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
-#if USE(BUN_JSC_ADDITIONS)
 void addBunTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
-#endif
 
 void testCSEStoreWithLoop();
 void testCSELoadAfterStoreDiamond(bool flag);

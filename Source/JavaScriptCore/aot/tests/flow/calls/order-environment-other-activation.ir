@@ -1,0 +1,45 @@
+# The only call of a closure stands below the store of the field it reads, but it enters the closure of another activation, whose own store has not run: where a closure is handed on decides for a field of an environment, not where it is called
+# RUN: flow-order locations failed
+# CHECK: L0.0: Unknown AtMostOnce
+# CHECK: read-before-initialization L0.0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything|absent}}]
+variable g0 name="outer" module=m0 declared={type=function} initialization=Function function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="outer" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject layout=L0
+    v3 = NewClosure v2 function=f2
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = GetModuleVariable variable=g0
+    v6 = Boolean boolean=false
+    v7 = Call v5, -, v3, v6
+    Jump -> next b2()
+  b2():
+    v8 = Integer integer=1
+    PutEnvironmentField v2, v8 layout=L0 field=0
+    v10 = ToBoolean v0
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    v11 = Call v0
+    Jump -> next b4()
+  b4():
+    Return
+}
+function f2 name="read" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = CheckInitialized v1 name="x"
+    Return v2
+}

@@ -1,0 +1,39 @@
+# The limit on the sites of a layout also holds for sites that the solve creates: the calls past it share the layout's own object
+# OPTIONS: limit=MaxSitesPerLayout:1
+# LOSS: MaxSitesPerLayout x1
+# RUN: flow-sites solved
+# CHECK: site s0 function=f0 value=v10 kind=Layout origin=Operation layout=L0 class=A0 object=o{{*}}(L0#0)
+# CHECK: site [[first]] function=f0 value=v6 kind=Layout origin=BuiltinResult layout=[[step]] {{*}}class=[[own]] object=o{{*}}([[step]]#
+# CHECK: site [[second]] function=f0 value=v7 kind=Layout origin=BuiltinResult layout=[[step]] {{*}}class=[[rest]] object=o{{*}}([[step]])
+# CHECK: site [[third]] function=f0 value=v8 kind=Layout origin=BuiltinResult layout=[[step]] {{*}}class=[[rest]] object=o{{*}}([[step]])
+# CHECK: class A0 layout=L0 sites=[s0] shared=o{{*}}(L0#0)
+# CHECK-NOT: layout-object
+# CHECK: class [[own]] layout=[[step]] sites=[{{*}}[[first]]] shared=o{{*}}([[step]]#
+# CHECK-NOT: layout-object
+# CHECK: class [[rest]] layout=[[step]] sites=[{{*}}[[second]]{{*}}[[third]]{{*}}] shared=o{{*}}([[step]]) layout-object
+# CHECK-NOT: layout-object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Map" [isFreeName]
+    v2 = Construct v1
+    v3 = PropGet v2 key="entries"
+    v4 = Call v3, v2
+    v5 = PropGet v4 key="next"
+    v6 = Call v5, v4
+    v7 = Call v5, v4
+    v8 = Call v5, v4
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L0 fields=[0]
+    v11 = FinishObject v10
+    Jump -> next b1()
+  b1():
+    Return
+  b2() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}

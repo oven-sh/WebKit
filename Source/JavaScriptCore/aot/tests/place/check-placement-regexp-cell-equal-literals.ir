@@ -1,0 +1,23 @@
+# Equal literals at two sites have a cell each: a shared literal returns the object in its cell, so it cannot name the cell of the other site
+# RUN: check-placement regexp-cell
+# DIAGNOSTIC: PlacementCheckFailed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = PropGet v2 key="split"
+    v4 = NewRegExp pattern="a+" regExpFlags=[Global] @10
+    v5 = Call v3, v2, v4
+    v6 = NewRegExp pattern="a+" regExpFlags=[Global] @20
+    v7 = Call v3, v2, v6
+    v8 = PropGet v0 key="publish" [isFreeName]
+    v9 = Call v8, -, v5, v7
+    Return
+}
+
+# CHECK: mutated f0
+# CHECK-NEXT: rule SiteRefersElsewhere

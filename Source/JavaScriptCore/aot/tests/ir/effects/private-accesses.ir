@@ -1,0 +1,66 @@
+# A private access on a proven receiver of the declaring class touches the one field it names; on any other receiver it has its written set, which is not unknown code
+# FORM: Prepared
+# RUN: effects f0 f1 f2
+# RUN(W): write-overlap f5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Counter" constructor=f3 fields=[{key=#"count"@L0 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"late"@L0 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="EvaluatedAgain" constructor=f4 fields=[{key=#"count"@L1 declared={type=number} flags=[IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType, LoseShape]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="provenReceiver" parameters=[{type=L0}, {type=number}, {type=null|L0}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number, v2: null|L0):
+    v3 = NewClassToken layout=L0
+    v4 = PrivateGet v0, v3 layout=L0 field=0
+    PrivateSet v0, v3, v1 layout=L0 field=0
+    v6 = PrivateHas v0, v3 layout=L0 field=1
+    PrivateDefine v0, v3, v1 layout=L0 field=1
+    v8 = PrivateGet v2, v3 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v4 PrivateGet: reads(ObjectFields/1)
+# CHECK-NOT: throws
+# CHECK: v5 PrivateSet: writes(ObjectFields/1)
+# CHECK-NOT: throws
+# CHECK: v6 PrivateHas: reads(ObjectFields/1)
+# CHECK-NOT: throws
+# CHECK: v7 PrivateDefine: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v8 PrivateGet: reads(ObjectFields/1) throws
+function f1 name="anyReceiver" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+  b0(v0: anything, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=0
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    v5 = PrivateHas v0, v2 layout=L0 field=1
+    PrivateDefine v0, v2, v1 layout=L0 field=1
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: nknownCode
+# CHECK: v3 PrivateGet: reads(ObjectFields, ShapeWords, NamedProperties) throws
+# CHECK-NEXT: v4 PrivateSet: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v5 PrivateHas: reads(ObjectFields, ShapeWords, NamedProperties) throws
+# CHECK-NEXT: v6 PrivateDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, ShapeEpoch, NamedProperties, AllocatorState, RuntimeState) throws collects
+# CHECK-NOT: nknownCode
+function f2 name="planNeedsTest" parameters=[{type=L0}, {type=L1}] results=[{type=undefined}] {
+  b0(v0: L0, v1: L1):
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v0, v2 layout=L0 field=1
+    v4 = NewClassToken layout=L1
+    v5 = PrivateGet v1, v4 layout=L1 field=0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v3 PrivateGet: reads(ObjectFields, ShapeWords, NamedProperties) throws
+# CHECK: v5 PrivateGet: reads(ObjectFields, ShapeWords, NamedProperties) throws
+function f3 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f4 name="EvaluatedAgain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f5 name="namesTheKeyOfTheField" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    v2 = NewClassToken layout=L0
+    v3 = GetSlot v0 key=#"count"@L0 receivers=[L0] level=Proven
+    v4 = GetSlotOrUndefined v0 key=#"late"@L0 receivers=[L0] level=Proven
+    PrivateSet v0, v2, v1 layout=L0 field=0
+    Return
+}
+# W: v5 on v3: May
+# W: v5 on v4: None

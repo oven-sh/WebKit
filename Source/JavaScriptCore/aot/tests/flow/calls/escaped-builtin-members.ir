@@ -1,0 +1,25 @@
+# A built-in object that reaches native code leaves its member functions behind, and a built-in object that is only called through stays where it is
+# RUN: flow-links uses
+# RUN(OTHERS): flow-links uses
+# CHECK: use Math [Read, Escaped] f0:v3
+# CHECK-NOT: use Math{{*}}Escaped
+# OTHERS-NOT: use Math{{*}}Called] f0
+# OTHERS-NOT: use JSON{{*}}Escaped
+# OTHERS: use JSONStringify [Read, Called] f0:v5
+# OTHERS-NOT: use Math{{*}}Called] f0
+# OTHERS-NOT: use JSON{{*}}Escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="keep" [isFreeName]
+    v2 = Builtin builtin=Math
+    v3 = Call v1, -, v2
+    v4 = Builtin builtin=JSON
+    v5 = PropGet v4 key="stringify"
+    v6 = Integer integer=1
+    v7 = Call v5, v4, v6 calleeKey="stringify"
+    Return
+}

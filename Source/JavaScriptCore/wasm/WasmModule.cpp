@@ -29,6 +29,7 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSWebAssemblyInstance.h"
+#include "WasmCodeInImage.h"
 #include "WasmFunctionIPIntMetadataGenerator.h"
 #include "WasmIPIntGenerator.h"
 #include "WasmIPIntPlan.h"
@@ -143,22 +144,26 @@ void Module::copyInitialCalleeGroupToAllMemoryModes(MemoryMode initialMode)
     }
 }
 
-
 void Module::createInterpreterMetadataIfNeeded(const CalleeGroup& group)
 {
     if (group.imageCodePointers() || Options::crashIfInterpreterIsUsed())
         return;
     ModuleInformation& info = m_moduleInformation.get();
     Locker locker { info.interpreterMetadataLock };
-    if (!info.isMissingInterpreterMetadata)
+    if (!info.moduleWithSkippedFunctions)
         return;
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    std::span<const FunctionInImage> functionsInImage = CodeInImage::functionsOf(*info.moduleWithSkippedFunctions);
     for (unsigned index = 0; index < info.internalFunctionCount(); ++index) {
+        if (!functionsInImage[index].hasCode)
+            continue;
         info.functions[index].finishedValidating = false;
         auto metadata = parseAndCompileMetadata(info.functions[index].data, info.rtt(info.internalFunctionTypeSignatureIndices[index]), info, FunctionCodeIndex(index));
         RELEASE_ASSERT(metadata);
         m_ipintCallees->at(index)->takeMetadata(**metadata);
     }
-    info.isMissingInterpreterMetadata = false;
+#endif
+    info.moduleWithSkippedFunctions = nullptr;
 }
 
 Ref<Wasm::InstanceAnchor> Module::registerAnchor(JSWebAssemblyInstance* instance)

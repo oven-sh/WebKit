@@ -1,0 +1,33 @@
+# The members of a supertype are its declared members without those never allocated, and a layout that is no declared member is never added, whatever flows
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: layout L0 flow={allocation=NeverAllocated baseState=None members=[L1, L2] 
+# CHECK: layout L2 flow={baseState=None members=[L2] 
+# CHECK: layout L3 flow={allocation=NeverAllocated 
+# CHECK: layout L4 flow={baseState=None members=[L4] 
+# CHECK: variable g0 type=L1|L4 written=undefined|null|
+# CHECK: variable g1 type=L2 written=anything
+# ALL-NOT: layout L3 {{*}}members=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=0 kind=Assertion
+variable g0 name="held" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+variable g1 name="held" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Shape"
+layout L1 name="Circle" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Ghost" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Stray" fields=[{key="size" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    v6 = ClaimDeclared v5 declared={type=undefined|null|L0 site=w0}
+    PutModuleVariable v6 variable=g0
+    Return
+}

@@ -1,0 +1,52 @@
+# A claim of "an object, undefined or null" is one check for cells and one for the rest, and both fail at one throw site; a read from a value that is an object or null traps on null and has a faulting access in place of a throw site; a claim of a subset has neither
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
+# STATISTIC: ThrowSites = 1
+# CHECK: f1: size={{*}} frame=none entries=1 sites=1 handlers=0 faults=0
+# CHECK: f2: size={{*}} frame=none entries=1 sites=1 handlers=0 faults=1
+# CHECK: f3: size={{*}} frame=none entries=1 sites=0 handlers=0 faults=0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion text="Point"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="sink" [isFreeName]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1 function=f1
+    v5 = Double number=1.5
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = ClaimDeclared v6 declared={type=null|L0}
+    v8 = CallDirect v7 function=f2
+    v9 = Null
+    v10 = ClaimDeclared v9 declared={type=null|L0}
+    v11 = CallDirect v10 function=f2
+    v12 = CallDirect v7 function=f3
+    v13 = Call v2, -, v4, v8, v11, v12
+    v14 = ToBoolean v13
+    Branch v14 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="claimWithSite" parameters=[{type=anything}] results=[{type=undefined|null|L0}] {
+  b0(v0: anything):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|L0 site=w0} @10
+    Return v1
+}
+function f2 name="readNullable" parameters=[{type=null|L0}] results=[{type=anything}] {
+  b0(v0: null|object ? L0):
+    v1 = PropGet v0 key="x" @20
+    Return v1
+}
+function f3 name="claimOfSubset" parameters=[{type=null|L0}] results=[{type=undefined|null|L0}] {
+  b0(v0: null|object ? L0):
+    v1 = ClaimDeclared v0 declared={type=undefined|null|L0 site=w0}
+    Return v1
+}

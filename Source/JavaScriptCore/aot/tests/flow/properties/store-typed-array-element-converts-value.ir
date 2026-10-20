@@ -1,0 +1,148 @@
+# A store into a typed array converts the stored value: valueOf of an object runs at the store, what it writes is seen, what it throws reaches the handler, and the array holds numbers, never the object. An ordinary array retains the object and runs nothing
+# OPTIONS: check=FlowFixpoint
+# RUN(CONVERTED): flow-links calls
+# CONVERTED: f1 v3 -> i{{*}} f4 Protocol
+# RUN(THROWING): flow-links calls
+# THROWING: f2 v3 -> i{{*}} f5 Protocol
+# RUN(WRITTEN): flow-solve nodes
+# WRITTEN: DeclaredPart(L0#{{*}}, 0) = {1|"text"}
+# RUN(CAUGHT): flow-solve nodes
+# CAUGHT: , f2, v5) = {"thrown"
+# RUN(ELEMENTS): flow-solve nodes
+# ELEMENTS: DeclaredPart(Float64Array@{{*}}, 0) = {number}
+# RUN(RETAINED): flow-solve nodes
+# RETAINED: Position(Array@{{*}}, 1) = {0|L3#{{*}}}
+# RUN(NOTRUN): flow-links calls
+# NOTRUN-NOT: f6
+# RUN(FIXPOINT): flow-solve fixpoint
+# FIXPOINT: nothing changes
+
+layout L0 module=m0 position=14 fields=[{key="n" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L1 module=m0 position=42 fields=[{key="valueOf" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+layout L2 module=m0 position=106 fields=[{key="valueOf" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+layout L3 module=m0 position=158 fields=[{key="valueOf" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+variable g0 name="state" module=m0 declared={type=anything|absent predicted=L0} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f2 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f3 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = Data data=d0 @14
+    v7 = Predict v6 predicted=L0 @6
+    PutModuleVariable v7 variable=g0 @6
+    v9 = NewObject layout=L1 @44
+    v10 = NewClosure function=f4 @44
+    v11 = ClaimDeclared v10 declared={type=anything predicted=function} @44
+    PropDefine v9, v11 key="valueOf" @44
+    v13 = FinishObject v9 @42
+    v14 = Predict v13 predicted=L1 @30
+    v15 = NewObject layout=L2 @108
+    v16 = NewClosure function=f5 @108
+    v17 = ClaimDeclared v16 declared={type=anything predicted=function} @108
+    PropDefine v15, v17 key="valueOf" @108
+    v19 = FinishObject v15 @106
+    v20 = Predict v19 predicted=L2 @95
+    v21 = NewObject layout=L3 @160
+    v22 = NewClosure function=f6 @160
+    v23 = ClaimDeclared v22 declared={type=anything predicted=function} @160
+    PropDefine v21, v23 key="valueOf" @160
+    v25 = FinishObject v21 @158
+    v26 = Predict v25 predicted=L3 @147
+    v27 = Builtin builtin=GlobalThis @207
+    v28 = PropGet v27 key="Float64Array" [isFreeName] @207
+    v29 = Predict v28 predicted=builtin(Float64Array) @207
+    v30 = Integer integer=2 @220
+    v31 = Construct v29, -, v30 calleeName="Float64Array" @207
+    v32 = Predict v31 predicted=Float64Array @203
+    v33 = Data data=d1 @239
+    v34 = Predict v33 predicted=Array<number> @239
+    v35 = Predict v1 predicted=function @471
+    v36 = Call v35, -, v32, v14 calleeName="storeNumber" @471
+    v37 = Predict v5 predicted=function @504
+    v38 = Call v37, -, v34, v26 calleeName="storeValue" @504
+    v39 = Builtin builtin=GlobalThis @534
+    v40 = PropGet v39 key="print" [isFreeName] @534
+    v41 = PropGet v7 key="n" @540
+    v42 = Predict v41 predicted=number @540
+    v43 = Predict v3 predicted=function @549
+    v44 = Call v43, -, v32, v20 calleeName="storeInTry" @549
+    v45 = Integer integer=1 @580
+    v46 = ElemGet v32, v45 @580
+    v47 = Predict v46 predicted=number @580
+    v48 = Integer integer=1 @599
+    v49 = ElemGet v34, v48 @599
+    v50 = Predict v49 predicted=number @599
+    v51 = TypeOf v50 @592
+    v52 = Call v40, -, v42, v44, v47, v51 calleeName="print" @534
+    v53 = Undefined @534
+    Return v53 @534
+}
+function f1 name="storeNumber" module=m0 position=247 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @247
+  b1():
+    v2 = Integer integer=1 @285
+    ElemSet v0, v2, v1 @285
+    v4 = Undefined @285
+    Return v4 @285
+}
+function f2 name="storeInTry" module=m0 position=306 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @306
+  b1():
+    Jump -> next b2() @343
+  b2() handler=b3():
+    v2 = Integer @349
+    ElemSet v0, v2, v1 @349
+    v4 = String string="stored" @375
+    Return v4 @375
+  b3() role=CatchHandler:
+    v5 = CatchValue @397
+    Return v5 @406
+}
+function f3 name="storeValue" module=m0 position=413 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @413
+  b1():
+    v2 = Integer integer=1 @450
+    ElemSet v0, v2, v1 @450
+    v4 = Undefined @450
+    Return v4 @450
+}
+function f4 name="valueOf" module=m0 position=44 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @44
+  b1():
+    v0 = GetModuleVariable variable=g0 @56
+    v1 = CheckInitialized v0 name="state" @56
+    v2 = String string="text" @66
+    v3 = ClaimDeclared v2 declared={type=anything predicted=number} @56
+    PropSet v1, v3 key="n" @56
+    v5 = Integer integer=7 @81
+    v6 = ClaimDeclared v5 declared={type=anything predicted=number} @81
+    Return v6 @81
+}
+function f5 name="valueOf" module=m0 position=108 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=never}] {
+  b0():
+    Jump -> next b1() @108
+  b1():
+    v0 = String string="thrown" @126
+    Throw v0 @120
+}
+function f6 name="valueOf" module=m0 position=160 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @160
+  b1():
+    v0 = Integer integer=8 @179
+    v1 = ClaimDeclared v0 declared={type=anything predicted=number} @179
+    Return v1 @179
+}
+data d0 root=Object{layout=L0 members=[{key="n" value=Number{value=1}}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{}, Number{}]} module=m0
+entry module=m0

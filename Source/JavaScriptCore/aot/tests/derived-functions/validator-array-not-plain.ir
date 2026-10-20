@@ -1,0 +1,42 @@
+# The validator of an array or a tuple reads elements only from a plain array. An array with holes, accessors or names of its own and a proxy of an array are left to the general validator, which reads each element once: the validator calls nothing that could run an iterator, a getter or a trap
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0 Validator:x1.0
+# STATISTIC: ValidatorsCreated = 2
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=Array<number> validation=[{shape=Array{element=1} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=Array validation=[{shape=Tuple{elements=[1, 1]} type=Array}, {shape=Primitive{primitive=Number} type=number}]
+
+# CHECK: function {{*}}role=Validator {{*}}expectedResult=x0}
+# CHECK-NOT: CompilerHelpers
+# CHECK-NOT: CallDirect
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[isProxied0]]: boolean = CallBuiltin -, v0 overload=ArrayIsArray/0
+# CHECK-NEXT: Branch [[isProxied0]] -> taken [[proxied0]](), notTaken [[noArray0]]()
+# CHECK-NEXT: ([[array0]]: Array):
+# CHECK-NEXT: [[isPlain0]]: boolean = IsPristine [[array0]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPlain0]] -> taken {{*}}(| 0), notTaken [[notPlain0]]()
+# CHECK: [[notPlain0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: [[proxied0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: [[noArray0]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK-NOT: CompilerHelpers
+# CHECK-NOT: CallDirect
+
+# CHECK: function {{*}}role=Validator {{*}}expectedResult=x1}
+# CHECK-NOT: CompilerHelpers
+# CHECK-NOT: CallDirect
+# CHECK: : 2 = Integer integer=2
+# CHECK: [[unknown1]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[isPlain1]]: boolean = IsPristine {{*}} builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPlain1]] -> taken {{*}}(| 0), notTaken [[notPlain1]]()
+# CHECK: [[notPlain1]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown1]]()
+# CHECK-NOT: CompilerHelpers
+# CHECK-NOT: CallDirect

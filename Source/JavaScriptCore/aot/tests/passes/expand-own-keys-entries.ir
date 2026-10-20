@@ -1,0 +1,87 @@
+# Object.entries makes one pair of key text and slot read per enumerable string field, then the array of the pairs
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[1, 0]}]}
+layout L1 name="Mixed" fields=[{key=@@iterator declared={type=anything}}, {key="a" declared={type=number}}, {key=#"p"@L1 declared={type=number} flags=[IsPrivate]}] flow={constructorOrders=[{fields=[0, 1, 2]}]}
+layout L2 name="NoOrderKnown" fields=[{key="x" declared={type=number}}]
+
+function f0 name="predicted" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectEntries/0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="predicted"
+# CHECK: b0(v0: object ~ L0):
+# CHECK-NEXT: = ShapeTest v0 layouts=[L0]
+# CHECK: [[done0]](v1: Array<Array>):
+# CHECK-NEXT: Return v1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[call0]]: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
+# CHECK-NEXT: Jump -> next [[done0]]([[call0]])
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0]
+# CHECK: = HasNoExtraProperties v0,
+# CHECK: [[all0]]: guard = AllGuards
+# CHECK-NEXT: [[yKey]]: "y" = String string="y"
+# CHECK-NEXT: [[y]]: string = GetSlot v0, [[all0]] key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[yPair]]: Array = NewArray [[yKey]], [[y]] contents=anything
+# CHECK-NEXT: [[xKey]]: "x" = String string="x"
+# CHECK-NEXT: [[x]]: number = GetSlot v0, [[all0]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[xPair]]: Array = NewArray [[xKey]], [[x]] contents=anything
+# CHECK-NEXT: [[pairs]]: Array<Array> = NewArray [[yPair]], [[xPair]] contents=Array
+# CHECK-NEXT: Jump -> next [[done0]]([[pairs]])
+
+function f1 name="symbolAndPrivateFields" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = CallBuiltin -, v0 overload=ObjectEntries/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="symbolAndPrivateFields"
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
+# CHECK-NOT: GetSlot
+# CHECK: [[aKey]]: "a" = String string="a"
+# CHECK-NEXT: [[a]]: number = GetSlot v0, {{*}} key="a" receivers=[L1] level=Predicted
+# CHECK-NEXT: [[aPair]]: Array = NewArray [[aKey]], [[a]] contents=anything
+# CHECK-NEXT: = NewArray [[aPair]] contents=Array
+# CHECK-NOT: GetSlot
+
+function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = CallBuiltin -, v2 overload=ObjectEntries/0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="unchangedAllocation"
+# CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[xKey2]]: "x" = String string="x"
+# CHECK-NEXT: [[x2]]: number = GetSlot v2, v2 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[xPair2]]: Array = NewArray [[xKey2]], [[x2]] contents=anything
+# CHECK-NEXT: [[yKey2]]: "y" = String string="y"
+# CHECK-NEXT: [[y2]]: string = GetSlot v2, v2 key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[yPair2]]: Array = NewArray [[yKey2]], [[y2]] contents=anything
+# CHECK-NEXT: = NewArray [[xPair2]], [[yPair2]] contents=Array
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CallBuiltin
+
+function f3 name="nothingPredicted" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = CallBuiltin -, v0 overload=ObjectEntries/0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="nothingPredicted"
+# CHECK: b0(v0: object):
+# CHECK-NEXT: v1: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
+# CHECK-NEXT: Return v1
+
+function f4 name="layoutWithoutKnownOrder" parameters=[{type=object predicted=L2}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = CallBuiltin -, v0 overload=ObjectEntries/0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="layoutWithoutKnownOrder"
+# CHECK: b0(v0: object ~ L2):
+# CHECK-NEXT: v1: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
+# CHECK-NEXT: Return v1

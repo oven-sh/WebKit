@@ -1,0 +1,34 @@
+# A delete through the unknown object under a key nobody can name may remove any property of any escaped object. That is on record at the unknown object,
+# so it holds for a name that gets a location on the unknown object before the delete has run (f0's "early") and for one that gets it afterwards ("late")
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-solve objects
+# CHECK: unknown mutations=[{{*}}DeleteField{{*}}] uses={{*}} events=[{{*}}DeletedByUnknownKey
+# RUN(RESULTS): flow
+# RESULTS-NOT: IsNeverDeleted
+
+layout L0 name="Options" fields=[{key="early" declared={type=anything} flags=[IsRequired]}, {key="late" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = Call v1, -, v3
+    v5 = Call v1
+    v6 = Call v1
+    PropSet v5, v2 key="early" mode=Strict
+    v8 = ElemDelete v5, v6 mode=Strict
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v5
+    v11 = Call v9, -, v10
+    PropSet v11, v2 key="late" mode=Strict
+    v13 = PropGet v3 key="early"
+    v14 = PropGet v3 key="late"
+    Return v8
+}
+function f1 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

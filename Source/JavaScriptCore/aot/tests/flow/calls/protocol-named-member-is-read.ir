@@ -1,0 +1,43 @@
+# A built-in that only reads the members it names runs a getter under such a name, with the operand as this, and does not call a function that a member holds
+# RUN: flow-links calls
+# RUN(NOWHERE): flow-links calls
+# RUN(THIS): flow-solve nodes
+# CHECK: f0 v17 -> [[getter]] f2 Accessor
+# NOWHERE-NOT: -> {{*}} f1
+# THIS: , f2, parameter 0) = {L2#[[descriptor]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="ValueDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ComputedDescriptor" fields=[{key="writable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=Object
+    v2 = PropGet v1 key="defineProperty"
+    v3 = String string="k"
+    v4 = NewObject -, v0 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewClosure function=f1
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Call v2, v1, v5, v3, v8 calleeKey="defineProperty"
+    v10 = NewObject -, v0 layout=L0 fields=[0]
+    v11 = FinishObject v10
+    v12 = Boolean boolean=true
+    v13 = NewObject -, v12 layout=L2 fields=[0]
+    v14 = NewClosure function=f2
+    DefineGetter v13, v14 key="value"
+    v16 = FinishObject v13
+    v17 = Call v2, v1, v11, v3, v16 calleeKey="defineProperty"
+    Return
+}
+function f1 name="held" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="value" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

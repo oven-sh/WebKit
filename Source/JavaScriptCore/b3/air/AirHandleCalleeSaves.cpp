@@ -34,56 +34,94 @@
 
 namespace JSC { namespace B3 { namespace Air {
 
+static void addSuffixSavedForSuspensions(RegisterSet& usedCalleeSaves, const RegisterSet& clobberedAtSuspensions)
+{
+    Vector<Reg, 8> registersInSaveOrder;
+    clobberedAtSuspensions.forEach(
+        [&](Reg reg) {
+            registersInSaveOrder.append(reg);
+        });
+
+    size_t first = registersInSaveOrder.findIf(
+        [&](Reg reg) {
+            return usedCalleeSaves.contains(reg, IgnoreVectors);
+        });
+    if (first == notFound)
+        return;
+
+    constexpr size_t registersPerSave = isARM64() ? 2 : 1;
+    for (size_t position = first - first % registersPerSave; position < registersInSaveOrder.size(); ++position)
+        usedCalleeSaves.add(registersInSaveOrder[position], IgnoreVectors);
+}
+
+// Nothing saves a register that the policy pins: it keeps its value only while no instruction writes it and no patch clobbers it.
+static void checkPinnedRegistersAreOnlyRead(Code& code)
+{
+    RegisterSet writtenRegisters;
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            inst.forEachTmp(
+                [&] (Tmp& tmp, Arg::Role role, Bank, Width) {
+                    if (Arg::isAnyDef(role))
+                        writtenRegisters.add(tmp.reg(), IgnoreVectors);
+                });
+
+            if (inst.kind.opcode == Patch) {
+                writtenRegisters.merge(inst.extraClobberedRegs());
+                writtenRegisters.merge(inst.extraEarlyClobberedRegs());
+            }
+        }
+    }
+
+    writtenRegisters.filter(code.policy().registers.pinned);
+    if (writtenRegisters.isEmpty())
+        return;
+    dataLogLn("Air: the code writes or clobbers ", writtenRegisters, ", which the register policy pins");
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void handleCalleeSaves(Code& code)
 {
-    RegisterSet usedCalleeSaves;
+    static_assert(Reg::maxIndex() < 64);
+    uint64_t namedRegisters = 0;
+    RegisterSet clobberedRegisters;
 
     for (BasicBlock* block : code) {
         for (Inst& inst : *block) {
             inst.forEachTmpFast(
                 [&] (Tmp& tmp) {
-                    // At first we just record all used regs.
-                    usedCalleeSaves.add(tmp.reg(), IgnoreVectors);
+                    namedRegisters |= static_cast<uint64_t>(1) << tmp.reg().index();
                 });
 
             if (inst.kind.opcode == Patch) {
-#if USE(BUN_JSC_ADDITIONS)
-                RegisterSet clobbered = inst.extraClobberedRegs();
-                clobbered.merge(inst.extraEarlyClobberedRegs());
-                clobbered.exclude(code.calleeSavesClobberedAtSuspensions());
-                usedCalleeSaves.merge(clobbered);
-#else
-                usedCalleeSaves.merge(inst.extraClobberedRegs());
-                usedCalleeSaves.merge(inst.extraEarlyClobberedRegs());
-#endif
+                clobberedRegisters.merge(inst.extraClobberedRegs());
+                clobberedRegisters.merge(inst.extraEarlyClobberedRegs());
             }
         }
     }
 
-    handleCalleeSaves(code, WTF::move(usedCalleeSaves));
+    clobberedRegisters.exclude(code.calleeSavesClobberedAtSuspensions());
+    for (uint64_t registers = namedRegisters; registers; registers &= registers - 1)
+        clobberedRegisters.add(Reg::fromIndex(std::countr_zero(registers)), IgnoreVectors);
+
+    RegisterSet pinnedRegistersInUse = clobberedRegisters;
+    pinnedRegistersInUse.filter(code.policy().registers.pinned);
+    if (!pinnedRegistersInUse.isEmpty()) [[unlikely]]
+        checkPinnedRegistersAreOnlyRead(code);
+
+    handleCalleeSaves(code, WTF::move(clobberedRegisters));
 }
 
 void handleCalleeSaves(Code& code, RegisterSet usedCalleeSaves)
 {
     // We filter to really get the callee saves.
-    usedCalleeSaves.filter(RegisterSet::calleeSaveRegisters());
+    RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
+    calleeSaves.exclude(code.unsavedCalleeSaves());
+    calleeSaves.merge(code.policy().registers.savedByCallee);
+    usedCalleeSaves.filter(calleeSaves);
     usedCalleeSaves.filter(code.mutableRegs());
     usedCalleeSaves.exclude(RegisterSet::stackRegisters()); // We don't need to save FP here.
-#if USE(BUN_JSC_ADDITIONS)
-    usedCalleeSaves.exclude(code.unsavedCalleeSaves());
-#if CPU(ARM64)
-    if (!code.calleeSavesClobberedAtSuspensions().isEmpty()) {
-        bool isSaved = false;
-        for (auto [first, second] : { std::pair { ARM64Registers::x19, ARM64Registers::x20 }, std::pair { ARM64Registers::x21, ARM64Registers::x22 }, std::pair { ARM64Registers::x23, ARM64Registers::x24 } }) {
-            isSaved |= usedCalleeSaves.contains(first, IgnoreVectors) || usedCalleeSaves.contains(second, IgnoreVectors);
-            if (isSaved) {
-                usedCalleeSaves.add(first, IgnoreVectors);
-                usedCalleeSaves.add(second, IgnoreVectors);
-            }
-        }
-    }
-#endif
-#endif
+    addSuffixSavedForSuspensions(usedCalleeSaves, code.calleeSavesClobberedAtSuspensions());
 
     auto calleSavesToSave = usedCalleeSaves;
 

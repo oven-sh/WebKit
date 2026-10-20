@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include "IntlFormatPattern.h"
 #include "JSObject.h"
 #include "MathCommon.h"
 #include "TemporalObject.h"
@@ -40,11 +41,6 @@ struct UNumberFormatter;
 struct UNumberRangeFormatter;
 
 namespace JSC {
-
-namespace AOT {
-struct FormatPatternHeader;
-enum class FormatPatternUse : uint8_t;
-}
 
 class IntlFieldIterator;
 class JSBoundFunction;
@@ -185,18 +181,6 @@ public:
     JSBoundFunction* boundFormat() const LIFETIME_BOUND { return m_boundFormat.get(); }
     void setBoundFormat(VM&, JSBoundFunction*);
 
-#if ENABLE(AOT)
-    const AOT::FormatPatternHeader* compiledPattern() const { return m_compiledPattern; }
-    AOT::FormatPatternUse compiledPatternUse() const { return m_compiledPatternUse; }
-    void setCompiledPattern(const AOT::FormatPatternHeader* pattern, AOT::FormatPatternUse use = { }) { replaceCompiledPattern(pattern, use); }
-    void replaceCompiledPattern(const AOT::FormatPatternHeader* pattern, AOT::FormatPatternUse use)
-    {
-        m_compiledPattern = pattern;
-        m_compiledPatternUse = use;
-    }
-    void initializeIfDeferred(JSGlobalObject*);
-#endif
-
     enum class Style : uint8_t { Decimal, Percent, Currency, Unit };
 
     static void formatToPartsInternal(JSGlobalObject*, Style, bool sign, IntlMathematicalValue::NumberType, const String& formatted, IntlFieldIterator&, JSArray*, JSString* sourceType, JSString* unit);
@@ -219,8 +203,13 @@ public:
     static ASCIILiteral trailingZeroDisplayString(IntlTrailingZeroDisplay);
 
 private:
+    friend class IntlFormatPatternCompiler;
+
     IntlNumberFormat(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
+
+    String tryFormatWithICU(double) const;
+    const IntlFormatPattern* formatPattern() const;
 
     static Vector<String> localeData(const String&, RelevantExtensionKey);
 
@@ -240,9 +229,6 @@ private:
     static JSValue useGroupingValue(VM&, UseGrouping);
 
     WriteBarrier<JSBoundFunction> m_boundFormat;
-#if ENABLE(AOT)
-    const AOT::FormatPatternHeader* m_compiledPattern { nullptr };
-#endif
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
     String m_numberFormatterSkeleton;
@@ -270,9 +256,8 @@ private:
     UseGrouping m_useGrouping { UseGrouping::Always };
     RoundingMode m_roundingMode { RoundingMode::HalfExpand };
     IntlRoundingType m_roundingType { IntlRoundingType::FractionDigits };
-#if ENABLE(AOT)
-    AOT::FormatPatternUse m_compiledPatternUse { };
-#endif
+    mutable uint8_t m_numberOfFormatsBeforeCompilingPattern { IntlFormatPattern::numberOfFormatsBeforeCompiling };
+    mutable std::unique_ptr<IntlFormatPattern> m_formatPattern;
 };
 
 } // namespace JSC

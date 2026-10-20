@@ -1,0 +1,56 @@
+# A spread of a namespace object defines each export under its name on the target, and neither the namespace object nor an export reaches unknown code
+# RUN: flow-solve nodes
+# RUN(ABSENT): flow-solve nodes
+# RUN(OBJECTS): flow-solve objects
+# RUN(SINKS): flow-solve sinks
+# CHECK: Variable(g0) = {1}
+# CHECK: Variable(g1) = {f2}
+# CHECK: Property(L0#{{*}}, "count") = {1}
+# CHECK: Property(L0#{{*}}, "run") = {f2}
+# ABSENT-NOT: (L0#{{*}}, "hidden")
+# ABSENT-NOT: (L0#{{*}}, "__esModule")
+# ABSENT-NOT: StringProperties(L0#
+# ABSENT-NOT: SymbolProperties(L0#
+# OBJECTS: L0#{{*}} mutations=
+# OBJECTS-NOT: StoredByUnknownKey
+# OBJECTS: namespace m1 mutations=[] uses=[Enumerated]
+# SINKS-NOT: namespace m1
+# SINKS-NOT: L0#
+# SINKS-NOT: , f2
+# SINKS-NOT: , f3
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="library.js" displayPath="library.js" body=f1 exports=[{name="count" variable=g0}, {name="run" variable=g1}]
+entry module=m0
+layout L0 name="Copy"
+variable g0 name="count" module=m1 declared={type=anything}
+variable g1 name="run" module=m1 declared={type=anything}
+variable g2 name="hidden" module=m1 declared={type=anything}
+variable g3 name="copy" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    PutModuleVariable v3 variable=g3
+    Return
+}
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f3
+    PutModuleVariable v4 variable=g2
+    Return
+}
+function f2 name="run" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="hidden" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

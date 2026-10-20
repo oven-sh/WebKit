@@ -1,0 +1,126 @@
+# An operation that only a throw into an ignoring handler follows goes with the throw if nobody uses its result and all it can be seen to do is throw: an error that is created to be thrown, with its message. Whatever else creating it does stays
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="constantMessage" parameters=[{type=function}] results=[{type=number}] {
+  b0(v0: function) handler=b1():
+    v1 = Call v0
+    v2 = String string="too small"
+    v3 = CallBuiltin -, v2 overload=Error/1
+    Throw v3
+  b1() role=CatchHandler:
+    v4 = Integer integer=-1
+    Return v4
+}
+# CHECK-LABEL: function f0 name="constantMessage"
+# CHECK: b0(v0: function) handler=b1():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body0]]()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: Jump -> next [[body0]]()
+# CHECK-NEXT: [[body0]]():
+# CHECK-NEXT: = Integer integer=-1
+
+function f1 name="concatenatedMessage" parameters=[{type=function}, {type=number}] results=[{type=number}] {
+  b0(v0: function, v1: number) handler=b1():
+    v2 = Call v0
+    v3 = String string="too small: "
+    v4 = Add v3, v1
+    v5 = CallBuiltin -, v4 overload=RangeError/1
+    Throw v5
+  b1() role=CatchHandler:
+    v6 = Integer integer=-2
+    Return v6
+}
+# CHECK-LABEL: function f1 name="concatenatedMessage"
+# CHECK: b0(v0: function, v1: number) handler=b1():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next [[body1]]()
+
+function f2 name="messageConvertedByUserCode" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything) handler=b1():
+    v1 = ToString v0
+    v2 = CallBuiltin -, v1 overload=Error/1
+    Throw v2
+  b1() role=CatchHandler:
+    v3 = Integer integer=-3
+    Return v3
+}
+# CHECK-LABEL: function f2 name="messageConvertedByUserCode"
+# CHECK: b0(v0: anything) handler=b1():
+# CHECK-NEXT: = ToString v0
+# CHECK-NEXT: Jump -> next
+# CHECK-NOT: CallBuiltin
+
+function f3 name="optionsMayHaveGetter" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything) handler=b1():
+    v1 = String string="with a cause"
+    v2 = CallBuiltin -, v1, v0 overload=Error/1
+    Throw v2
+  b1() role=CatchHandler:
+    v3 = Integer integer=-4
+    Return v3
+}
+# CHECK-LABEL: function f3 name="optionsMayHaveGetter"
+# CHECK: = CallBuiltin -, v1, v0 overload=Error/1
+# CHECK-NEXT: Jump -> next
+
+function f4 name="errorIsStored" results=[{type=number}] {
+  b0() handler=b1():
+    v0 = String string="kept"
+    v1 = CallBuiltin -, v0 overload=Error/1
+    PutModuleVariable v1 variable=g0
+    Throw v1
+  b1() role=CatchHandler:
+    v3 = Integer integer=-5
+    Return v3
+}
+# CHECK-LABEL: function f4 name="errorIsStored"
+# CHECK: = CallBuiltin -, v0 overload=Error/1
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: Jump -> next
+
+function f5 name="callBetweenCreationAndThrow" parameters=[{type=function}] results=[{type=number}] {
+  b0(v0: function) handler=b1():
+    v1 = String string="made first"
+    v2 = CallBuiltin -, v1 overload=Error/1
+    v3 = Call v0
+    Throw v2
+  b1() role=CatchHandler:
+    v4 = Integer integer=-6
+    Return v4
+}
+# CHECK-LABEL: function f5 name="callBetweenCreationAndThrow"
+# CHECK: = CallBuiltin -, v1 overload=Error/1
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next
+
+function f6 name="handlerReadsValue" results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = String string="read"
+    v1 = CallBuiltin -, v0 overload=Error/1
+    Throw v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: function f6 name="handlerReadsValue"
+# CHECK: = CallBuiltin -, v0 overload=Error/1
+# CHECK-NEXT: Throw v1
+
+function f7 name="cleanupHandler" results=[{type=number}] {
+  b0() handler=b1():
+    v0 = String string="passed on"
+    v1 = CallBuiltin -, v0 overload=Error/1
+    Throw v1
+  b1() role=CleanupHandler:
+    v2 = CatchException
+    Rethrow v2
+}
+# CHECK-LABEL: function f7 name="cleanupHandler"
+# CHECK: = CallBuiltin -, v0 overload=Error/1
+# CHECK-NEXT: Throw v1

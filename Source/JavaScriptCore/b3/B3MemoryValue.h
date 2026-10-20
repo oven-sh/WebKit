@@ -74,10 +74,6 @@ public:
     bool controlDependent() const { return m_controlDependent; }
     void setControlDependent(bool value) { m_controlDependent = value; }
 
-    static constexpr unsigned alignedHeaderSize = 16;
-    bool isInAlignedHeader() const { return m_isInAlignedHeader; }
-    void setIsInAlignedHeader(bool value) { m_isInAlignedHeader = value; }
-
     bool isStore() const { return B3::isStore(opcode()); }
     bool isLoad() const { return B3::isLoad(opcode()); }
 
@@ -161,7 +157,6 @@ private:
     HeapRange m_fenceRange { HeapRange() };
     Mutability m_readsMutability : 1 { Mutability::Mutable };
     bool m_controlDependent : 1 { true };
-    bool m_isInAlignedHeader : 1 { false };
 };
 
 } } // namespace JSC::B3

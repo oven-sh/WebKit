@@ -130,9 +130,6 @@ public:
     // What op_new_reg_exp_shared evaluates to: the site's object from cachedObject while it can stand for a new one, else a new one.
     static inline JSObject* literalAsReceiver(JSGlobalObject*, CodeBlock*, RegExp*, bool forTest, WriteBarrier<JSCell>& cachedObject);
     JS_EXPORT_PRIVATE static JSObject* literalAsReceiverSlow(JSGlobalObject*, CodeBlock*, RegExp*, bool forTest, WriteBarrier<JSCell>& cachedObject);
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    JS_EXPORT_PRIVATE static RegExp* tryCreateRegExpFromLongRope(VM&, JSString*, OptionSet<Yarr::Flags>);
-#endif
     static RegExpObject* createSharedLiteral(VM& vm, Structure* structure, RegExp* regExp)
     {
         RegExpObject* object = create(vm, structure, regExp);

@@ -1,0 +1,155 @@
+# A required tail call of a built-in that calls one operand once and returns its result becomes a call of that operand and stays a tail call
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+# STATISTIC: BuiltinCallsResolved = 9
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="applyWithAnyList" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f0 name="applyWithAnyList"
+# CHECK-NOT: CallBuiltin
+# CHECK: [[list]]: {{*}} = NewArgumentList v0, v2
+# CHECK-NEXT: v4: anything = CallList v0, v1, [[list]]
+# CHECK-NEXT: ReturnCall v4
+
+function f1 name="applyWithArray" parameters=[{type=anything}, {type=anything}, {type=Array<number>}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<number>):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f1 name="applyWithArray"
+# CHECK-NOT: NewArgumentList
+# CHECK: v4: anything = CallList v0, v1, v2
+# CHECK-NEXT: ReturnCall v4
+
+function f2 name="applyWithoutList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=FunctionPrototypeApply
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}
+# CHECK-LABEL: function f2 name="applyWithoutList"
+# CHECK-NOT: NewArgumentList
+# CHECK: v3: anything = Call v0, v1
+# CHECK-NEXT: ReturnCall v3
+
+function f3 name="applyWithNullishList" parameters=[{type=anything}, {type=anything}, {type=undefined|null}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: undefined|null):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f3 name="applyWithNullishList"
+# CHECK-NOT: NewArgumentList
+# CHECK: v4: anything = Call v0, v1
+# CHECK-NEXT: ReturnCall v4
+
+function f4 name="callOfFunction" parameters=[{type=function}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = Builtin builtin=FunctionPrototypeCall
+    v5 = Call v4, v0, v1, v2, v3
+    ReturnCall v5
+}
+# CHECK-LABEL: function f4 name="callOfFunction"
+# CHECK: v5: anything = Call v0, v1, v2, v3
+# CHECK-NEXT: ReturnCall v5
+
+function f5 name="reflectApplyOfFunctionAndObject" parameters=[{type=function}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: object):
+    v3 = Builtin builtin=ReflectApply
+    v4 = Call v3, -, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f5 name="reflectApplyOfFunctionAndObject"
+# CHECK: [[reflectedList]]: {{*}} = NewArgumentList v0, v2
+# CHECK-NEXT: v4: anything = CallList v0, v1, [[reflectedList]]
+# CHECK-NEXT: ReturnCall v4
+
+# Reflect.apply throws for a list that is undefined or null, where apply passes no argument.
+function f6 name="reflectApplyOfAnyList" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = Builtin builtin=ReflectApply
+    v4 = Call v3, -, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f6 name="reflectApplyOfAnyList"
+# CHECK-NOT: NewArgumentList
+# CHECK: v4: anything = Call v3, -, v0, v1, v2
+# CHECK-NEXT: ReturnCall v4
+
+# call throws its own TypeError for a receiver that is no function, so the call is passed on behind a test, and both arms stay tail calls.
+function f7 name="callOfAnything" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f7 name="callOfAnything"
+# CHECK: [[isFunction7]]: boolean = TypeTest v0 testedType=function
+# CHECK-NEXT: Branch [[isFunction7]] -> taken [[function7]](| 0), notTaken [[other7]](| 0)
+# CHECK: [[function7]]([[callee7]]:{{*}}):
+# CHECK-NEXT: [[passed7]]: anything = Call [[callee7]], v1, v2
+# CHECK-NEXT: ReturnCall [[passed7]]
+# CHECK: [[other7]]([[noFunction7]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[own7]]: anything = Call v3, [[noFunction7]], v1, v2
+# CHECK-NEXT: ReturnCall [[own7]]
+
+# Promise.try calls its operand once with the arguments after it, as call does, and returns a promise of the result.
+function f8 name="resultIsNotReturned" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = Builtin builtin=PromiseTry
+    v4 = Call v3, v2, v0, v1
+    ReturnCall v4
+}
+# CHECK-LABEL: function f8 name="resultIsNotReturned"
+# CHECK: v4: anything = Call v3, v2, v0, v1
+# CHECK-NEXT: ReturnCall v4
+
+# A tail call that may be demoted takes the ordinary way.
+function f9 name="allowedTailCall" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeApply
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4 requirement=Allowed
+}
+# CHECK-LABEL: function f9 name="allowedTailCall"
+# CHECK-NOT: NewArgumentList
+# CHECK: v4: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
+# CHECK-NEXT: Return v4
+
+# Reflect.apply has an error of its own for a target that is no function too.
+function f10 name="reflectApplyOfAnyTarget" parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: object):
+    v3 = Builtin builtin=ReflectApply
+    v4 = Call v3, -, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f10 name="reflectApplyOfAnyTarget"
+# CHECK: [[isFunction10]]: boolean = TypeTest v0 testedType=function
+# CHECK-NEXT: Branch [[isFunction10]] -> taken [[function10]](| 0), notTaken [[other10]](| 0)
+# CHECK: [[function10]]([[target10]]:{{*}}):
+# CHECK-NEXT: [[list10]]: {{*}} = NewArgumentList [[target10]], v2
+# CHECK-NEXT: [[passed10]]: anything = CallList [[target10]], v1, [[list10]]
+# CHECK-NEXT: ReturnCall [[passed10]]
+# CHECK: [[other10]]([[noFunction10]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[own10]]: anything = Call v3, -, [[noFunction10]], v1, v2
+# CHECK-NEXT: ReturnCall [[own10]]
+
+# A target that is never a function is left to the error of the built-in.
+function f11 name="reflectApplyOfNumber" parameters=[{type=number}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: object):
+    v3 = Builtin builtin=ReflectApply
+    v4 = Call v3, -, v0, v1, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f11 name="reflectApplyOfNumber"
+# CHECK-NOT: TypeTest
+# CHECK: v4: anything = Call v3, -, v0, v1, v2
+# CHECK-NEXT: ReturnCall v4

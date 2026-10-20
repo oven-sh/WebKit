@@ -1,0 +1,28 @@
+# A sloppy function that is only called on an object never mentions the global object, so flow does not create it
+# RUN: flow-solve objects
+# CHECK-NOT: GlobalThis
+# CHECK: L0#{{*}} mutations=
+# CHECK-NOT: GlobalThis
+# RUN(NODES): flow-solve nodes
+# NODES: Local({{*}}f1, v1) = {L0#[[receiver]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Receiver" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return
+}
+function f1 name="objectOnly" flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    Return v1
+}

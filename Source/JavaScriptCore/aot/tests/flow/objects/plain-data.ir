@@ -1,0 +1,44 @@
+# A parse without a reviver returns primitives, an object of the call and an array of the call whose contents are each other and primitives, so reads on the result never answer the unknown object
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {{*}}null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# CHECK: Variable(g1) = {undefined|null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# CHECK: Variable(g2) = {undefined|null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# CHECK: Variable(g3) = {{*}}unknown
+# CHECK: DeclaredPart(Array@f0:v4, 0) = {{*}}null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# CHECK: StringProperties(Object@f0:v4) = {{*}}null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# CHECK: IndexedProperties(Object@f0:v4) = {{*}}null|boolean|number|string{{*}}|Object@f0:v4|Array@f0:v4}
+# RUN(ALL): flow-solve nodes
+# ALL-NOT: Variable(g0) = {{*}}unknown
+# ALL-NOT: Variable(g1) = {{*}}unknown
+# ALL-NOT: Variable(g2) = {{*}}unknown
+# ALL-NOT: (Object@f0:v4) = {{*}}unknown
+# ALL-NOT: DeclaredPart(Array@f0:v4, 0) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="config" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="items" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="first" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="revived" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="JSON" [isFreeName]
+    v2 = PropGet v1 key="parse"
+    v3 = PropGet v0 key="text" [isFreeName]
+    v4 = Call v2, v1, v3
+    PutModuleVariable v4 variable=g0
+    v6 = PropGet v4 key="items"
+    PutModuleVariable v6 variable=g1
+    v8 = Integer integer=0
+    v9 = ElemGet v6, v8
+    PutModuleVariable v9 variable=g2
+    v11 = NewClosure function=f1
+    v12 = Call v2, v1, v3, v11
+    PutModuleVariable v12 variable=g3
+    Return
+}
+function f1 name="reviver" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

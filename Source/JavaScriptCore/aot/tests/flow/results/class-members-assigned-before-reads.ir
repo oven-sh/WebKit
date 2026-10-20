@@ -1,0 +1,125 @@
+# A function that one operation stores on the prototype object of a constructor function is a fixed member when the store has completed before anything looks the name up
+# RUN: flow
+# CHECK: layout L0 flow={{*}} namedMembers=[{key="get" function=f2 mutability=Fixed
+# CHECK: layout L1 flow={{*}} namedMembers=[{key="get" function=f2 closureUse
+# CHECK: layout L2 flow={{*}} namedMembers=[{key="get" function=f2 closureUse
+# CHECK: layout L3 flow={{*}} namedMembers=[{key="get" function=f2 mutability=Fixed
+# CHECK: layout L4 flow={{*}} namedMembers=[{key="get" function=f2 closureUse
+# CHECK: layout L5 flow={{*}} namedMembers=[{key="get" function=f2 closureUse=CalledOnly isWritableData=true}, {key="get" function=f8 closureUse
+# CHECK: layout L6 flow={{*}} namedMembers=[{key="get" function=f2 closureUse
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="StoredFirst" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="ReadFirst" constructor=f3 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="StoredOnOnePath" constructor=f4 flags=[IsConstructorFunction]
+layout L3 kind=Instance name="ReaderCalledLater" constructor=f5 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="ReaderCalledEarlier" constructor=f6 flags=[IsConstructorFunction]
+layout L5 kind=Instance name="StoredTwice" constructor=f7 flags=[IsConstructorFunction]
+layout L6 kind=Instance name="StoredToOneOfTwo" constructor=f9 flags=[IsConstructorFunction]
+layout L7 kind=Instance name="OtherOfTwo" constructor=f11 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f1
+    v2 = PropGet v1 key="prototype"
+    PropSet v2, v0 key="get" mode=Strict
+    v4 = Construct v1
+    v5 = PropGet v4 key="get"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f3
+    v8 = Construct v7
+    v9 = PropGet v8 key="get"
+    v10 = PropGet v7 key="prototype"
+    PropSet v10, v0 key="get" mode=Strict
+    v12 = Call v9, v8
+    v13 = NewClosure function=f4
+    v14 = PropGet v13 key="prototype"
+    v15 = ToBoolean v6
+    Branch v15 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v14, v0 key="get" mode=Strict
+    Jump -> next b2()
+  b2():
+    v17 = Construct v13
+    v18 = PropGet v17 key="get"
+    v19 = Call v18, v17
+    v20 = NewClosure function=f5
+    v21 = NewClosure v20 function=f10
+    v22 = PropGet v20 key="prototype"
+    PropSet v22, v0 key="get" mode=Strict
+    v24 = Call v21
+    v25 = NewClosure function=f6
+    v26 = NewClosure v25 function=f10
+    v27 = Call v26
+    v28 = PropGet v25 key="prototype"
+    PropSet v28, v0 key="get" mode=Strict
+    v30 = NewClosure function=f7
+    v31 = PropGet v30 key="prototype"
+    PropSet v31, v0 key="get" mode=Strict
+    v33 = NewClosure function=f8
+    PropSet v31, v33 key="get" mode=Strict
+    v35 = Construct v30
+    v36 = PropGet v35 key="get"
+    v37 = Call v36, v35
+    v38 = NewClosure function=f9
+    v39 = PropGet v38 key="prototype"
+    v40 = NewClosure function=f11
+    v41 = PropGet v40 key="prototype"
+    Branch v15 -> taken b3(v39), notTaken b3(v41)
+  b3(v42):
+    PropSet v42, v0 key="get" mode=Strict
+    v44 = Construct v38
+    v45 = PropGet v44 key="get"
+    v46 = Call v45, v44
+    Return
+}
+function f1 name="StoredFirst" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f2 name="get" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f3 name="ReadFirst" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f4 name="StoredOnOnePath" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f5 name="ReaderCalledLater" flags=[HasThis] thisType={type=L3} results=[{type=anything}] {
+  b0(v0: object ? L3):
+    Return
+}
+function f6 name="ReaderCalledEarlier" flags=[HasThis] thisType={type=L4} results=[{type=anything}] {
+  b0(v0: object ? L4):
+    Return
+}
+function f7 name="StoredTwice" flags=[HasThis] thisType={type=L5} results=[{type=anything}] {
+  b0(v0: object ? L5):
+    Return
+}
+function f8 name="other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f9 name="StoredToOneOfTwo" flags=[HasThis] thisType={type=L6} results=[{type=anything}] {
+  b0(v0: object ? L6):
+    Return
+}
+function f10 name="reader" captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Construct v0
+    v2 = PropGet v1 key="get"
+    v3 = Call v2, v1
+    Return v3
+}
+function f11 name="OtherOfTwo" flags=[HasThis] thisType={type=L7} results=[{type=anything}] {
+  b0(v0: object ? L7):
+    Return
+}

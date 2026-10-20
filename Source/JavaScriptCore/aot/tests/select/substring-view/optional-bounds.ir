@@ -1,0 +1,73 @@
+# A substring that is undefined where its bounds are negative is never created where every reader takes undefined for the empty string: the empty range -1 to -1 gives it the same answer
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 7
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="equals-literal" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = String string="ab"
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f0 name="equals-literal"
+# CHECK-NOT: SubstringOrUndefined
+# CHECK: [[result0]]: boolean = StringRangeEqualsLiteral v0, v1, v2 literal="ab"
+# CHECK-NEXT: Return [[result0]]
+
+function f1 name="equals-empty-literal" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = String string=""
+    v5 = StrictEq v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="equals-empty-literal"
+# CHECK-NOT: StringRangeEqualsLiteral
+# CHECK: v3: undefined|string = SubstringOrUndefined v0, v1, v2
+# CHECK-NOT: StringRangeEqualsLiteral
+
+function f2 name="compared-twice" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    v4 = String string="get"
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    v6 = String string="post"
+    v7 = StrictEq v3, v6
+    Return v7
+}
+# CHECK-LABEL: function f2 name="compared-twice"
+# CHECK-NOT: SubstringOrUndefined
+# CHECK: [[flat2]]: {{*}} = FlattenString v0
+# CHECK: = StringRangeEqualsLiteral [[flat2]], v1, v2 literal="get"
+# CHECK-NOT: SubstringOrUndefined
+# CHECK: = StringRangeEqualsLiteral [[flat2]], v1, v2 literal="post"
+
+function f3 name="stored" parameters=[{type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[-1, 100], v2: int[-1, 100]):
+    v3 = SubstringOrUndefined v0, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f3 name="stored"
+# CHECK: v3: undefined|string = SubstringOrUndefined v0, v1, v2
+# CHECK-NEXT: Return v3
+
+function f4 name="in-another-range" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[-1, 100]}, {type=int[-1, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[-1, 100], v4: int[-1, 100]):
+    v5 = Substring v0, v1, v2
+    v6 = SubstringOrUndefined v5, v3, v4
+    v7 = String string="ab"
+    v8 = StrictEq v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f4 name="in-another-range"
+# CHECK-NOT: = Add
+# CHECK: v5: string = Substring v0, v1, v2
+# CHECK-NOT: SubstringOrUndefined
+# CHECK-NOT: = Add
+# CHECK: = StringRangeEqualsLiteral v5, v3, v4 literal="ab"

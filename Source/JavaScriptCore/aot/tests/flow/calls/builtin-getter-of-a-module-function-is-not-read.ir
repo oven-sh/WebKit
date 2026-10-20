@@ -1,0 +1,34 @@
+# A program that only calls setTimeout reads no member of it, so nobody requires node:timers/promises.
+# With the read: flow/calls/builtin-getter-answers-a-function-of-a-module.ir
+# RUN: flow-links calls modules
+# CHECK-NOT: -> {{*}} f1
+# CHECK-NOT: -> {{*}} f2
+# CHECK: evaluated m0
+# CHECK-NOT: m1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:timers/promises" displayPath="node:timers/promises" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeTimersPromises body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="setTimeout" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SetTimeout
+    v1 = NewClosure function=f3
+    v2 = Integer integer=1
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="timersPromises" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="setTimeout" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="later" results=[{type=anything}] {
+  b0():
+    Return
+}

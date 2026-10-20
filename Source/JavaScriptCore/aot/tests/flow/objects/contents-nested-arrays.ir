@@ -1,0 +1,35 @@
+# The parts of nested arrays hold what was stored into each array, site by site, whatever contents the arrays declare. Native code stores nothing into an array it is handed: no entry says so, and it looks up no member of Array.prototype by itself
+# RUN: flow-solve nodes
+# CHECK: Position(Array@f0:v1, 0) = {1}
+# CHECK: Position(Array@f0:v2, 0) = {Array@f0:v1}
+# CHECK: Position(Array@f0:v4, 0) = {1}
+# CHECK: Position(Array@f0:v5, 0) = {Array@f0:v4}
+# CHECK: Position(Array@f0:v10, 0) = {1}
+# CHECK: Position(Array@f0:v11, 0) = {true|Array@f0:v10}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="matrix" declared={type=anything} initialization=Uninitialized
+variable g1 name="escapedRow" declared={type=anything} initialization=Uninitialized
+variable g2 name="mistypedRow" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewArray v1 contents=anything
+    PutModuleVariable v2 variable=g0
+    v4 = NewArray v0 contents=anything
+    v5 = NewArray v4 contents=anything
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    v9 = Call v8, -, v4
+    v10 = NewArray v0 contents=anything
+    v11 = NewArray v10 contents=Array
+    PutModuleVariable v11 variable=g2
+    v13 = GetModuleVariable variable=g2
+    v14 = Integer integer=0
+    v15 = Boolean boolean=true
+    ElemSet v13, v14, v15
+    Return
+}

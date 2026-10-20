@@ -1,0 +1,45 @@
+# The own values of the unknown object are unknown, and so whatever an object that has reached native code holds: beside the unknown object such holders are not read where there are more of them than an operation has arms. A holder that nobody else holds is read, and so is the only escaped one of a few
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: flow-solve locations
+# RUN(ABSENT): flow-solve locations
+# CHECK: DeclaredPart(L2#{{*}}, 0) events=[{{*}}ReadAsValue
+# CHECK: DeclaredPart(L3#{{*}}, 0) events=[{{*}}ReadAsValue
+# ABSENT-NOT: DeclaredPart(L0#{{*}}, 0) events=[{{*}}ReadAsValue
+# ABSENT-NOT: DeclaredPart(L1#{{*}}, 0) events=[{{*}}ReadAsValue
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="second" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Kept" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="OnlyEscapedOne" fields=[{key="only" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="many" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="few" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Integer integer=2
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Call v1, -, v3
+    v7 = Call v1, -, v5
+    v8 = Integer integer=3
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v5 variable=g0
+    PutModuleVariable v9 variable=g0
+    v14 = GetModuleVariable variable=g0
+    v15 = Builtin builtin=ObjectValues
+    v16 = Call v15, -, v14
+    v17 = Integer integer=4
+    v18 = NewObject -, v17 layout=L3 fields=[0]
+    v19 = Call v1, -, v18
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v18 variable=g1
+    v22 = GetModuleVariable variable=g1
+    v23 = Call v15, -, v22
+    Return
+}

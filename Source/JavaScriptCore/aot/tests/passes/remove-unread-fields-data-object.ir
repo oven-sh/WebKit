@@ -1,0 +1,45 @@
+# A field that nothing reads stays when a data record builds objects of its layout, at the root or nested
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="RootOfData" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="items" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="NestedInData" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
+layout L2 name="InNoData" fields=[{key="id" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=number} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="items" value=Array{contents=anything elements=[Object{layout=L1 members=[{key="id" value=Number{value=2}}, {key="n" value=Number{value=3}}]}]}}]}
+# CHECK: layout L0 name="RootOfData" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="items"
+# CHECK: layout L1 name="NestedInData" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 name="InNoData" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+
+function f0 name="buildsFromData" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+# CHECK-LABEL: function f0 name="buildsFromData"
+# CHECK: = Data data=d0
+
+function f1 name="buildsRootLayout" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="buildsRootLayout"
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+
+function f2 name="buildsNestedLayout" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Return v1
+}
+# CHECK-LABEL: function f2 name="buildsNestedLayout"
+# CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+
+function f3 name="buildsLayoutInNoData" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    Return v1
+}
+# CHECK-LABEL: function f3 name="buildsLayoutInNoData"
+# CHECK: = NewObject -, v0 layout=L2 fields=[1]

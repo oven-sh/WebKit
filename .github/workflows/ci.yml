@@ -264,10 +264,15 @@ jobs:
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
           echo "{ \"name\": \"$LABEL\", \"version\": \"0.0.1-$BUILD_REF\", \"os\": [\"$PACKAGE_OS\"], \"cpu\": [\"$PACKAGE_CPU\"], \"repository\": \"https://github.com/$REPOSITORY\" }" > bun-webkit/package.json
           rm -rf bun-webkit/lib/*.so bun-webkit/lib/*.so.*
+          # For `test` alone: not part of what ships.
+          rm -rf test-bin && if [ -d bun-webkit/test-bin ]; then mv bun-webkit/test-bin test-bin; fi
           tar -czf bun-webkit.tar.gz bun-webkit
           # What `test` runs.
-          if [ "$TEST" = true ]; then tar -cf jsc-shell.tar bun-webkit/bin; fi
-          rm -rf bun-webkit
+          if [ "$TEST" = true ]; then
+            if [ -d test-bin ]; then mv test-bin/* bun-webkit/bin/; fi
+            tar -cf jsc-shell.tar bun-webkit/bin
+          fi
+          rm -rf bun-webkit test-bin
       - name: Upload the jsc shell for the tests
         if: matrix.test
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -326,7 +331,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.test) }}
     # A quick lane is one tested on a runner with few cores (lanes.mjs); there is none at the moment.
-    timeout-minutes: ${{ matrix.quick && 300 || 90 }}
+    timeout-minutes: ${{ matrix.quick && 315 || 105 }}
     env:
       QUICK: ${{ matrix.quick }}
       LABEL: ${{ matrix.label }}
@@ -387,7 +392,8 @@ jobs:
           cd "$RUNNER_TEMP"
           tar -xf jsc-shell.tar
           ls -la bun-webkit/bin
-      # testFFI and the JavaScriptCore tests each run whatever the other did, and either failing fails the job.
+      # testFFI, TestWTF and the JavaScriptCore tests each run whatever the others did, and any of them failing fails
+      # the job.
       - name: testFFI
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
         env: &test_env
@@ -402,6 +408,11 @@ jobs:
           JSCTEST_memoryLimit: 4294967296
         run: |
           "$RUNNER_TEMP/bun-webkit/bin/testFFI"
+      - name: TestWTF
+        if: *have_jsc
+        env: *test_env
+        run: |
+          if [ -x "$RUNNER_TEMP/bun-webkit/bin/TestWTF" ]; then "$RUNNER_TEMP/bun-webkit/bin/TestWTF"; else echo "this lane has no TestWTF"; fi
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env
@@ -430,13 +441,14 @@ jobs:
           esac
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
-          # --root: <root>/bin/jsc. The C++ test binaries (testapi, testmasm, testb3, testair, testdfg) are not built
-          # by the release Dockerfiles, hence the --no-test*.
+          for program in testair testb3; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
+          # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair and testb3 where lanes.mjs
+          # says so (testPrograms); the others are not built, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
           # --no-fail-fast: run everything, report every failure.
           perl Tools/Scripts/run-javascriptcore-tests \
             --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
-            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
+            --no-testmasm --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
             --no-fail-fast --memory-limited \
             --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
               # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it

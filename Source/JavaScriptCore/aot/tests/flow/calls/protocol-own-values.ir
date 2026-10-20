@@ -1,0 +1,54 @@
+# Object.values reads every own value: an own getter is run with the object as this, the array it answers holds what the field holds and what the getter returns, and the object counts as enumerated; an object that is not passed keeps its getter unlinked
+# RUN: flow-links calls
+# RUN(NOWHERE): flow-links calls
+# RUN(PASSED): flow-solve objects
+# RUN(NOTPASSED): flow-solve objects
+# RUN(ELEMENT): flow-solve nodes
+# RUN(THIS): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# CHECK: f0 v8 -> [[getter]] f1 Accessor
+# NOWHERE-NOT: -> {{*}} f2
+# PASSED: L0#{{*}} mutations=[] uses=[{{*}}Enumerated
+# NOTPASSED: L3#{{*}} mutations=[] uses=[] events
+# ELEMENT: , f0, v10) = {{*}}L1#[[field]]|L2#[[returned]]}
+# THIS: , f1, parameter 0) = {L0#[[passed]]}
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: L2#
+# SINKS-NOT: Array@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="FieldValue" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="GetterValue" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="NotPassed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure function=f1
+    DefineGetter v2, v3 key="b"
+    v5 = FinishObject v2
+    v6 = Builtin builtin=Object
+    v7 = PropGet v6 key="values"
+    v8 = Call v7, v6, v5 calleeKey="values"
+    v9 = Integer integer=0
+    v10 = ElemGet v8, v9
+    v11 = NewObject -, v0 layout=L3 fields=[0]
+    v12 = NewClosure function=f2
+    DefineGetter v11, v12 key="b"
+    v14 = FinishObject v11
+    Return
+}
+function f1 name="b" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    Return v2
+}
+function f2 name="b" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -1,0 +1,26 @@
+# An access over more members than the limit stays by name and the loss is recorded, its neighbor over as many members as the limit is resolved
+# FORM: Prepared
+# OPTIONS: limit=MaxAccessPlanMembers:2
+# RUN: pass ResolveAccesses
+# LOSS: MaxAccessPlanMembers x2 f0 v3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Second" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Third" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="reads-and-stores" parameters=[{type=L0|L1|L2}, {type=L0|L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2, v1: L0|L1, v2: number):
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v1 key="x"
+    PropSet v0, v2 key="x"
+    PropSet v1, v2 key="x"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="reads-and-stores"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: v4: number = GetSlot v1 key="x" receivers=[L0, L1] level=Proven
+# CHECK-NEXT: PropSet v0, v2 key="x"
+# CHECK-NEXT: PutSlot v1, -, v2 key="x" receivers=[L0, L1] level=Proven
+# CHECK-NEXT: Return v3

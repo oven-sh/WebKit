@@ -1,0 +1,45 @@
+# A run of slot stores has the effects of its stores taken one by one: the fields it names, and the order words and an allocation only where a key may be added (the mask bits of the two keys differ)
+# FORM: Selected
+# RUN: effects
+# RUN(ADD): check-replacement f0 v4 v2 v3
+# ADD: valid
+# RUN(PUT): check-replacement f1 v4 v2 v3
+# PUT: valid
+# RUN(MIXED): check-replacement f2 v4 v2 v3
+# MIXED: valid
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="bothMayBeAdded" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    PutSlots v0, -, v1, v1 placedKeys=[{key="x" level=Proven mayAdd=true}, {key="y" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v2 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v3 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v4 PutSlots: reads(ObjectFields/2, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState) collects
+function f1 name="bothAreFilled" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlot v0, -, v1 key="y" receivers=[L0] level=Proven
+    PutSlots v0, -, v1, v1 placedKeys=[{key="x" level=Proven}, {key="y" level=Proven}] receivers=[L0]
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v2 PutSlot: writes(ObjectFields/1)
+# CHECK-NEXT: v3 PutSlot: writes(ObjectFields/1)
+# CHECK-NEXT: v4 PutSlots: writes(ObjectFields/2)
+# CHECK-NEXT: b0 Return
+# CHECK-NOT: OrderWords
+function f2 name="oneMayBeAdded" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: L0, v1: number):
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    PutSlots v0, -, v1, v1 placedKeys=[{key="x" level=Proven}, {key="y" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v4 PutSlots: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/2, OrderWords, AllocatorState, RuntimeState) collects

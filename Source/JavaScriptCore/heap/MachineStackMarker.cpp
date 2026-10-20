@@ -103,7 +103,7 @@ static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
     size /= sizeof(CPURegister);
     // The copy is scanned in place of the stack, and only the stack knows which of its words are poisoned.
     while (size--) {
-        *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? 0 : *srcPtr;
+        *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? addressableHalvesForConservativeScan(srcPtr) : *srcPtr;
         ++srcPtr;
     }
 }

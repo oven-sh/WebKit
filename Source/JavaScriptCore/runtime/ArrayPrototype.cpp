@@ -59,18 +59,18 @@ static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncEntries);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSplice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncUnShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncConcat);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFill);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToReversed);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSorted);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncWith);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncCopyWithin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSpliced);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFlat);
@@ -1006,13 +1006,13 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
     auto callData = JSC::getCallDataInline(comparator);
     ASSERT(callData.type != CallData::Type::None);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, comparator, 2);
-        RETURN_IF_EXCEPTION(scope, compacted);
+    auto cachedCall = CachedCall::tryCreate(globalObject, comparator, callData, 2);
+    RETURN_IF_EXCEPTION(scope, compacted);
+    if (cachedCall) [[likely]] {
         RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue jsResult = cachedCall.callWithArguments(globalObject, jsUndefined(), JSValue::decode(left), JSValue::decode(right));
+            JSValue jsResult = cachedCall->callWithArguments(globalObject, jsUndefined(), JSValue::decode(left), JSValue::decode(right));
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
 
             RELEASE_AND_RETURN(scope, coerceComparatorResultToBoolean(globalObject, jsResult));
@@ -1617,7 +1617,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
 
     CheckedUint32 checkedResultSize = firstArraySize;
     checkedResultSize += secondArraySize;
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value())) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;
@@ -1680,7 +1680,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
     ASSERT(!globalObject->isHavingABadTime());
 
     if (!argumentValue.isObject()) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1690,7 +1690,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
         return nullptr;
 
     if (!isJSArray(argumentObject)) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (!copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1743,7 +1743,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
         checkedResultSize += 1;
     }
 
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value())) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;

@@ -1,0 +1,64 @@
+# The library's own operations: StepArrayIterator([one].values())(); map = new Map; map.set(key, two); MapNext(map)(); set = new Set; set.add(three); SetNext(set)()
+# StepArrayIterator answers what the iterator hands out, MapNext the keys and the values of the map, SetNext the elements of the set. None of them lets its operand escape.
+# RUN: valueflow-solve calls
+# CHECK: f1 v8 -> f2
+# CHECK: f1 v19 -> f3 f4
+# CHECK: f1 v29 -> f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="steps" role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ArrayPrototypeValues
+    v3 = Call v2, v1
+    v4 = ClaimDeclared v3 declared={type=object flags=[IsFromCompiler]}
+    v5 = StepArrayIterator v4
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Call v7
+    v9 = Builtin builtin=Map
+    v10 = Construct v9
+    v11 = Builtin builtin=MapPrototypeSet
+    v12 = NewClosure function=f3
+    v13 = NewClosure function=f4
+    v14 = Call v11, v10, v12, v13
+    v15 = Undefined
+    v16 = Integer
+    v17 = MapNext v10, v15, v16
+    v18 = ResultAt v17 index=3
+    v19 = Call v18
+    v20 = Builtin builtin=Set
+    v21 = Construct v20
+    v22 = Builtin builtin=SetPrototypeAdd
+    v23 = NewClosure function=f5
+    v24 = Call v22, v21, v23
+    v25 = Undefined
+    v26 = Integer
+    v27 = SetNext v21, v25, v26
+    v28 = ResultAt v27 index=2
+    v29 = Call v28
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="key" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="three" results=[{type=anything}] {
+  b0():
+    Return
+}

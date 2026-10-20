@@ -1,0 +1,40 @@
+# A call of a group in the body of a loop is converted like any other
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints ChooseCallingConventions
+# STATISTIC: GroupCalls = 1
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="caller"
+# CHECK: number = CallGroup v0, v2 function=
+function f0 name="caller" parameters=[{type=f1|f2|f3|f4|f5}, {type=number}] results=[{type=number}] {
+  b0(v0: f1|f2|f3|f4|f5, v1: number):
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Call v0, -, v2 accessSite=0 callees=[f1, f2, f3, f4, f5]
+    v5 = AssumeType v4 castType=number
+    v6 = Less v5, v1
+    Branch v6 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v5
+}
+function f1 name="first" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="second" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="third" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f4 name="fourth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f5 name="fifth" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}

@@ -1,0 +1,22 @@
+# A loader that is called as a value with a specifier nobody knows may load any module of the program, so every module is evaluated; code outside the image is refused at run time, so no unseen code runs, and the build warns at the call
+# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# RUN: flow-links modules unseen
+# CHECK: evaluated m0 m1
+# CHECK: unseen LoadsModuleByName ModuleRequire f0:v8
+# CHECK-NOT: unseen RunsUnseenCode
+# CHECK: unknown-javascript no
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="name" [isFreeName]
+    v8 = Call v2, -, v7
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}

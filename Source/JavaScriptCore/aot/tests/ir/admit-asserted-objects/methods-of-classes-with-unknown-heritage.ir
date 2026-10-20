@@ -1,0 +1,68 @@
+# `mix = Base => class extends Base { take(v: string) {..} }`: before flow the class that a mixin makes may extend any class, so its method is one of the callees of `this.take(x as string)` in another class. A method of another name in it keeps its type
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 2
+# STATISTIC: AssertedObjectsPassedToUnknownCallees = 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+layout L0 kind=Instance name="A" constructor=f1 fields=[{key="take" declared={type=undefined|null|function} flags=[IsMethod]}, {key="run" declared={type=undefined|null|function} flags=[IsMethod]}]
+layout L1 kind=Instance name="Mixed" constructor=f4 fields=[{key="take" declared={type=undefined|null|function} flags=[IsMethod]}, {key="other" declared={type=undefined|null|function} flags=[IsMethod]}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="take"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 key="run"
+    v6 = FinishClass v1 layout=L0
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="take" kind=Method flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=undefined|null|string site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|string):
+    Return v1
+}
+# CHECK-LABEL: function f2 name="take" {{*}}parameters=[{type=undefined|null|string|object site=w0 flags=[AdmitsObjects]}]
+function f3 name="run" kind=Method flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|string|object written=undefined|null|string predicted=string site=w1}
+    v3 = PropGet v0 key="take"
+    v4 = Call v3, v0, v2 calleeKey="take" calleeName="take"
+    Return v4
+}
+function f4 name="Mixed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="take" kind=Method flags=[HasThis] thisType={type=anything predicted=L1} parameters=[{type=undefined|null|string site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|string):
+    Return v1
+}
+# CHECK-LABEL: function f5 name="take" {{*}}parameters=[{type=undefined|null|string|object site=w0 flags=[AdmitsObjects]}]
+function f6 name="other" kind=Method flags=[HasThis] thisType={type=anything predicted=L1} parameters=[{type=undefined|null|string site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|string):
+    Return v1
+}
+# CHECK-LABEL: function f6 name="other" {{*}}parameters=[{type=undefined|null|string site=w0}]
+function f7 name="mix" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L1
+    v4 = NewClosure function=f5
+    DefineMethod v3, v4 layout=L1 key="take"
+    v6 = NewClosure function=f6
+    DefineMethod v3, v6 layout=L1 key="other"
+    v8 = FinishClass v3 layout=L1
+    Return v8
+}

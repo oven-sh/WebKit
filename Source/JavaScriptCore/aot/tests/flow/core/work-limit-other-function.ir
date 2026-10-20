@@ -1,0 +1,243 @@
+# One function gives up at the work limit; the host, which allocates every hoisted function, and the other functions keep their results
+# OPTIONS: limit=MaxFlowWorkPerFunction:60
+# RUN: flow-solve work instances objects nodes
+# LOSS: MaxFlowWorkPerFunction f1
+# CHECK: past-work-limit f1
+# CHECK-NOT: past-work-limit
+# CHECK: host Proven Initialized
+# CHECK-NOT: PastWorkLimit
+# CHECK: f0 Proven Initialized
+# CHECK-NOT: PastWorkLimit
+# CHECK: f1 Proven PastWorkLimit
+# CHECK-NOT: PastWorkLimit
+# CHECK: f2 Proven Initialized
+# CHECK-NOT: PastWorkLimit
+# CHECK: L0#[[argument]] mutations=[ReachNativeCode, ReachUnknownJavaScript, 
+# CHECK-NEXT: L1#[[neighbor]] mutations=[] uses=
+# CHECK-NEXT: f4 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f5 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f6 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f7 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f8 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f9 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f10 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f11 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f12 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f13 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f14 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f15 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f16 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f17 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f18 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f19 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f20 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f21 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f22 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f23 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f24 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f25 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f26 mutations=[] uses=[] events=[Allocated]
+# CHECK-NEXT: f27 mutations=[] uses=[] events=[Allocated]
+# CHECK: Variable(g0) = {f4}
+# CHECK: Variable(g23) = {f27}
+# CHECK: DeclaredPart(L1#[[neighbor]], 0) = {2}
+# CHECK: Local({{*}}f0, v1) = {L0#[[argument]]}
+# CHECK-NEXT: Local({{*}}f0, v2) = {number}
+# CHECK-NEXT: Local({{*}}f0, v3) = {2}
+# CHECK: Local({{*}}f2, result 0) = {2}
+# CHECK: Local({{*}}f2, v1) = {L1#[[neighbor]]}
+# CHECK-NEXT: Local({{*}}f2, v2) = {2}
+# CHECK-NEXT: Local({{*}}f2, v3) = {undefined}
+# CHECK-NEXT: Local({{*}}f2, v4) = {ObjectPrototypeHasOwnProperty}
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="helpers.js" displayPath="helpers.js" body=f3
+entry module=m0
+layout L0 name="Argument" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Neighbor" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="helper1" module=m1 declared={type=anything} initialization=Function function=f4
+variable g1 name="helper2" module=m1 declared={type=anything} initialization=Function function=f5
+variable g2 name="helper3" module=m1 declared={type=anything} initialization=Function function=f6
+variable g3 name="helper4" module=m1 declared={type=anything} initialization=Function function=f7
+variable g4 name="helper5" module=m1 declared={type=anything} initialization=Function function=f8
+variable g5 name="helper6" module=m1 declared={type=anything} initialization=Function function=f9
+variable g6 name="helper7" module=m1 declared={type=anything} initialization=Function function=f10
+variable g7 name="helper8" module=m1 declared={type=anything} initialization=Function function=f11
+variable g8 name="helper9" module=m1 declared={type=anything} initialization=Function function=f12
+variable g9 name="helper10" module=m1 declared={type=anything} initialization=Function function=f13
+variable g10 name="helper11" module=m1 declared={type=anything} initialization=Function function=f14
+variable g11 name="helper12" module=m1 declared={type=anything} initialization=Function function=f15
+variable g12 name="helper13" module=m1 declared={type=anything} initialization=Function function=f16
+variable g13 name="helper14" module=m1 declared={type=anything} initialization=Function function=f17
+variable g14 name="helper15" module=m1 declared={type=anything} initialization=Function function=f18
+variable g15 name="helper16" module=m1 declared={type=anything} initialization=Function function=f19
+variable g16 name="helper17" module=m1 declared={type=anything} initialization=Function function=f20
+variable g17 name="helper18" module=m1 declared={type=anything} initialization=Function function=f21
+variable g18 name="helper19" module=m1 declared={type=anything} initialization=Function function=f22
+variable g19 name="helper20" module=m1 declared={type=anything} initialization=Function function=f23
+variable g20 name="helper21" module=m1 declared={type=anything} initialization=Function function=f24
+variable g21 name="helper22" module=m1 declared={type=anything} initialization=Function function=f25
+variable g22 name="helper23" module=m1 declared={type=anything} initialization=Function function=f26
+variable g23 name="helper24" module=m1 declared={type=anything} initialization=Function function=f27
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect function=f2
+    Return
+}
+function f1 name="large" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="x"
+    v4 = PropGet v0 key="x"
+    v5 = PropGet v0 key="x"
+    v6 = PropGet v0 key="x"
+    v7 = PropGet v0 key="x"
+    v8 = PropGet v0 key="x"
+    v9 = PropGet v0 key="x"
+    v10 = PropGet v0 key="x"
+    v11 = PropGet v0 key="x"
+    v12 = PropGet v0 key="x"
+    v13 = PropGet v0 key="x"
+    v14 = PropGet v0 key="x"
+    v15 = PropGet v0 key="x"
+    v16 = PropGet v0 key="x"
+    v17 = PropGet v0 key="x"
+    v18 = PropGet v0 key="x"
+    v19 = PropGet v0 key="x"
+    v20 = PropGet v0 key="x"
+    v21 = PropGet v0 key="x"
+    v22 = PropGet v0 key="x"
+    v23 = PropGet v0 key="x"
+    v24 = PropGet v0 key="x"
+    v25 = PropGet v0 key="x"
+    v26 = PropGet v0 key="x"
+    v27 = PropGet v0 key="x"
+    v28 = PropGet v0 key="x"
+    v29 = PropGet v0 key="x"
+    v30 = PropGet v0 key="x"
+    v31 = PropGet v0 key="x"
+    v32 = PropGet v0 key="x"
+    v33 = PropGet v0 key="x"
+    v34 = PropGet v0 key="x"
+    v35 = PropGet v0 key="x"
+    v36 = PropGet v0 key="x"
+    v37 = PropGet v0 key="x"
+    v38 = PropGet v0 key="x"
+    v39 = PropGet v0 key="x"
+    v40 = PropGet v0 key="x"
+    v41 = ToNumber v40
+    Return v41
+}
+function f2 name="small" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = PropGet v1 key="y"
+    v3 = PropGet v1 key="missing"
+    v4 = PropGet v1 key="hasOwnProperty"
+    Return v2
+}
+function f3 name="helpers" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="helper1" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="helper2" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="helper3" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="helper4" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="helper5" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f9 name="helper6" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f10 name="helper7" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f11 name="helper8" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f12 name="helper9" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f13 name="helper10" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f14 name="helper11" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f15 name="helper12" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f16 name="helper13" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f17 name="helper14" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f18 name="helper15" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f19 name="helper16" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f20 name="helper17" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f21 name="helper18" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f22 name="helper19" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f23 name="helper20" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f24 name="helper21" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f25 name="helper22" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f26 name="helper23" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f27 name="helper24" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

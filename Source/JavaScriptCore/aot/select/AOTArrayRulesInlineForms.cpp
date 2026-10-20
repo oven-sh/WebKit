@@ -1,0 +1,172 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTArrayRules.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuiltinFormRules.h"
+#include "AOTInlineBuiltinForms.h"
+#include <algorithm>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+#define AOT_COUNT_INLINE_BUILTIN(name) + 1
+static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 12, "chooseFormOfArrayBuiltin needs a case for every member of the family");
+static_assert(0 FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_STORAGE_BUILTIN(AOT_COUNT_INLINE_BUILTIN) == 6, "chooseFormOfArrayStorageBuiltin needs a case for every member of the family");
+#undef AOT_COUNT_INLINE_BUILTIN
+
+static InlineForm twoWayIf(const InlineBuiltinSite& site, bool hasInlineCode)
+{
+    RELEASE_ASSERT(site.hasSlowPath);
+    return hasInlineCode ? InlineForm::TwoWay : InlineForm::Call;
+}
+
+static InlineForm wholeIf(const InlineBuiltinSite& site, bool handlesOperandTypes)
+{
+    // Without a slow path the parameter types of the overload imply the condition.
+    if (handlesOperandTypes || !site.hasSlowPath)
+        return InlineForm::Whole;
+    return InlineForm::Call;
+}
+
+static bool exceeds(const InlineBuiltinSite& site, LimitID limit, size_t amount)
+{
+    return site.context.pass().exceeds(limit, amount, site.call);
+}
+
+static bool isNumberArgument(const InlineBuiltinSite& site, unsigned index)
+{
+    const Type* type = argumentTypeOf(site, index);
+    return type && type->isNumber();
+}
+
+static bool areIntegers(const InlineBuiltinSite& site, std::span<const ValueID> values)
+{
+    return std::ranges::all_of(values, [&](ValueID value) {
+        return site.typeOf(value).isInteger();
+    });
+}
+
+static bool isArray(const Type& type)
+{
+    const ClassPart* part = type.isObject() ? type.singleBuiltinClass() : nullptr;
+    return part && part->builtinClass == BuiltinClasses::Array;
+}
+
+static bool searchesForNumber(const InlineBuiltinSite& site)
+{
+    return isNumberArgument(site, 0);
+}
+
+static bool canJoinInline(const InlineBuiltinSite& site)
+{
+    std::span<const ValueID> arguments = site.arguments();
+    return arguments.empty() || (arguments.size() == 1 && site.typeOf(arguments[0]).isAnyString());
+}
+
+static bool canConcatenateInline(const InlineBuiltinSite& site)
+{
+    std::span<const ValueID> arguments = site.arguments();
+    bool areElementsOrArrays = std::ranges::all_of(arguments, [&](ValueID argument) {
+        const Type& type = site.typeOf(argument);
+        return !type.hasObjects() || isArray(type);
+    });
+    return areElementsOrArrays && !exceeds(site, LimitID::MaxInlineConcatOperands, arguments.size());
+}
+
+static bool canSliceInline(const InlineBuiltinSite& site)
+{
+    std::span<const ValueID> arguments = site.arguments();
+    return arguments.size() <= 2 && areIntegers(site, arguments);
+}
+
+static bool canSpliceInline(const InlineBuiltinSite& site)
+{
+    constexpr size_t numberOfRangeArguments = 2;
+    std::span<const ValueID> arguments = site.arguments();
+    if (arguments.size() < numberOfRangeArguments || !areIntegers(site, arguments.first(numberOfRangeArguments)))
+        return false;
+    return !exceeds(site, LimitID::MaxInlineSpliceInsertions, arguments.size() - numberOfRangeArguments);
+}
+
+InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
+{
+    bool isCompact = site.shape == CodeShape::Compact;
+    switch (site.builtin) {
+    case InlineBuiltin::ArrayAt:
+        return twoWayIf(site, isNumberArgument(site, 0));
+    case InlineBuiltin::ArrayIndexOf:
+    case InlineBuiltin::ArrayIncludes:
+        return twoWayIf(site, searchesForNumber(site) && site.arguments().size() <= 1);
+    case InlineBuiltin::ArrayJoin:
+        return twoWayIf(site, canJoinInline(site));
+    case InlineBuiltin::ArrayConcat:
+        return twoWayIf(site, !isCompact && canConcatenateInline(site));
+    case InlineBuiltin::ArrayShift:
+        return twoWayIf(site, !isCompact);
+    case InlineBuiltin::ArrayPop:
+        return InlineForm::TwoWay;
+    case InlineBuiltin::ArraySlice:
+        return twoWayIf(site, canSliceInline(site));
+    case InlineBuiltin::ArraySplice:
+        return twoWayIf(site, !isCompact && canSpliceInline(site));
+    case InlineBuiltin::ArraySplicePrefix:
+        return InlineForm::Whole;
+    case InlineBuiltin::ArrayUnshift:
+        return twoWayIf(site, site.arguments().size() == 1);
+    case InlineBuiltin::ArrayIterator:
+        // The methods of %TypedArray%.prototype throw on a detached or out-of-bounds view, which the inline code does not test.
+        return wholeIf(site, site.receiver() && isArray(site.typeOf(site.receiver())));
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+static InlineForm chooseFormOfArrayPush(const InlineBuiltinSite& site)
+{
+    size_t numberOfPushedValues = site.arguments().size();
+    if (numberOfPushedValues == 1)
+        return InlineForm::Whole;
+    return twoWayIf(site, numberOfPushedValues && !exceeds(site, LimitID::MaxInlinePushOperands, numberOfPushedValues));
+}
+
+static InlineForm chooseFormOfArrayIsArray(const InlineBuiltinSite& site)
+{
+    const Type* tested = argumentTypeOf(site, 0);
+    if (tested && !tested->hasObjects())
+        return InlineForm::Whole;
+    return twoWayIf(site, !!tested);
+}
+
+static InlineForm chooseFormOfArraySetLength(const InlineBuiltinSite& site)
+{
+    bool storesNumber = isNumberArgument(site, 0);
+    return site.hasSlowPath ? twoWayIf(site, storesNumber) : wholeIf(site, storesNumber);
+}
+
+InlineForm chooseFormOfArrayStorageBuiltin(const InlineBuiltinSite& site)
+{
+    switch (site.builtin) {
+    case InlineBuiltin::ArrayPush:
+        return chooseFormOfArrayPush(site);
+    case InlineBuiltin::ArrayIsArray:
+        return chooseFormOfArrayIsArray(site);
+    case InlineBuiltin::ArraySetLength:
+        return chooseFormOfArraySetLength(site);
+    case InlineBuiltin::ArrayWithLength:
+        return wholeIf(site, isNumberArgument(site, 0));
+    case InlineBuiltin::ArrayLength:
+    case InlineBuiltin::ArrayOf:
+        return InlineForm::Whole;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

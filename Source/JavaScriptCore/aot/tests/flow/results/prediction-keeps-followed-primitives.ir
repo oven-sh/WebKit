@@ -1,0 +1,24 @@
+# A prediction keeps the primitives that flow followed to the position: only where the unknown value has brought all of them do they say nothing
+# OPTIONS: admit=RuntimeCode
+# RUN: flow
+# CHECK: variable g0 type=1|object predicted=1|L0 written=anything
+# CHECK: variable g1 type=anything predicted=L0 flow=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="numberOrPoint" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="unknownOrPoint" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v1, -, v3
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v3 variable=g1
+    Return
+}

@@ -1,0 +1,120 @@
+# A substring is a virtual object with a base, a start and an end
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 3
+# STATISTIC: AllocationsSunk = 1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="onlyLengthIsRead" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
+    v3 = Substring v0, v1, v2
+    v4 = GetStringLength v3
+    Return v4
+}
+# CHECK-LABEL: function f0 name="onlyLengthIsRead"
+# CHECK-NOT: Substring
+# CHECK-NOT: GetStringLength
+# CHECK: = Sub v2, v1
+# CHECK-NOT: Substring
+# CHECK-NOT: GetStringLength
+
+function f1 name="lengthByNameThroughCast" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
+    v3 = Substring v0, v1, v2
+    v4 = Upcast v3 castType=anything
+    v5 = PropGet v4 key="length"
+    Return v5
+}
+# CHECK-LABEL: function f1 name="lengthByNameThroughCast"
+# CHECK-NOT: Substring
+# CHECK-NOT: PropGet
+# CHECK: = Sub v2, v1
+# CHECK-NOT: Substring
+# CHECK-NOT: PropGet
+# CHECK: v5: anything = Upcast
+
+function f2 name="usedInOneBranch" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: anything):
+    v4 = Substring v0, v1, v2
+    v5 = ToBoolean v3
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Call v3, -, v4
+    Return v6
+  b2():
+    v7 = GetStringLength v4
+    Return v7
+}
+# CHECK-LABEL: function f2 name="usedInOneBranch"
+# CHECK: b0(
+# CHECK-NEXT: = ToBoolean v3
+# CHECK-NEXT: Branch v5
+# CHECK: b1():
+# CHECK-NEXT: [[string2]]: string = Substring v0, v1, v2
+# CHECK-NEXT: = Call v3, -, [[string2]]
+# CHECK: b2():
+# CHECK-NEXT: = Sub v2, v1
+# CHECK-NOT: Substring
+
+function f3 name="truthinessNeedsTheString" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
+    v3 = Substring v0, v1, v2
+    v4 = ToBoolean v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="truthinessNeedsTheString"
+# CHECK: b0(
+# CHECK-NEXT: v3: string = Substring v0, v1, v2
+# CHECK-NEXT: = ToBoolean v3
+
+function f4 name="equalityNeedsTheString" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: anything):
+    v4 = Substring v0, v1, v2
+    v5 = StrictEq v4, v3
+    Return v5
+}
+# CHECK-LABEL: function f4 name="equalityNeedsTheString"
+# CHECK: b0(
+# CHECK-NEXT: v4: string = Substring v0, v1, v2
+# CHECK-NEXT: = StrictEq v4, v3
+
+function f5 name="everyEdgePassesTheSameRange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: boolean):
+    v4 = Substring v0, v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetStringLength v5
+    Return v6
+}
+# CHECK-LABEL: function f5 name="everyEdgePassesTheSameRange"
+# CHECK-NOT: Substring
+# CHECK-NOT: GetStringLength
+# CHECK: = Sub
+
+function f6 name="twoRangesMeetAsStrings" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
+  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Substring v0, v1, v2
+    Jump -> next b3(v4)
+  b2():
+    v5 = Substring v0, v2, v1
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = GetStringLength v6
+    Return v7
+}
+# CHECK-LABEL: function f6 name="twoRangesMeetAsStrings"
+# CHECK: b1():
+# CHECK-NEXT: v4: string = Substring v0, v1, v2
+# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK: b2():
+# CHECK-NEXT: v5: string = Substring v0, v2, v1
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK: b3(v6: string):
+# CHECK-NEXT: = GetStringLength v6

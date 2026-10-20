@@ -1,0 +1,21 @@
+# A word that names no pass, a pass without the prefix and a second word are reported, and no report is built
+# RUN: flow-report through=NoSuchPass
+# CHECK: error: bad argument through=NoSuchPass
+# CHECK-NOT: access-count
+# RUN(PREFIX): flow-report ResolveAccesses
+# PREFIX: error: bad argument ResolveAccesses
+# PREFIX-NOT: access-count
+# RUN(SECOND): flow-report through=ResolveAccesses through=InlineCalls
+# SECOND: error: bad argument through=InlineCalls
+# SECOND-NOT: access-count
+# RUN(REPORT): flow-report through=ResolveAccesses
+# REPORT: access-count m0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName] @1
+    Return
+}

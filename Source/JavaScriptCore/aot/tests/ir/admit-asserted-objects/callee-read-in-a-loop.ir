@@ -1,0 +1,62 @@
+# The receiver of the method goes around a loop through a read of itself (`node = node.parent`): the search for the callee ends, and finds the method through the layout expected at the receiver
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 1
+# STATISTIC: AssertedObjectsPassedToUnknownCallees = 1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+layout L0 kind=Instance name="Node" constructor=f1 fields=[{key="parent" declared={type=undefined|null|L0}}, {key="visit" declared={type=undefined|null|function} flags=[IsMethod]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="visit"
+    v4 = FinishClass v1 layout=L0
+    Return
+}
+function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="visit" kind=Method flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|number):
+    Return v1
+}
+# CHECK-LABEL: function f2 name="visit" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f3 name="walksTypedParents" parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = ToBoolean v3
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = PropGet v6 key="visit"
+    v8 = Call v7, v6, v2 calleeKey="visit" calleeName="visit"
+    v9 = PropGet v6 key="parent"
+    Jump -> next b1(v9)
+  b3():
+    Return
+}
+function f4 name="walksUntypedParents" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = ToBoolean v3
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = PropGet v6 key="visit"
+    v8 = Call v7, v6, v2 calleeKey="visit" calleeName="visit"
+    v9 = PropGet v6 key="parent"
+    Jump -> next b1(v9)
+  b3():
+    Return
+}

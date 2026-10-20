@@ -1,0 +1,46 @@
+# What a call in tail position returns flows into the result of the caller unfiltered by the casts of the tail call, and a claim behind an ordinary call filters
+# RUN: flow
+# CHECK: variable g0 type=1|L0 written=anything
+# CHECK: variable g1 type=1 written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 kind=CallResult
+typesite w1 kind=CallResult
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="afterTailCall" declared={type=anything} initialization=Uninitialized
+variable g1 name="afterCall" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = CallDirect function=f2
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f1 name="tailCall" results=[{type=number}] {
+  b0():
+    v0 = CallDirect function=f3
+    ReturnCall v0 casts=[{declared={type=number site=w0}}]
+}
+function f2 name="call" results=[{type=number}] {
+  b0():
+    v0 = CallDirect function=f3
+    v1 = Claim v0 castType=number site=w1
+    Return v1
+}
+function f3 name="numberOrBox" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    v4 = Upcast v3 castType=anything
+    Return v4
+  b2():
+    v5 = NewObject -, v1 layout=L0 fields=[0]
+    v6 = Upcast v5 castType=anything
+    Return v6
+}

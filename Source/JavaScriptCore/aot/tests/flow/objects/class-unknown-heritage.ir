@@ -1,0 +1,56 @@
+# A heritage nobody tracks puts the unknown object into the heritage node and into both prototype links of that class, and a second class keeps its exact links
+# RUN: flow-solve nodes
+# RUN(EXACT): flow-solve nodes
+# CHECK: Heritage(L0) = {{*}}unknown
+# CHECK: PrototypeLink(f2) = {{*}}unknown
+# CHECK: PrototypeLink(f2.prototype) = {{*}}unknown
+# EXACT: Heritage(L2) = {f3}
+# EXACT: PrototypeLink(f4) = {f3}
+# EXACT: PrototypeLink(f4.prototype) = {f3.prototype}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Mixed" constructor=f2 flags=[HasHeritage]
+layout L1 kind=Instance name="A" constructor=f3
+layout L2 kind=Instance name="B" predictedBase=L1 constructor=f4 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f3
+    v5 = NewClass v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f4
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L2
+    v10 = FinishClass v9 layout=L2
+    Return
+}
+function f1 name="mixin" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    Return
+}
+function f2 name="Mixed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f3 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f4 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

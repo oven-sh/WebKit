@@ -1,0 +1,189 @@
+# A store creates a property of the object under construction unless the object inherits an accessor or a read-only property under the name: then it runs the setter, throws or does nothing, and proves nothing about the object. A method is writable data and lets the store through, and a definition never looks above the object
+# RUN(METHOD): flow-construction constructors
+# RUN(GETTER): flow-construction constructors
+# RUN(GETTERNODES): flow-solve nodes
+# RUN(PARENTGETTER): flow-construction constructors
+# RUN(SUBCLASSGETTER): flow-construction constructors
+# RUN(FROZEN): flow-construction constructors
+# RUN(REDEFINED): flow-construction constructors
+# RUN(DEFINES): flow-construction constructors
+# RUN(BUILTINMETHOD): flow-construction constructors
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="AboveIsMethod" constructor=f1
+layout L1 kind=Instance name="AboveIsGetter" constructor=f3
+layout L2 kind=Instance name="ParentWithGetter" constructor=f5
+layout L3 kind=Instance name="BelowParentWithGetter" predictedBase=L2 constructor=f6 fields=[{key="x" declared={type=anything}}] flags=[HasHeritage]
+layout L4 kind=Instance name="Stores" constructor=f7
+layout L5 kind=Instance name="BelowWithGetter" predictedBase=L4 constructor=f8 flags=[HasHeritage]
+layout L6 kind=Instance name="AboveIsFrozen" constructor=f9
+layout L7 kind=Instance name="AboveIsRedefined" constructor=f10
+layout L8 kind=Instance name="Defines" constructor=f11
+layout L9 kind=Instance name="AboveIsBuiltinMethod" constructor=f12
+layout L10 name="Descriptor" fields=[{key="writable" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="read" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="x"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 methodKind=Getter key="x"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = PropGet v11 key="x"
+    PutModuleVariable v12 variable=g0
+    v14 = NewClosure function=f5
+    v15 = NewClass v14 layout=L2
+    v16 = NewClosure function=f4
+    DefineMethod v15, v16 layout=L2 methodKind=Getter key="x"
+    v18 = FinishClass v15 layout=L2
+    v19 = NewClosure function=f6
+    v20 = ResolveHeritage v18
+    v21 = NewClass v19, v18, v20 layout=L3
+    v22 = FinishClass v21 layout=L3
+    v23 = Construct v22
+    v24 = NewClosure function=f7
+    v25 = NewClass v24 layout=L4
+    v26 = FinishClass v25 layout=L4
+    v27 = NewClosure function=f8
+    v28 = ResolveHeritage v26
+    v29 = NewClass v27, v26, v28 layout=L5
+    v30 = NewClosure function=f4
+    DefineMethod v29, v30 layout=L5 methodKind=Getter key="x"
+    v32 = FinishClass v29 layout=L5
+    v33 = Construct v26
+    v34 = Construct v32
+    v35 = NewClosure function=f9
+    v36 = NewClass v35 layout=L6
+    v37 = NewClosure function=f2
+    DefineMethod v36, v37 layout=L6 key="x"
+    v39 = FinishClass v36 layout=L6
+    v40 = PropGet v39 key="prototype"
+    v41 = Builtin builtin=ObjectFreeze
+    v42 = Call v41, -, v40
+    v43 = Construct v39
+    v44 = NewClosure function=f10
+    v45 = NewClass v44 layout=L7
+    v46 = NewClosure function=f2
+    DefineMethod v45, v46 layout=L7 key="x"
+    v48 = FinishClass v45 layout=L7
+    v49 = PropGet v48 key="prototype"
+    v50 = Boolean
+    v51 = NewObject -, v50 layout=L10 fields=[0]
+    v52 = Builtin builtin=ObjectDefineProperty
+    v53 = String string="x"
+    v54 = Call v52, -, v49, v53, v51
+    v55 = Construct v48
+    v56 = NewClosure function=f11
+    v57 = NewClass v56 layout=L8
+    v58 = NewClosure function=f4
+    DefineMethod v57, v58 layout=L8 methodKind=Getter key="x"
+    v60 = FinishClass v57 layout=L8
+    v61 = Construct v60
+    v62 = NewClosure function=f12
+    v63 = NewClass v62 layout=L9
+    v64 = FinishClass v63 layout=L9
+    v65 = Construct v64
+    Return
+}
+function f1 name="AboveIsMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x"
+    Return v2
+}
+# METHOD: construction f1@i{{*}} root v2: DoesNotLeak before-leak "x" at-exit "x" read-early initial-order "x" stores OnlyInitialOrder
+function f2 name="x" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="AboveIsGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x" mode=Sloppy
+    Return v2
+}
+# GETTER: construction f3@i{{*}} root v2: DoesNotLeak before-leak at-exit read-early initial-order stores Unknown
+# GETTERNODES: Variable(g0) = {{*}}"got"}
+function f4 name="x" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="got"
+    Return v1
+}
+function f5 name="ParentWithGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f6 name="BelowParentWithGetter" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L3
+    v4 = Integer integer=5
+    PropSet v3, v4 key="x"
+    Return v3
+}
+# PARENTGETTER: construction f6@i{{*}} root v3: DoesNotLeak before-leak at-exit read-early initial-order stores Unknown
+function f7 name="Stores" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x"
+    Return v2
+}
+# SUBCLASSGETTER: construction f7@i{{*}} root v2: DoesNotLeak before-leak at-exit read-early initial-order stores Unknown
+function f8 name="BelowWithGetter" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L5
+    Return v3
+}
+function f9 name="AboveIsFrozen" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x"
+    Return v2
+}
+# FROZEN: construction f9@i{{*}} root v2: DoesNotLeak before-leak at-exit read-early initial-order stores Unknown
+function f10 name="AboveIsRedefined" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7
+    v3 = Integer integer=5
+    PropSet v2, v3 key="x"
+    Return v2
+}
+# REDEFINED: construction f10@i{{*}} root v2: DoesNotLeak before-leak at-exit read-early initial-order stores Unknown
+function f11 name="Defines" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L8
+    v2 = NewObject v1 layout=L8
+    v3 = Integer integer=5
+    PropDefine v2, v3 key="x"
+    Return v2
+}
+# DEFINES: construction f11@i{{*}} root v2: DoesNotLeak before-leak "x" at-exit "x" read-early initial-order "x" stores OnlyInitialOrder
+function f12 name="AboveIsBuiltinMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L9
+    v2 = NewObject v1 layout=L9
+    v3 = Integer integer=5
+    PropSet v2, v3 key="toString"
+    Return v2
+}
+# BUILTINMETHOD: construction f12@i{{*}} root v2: DoesNotLeak before-leak "toString" at-exit "toString" read-early initial-order "toString" stores OnlyInitialOrder

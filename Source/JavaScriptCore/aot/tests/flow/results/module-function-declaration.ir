@@ -1,0 +1,53 @@
+# A top-level function declaration of an ES module is in its variable before any code runs, even in a module cycle
+# RUN: flow
+# RUN(APPLY): flow-apply
+# CHECK: variable g0 type=f3 written=function {{*}}initialization=SetAtCreation
+# CHECK: variable g1 type=f5|f6 written=function
+# CHECK: variable g2 type=f4 written=function {{*}}initialization=SetAtCreation
+# APPLY: v0: f4 = GetModuleVariable variable=g2
+# APPLY: v4: f5|f6 = GetModuleVariable variable=g1
+# APPLY: v0: f3 = GetModuleVariable variable=g0
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="first.js" displayPath="first.js" body=f1 requests=[{target=m2}] exports=[{name="first" variable=g0}]
+module m2 path="second.js" displayPath="second.js" body=f2 requests=[{target=m1}] exports=[{name="second" variable=g2}]
+entry module=m0
+variable g0 name="first" module=m1 declared={type=function} initialization=Function function=f3
+variable g1 name="reassigned" module=m1 declared={type=function} initialization=Function function=f5
+variable g2 name="second" module=m2 declared={type=function} initialization=Function function=f4
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="first.js" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = Call v0
+    v2 = NewClosure function=f6
+    PutModuleVariable v2 variable=g1
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4
+    Return
+}
+function f2 name="second.js" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    Return
+}
+function f3 name="first" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="second" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="reassigned" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="replacement" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

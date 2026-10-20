@@ -1,0 +1,46 @@
+# A `this` that nothing reads goes: the reduced function has no HasThis and direct calls pass no receiver
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+
+function f0 name="ignoresThis" kind=Method flags=[HasThis] thisType={type=object} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: object, v1: number):
+    v2 = Add v1, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="ignoresThis"{{*}}flags=[HasThis] thisType={type=object} parameters=[{type=number}]
+# CHECK: b0(v0: object, v1: number):
+# CHECK-NEXT: [[forwarded]]: number = CallDirect v1 function=f3
+# CHECK-NEXT: ReturnCall [[forwarded]] requirement=Allowed
+
+function f1 name="readsThis" kind=Method flags=[HasThis] thisType={type=object} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object, v1: number):
+    v2 = PropGet v0 key="x"
+    v3 = Add v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f1 name="readsThis"{{*}}flags=[HasThis] thisType={type=object}
+# CHECK: b0(v0: object, v1: number):
+# CHECK-NEXT: = PropGet v0 key="x"
+
+function f2 name="callsBoth" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] @10
+    v2 = CallDirect v1, v0 function=f0
+    v3 = NewObject -, v2 layout=L0 fields=[0] @20
+    v4 = CallDirect v3, v0 function=f1
+    Return v4
+}
+# CHECK-LABEL: function f2 name="callsBoth"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: [[doubled]]: number = CallDirect v0 function=f3
+# CHECK-NEXT: [[receiver]]:{{*}}= NewObject -, [[doubled]] layout=L0
+# CHECK-NEXT: = CallDirect [[receiver]], v0 function=f1
+
+# CHECK-LABEL: function f3 name="ignoresThis" module=m0 kind=Method thisType={type=anything} parameters=[{type=number}] results=[{type=number}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f0 parameterMap=[{original=1}]}
+# CHECK: b0([[parameter]]: number):
+# CHECK-NEXT: = Add [[parameter]], [[parameter]]

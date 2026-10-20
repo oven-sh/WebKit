@@ -1,0 +1,219 @@
+# A resolved call with an inline implementation is inline code alone, inline code with a miss edge to the call, or the call, and its result leaves in the representation of its type
+# OPTIONS: disable=pass:SimplifyBuiltinCalls
+# RUN: pass ResolveBuiltins Select
+# RUN(REPS): pipeline ChooseRepresentations
+# RUN(CODE): compile
+# CHECK: outcome: Changed
+# CHECK: outcome: Changed
+# CODE-NOT: diagnostic
+# CODE: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = NewClosure function=f8
+    v10 = NewClosure function=f9
+    v11 = NewClosure function=f10
+    v12 = NewClosure function=f11
+    v13 = NewClosure function=f12
+    v14 = NewClosure function=f13
+    v15 = NewClosure function=f14
+    v16 = NewClosure function=f15
+    v17 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16
+    Return
+}
+
+function f1 name="wholeForm" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=MathFloor
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="wholeForm"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: TryCallInline
+# CHECK: v2: {{*}} = CallInline -, v0 inlineBuiltin=MathFloor overload=MathFloor/0
+# CHECK-NEXT: Return v2
+
+function f2 name="twoWayFormThatAllocates" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="twoWayFormThatAllocates"
+# CHECK: TryCallInline -, v0 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done [[done2]](), miss [[miss2]]()
+# CHECK: [[done2]](v2: Object):
+# CHECK-NEXT: Return v2
+# CHECK: [[miss2]]() frequency=Rare:
+# CHECK-NEXT: [[called2]]: Object = CallBuiltin -, v0 overload=ObjectCreate/0
+# CHECK-NEXT: Jump -> next [[done2]]([[called2]])
+# REPS-LABEL: function f2 name="twoWayFormThatAllocates"
+# REPS: TryCallInline {{*}} inlineBuiltin=ObjectCreate {{*}} -> done [[doneCell]](), miss
+# REPS: [[doneCell]]({{*}}: Object @Cell):
+
+function f3 name="twoWayFormThatReadsCache" parameters=[{type=Date}] results=[{type=anything}] {
+  b0(v0: Date):
+    v1 = Builtin builtin=DatePrototypeGetFullYear
+    v2 = Call v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f3 name="twoWayFormThatReadsCache"
+# CHECK: TryCallInline v0 inlineBuiltin=DateGetField inlineParameters=[{{*}}] overload=DatePrototypeGetFullYear/0 -> done [[done3]](), miss [[miss3]]()
+# CHECK: [[done3]](v2: number):
+# CHECK-NEXT: Return v2
+# CHECK: [[miss3]]() frequency=Rare:
+# CHECK-NEXT: [[called3]]: number = CallBuiltin v0 overload=DatePrototypeGetFullYear/0
+# CHECK-NEXT: Jump -> next [[done3]]([[called3]])
+# REPS-LABEL: function f3 name="twoWayFormThatReadsCache"
+# REPS: TryCallInline {{*}} inlineBuiltin=DateGetField {{*}} -> done [[doneNumber]](), miss
+# REPS: [[doneNumber]]({{*}}: number @Double):
+
+function f4 name="twoWayFormUnderHandler" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object) handler=b2():
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f4 name="twoWayFormUnderHandler"
+# CHECK: b0(v0: object) handler=b2():
+# CHECK: TryCallInline -, v0 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done
+# CHECK: frequency=Rare handler=b2():
+# CHECK-NEXT: Object = CallBuiltin -, v0 overload=ObjectCreate/0
+
+function f5 name="callStays" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Null
+    v2 = Undefined
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="callStays"
+# CHECK-NOT: CallInline
+# CHECK: v3: Object = CallBuiltin -, v1, v2 overload=ObjectCreate/0
+# CHECK-NEXT: Return v3
+
+function f6 name="unmatchedCallStays" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=ObjectCreate
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f6 name="unmatchedCallStays"
+# CHECK-NOT: CallInline
+# CHECK: v2: {{*}} = CallBuiltin -, v0 overload=ObjectCreate/{{*}} builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v2
+
+function f7 name="numberResult" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = Builtin builtin=MathSqrt
+    v2 = Call v1, -, v0
+    Return v2
+}
+# REPS-LABEL: function f7 name="numberResult"
+# REPS: number @Double = CallInline {{*}} inlineBuiltin=MathSqrt
+
+function f8 name="numberCodeWithInt32Result" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=MathFloor
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f8 name="numberCodeWithInt32Result"
+# CHECK: v2: i32 = CallInline -, v0 inlineBuiltin=MathFloor overload=MathFloor/0
+# REPS-LABEL: function f8 name="numberCodeWithInt32Result"
+# REPS: i32 @Int32 = CallInline {{*}} inlineBuiltin=MathFloor
+
+function f9 name="numberCodeWithWiderIntegerResult" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = Builtin builtin=MathAbs
+    v2 = Call v1, -, v0
+    Return v2
+}
+# CHECK-LABEL: function f9 name="numberCodeWithWiderIntegerResult"
+# CHECK: v2: int[0, 2147483648] = CallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0
+# REPS-LABEL: function f9 name="numberCodeWithWiderIntegerResult"
+# REPS: int[0, 2147483648] @Int64 = CallInline {{*}} inlineBuiltin=MathAbs
+
+function f10 name="int32Result" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = Builtin builtin=MathImul
+    v3 = Call v2, -, v0, v1
+    Return v3
+}
+# REPS-LABEL: function f10 name="int32Result"
+# REPS: i32 @Int32 = CallInline {{*}} inlineBuiltin=MathImul
+
+function f11 name="booleanResult" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=NumberIsInteger
+    v2 = Call v1, -, v0
+    Return v2
+}
+# REPS-LABEL: function f11 name="booleanResult"
+# REPS: boolean @Boolean = CallInline {{*}} inlineBuiltin=NumberIsInteger
+
+function f12 name="noResult" parameters=[{type=Map}] results=[{type=anything}] {
+  b0(v0: Map):
+    v1 = Builtin builtin=MapPrototypeClear
+    v2 = Call v1, v0
+    Return v2
+}
+# REPS-LABEL: function f12 name="noResult"
+# REPS: undefined @Void = CallInline {{*}} inlineBuiltin=MapClear
+
+function f13 name="boxedResult" parameters=[{type=Map}, {type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: Map, v1: anything, v2: object):
+    v3 = Builtin builtin=MapPrototypeGet
+    v4 = Call v3, v0, v1
+    v5 = Builtin builtin=ObjectGetPrototypeOf
+    v6 = Call v5, -, v2
+    v7 = NewArray v4, v6 contents=anything
+    Return v7
+}
+# REPS-LABEL: function f13 name="boxedResult"
+# REPS: anything @JSValue = CallInline {{*}} inlineBuiltin=MapGet
+# REPS: TryCallInline {{*}} inlineBuiltin=GetPrototypeOf {{*}} -> done [[doneBoxed]](), miss
+# REPS: [[doneBoxed]]({{*}}: null|object @JSValue):
+
+function f14 name="boxedCodeWithOptionalNumberResult" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Builtin builtin=MapPrototypeSet
+    v5 = Call v4, v3, v0, v1
+    v6 = Builtin builtin=MapPrototypeGet
+    v7 = Call v6, v3, v0
+    Return v7
+}
+# REPS-LABEL: function f14 name="boxedCodeWithOptionalNumberResult"
+# REPS: undefined|number @OptionalDouble = CallInline {{*}} inlineBuiltin=MapGet
+
+function f15 name="boxedCodeWithOptionalIntegerResult" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = Builtin builtin=Map
+    v3 = Construct v2
+    v4 = Builtin builtin=MapPrototypeSet
+    v5 = Call v4, v3, v0, v1
+    v6 = Builtin builtin=MapPrototypeGet
+    v7 = Call v6, v3, v0
+    Return v7
+}
+# REPS-LABEL: function f15 name="boxedCodeWithOptionalIntegerResult"
+# REPS: undefined|i32 @OptionalInt64 = CallInline {{*}} inlineBuiltin=MapGet

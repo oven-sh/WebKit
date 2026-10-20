@@ -1,0 +1,66 @@
+# A delete under an unknown key through an unknown receiver may take the setter off a prototype that reached native code, so the store that found the setter is looked at again and defines the property as well. A class that stayed in the program keeps its setter
+# RUN: flow-links calls
+# CHECK: f0 v11 -> i{{*}} f2 Accessor
+# RUN(NODES): flow-solve nodes objects
+# NODES: Property(L0#{{*}}, "x") = {"stored"}
+# NODES: L0#{{*}} mutations=[AddProperty] uses
+# RUN(KEPT): flow-solve nodes objects
+# KEPT-NOT: Property(L1#
+# KEPT: L1#{{*}} mutations=[] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f1
+layout L1 kind=Instance name="KeptHolder" constructor=f4
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Setter key="x"
+    v4 = FinishClass v1 layout=L0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = PropGet v4 key="prototype"
+    v8 = Call v6, -, v7
+    v9 = Construct v4
+    v10 = String string="stored"
+    PropSet v9, v10 key="x" mode=Strict
+    v12 = NewClosure function=f4
+    v13 = NewClass v12 layout=L1
+    v14 = NewClosure function=f5
+    DefineMethod v13, v14 layout=L1 methodKind=Setter key="x"
+    v16 = FinishClass v13 layout=L1
+    v17 = Construct v16
+    PropSet v17, v10 key="x" mode=Strict
+    v19 = CallDirect v8 function=f3
+    Return
+}
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="x" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f3 name="reachedLater" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1
+    v3 = ToString v2
+    v4 = ElemDelete v0, v3 mode=Strict
+    Return
+}
+function f4 name="KeptHolder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f5 name="x" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

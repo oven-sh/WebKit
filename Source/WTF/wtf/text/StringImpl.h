@@ -284,6 +284,14 @@ public:
             string->setHash(hash);
         return string;
     }
+    static Ref<StringImpl> create(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));
+        Ref string = create(characters);
+        if (!string->isStatic() && !string->hasHash())
+            string->setHash(hash);
+        return string;
+    }
 
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<Latin1Character>&);
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<char16_t>&);

@@ -1,0 +1,28 @@
+# An object stored into parsed data stays with the object of that parse and reaches no sink, and the same store into an unknown object reaches native code
+# RUN: flow-solve sinks nodes
+# CHECK: nativeCode {{*}}L1#1
+# CHECK: Property(Object@f0:v4, "logger") = {{*}}L0#0
+# RUN(ALL): flow-solve sinks
+# ALL-NOT: L0#0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Logger" fields=[{key="level" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="EscapedLogger" fields=[{key="level" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="JSON" [isFreeName]
+    v2 = PropGet v1 key="parse"
+    v3 = PropGet v0 key="text" [isFreeName]
+    v4 = Call v2, v1, v3
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    PropSet v4, v7 key="logger"
+    v9 = NewObject -, v5 layout=L1 fields=[0]
+    v10 = FinishObject v9
+    v11 = PropGet v0 key="settings" [isFreeName]
+    PropSet v11, v10 key="logger"
+    Return
+}

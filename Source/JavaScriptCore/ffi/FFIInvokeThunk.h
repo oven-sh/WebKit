@@ -43,19 +43,6 @@ JS_EXPORT_PRIVATE MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(cons
 
 #endif // ENABLE(JIT)
 
-#if !ENABLE(JIT_CAGE) && (CPU(X86_64) || (CPU(ARM64) && !CPU(ARM64E)))
-#define FFI_INVOKE_WITHOUT_JIT_SUPPORTED 1
-#else
-#define FFI_INVOKE_WITHOUT_JIT_SUPPORTED 0
-#endif
-
-#if FFI_INVOKE_WITHOUT_JIT_SUPPORTED
-
-// What a thunk of generateInvokeThunk() does, for any signature, without code that is made at run time.
-JS_EXPORT_PRIVATE void invokeWithoutJIT(const Signature&, void* target, uint64_t* slots);
-
-#endif // FFI_INVOKE_WITHOUT_JIT_SUPPORTED
-
 } } // namespace JSC::FFI
 
 #endif // USE(BUN_JSC_ADDITIONS)

@@ -1,0 +1,119 @@
+enum KnowledgeLevel { Unknown Predicted Written Proven }
+enum AccessKind { Unknown Read Store Define Has Delete Call Construct }
+enum UnprovenCauseFamily { UnprovenType UnknownCode Mutation Limit }
+enum UnprovenCause (family: UnprovenCauseFamily) {
+    Unknown(UnprovenType) ResultDisabled(UnprovenType) LimitReached(Limit) UnknownObject(UnknownCode) NonLayoutObject(UnprovenType) BuiltinBase(UnprovenType)
+    UnknownBase(UnknownCode) ClassEvaluatedAgain(UnknownCode) ReachesNativeCode(UnknownCode) ReachesUnknownJavaScript(UnknownCode) UnknownWriter(UnknownCode) UnknownCallee(UnknownCode)
+    UnprovenContents(UnprovenType) FieldDeleted(Mutation) UnknownKeyDelete(Mutation) PropertyRedefined(Mutation) PropertyAdded(Mutation) UnknownKeyStore(Mutation)
+    StoreOfOtherType(Mutation) IntegrityChanged(Mutation) PrototypeChanged(Mutation) OwnPropertyHidesMember(Mutation) OtherNewTarget(Mutation)
+    LeftByPasses(UnprovenType)
+}
+enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
+enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled }
+flags BuiltinUse { Tested Read Called Constructed Written Escaped }
+enum LocaleUseKind { Unknown HostDefault Constant }
+enum TypeTestFailure { TakesGenericPath Throws }
+
+enum ImageVerdict {
+    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
+    MalformedTables StampMismatch IdentityMismatch
+}
+enum DeclineKind {
+    Unknown HotCallNotInlined HotCallNotResolved GeneratorLoopNotFused ArrayChainNotFused StringBuilderNotCreated StringBuildersNotJoined AllocationNotSunk
+    TypedResultNotSelected IterationNotExpandedByClass LoopNotVersioned LoopPollNotStripMined LoopBoundNotClamped StretchNotGuarded ResultNodeInterpreted
+    PositionAdmitsObjects AssertedObjectPassedToUnknownCallee
+}
+enum TypedResultDeclineReason {
+    None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
+}
+enum CallDeclineReason { None UnknownCallee CalleeNotCallable CalleeNeedsClosure UnknownMember NeedsTest EffectsBeforeCall TooManyCallees }
+enum GeneratorFusionDeclineReason {
+    Unknown None BodyIsNotDescribed HasNoStep SeveralLiveInstances StepMayReachOtherGenerator MayEscapeBeforeStep BodyIsBoundToFrame BodyIsTooLarge
+    CallerIsTooLarge InlineDepth
+}
+enum ArrayChainDeclineReason {
+    Unknown None SourceIsNotPristine CallbackIsNotAFunction CalleeIsUnknown CallbackSeesIntermediateArray CallbacksInterfere SkippedCallIsObservable
+    CallbackWritesSource ValueBetweenLinksInterferes
+}
+enum StringBuilderDeclineReason { Unknown Created TooFewAppends TwoStatesLive StateIsNotFirstOperand WebLimit }
+enum LoopDeclineReason {
+    None NotInnermost SeveralEntries NoSingleLikelyPath UncloneableValue NothingToHoist NotCounted CounterMayWrap BoundNotInvariant TestNotOnLikelyPath
+    EffectsBeforeTopTest PollNotOnEveryIteration SeveralPolls LimitReached
+}
+enum InterpretedCause { None TooManyNodes RepeatedRecursion MemberKeyIsNotText LayoutIsNotModeled MemberIsNotNamedField FieldTypeIsNotTestable }
+flags AllocationEscapeReason {
+    Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
+}
+enum AllocationHeapCause {
+    None NotTracked HasNoFrameForm Escapes SeveralLiveInstances HasUntrackedAlias LiveAcrossSuspension LiveAtReturnCall HeldByHeapCell HeldAcrossIterations ChangedByUse
+    SeenByNativeCode ClosureIsNotOnlyCalled LayoutDefersClosures FieldsCreatedLater ExceedsLimit MaterializationDoesNotPay
+}
+enum AllocationOutcome { Unknown Removed Heap Frame FrameUntilMaterialized Slim Deferred }
+enum AllocationKind {
+    Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
+}
+enum ResultSection {
+    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed Accesses AccessCounts TypeTests RemainingChecks
+    Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
+}
+
+record TextRange abi { offset: UInt32 length: UInt32 }
+record SourceLocation abi { module: Module? position: UInt32 }
+record Witness abi { function: Function? value: Value? location: SourceLocation }
+record UserDiagnosticRecord abi {
+    kind: UserDiagnosticKind function: Function? block: Block? value: Value? layout: Layout? limit: LimitID count: UInt32 location: SourceLocation
+    message: TextRange origin: SourceLocation siteKind: TypeSiteKind minimum: Double maximum: Double
+}
+record InternalErrorRecord abi {
+    kind: InternalErrorKind function: Function? block: Block? value: Value? layout: Layout? limit: LimitID pass: PassID count: UInt32
+    location: SourceLocation message: TextRange
+}
+record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: Witness }
+record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
+record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness }
+record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
+record AccessRecord abi {
+    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 witness: Witness
+    function: Function?
+}
+record AccessCountRecord abi { module: Module accesses: UInt32[4] calls: UInt32[4] typeTests: UInt32 }
+record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 }
+record RemainingCheckRecord abi { id: UInt64 witness: Witness origin: SourceLocation cause: CheckCause siteKind: TypeSiteKind }
+record DeclineRecord abi { kind: DeclineKind limit: LimitID count: UInt32 reason: UInt32 witness: Witness }
+record AllocationRemarkRecord abi {
+    location: SourceLocation forcedBy: SourceLocation outcome: AllocationOutcome copies: UInt32 forcingOperation: TextRange reasons: AllocationEscapeReason
+    limit: LimitID function: Function? kind: AllocationKind cause: AllocationHeapCause
+}
+record LossRecord abi { limit: LimitID stage: Stage layout: Layout? count: UInt32 witness: Witness }
+record FunctionReportRecord abi {
+    source: Function? role: TextRange codeBytes: UInt32 accesses: UInt32[4] calls: UInt32[4] firstOperation: UInt32 operationCount: UInt32
+}
+record OperationCountRecord abi { name: TextRange count: UInt32 }
+record PassTimeRecord abi { pass: PassID reserved: UInt32 runs: UInt64 wallNanoseconds: UInt64 cpuNanoseconds: UInt64 }
+record ObfuscatedSiteRecord abi { function: UInt32 site: UInt32 location: SourceLocation name: TextRange }
+
+enum CompileAction { Compile VerifyOnly }
+enum Architecture { ARM64 X86_64 }
+enum ReferenceWidth { Wide Narrow }
+enum MismatchPolicy { Throw Report }
+enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences FlowFixpoint VerifyEachStage ValidateReferenceGuards }
+flags ReportSet { Flow Declines Symbols Allocations Functions }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnorePredictions LoseFlowWakeUps AnalyzeValueFlow DropReferenceGuards }
+flags Instrumentation { CountBranches }
+flags AdmittedCode { Inspector RuntimeCode }
+flags ExcludedCode { EvaluatedText }
+flags OutputOptions { Obfuscate }
+record SwitchRange abi { firstID: UInt32 count: UInt32 }
+record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
+record BisectionSwitches abi {
+    disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
+    droppedGuard: DroppedGuardWords flowOrderSeed: UInt32 reserved: UInt32
+}
+record TargetOptions abi { features: UInt64 architecture: Architecture referenceWidth: ReferenceWidth }
+record CompileOptions abi {
+    bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double executableIdentity: UInt8[16] size: UInt32
+    action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
+    heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
+    excludedCode: ExcludedCode
+}

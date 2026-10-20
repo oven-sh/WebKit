@@ -1,0 +1,33 @@
+# An object escapes when it is passed to a direct call, so a later store to it keeps its barrier even though the callee cannot collect.
+# FORM: Selected
+# RUN: pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 1
+# STATISTIC: BarriersCoveredLater = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={members=[L0]}
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="escaped-by-argument" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = CallDirect v1 function=f2
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f0 name="escaped-by-argument"
+# CHECK: PutSlot v1, -, v0 key="x"
+# CHECK-NOT: ownerCannotBeMarked
+function f1 name="other-argument" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    v2 = CallDirect v0 function=f2
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f1 name="other-argument"
+# CHECK: PutSlot v1, -, v0 key="x"{{*}}[ownerCannotBeMarked]
+function f2 name="retains-argument" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}

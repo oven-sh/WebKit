@@ -1,0 +1,77 @@
+# What the passes in front of ExpandIteration leave of `m.values()` on a parameter of a function that unknown code calls is a loop over the map
+# RUN: pipeline ExpandIteration
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="mapValues" parameters=[{type=Map<string, number>}] results=[{type=anything}] {
+  b0(v0: Map<string, number>):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = PropGet v0 key="values"
+    v4 = Call v3, v0 calleeKey="values"
+    v5 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7 index=0
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ResultAt v7 index=1
+    v10 = Call v2, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="mapValues"
+# CHECK: = IsPristine v0 builtinClass=Map aspects=[Names]
+# CHECK: LoopHint
+# CHECK-NEXT: = MapNext [[map1]],
+# CHECK: = TypeTest {{*}} testedType=builtin(MapPrototypeValues)
+# CHECK: [[iterator1]]: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
+# CHECK-NOT: [[iterator1]]
+# CHECK: ([[merged1]]: anything ~ MapIterator, [[arm1]]: int[0, 1], [[map1]]: Map<string, number>):
+# CHECK-NEXT: Switch [[arm1]] cases=[0]
+# CHECK: [[returned1]]: anything = Call {{*}}, v0 calleeKey="values"
+# CHECK: ([[returned1]],
+# CHECK: = RequireObjectCoercible [[merged1]] nullishAccess=Iterate
+function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type=anything}] {
+  b0(v0: Array<number>):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="print" [isFreeName]
+    v3 = PropGet v0 key="entries"
+    v4 = Call v3, v0 calleeKey="entries"
+    v5 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7 index=0
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v9 = ResultAt v7 index=1
+    v10 = Call v2, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2 name="arrayEntries"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Names]
+# CHECK: LoopHint
+# CHECK-NEXT: = PropGet [[array2]] key="length"
+# CHECK: [[iterator2]]: ArrayIterator = CallBuiltin v0 overload=ArrayPrototypeEntries/0
+# CHECK-NOT: [[iterator2]]
+# CHECK: ([[merged2]]: anything ~ ArrayIterator, [[arm2]]: int[0, 1], [[array2]]: Array<number>):
+# CHECK-NEXT: Switch [[arm2]] cases=[0]
+# CHECK: = RequireObjectCoercible [[merged2]] nullishAccess=Iterate
+# CHECK: = ElemGet [[array2]],

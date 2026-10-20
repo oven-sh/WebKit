@@ -1,0 +1,35 @@
+# A program that only tests whether an evaluator of text exists evaluates none, so the library functions that the interpreter calls for such text stay out
+# RUN: flow-links calls uses
+# RUN(INSTANCES): flow-solve instances
+# CHECK-NOT: f1
+# CHECK-NOT: f2
+# CHECK-NOT: f3
+# CHECK: use Eval [Tested]
+# INSTANCES-NOT: f1
+# INSTANCES-NOT: f2
+# INSTANCES-NOT: f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="eval" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return
+}
+function f1 name="getAsyncDisposeMethod" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="getDisposeMethod" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="performIteration" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+runtimefunction id=55 function=f1
+runtimefunction id=56 function=f2
+runtimefunction id=74 function=f3

@@ -1,0 +1,60 @@
+# A loop over an array is stepped without a call. The loop may still look next up by name at run time (here the array shadows a name of its prototype), so the library's function is entered as native code enters it and keeps its body. Nothing of the array goes along: it reaches no sink, and the stepped value holds its elements alone
+# RUN: flow-solve instances sinks nodes
+# RUN(LINKS): flow-links
+# RUN(KEPT): pipeline RemoveUnreachableFunctions
+# CHECK: f1 Generic
+# CHECK: nativeCode {
+# CHECK-NOT: Array@
+# CHECK-NOT: ArrayIterator@
+# CHECK: unknownJavaScript {}
+# CHECK: , f0, v10) = {undefined|"a"|"b"}
+# CHECK: , f1, parameter 0) = {{*}}unknown}
+# LINKS: host - -> [[instance]] f1 Host Repeatedly
+# LINKS-NOT: f0 v8 -> [[instance]]
+# LINKS: unknown-javascript no
+# KEPT-LABEL: function f1 name="next"
+# KEPT-NEXT: b0(v0: anything):
+# KEPT-NEXT: = HasJSType v0 first=5 last=5
+# KEPT: = NewObject {{*}} layout=L(IteratorResult)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=70 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="a"
+    v3 = String string="b"
+    v4 = NewArray v2, v3 contents=anything
+    PropSet v4, v2 key="map"
+    v6 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v8 = IteratorResume v6
+    v9 = ResultAt v8
+    Branch v9 -> taken b3(), notTaken b2()
+  b2():
+    v10 = ResultAt v8 index=1
+    v11 = Call v1, -, v10
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ClaimDeclared v0 declared={type=object flags=[IsFromCompiler]}
+    v3 = StepArrayIterator v2
+    v4 = ResultAt v3 index=1
+    v5 = ResultAt v3
+    v6 = CreateIteratorResult v4, v5
+    Return v6
+  b2():
+    v7 = ThrowNewError errorKind=TypeError message="not an array iterator"
+    Unreachable
+}

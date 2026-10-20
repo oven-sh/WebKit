@@ -1,0 +1,15 @@
+# A reached call that evaluates text is an event of the program, and from then on unknown JavaScript can run
+# RUN: flow-links unseen
+# CHECK: unseen EvaluatesText Function f0:v3
+# CHECK: unknown-javascript yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = PropGet v0 key="Function" [isFreeName]
+    v3 = Construct v2, -, v1
+    Return
+}

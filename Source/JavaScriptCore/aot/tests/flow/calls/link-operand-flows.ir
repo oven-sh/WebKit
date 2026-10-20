@@ -1,0 +1,70 @@
+# Each operand of a call has one record from the caller's own node to the parameter, though its edge goes through a gate and the receiver of a method call through a temporary, and an argument that grows after the call was linked adds no record
+# RUN: flow-links calls operands
+# CHECK: link [[call]]: [[caller]] f0 v6 -> [[callee]] f1 Call Once
+# CHECK: operand [[capture]](f1.part0) -> [[parameter0]](f1:l0) link [[call]]
+# CHECK-NEXT: operand [[receiver]](f0:l4) -> [[parameter1]](f1:l1) link [[call]]
+# CHECK-NEXT: operand [[first]](f0:l5) -> [[parameter2]](f1:l2) link [[call]]
+# CHECK-NEXT: operand [[second]](f0:l6) -> [[parameter3]](f1:l3) link [[call]]
+# RUN(METHOD): flow-links calls operands
+# METHOD: link [[call]]: [[caller]] f0 v10 -> [[callee]] f3 Call Once
+# METHOD: operand [[holder]](f0:l10) -> [[parameter0]](f3:l0) link [[call]]
+# METHOD-NEXT: operand [[first]](f0:l5) -> [[parameter1]](f3:l1) link [[call]]
+# RUN(ALL): flow-links operands
+# ALL-COUNT-6: operand
+# ALL-NOT: operand
+# RUN(GATE): flow-links operands
+# GATE-NOT: temporary
+# RUN(SUMMARY): flow-summary f0
+# SUMMARY: l4 = v2
+# SUMMARY-NEXT: l5 = v3
+# SUMMARY-NEXT: l6 = v4
+# SUMMARY: l10 = v8
+# RUN(NODES): flow-solve nodes
+# NODES: Local([[caller]], f0, v4) = {undefined|L3#[[late]]}
+# NODES: , f1, parameter 0) = {L0#{{*}}}
+# NODES-NEXT: , f1, parameter 1) = {L1#{{*}}}
+# NODES-NEXT: , f1, parameter 2) = {L2#{{*}}}
+# NODES-NEXT: , f1, parameter 3) = {undefined|L3#[[late]]}
+# RUN(GATED): flow-solve nodes
+# GATED: Local([[caller]], f0, v4) = {undefined|L3#[[late]]}
+# GATED: Temporary([[caller]], f0) = {undefined|L3#[[late]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Captured" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Receiver" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="First" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="StoredLate" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="second" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = GetModuleVariable variable=g0
+    v5 = NewClosure v1 function=f1
+    v6 = Call v5, v2, v3, v4
+    v7 = NewClosure function=f3
+    v8 = NewObject -, v7 layout=L4 fields=[0]
+    v9 = PropGet v8 key="m"
+    v10 = Call v9, v8, v3 calleeKey="m"
+    Return
+}
+function f1 name="called" flags=[HasThis] captures=[{type=anything}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = CallDirect function=f2
+    Return
+}
+function f2 name="storesAfterTheCallWasLinked" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f3 name="method" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

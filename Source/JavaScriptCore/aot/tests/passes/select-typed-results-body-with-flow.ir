@@ -1,0 +1,43 @@
+# A body read as lowering writes it, with the class of the promise predicted before the await: flow puts the typed result into the promise, and the pass parses the bytes into the layouts
+# FORM: AsRead
+# OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
+# RUN: pipeline SelectTypedResults
+# STATISTIC: TypedResultsSelected = 1
+# STATISTIC: ParsersCreated >= 2
+# CHECK-NOT: decline TypedResultNotSelected
+# CHECK-NOT: decline ResultNodeInterpreted
+
+typesite w0 module=m0 position=20 kind=PromiseValue
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Order" module=m0 position=10 fields=[{key="id" declared={type=number}}, {key="items" declared={type=Array<string>}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Response" [isFreeName]
+    v2 = String string="{\"id\":1,\"items\":[\"a\"]}"
+    v3 = Construct v1, -, v2 calleeName="Response"
+    v4 = CallDirect v3 function=f1
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v4
+    Return
+}
+
+function f1 name="ofResponse" flags=[IsAsync] parameters=[{type=anything predicted=Response}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="json"
+    v2 = Call v1, v0 calleeKey="json"
+    v3 = Predict v2 predicted=Promise
+    v4 = Await v3
+    v5 = ClaimRead v4, v3 source=Contents{slot=Value} site=w0
+    v6 = ClaimDeclared v5 declared={type=undefined|null|L0}
+    Return v6
+}
+# CHECK-LABEL: function f1 name="ofResponse"
+# CHECK: = CallBuiltin {{*}} overload=ResponsePrototypeBytes/0
+# CHECK: [[bytes]]:{{*}}= Await
+# CHECK: = JSONSourceOpen [[bytes]]
+# CHECK: = CallDirect {{*}} function=[[parserOfOrder]]
+# CHECK: function [[parserOfOrder]] {{*}}role=Parser
+# CHECK: = NewObject {{*}} layout=L0

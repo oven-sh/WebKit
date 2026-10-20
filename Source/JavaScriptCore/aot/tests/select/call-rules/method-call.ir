@@ -1,0 +1,123 @@
+# A read of a method from a receiver of unknown type and the call of what was read on that receiver become one CallMethod
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: MethodCallGroups = 3
+# STATISTIC: ResolvedCallTargetGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="read-and-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m" @10
+    v3 = Call v2, v0, v1 calleeKey="m" calleeName="o.m" @12
+    Return v3
+}
+# CHECK-LABEL: function f0 name="read-and-call"
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: [[result]]: anything = CallMethod v0, v1 key="m" calleeName="o.m" readOrigin={position=10} @12
+# CHECK-NEXT: Return [[result]]
+
+function f1 name="four-arguments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1, v1, v1, v1 calleeKey="m"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="four-arguments"
+# CHECK-NOT: PropGet
+# CHECK: anything = CallMethod v0, v1, v1, v1, v1 key="m"
+
+function f2 name="under-handler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything) handler=b1():
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m"
+    Return v3
+  b1() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f2 name="under-handler"
+# CHECK-NEXT: b0(v0: anything, v1: anything) handler=b1():
+# CHECK-NEXT: anything = CallMethod v0, v1 key="m"
+
+function f3 name="nine-arguments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1, v1, v1, v1, v1, v1, v1, v1, v1 calleeKey="m"
+    Return v3
+}
+# CHECK-LABEL: function f3 name="nine-arguments"
+# CHECK-NOT: CallMethod
+
+function f4 name="read-used-twice" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m"
+    Return v2
+}
+# CHECK-LABEL: function f4 name="read-used-twice"
+# CHECK-NOT: CallMethod
+
+function f5 name="called-on-another-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v1, v1 calleeKey="m"
+    Return v3
+}
+# CHECK-LABEL: function f5 name="called-on-another-value"
+# CHECK-NOT: CallMethod
+
+function f6 name="call-without-callee-key" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1
+    Return v3
+}
+# CHECK-LABEL: function f6 name="call-without-callee-key"
+# CHECK-NOT: CallMethod
+
+function f7 name="unknown-code-between" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="m"
+    Return v4
+}
+# CHECK-LABEL: function f7 name="unknown-code-between"
+# CHECK-NOT: CallMethod
+
+function f8 name="tail-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m"
+    ReturnCall v3
+}
+# CHECK-LABEL: function f8 name="tail-call"
+# CHECK-NOT: CallMethod
+# CHECK: [[tail]]: anything = Call
+# CHECK-NEXT: ReturnCall [[tail]]
+
+function f9 name="key-with-own-meaning" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="__proto__"
+    v3 = Call v2, v0, v1 calleeKey="__proto__"
+    Return v3
+}
+# CHECK-LABEL: function f9 name="key-with-own-meaning"
+# CHECK-NOT: CallMethod
+
+function f10 name="read-in-front-of-loop" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = PropGet v0 key="m"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Call v3, v0, v1 calleeKey="m"
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f10 name="read-in-front-of-loop"
+# CHECK-NOT: CallMethod
+# CHECK: [[read]]: anything = PropGet v0 key="m"
+# CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget [[read]] argumentCount=1
+# CHECK: anything = CallResolved [[read]], [[target]], v0, v1

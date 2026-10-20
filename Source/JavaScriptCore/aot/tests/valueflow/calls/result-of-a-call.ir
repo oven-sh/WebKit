@@ -1,0 +1,24 @@
+# function make() { return made }  make()()
+# What a function returns is what a call of it gives.
+# RUN: valueflow-solve calls
+# CHECK: f0 v1 -> f1
+# CHECK: f0 v2 -> f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = Call v1, -
+    Return
+}
+function f1 name="make" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="made" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

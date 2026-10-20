@@ -1,0 +1,63 @@
+# A callee is measured before its accesses are resolved: an access by name whose receiver's type names its layouts counts as the slot operation it becomes
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Lazy" fields=[{key="cached" declared={type=undefined|number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="seed" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+function f0 name="memoizingGetter" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="cached" receivers=[L0]
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="seed" receivers=[L0]
+    v4 = CallDirect v3 function=f3
+    PropSet v0, v4 key="cached" receivers=[L0]
+    Return v4
+  b2():
+    v6 = PropGet v0 key="cached" receivers=[L0]
+    Return v6
+}
+# CHECK: f0: barrier=None bytes=76 head=[b0 b2] headBytes=44
+
+function f1 name="memoizingGetterOfUnprovenReceiver" kind=Getter flags=[HasThis] thisType={type=object predicted=L0} results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = PropGet v0 key="cached" receivers=[L0]
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="seed" receivers=[L0]
+    v4 = CallDirect v3 function=f3
+    PropSet v0, v4 key="cached" receivers=[L0]
+    Return v4
+  b2():
+    v6 = PropGet v0 key="cached" receivers=[L0]
+    Return v6
+}
+# CHECK: f1: barrier=None bytes=124
+# CHECK-NOT: head=
+
+function f2 name="storesFields" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    v2 = Undefined
+    PropSet v0, v2 key="cached" receivers=[L0]
+    PropSet v0, v1 key="seed" receivers=[L0]
+    Return v0
+}
+# CHECK: f2: barrier=None bytes=20
+
+function f3 name="compute" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}
+# CHECK: f3: barrier=None
+
+function f4 name="computedKey" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK: f4: barrier=None bytes=24

@@ -58,9 +58,7 @@ private:
     MacroAssembler::Jump generate(Air::Inst&, CCallHelpers&, Air::GenerationContext&) final;
     
     bool isTerminal(Air::Inst&) final;
-#if USE(BUN_JSC_ADDITIONS)
     bool hasFixedForms(Air::Inst&) final;
-#endif
 
     void dumpImpl(PrintStream&) const final;
     void deepDumpImpl(PrintStream&) const final;

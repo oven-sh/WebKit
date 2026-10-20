@@ -1,0 +1,95 @@
+# The host enters a handler in the options of Bun.serve with what the table declares and with nothing else, wherever the handler sits in the options. The options and the handlers reach no unseen code, and a function under a name that the host does not read is not called
+# RUN: flow-solve sinks nodes
+# RUN(SERVER): flow-solve nodes
+# RUN(ERROR): flow-solve nodes
+# RUN(ROUTE): flow-solve nodes
+# RUN(METHOD): flow-solve nodes
+# RUN(MESSAGE): flow-solve nodes
+# RUN(CLOSE): flow-solve nodes
+# RUN(LINKS): flow-links calls
+# RUN(LINKS2): flow-links calls
+# RUN(LINKS3): flow-links calls
+# RUN(LINKS4): flow-links calls
+# RUN(LINKS5): flow-links calls
+# RUN(LINKS6): flow-links calls
+# RUN(LINKS7): flow-links calls
+# CHECK-NOT: L0#
+# CHECK-NOT: L1#
+# CHECK-NOT: L2#
+# CHECK-NOT: L3#
+# CHECK-NOT: f1
+# CHECK-NOT: f5
+# CHECK: n0 NativeCode()
+# CHECK: , f1, parameter 0) = {Request@f0:v13{{*}}}
+# SERVER: , f1, parameter 1) = {{*}}HTTPServer@f0:v13
+# SERVER-NOT: , f1, parameter 1) = {{*}}unknown
+# ERROR: , f2, parameter 0) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# ROUTE: , f3, parameter 0) = {BunRequest@f0:v13{{*}}}
+# METHOD: , f4, parameter 0) = {BunRequest@f0:v13{{*}}}
+# MESSAGE: , f5, parameter 0) = {ServerWebSocket@f0:v13{{*}}}
+# MESSAGE: , f5, parameter 1) = {string|
+# MESSAGE-NOT: , f5, parameter 1) = {{*}}unknown
+# CLOSE: , f6, parameter 1) = {number}
+# CLOSE: , f6, parameter 2) = {string}
+# LINKS: f0 v13 -> {{*}} f1 BuiltinCallback PerEvent
+# LINKS2: f0 v13 -> {{*}} f2 BuiltinCallback PerEvent
+# LINKS3: f0 v13 -> {{*}} f3 BuiltinCallback PerEvent
+# LINKS4: f0 v13 -> {{*}} f4 BuiltinCallback PerEvent
+# LINKS5: f0 v13 -> {{*}} f5 BuiltinCallback PerEvent
+# LINKS6: f0 v13 -> {{*}} f6 BuiltinCallback PerEvent
+# LINKS7-NOT: f7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}, {key="error" declared={type=anything} flags=[IsRequired]}, {key="routes" declared={type=anything} flags=[IsRequired]}, {key="websocket" declared={type=anything} flags=[IsRequired]}, {key="helper" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Routes" fields=[{key="/a" declared={type=anything} flags=[IsRequired]}, {key="/b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Methods" fields=[{key="POST" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="WebSocketHandlers" fields=[{key="message" declared={type=anything} flags=[IsRequired]}, {key="close" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="server" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = NewObject -, v2, v4 layout=L1 fields=[0, 1]
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewObject -, v6, v7 layout=L3 fields=[0, 1]
+    v9 = NewClosure function=f7
+    v10 = NewObject -, v0, v1, v5, v8, v9 layout=L0 fields=[0, 1, 2, 3, 4]
+    v11 = Builtin builtin=BunServe
+    v12 = Builtin builtin=Bun
+    v13 = Call v11, v12, v10
+    PutModuleVariable v13 variable=g0
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f2 name="error" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="route" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="post" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f5 name="message" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f6 name="close" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}
+function f7 name="helper" results=[{type=anything}] {
+  b0():
+    Return
+}

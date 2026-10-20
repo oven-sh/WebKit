@@ -1,0 +1,54 @@
+# A function whose closure a field defers keeps its capture: the slot creates the closure over the object. The closure in the field beside it, which copies a parameter, reads a variable
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass references=narrow
+# STATISTIC: FlowDeferredClosureFields = 1
+# STATISTIC: CapturesPromotedToVariables = 1
+# CHECK: layout L0 kind=Instance name="Widget"{{*}}deferral=CapturesObject deferredFunction=f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="deferred" declared={type=anything} flags=[IsRequired]}, {key="created" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    v6 = PropGet v5 key="deferred"
+    v7 = Call v6, v5 calleeKey="deferred"
+    v8 = PropGet v5 key="created"
+    v9 = Call v8, v5 calleeKey="created"
+    Return
+}
+
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    v4 = NewClosure v3 function=f2
+    PropSet v3, v4 key="deferred" mode=Strict
+    v6 = NewClosure v1 function=f3
+    PropSet v3, v6 key="created" mode=Strict
+    Return v3
+}
+# CHECK-LABEL: function f1 name="Widget"
+# CHECK: = NewClosure v3 function=f2
+# CHECK: = NewClosure function=f3
+
+function f2 name="capturesObject" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f2 name="capturesObject"{{*}}captures=[{type=
+
+function f3 name="capturesParameter" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f3 name="capturesParameter"
+# CHECK-NOT: captures=
+# CHECK: = GetModuleVariable variable=g0

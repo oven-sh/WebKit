@@ -1,0 +1,105 @@
+# A read that gives undefined for an empty slot is undefined while the slot is as empty as the allocation left it
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes}}, {key="y" declared={type=anything} flow={prototypeName=AbsentOnPrototypes}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Lazy" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes}}, {key="y" declared={type=anything} flow={location={stores=AtMostOnce initialization=StoredBeforeEveryRead} prototypeName=AbsentOnPrototypes}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="emptySinceAllocation" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f0 name="emptySinceAllocation"
+# CHECK: v2: undefined = Undefined
+# CHECK-NOT: GetSlotOrUndefined
+
+function f1 name="filledAtAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] [keepsShape]
+    v3 = GetSlotOrUndefined v2 key="y" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f1 name="filledAtAllocation"
+# CHECK: v3: anything = Upcast v1
+# CHECK-NOT: Undefined
+
+function f2 name="otherObjectIsFilled" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    PutSlotOrAdd v2, -, v0 key="y" receivers=[L0] level=Proven
+    v4 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f2 name="otherObjectIsFilled"
+# CHECK: PutSlotOrAdd v2
+# CHECK-NEXT: v4: undefined = Undefined
+
+function f3 name="otherSlotIsStored" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    v3 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f3 name="otherSlotIsStored"
+# CHECK: PutSlot v1
+# CHECK-NEXT: v3: undefined = Undefined
+
+function f4 name="filledAfterAllocation" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    PutSlotOrAdd v1, -, v0 key="y" receivers=[L0] level=Proven
+    v3 = GetSlotOrUndefined v1 key="y" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f4 name="filledAfterAllocation"
+# CHECK: PutSlotOrAdd v1
+# CHECK-NEXT: v3: anything = GetSlotOrUndefined v1
+
+function f5 name="filledOnOnePath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutSlotOrAdd v2, -, v0 key="y" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    v4 = GetSlotOrUndefined v2 key="y" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f5 name="filledOnOnePath"
+# CHECK: b2():
+# CHECK-NEXT: v4: anything = GetSlotOrUndefined v2
+
+function f6 name="unknownCodeHasTheObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v3 = Call v1, -, v2
+    v4 = GetSlotOrUndefined v2 key="y" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f6 name="unknownCodeHasTheObject"
+# CHECK: = Call v1, -, v2
+# CHECK-NEXT: v4: anything = GetSlotOrUndefined v2
+
+function f7 name="unknownCodeFillsTheSlotOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L1 fields=[0] [keepsShape]
+    v3 = Call v1, -, v2
+    v4 = GetSlotOrUndefined v2 key="y" receivers=[L1] level=Proven
+    v5 = Call v1
+    v6 = GetSlotOrUndefined v2 key="y" receivers=[L1] level=Proven
+    v7 = StrictEq v4, v6
+    Return v7
+}
+# CHECK-LABEL: function f7 name="unknownCodeFillsTheSlotOnce"
+# CHECK: = Call v1, -, v2
+# CHECK-NEXT: v4: anything = GetSlotOrUndefined v2
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: v6: anything = Upcast v4

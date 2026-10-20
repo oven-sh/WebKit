@@ -1,0 +1,33 @@
+# A claim of a parameter that one edge fills with what its test proves stays: there is no argument on that edge to replace
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = TypeTest v0 testedType=number|string
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = Integer integer=1
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = Claim v4 castType=number
+    Return v5
+  b4():
+    v6 = Integer integer=0
+    Return v6
+}
+# CHECK-LABEL: function f0 name="filledByTestOnOneEdge"
+# CHECK: b1():
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=number|string
+# CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: b3(v4: number|string):
+# CHECK-NEXT: v5: number = Claim v4 castType=number
+# CHECK-NEXT: Return v5

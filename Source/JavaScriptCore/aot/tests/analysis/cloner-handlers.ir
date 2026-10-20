@@ -1,0 +1,217 @@
+# A copied block keeps its handler or gets the copy of it, a covered block does not leave its function without its landing block, and an inlined block without a handler gets the handler of the call
+# FORM: Prepared
+# RUN: duplicate function=f0 region=b2 redirect=b1.0
+# RUN(BOTH): duplicate function=f0 region=b2,b3 redirect=b1.0
+# RUN(EXTRACT): extract function=f0 region=b2
+# RUN(WHOLE): extract function=f0 region=b2,b3
+# RUN(INLINE): inline function=f1 value=v1
+# RUN(UNCOVERED): inline function=f2 value=v1
+# RUN(LANDING): duplicate function=f4 region=b4 redirect=b2.handler
+# RUN(SHARED): extract function=f4 region=b2,b3,b4
+# RUN(ARGUMENT): duplicate function=f5 region=b2 redirect=b1.0
+# RUN(USED): duplicate function=f6 region=b2 redirect=b1.0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tryStatement" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    v2 = Integer integer=7
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2() handler=b3(v2):
+    v3 = Call v0
+    Return v3
+  b3(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# CHECK: check: CanClone
+# CHECK-NEXT: function f0
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[copy]]()
+# CHECK-NEXT: b2() handler=b3(v2):
+# CHECK-NEXT: v3: anything = Call v0
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b3(v4: 7) role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: [[copy]]() handler=b3(v2):
+# CHECK-NEXT: [[call]]: anything = Call v0
+# CHECK-NEXT: Return [[call]]
+# CHECK-NEXT: }
+# BOTH: check: CanClone
+# BOTH-NEXT: function f0
+# BOTH: b1():
+# BOTH-NEXT: Jump -> next [[copy]]()
+# BOTH-NEXT: b2() handler=b3(v2):
+# BOTH: b3(v4: 7) role=CatchHandler:
+# BOTH: [[copy]]() handler=[[landing]](v2):
+# BOTH-NEXT: [[call]]: anything = Call v0
+# BOTH-NEXT: Return [[call]]
+# BOTH-NEXT: [[landing]]([[argument]]: 7) role=CatchHandler:
+# BOTH-NEXT: [[caught]]: anything = CatchValue
+# BOTH-NEXT: Return [[argument]]
+# BOTH-NEXT: }
+# EXTRACT: check: HandlerOutsideRegion
+# EXTRACT-NOT: live-ins
+# EXTRACT-NOT: function
+# WHOLE: check: CanClone
+# WHOLE-NEXT: live-ins: [v0 v2]
+# WHOLE-NEXT: function f7 {{*}} role=OutlinedBody {{*}} parameters=[{type=anything}, {type=7}]
+# WHOLE-NEXT: b0([[callee]]: anything, [[seven]]: 7):
+# WHOLE-NEXT: Jump -> next [[covered]]()
+# WHOLE-NEXT: [[covered]]() handler=[[landing]]([[seven]]):
+# WHOLE-NEXT: [[call]]: anything = Call [[callee]]
+# WHOLE-NEXT: Return [[call]]
+# WHOLE-NEXT: [[landing]]([[argument]]: 7) role=CatchHandler:
+# WHOLE-NEXT: [[caught]]: anything = CatchValue
+# WHOLE-NEXT: Return [[argument]]
+# WHOLE-NEXT: }
+function f1 name="coveredCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b1():
+    v1 = CallDirect v0 function=f3
+    Return v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# INLINE: check: CanClone
+# INLINE-NEXT: function f1
+# INLINE-NEXT: b0(v0: anything) handler=b1():
+# INLINE-NEXT: Jump -> next [[entry]]()
+# INLINE-NEXT: b1() role=CatchHandler:
+# INLINE-NEXT: v2: anything = CatchValue
+# INLINE-NEXT: Return v2
+# INLINE-NEXT: [[continuation]](v1: anything) handler=b1():
+# INLINE-NEXT: Return v1
+# INLINE-NEXT: [[entry]]() handler=b1():
+# INLINE-NEXT: Jump -> next [[covered]]()
+# INLINE-NEXT: [[covered]]() handler=[[landing]]():
+# INLINE-NEXT: [[first]]: anything = Call v0
+# INLINE-NEXT: Jump -> next [[continuation]]([[first]])
+# INLINE-NEXT: [[landing]]() role=CatchHandler handler=b1():
+# INLINE-NEXT: [[caught]]: anything = CatchValue
+# INLINE-NEXT: [[second]]: anything = Call v0
+# INLINE-NEXT: Jump -> next [[continuation]]([[second]])
+# INLINE-NEXT: }
+function f2 name="uncoveredCaller" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+# UNCOVERED: check: CanClone
+# UNCOVERED-NEXT: function f2
+# UNCOVERED-NEXT: b0(v0: anything):
+# UNCOVERED-NEXT: Jump -> next [[entry]]()
+# UNCOVERED-NEXT: [[continuation]](v1: anything):
+# UNCOVERED-NEXT: Return v1
+# UNCOVERED-NEXT: [[entry]]():
+# UNCOVERED-NEXT: Jump -> next [[covered]]()
+# UNCOVERED-NEXT: [[covered]]() handler=[[landing]]():
+# UNCOVERED-NEXT: [[first]]: anything = Call v0
+# UNCOVERED-NEXT: Jump -> next [[continuation]]([[first]])
+# UNCOVERED-NEXT: [[landing]]() role=CatchHandler:
+# UNCOVERED-NEXT: [[caught]]: anything = CatchValue
+# UNCOVERED-NEXT: [[second]]: anything = Call v0
+# UNCOVERED-NEXT: Jump -> next [[continuation]]([[second]])
+# UNCOVERED-NEXT: }
+function f3 name="calleeWithTry" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Call v0
+    Return v3
+}
+function f4 name="sharedLandingBlock" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = Call v0
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v0
+    Jump -> next b3()
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# SHARED: check: HandlerOutsideRegion
+# SHARED-NOT: live-ins
+# SHARED-NOT: function
+# LANDING: check: CanClone
+# LANDING-NEXT: function f4
+# LANDING: b1() handler=b4():
+# LANDING: b2() handler=[[copy]]():
+# LANDING: b4() role=CatchHandler:
+# LANDING-NEXT: v3: anything = CatchValue
+# LANDING-NEXT: Return v3
+# LANDING-NEXT: [[copy]]() role=CatchHandler:
+# LANDING-NEXT: [[caught]]: anything = CatchValue
+# LANDING-NEXT: Return [[caught]]
+# LANDING-NEXT: }
+function f5 name="handlerArgumentDefinedInRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v2 = Call v0
+    Jump -> next b3()
+  b3() handler=b5(v2):
+    v3 = Call v0
+    Jump -> next b4()
+  b4():
+    Return v3
+  b5(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v4
+}
+# ARGUMENT: check: CanClone
+# ARGUMENT-NEXT: function f5
+# ARGUMENT: b1():
+# ARGUMENT-NEXT: Jump -> next [[copy]]()
+# ARGUMENT-NEXT: b2():
+# ARGUMENT-NEXT: v2: anything = Call v0
+# ARGUMENT-NEXT: Jump -> next b3(v2)
+# ARGUMENT-NEXT: b3([[merged]]: anything) handler=b5([[merged]]):
+# ARGUMENT: [[copy]]():
+# ARGUMENT-NEXT: [[call]]: anything = Call v0
+# ARGUMENT-NEXT: Jump -> next b3([[call]])
+# ARGUMENT-NEXT: }
+function f6 name="valueOfCoveredBlockUsedAfterIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v0
+    Jump -> next b3()
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# USED: check: CanClone
+# USED-NEXT: function f6
+# USED: b1():
+# USED-NEXT: Jump -> next [[copy]]()
+# USED-NEXT: b2() handler=b4():
+# USED-NEXT: v2: anything = Call v0
+# USED-NEXT: Jump -> next [[rest]]()
+# USED-NEXT: b3([[merged]]: anything):
+# USED-NEXT: Return [[merged]]
+# USED: [[copy]]() handler=b4():
+# USED-NEXT: [[call]]: anything = Call v0
+# USED-NEXT: Jump -> next [[restOfCopy]]()
+# USED-NEXT: [[rest]]() handler=b4():
+# USED-NEXT: Jump -> next b3(v2)
+# USED-NEXT: [[restOfCopy]]() handler=b4():
+# USED-NEXT: Jump -> next b3([[call]])
+# USED-NEXT: }

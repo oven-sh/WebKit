@@ -1,0 +1,65 @@
+# Beside the unknown object, a receiver that has reached native code has its lookup only to predict it: each of them where the operation can have an arm for each, else none, because the unknown object stands for them. A receiver nobody handed out keeps its lookup
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: flow-links calls unknown
+# CHECK-NOT: f0 v22 -> {{*}} f1
+# CHECK-NOT: f0 v22 -> {{*}} f2
+# CHECK: f0 v22 -> {{*}} f3 Call Once
+# CHECK-NOT: f0 v22 -> {{*}} f1
+# CHECK-NOT: f0 v22 -> {{*}} f2
+# CHECK: f0 v24 -> {{*}} f1 Call Once
+# CHECK: unknown-callee {{*}} v22 Call
+# CHECK: unknown-callee {{*}} v24 Call
+# RUN(LOADS): flow-solve nodes
+# LOADS: , f0, v21) = {{*}}unknown|f3}
+# LOADS: , f0, v23) = {{*}}unknown|f1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Runner" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="many" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="few" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v1, -, v3
+    v7 = Call v1, -, v5
+    v8 = NewClosure function=f3
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = NewClosure function=f4
+    v11 = Call v10, -, v3
+    v12 = Call v10, -, v5
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v9 variable=g0
+    PutModuleVariable v11 variable=g0
+    PutModuleVariable v12 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v11 variable=g1
+    v19 = GetModuleVariable variable=g0
+    v20 = GetModuleVariable variable=g1
+    v21 = PropGet v19 key="run"
+    v22 = Call v21, v19 calleeKey="run"
+    v23 = PropGet v20 key="run"
+    v24 = Call v23, v20 calleeKey="run"
+    Return
+}
+function f1 name="firstEscaped" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="secondEscaped" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="kept" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

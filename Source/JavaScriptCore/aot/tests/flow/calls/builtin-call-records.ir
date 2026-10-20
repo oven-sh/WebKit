@@ -1,0 +1,54 @@
+# A call of a built-in is recorded once for each site, overload and mode, however often its statement runs, and each built-in has the uses the program makes of it
+# RUN: flow-links builtins
+# RUN(MAP): flow-links builtins
+# RUN(USES): flow-links uses
+# CHECK-NOT: builtin [[main]] v4
+# CHECK: builtin [[main]] v4 JSONParse/0 Call
+# CHECK-NOT: builtin [[main]] v4
+# CHECK: operand-value [[main]] v4 JSONParse/0 argument0 [ReadAsCharacters]
+# MAP-NOT: builtin [[main]] v6
+# MAP-NOT: builtin [[main]] v8
+# MAP-NOT: builtin [[main]] v9
+# MAP: builtin [[main]] v6 Map/1 Construct
+# MAP-NOT: builtin [[main]] v6
+# MAP-NOT: builtin [[main]] v8
+# MAP-NOT: builtin [[main]] v9
+# USES: use Bun [Tested]
+# USES: use JSON [Read] f0:v1
+# USES: use Map [Read, Constructed] f0:v5
+# USES: use Math [Read] f0:v7
+# USES: use JSONParse [Read, Called] f0:v2
+# USES: use MathPI [Read] f0:v8
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="text" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="JSON" [isFreeName]
+    v2 = PropGet v1 key="parse"
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v2, v1, v3 calleeKey="parse"
+    v5 = PropGet v0 key="Map" [isFreeName]
+    v6 = Construct v5
+    v7 = PropGet v0 key="Math" [isFreeName]
+    v8 = PropGet v7 key="PI"
+    v9 = PropGet v0 key="Bun" [isFreeName, isForTypeOf]
+    v10 = TypeOf v9
+    v11 = CallDirect function=f1
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+  b0():
+    v0 = String string="1"
+    PutModuleVariable v0 variable=g0
+    v2 = CallDirect function=f2
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+  b0():
+    v0 = String string="2"
+    PutModuleVariable v0 variable=g0
+    Return
+}

@@ -32,7 +32,6 @@
 #include "AirCCallSpecial.h"
 #include "AirCFG.h"
 #include "AirDominators.h"
-#include "AirInstInlines.h"
 #include "AirNaturalLoops.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3BasicBlockUtils.h"
@@ -52,6 +51,9 @@ WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(NaturalLoops);
 
 static void defaultPrologueGenerator(CCallHelpers& jit, Code& code, GenerationContext&)
 {
+    if (code.policy().frame.emitsFrame)
+        return;
+
     jit.emitFunctionPrologue();
 
     // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
@@ -67,14 +69,17 @@ static void defaultPrologueGenerator(CCallHelpers& jit, Code& code, GenerationCo
 
 Code::Code(Procedure& proc)
     : m_proc(proc)
+    , m_policy(proc.policy().air)
+    , m_targetFeatures(proc.policy().targetFeatures)
     , m_cfg(new CFG(*this))
+    , m_optLevel(proc.policy().upstream.optLevel)
     , m_preserveB3Origins(Options::dumpAirGraphAtEachPhase() || Options::dumpFTLDisassembly())
     , m_lastPhaseName("initial")
     , m_defaultPrologueGenerator(createSharedTask<PrologueGeneratorFunction>(&defaultPrologueGenerator))
 {
     // Come up with initial orderings of registers. The user may replace this with something else.
     std::optional<WeakRandom> weakRandom;
-    if (Options::airRandomizeRegs())
+    if (m_policy.registers.randomizesRegisterOrder)
         weakRandom.emplace();
     forEachBank(
         [&](Bank bank) {
@@ -85,6 +90,7 @@ Code::Code(Procedure& proc)
             all.exclude(RegisterSet::stackRegisters());
             all.exclude(RegisterSet::reservedHardwareRegisters());
             auto calleeSave = RegisterSet::calleeSaveRegisters();
+            calleeSave.merge(m_policy.registers.savedByCallee);
             all.forEach(
                 [&] (Reg reg) {
                     if (!calleeSave.contains(reg, IgnoreVectors))
@@ -98,14 +104,16 @@ Code::Code(Procedure& proc)
             result.appendVector(volatileRegs);
             result.appendVector(fullCalleeSaveRegs);
             result.appendVector(calleeSaveRegs);
-            if (Options::airRandomizeRegs()) {
-                WeakRandom random(Options::airRandomizeRegsSeed() ? Options::airRandomizeRegsSeed() : weakRandom->getUint32());
+            if (m_policy.registers.randomizesRegisterOrder) {
+                std::optional<unsigned> seed = m_policy.registers.registerOrderSeed;
+                WeakRandom random(seed ? *seed : weakRandom->getUint32());
                 shuffleVector(result, [&] (unsigned limit) { return random.getUint32(limit); });
             }
             setRegsInPriorityOrder(bank, result);
         });
 
     m_pinnedRegs.add(MacroAssembler::framePointerRegister, IgnoreVectors);
+    orderRegistersClobberedAtSuspensionsLast();
 }
 
 Code::~Code() = default;
@@ -117,10 +125,7 @@ void Code::emitDefaultPrologue(CCallHelpers& jit, GenerationContext& context)
 
 void Code::emitEpilogue(CCallHelpers& jit)
 {
-    if (m_epilogueGenerator) {
-        m_epilogueGenerator->run(jit, *this);
-        return;
-    }
+    RELEASE_ASSERT(!m_policy.frame.emitsFrame);
     if (frameSize()) {
         // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
         // the macro assembler might assert scratch register usage on load operations emitted by emitRestore.
@@ -143,19 +148,19 @@ void Code::setRegsInPriorityOrder(Bank bank, const Vector<Reg>& regs)
         });
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-void Code::setCalleeSavesClobberedAtSuspensions(const RegisterSet& registers)
+void Code::orderRegistersClobberedAtSuspensionsLast()
 {
-    m_calleeSavesClobberedAtSuspensions = registers;
+    const RegisterSet& registers = m_policy.registers.calleeSavesClobberedAtSuspensions;
+    if (registers.isEmpty())
+        return;
     Vector<Reg> order;
-    Vector<Reg> lost;
+    Vector<Reg> clobbered;
     for (Reg reg : regsInPriorityOrder(GP))
-        (registers.contains(reg, IgnoreVectors) ? lost : order).append(reg);
-    std::ranges::sort(lost, std::ranges::greater { }, &Reg::index);
-    order.appendVector(lost);
+        (registers.contains(reg, IgnoreVectors) ? clobbered : order).append(reg);
+    std::ranges::sort(clobbered, std::ranges::greater { }, &Reg::index);
+    order.appendVector(clobbered);
     setRegsInPriorityOrder(GP, order);
 }
-#endif
 
 void Code::pinRegister(Reg reg)
 {
@@ -181,13 +186,9 @@ bool Code::needsUsedRegisters() const
 
 BasicBlock* Code::addBlock(double frequency)
 {
-#if USE(BUN_JSC_ADDITIONS)
     Arena* arena = m_proc.arenaOrNull();
     std::unique_ptr<BasicBlock> block(new (arena) BasicBlock(m_blocks.size(), frequency));
     block->m_isInArena = !!arena;
-#else
-    std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
-#endif
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;
@@ -197,6 +198,7 @@ StackSlot* Code::addStackSlot(uint64_t byteSize, StackSlotKind kind)
 {
     StackSlot* result = m_stackSlots.addNew(byteSize, kind);
     if (m_stackIsAllocated) {
+        RELEASE_ASSERT(!m_frameLayout.isPlanned);
         // FIXME: This is unnecessarily awful. Fortunately, it doesn't run often.
         unsigned extent = WTF::roundUpToMultipleOf(result->alignment(), frameSize() - stackAdjustmentForAlignment() + byteSize);
         result->setOffsetFromFP(-static_cast<ptrdiff_t>(extent));
@@ -255,123 +257,6 @@ void Code::setCalleeSaveRegisterAtOffsetList(RegisterAtOffsetList&& registerAtOf
     m_calleeSaveStackSlot = slot;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-void Code::tryPlaceSpillsAboveFrameRecord()
-{
-    constexpr unsigned maxBytesAbove = 480;
-    constexpr unsigned maxBytesBelow = 240;
-    if (!isARM64() || !m_mayPlaceSpillsAboveFrameRecord || m_callArgAreaSize || !m_frameSize)
-        return;
-    unsigned saved = m_calleeSaveStackSlot ? m_calleeSaveStackSlot->byteSize() : 0;
-    bool savesAreOnTop = saved && m_calleeSaveStackSlot->offsetFromFP() == -static_cast<intptr_t>(saved);
-    unsigned above = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(m_frameSize - (savesAreOnTop ? saved : 0));
-    unsigned below = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved);
-    if (above > maxBytesAbove || below > maxBytesBelow)
-        return;
-    for (StackSlot* slot : m_stackSlots) {
-        if (slot != m_calleeSaveStackSlot)
-            slot->setOffsetFromFP(slot->offsetFromFP() + m_frameSize + sizeof(CallerFrameAndPC));
-    }
-    if (saved)
-        m_calleeSaveStackSlot->setOffsetFromFP(-static_cast<intptr_t>(below));
-    m_placesSpillsAboveFrameRecord = true;
-    m_bytesAboveFrameRecord = above;
-    m_frameSize = above + below;
-}
-
-void Code::tryPlaceCalleeSavesAtFrameBottom()
-{
-    constexpr unsigned maxFrameSize = 496;
-    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFrameBottom || m_callArgAreaSize || !m_calleeSaveStackSlot || m_frameSize > maxFrameSize)
-        return;
-    unsigned saved = m_calleeSaveStackSlot->byteSize();
-    if (m_calleeSaveStackSlot->offsetFromFP() != -static_cast<intptr_t>(saved) || saved != m_uncorrectedCalleeSaveRegisterAtOffsetList.registerCount() * sizeof(CPURegister))
-        return;
-    for (const RegisterAtOffset& entry : m_uncorrectedCalleeSaveRegisterAtOffsetList) {
-        if (!entry.reg().isGPR())
-            return;
-    }
-    for (StackSlot* slot : m_stackSlots) {
-        if (slot != m_calleeSaveStackSlot && saved % slot->alignment())
-            return;
-    }
-    for (StackSlot* slot : m_stackSlots) {
-        if (slot != m_calleeSaveStackSlot)
-            slot->setOffsetFromFP(slot->offsetFromFP() + saved);
-    }
-    m_calleeSaveStackSlot->setOffsetFromFP(-static_cast<intptr_t>(m_frameSize));
-    m_placesCalleeSavesAtFrameBottom = true;
-}
-
-void Code::tryPushRegistersInPrologue()
-{
-    constexpr unsigned maxFrameSize = 496;
-    constexpr unsigned maxInstructions = 16;
-    constexpr unsigned maxPushes = 6;
-    constexpr intptr_t wordSize = sizeof(CPURegister);
-    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFrameBottom || m_callArgAreaSize || m_frameSize > maxFrameSize || (m_calleeSaveStackSlot && !m_placesCalleeSavesAtFrameBottom) || m_entrypoints.size() > 1)
-        return;
-    BasicBlock* entry = at(0);
-    if (!entry || entry->numPredecessors())
-        return;
-    std::array<Reg, MacroAssembler::numberOfRegisters()> valueAtEntryIn;
-    for (unsigned i = 0; i < valueAtEntryIn.size(); ++i)
-        valueAtEntryIn[i] = Reg::fromIndex(i);
-    valueAtEntryIn[Reg(MacroAssembler::stackPointerRegister).index()] = Reg();
-    valueAtEntryIn[Reg(MacroAssembler::framePointerRegister).index()] = Reg();
-    auto isGPR = [](const Arg& arg) {
-        return arg.isReg() && arg.reg().isGPR();
-    };
-    for (unsigned index = 0; index < entry->size() && index < maxInstructions && m_registersPushedInPrologue.size() < maxPushes; ++index) {
-        Inst& inst = entry->at(index);
-        bool isMove = inst.kind.opcode == Move && inst.args().size() == 2 && isGPR(inst.args()[0]);
-        if (isMove && isGPR(inst.args()[1])) {
-            valueAtEntryIn[inst.args()[1].reg().index()] = valueAtEntryIn[inst.args()[0].reg().index()];
-            continue;
-        }
-        if (isMove && inst.args()[1].isStack()) {
-            StackSlot* slot = inst.args()[1].stackSlot();
-            Reg source = valueAtEntryIn[inst.args()[0].reg().index()];
-            intptr_t from = slot->offsetFromFP();
-            intptr_t to = -wordSize * static_cast<intptr_t>(m_registersPushedInPrologue.size() + 1);
-            if (!source || !slot->isSpill() || slot->byteSize() != wordSize || inst.args()[1].offset() || from > to)
-                return;
-            auto isContainedIn = [](StackSlot* other, intptr_t word) {
-                return other->offsetFromFP() >= word && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) <= word + wordSize;
-            };
-            auto touches = [](StackSlot* other, intptr_t word) {
-                return other->offsetFromFP() < word + wordSize && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) > word;
-            };
-            for (StackSlot* other : m_stackSlots) {
-                if ((touches(other, from) && !isContainedIn(other, from)) || (touches(other, to) && !isContainedIn(other, to)))
-                    return;
-            }
-            if (from != to) {
-                for (StackSlot* other : m_stackSlots) {
-                    if (isContainedIn(other, from))
-                        other->setOffsetFromFP(other->offsetFromFP() - from + to);
-                    else if (isContainedIn(other, to))
-                        other->setOffsetFromFP(other->offsetFromFP() - to + from);
-                }
-            }
-            m_registersPushedInPrologue.append(source);
-            inst = Inst(Nop, inst.origin);
-            continue;
-        }
-        if (inst.kind.opcode == Patch || inst.isTerminal())
-            return;
-        for (Arg& arg : inst.args()) {
-            if (arg.isStack() || arg.isCallArg())
-                return;
-        }
-        inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-            if (Arg::isAnyDef(role) && tmp.isGPR())
-                valueAtEntryIn[tmp.reg().index()] = Reg();
-        });
-    }
-}
-#endif
-
 RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
 {
     RegisterAtOffsetList result = m_uncorrectedCalleeSaveRegisterAtOffsetList;
@@ -382,7 +267,6 @@ RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
 
 void Code::resetReachability()
 {
-#if USE(BUN_JSC_ADDITIONS)
     recomputePredecessorsFromRoots(m_blocks, [&](auto&& visit) {
         if (m_entrypoints.isEmpty()) {
             visit(m_blocks[0].get());
@@ -391,19 +275,24 @@ void Code::resetReachability()
         for (const FrequentedBlock& entrypoint : m_entrypoints)
             visit(entrypoint.block());
     });
-#else
-    clearPredecessors(m_blocks);
-    if (m_entrypoints.isEmpty())
-        updatePredecessorsAfter(m_blocks[0].get());
-    else {
-        for (const FrequentedBlock& entrypoint : m_entrypoints)
-            updatePredecessorsAfter(entrypoint.block());
-    }
-#endif
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get()) && !isEntrypoint(block.get()))
             block = nullptr;
+    }
+}
+
+void Code::adoptBlockOrder(const Vector<BasicBlock*>& order)
+{
+    // This leaks all of the blocks and then readopts them.
+    for (auto& entry : m_blocks)
+        entry.release();
+
+    m_blocks.shrink(0);
+
+    for (unsigned i = 0; i < order.size(); ++i) {
+        order[i]->setIndex(i);
+        m_blocks.append(std::unique_ptr<BasicBlock>(order[i]));
     }
 }
 
@@ -425,6 +314,8 @@ void Code::dump(PrintStream& out) const
     }
     if (m_frameSize || m_stackIsAllocated)
         out.print(tierName, "Frame size: ", m_frameSize, m_stackIsAllocated ? " (Allocated)" : "", "\n");
+    if (m_frameLayout.isPlanned)
+        out.print(tierName, "Frame layout: ", m_frameLayout, "\n");
     if (m_callArgAreaSize)
         out.print(tierName, "Call arg area size: ", m_callArgAreaSize, "\n");
     RegisterAtOffsetList calleeSaveRegisters = this->calleeSaveRegisterAtOffsetList();
@@ -559,14 +450,6 @@ void Code::appendIonGraphPass(ASCIILiteral passName)
     RefPtr { m_ionGraphPasses }->pushObject(pass);
 }
 
-
-#if USE(BUN_JSC_ADDITIONS)
-void Code::recordTableInCode(MacroAssembler::Label table, unsigned numberOfEntries)
-{
-    m_tablesInCode.append({ table, numberOfEntries });
-}
-
-#endif
 } } } // namespace JSC::B3::Air
 
 #endif // ENABLE(B3_JIT)

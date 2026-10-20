@@ -1,0 +1,16 @@
+# A written layout that can lose its shape is tested for a stretch: the access names a guard and has the level Predicted
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Loose" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="written-and-losable" parameters=[{type=object written=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="written-and-losable"
+# CHECK: = ShapeTest v0 layouts=[L0]
+# CHECK: v1: number = GetSlot v0, [[guard]] key="x" receivers=[L0] level=Predicted

@@ -1,0 +1,46 @@
+# A function that is never called has no body after the flow analysis. Its closure loses the captures like any other
+# FORM: AsRead
+# LIBRARY: own
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: FlowUnreachedFunctions = 1
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="neverCalled" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Environment name="scope" fields=[{key=@"x.0" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f1
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure v2 function=f2
+    v6 = Call v5
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: NewObject
+# CHECK: [[closure]]: f1 = NewClosure function=f1
+# CHECK-NEXT: PutModuleVariable [[closure]] variable=g0
+
+function f1 name="neverCalled" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="neverCalled"
+# CHECK-NOT: captures=
+# CHECK-NOT: b0
+
+function f2 name="called" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="called"
+# CHECK-NOT: captures=
+# CHECK: = GetModuleVariable variable=g1

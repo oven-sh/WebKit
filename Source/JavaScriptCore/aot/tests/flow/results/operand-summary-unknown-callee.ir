@@ -1,0 +1,40 @@
+# A receiver whose method nobody knows reaches nativeCode as this: it has every use but the mutating ones while no unseen JavaScript can run
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: function f1 parameter 0 uses=[Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, RetainsContents, PassesToUserCode, AppliesTransitively, AppliesToContents] 
+# CHECK: function f2 parameter 0 uses=[Inspects] 
+# CHECK: function f3 parameter 0 uses=[Inspects] 
+# ALL-NOT: unseen-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Called" fields=[{key="save" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Read" fields=[{key="save" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="save" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f2
+    v5 = NewObject -, v1 layout=L1 fields=[0]
+    v6 = CallDirect v5 function=f3
+    Return
+}
+function f1 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="save"
+    v2 = Call v1, v0
+    Return
+}
+function f2 name="inspects" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Return
+}
+function f3 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="save"
+    v2 = ToBoolean v1
+    Return
+}

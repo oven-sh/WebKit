@@ -1,0 +1,31 @@
+# Beside the unknown object, what flow has seen stored into a container narrows what the checker predicts of its contents. Strangers do not replace it, at any depth, and no contents are predicted to be nothing
+# OPTIONS: admit=RuntimeCode
+# RUN: flow
+# CHECK: field L0.0 "tags" type=anything predicted=Array<string, Contiguous>
+# CHECK: field L0.1 "points" type=anything predicted=Array<L1, Contiguous>
+# CHECK: field L0.2 "rows" type=anything predicted=Array<Array<string, Contiguous>, Contiguous>
+# CHECK: field L0.3 "untyped" type=anything predicted=Array<L3, Contiguous>
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="tags" declared={type=anything predicted=Array<string>} flags=[IsRequired]}, {key="points" declared={type=anything predicted=Array<L1|L2>} flags=[IsRequired]}, {key="rows" declared={type=anything predicted=Array<Array<string>>} flags=[IsRequired]}, {key="untyped" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Point" fields=[{key="x" declared={type=number}}]
+layout L2 name="Label" fields=[{key="text" declared={type=string}}]
+layout L3 name="Stranger" fields=[{key="x" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="outside" [isFreeName]
+    v2 = String string="a"
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L3 fields=[0]
+    v5 = NewArray v2, v4 contents=anything holes=[]
+    v6 = NewObject -, v3 layout=L1 fields=[0]
+    v7 = NewArray v6 contents=anything holes=[]
+    v8 = NewArray v2, v4 contents=anything holes=[]
+    v9 = NewArray v8 contents=anything holes=[]
+    v10 = NewArray v2, v4 contents=anything holes=[]
+    v11 = NewObject -, v5, v7, v9, v10 layout=L0 fields=[0, 1, 2, 3]
+    v12 = Call v1, -, v11
+    Return
+}

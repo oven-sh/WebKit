@@ -1,0 +1,80 @@
+# The step over a Map answers undefined for the key and for the value where it finds no entry, and both results stand in front of the test for an entry.
+# On the edge that has an entry they are what flow proved the map to hold, so the body of the loop sees the exact key and the exact value
+#   const filled = new Map(); filled.set("a", 1); for (const [key, value] of filled) print(key, value); print("end")
+# A map that is never filled, and a set: passes/expand-iteration-collection-rarely-filled.ir
+# RUN: pipeline ExpandIteration
+# CHECK: Map<"a", 1, proven,
+# CHECK: [[step]]: undefined = MapNext
+# CHECK: [[hasEntry]]: boolean = ResultAt [[step]]
+# CHECK: [[key]]: undefined|"a" = ResultAt [[step]] index=2
+# CHECK-NEXT: [[value]]: undefined|1 = ResultAt [[step]] index=3
+# CHECK-NEXT: Branch [[hasEntry]]
+# CHECK: String string="end"
+# CHECK: "a" = AssumeType [[key]] castType="a"
+# CHECK-NEXT: 1 = AssumeType [[value]] castType=1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Builtin builtin=GlobalThis @19
+    v1 = PropGet v0 key="Map" [isFreeName] @19
+    v2 = Predict v1 predicted=builtin(Map) @19
+    v3 = Construct v2 calleeName="Map" @19
+    v4 = Predict v3 predicted=Map @15
+    v5 = PropGet v4 key="set" @26
+    v6 = Predict v5 predicted=function @26
+    v7 = String string="a" @37
+    v8 = Integer integer=1 @42
+    v9 = Call v6, v4, v7, v8 calleeKey="set" calleeName="set" @33
+    v10 = IteratorOpen v4 @46
+    Jump -> next b2() @46
+  b2():
+    LoopHint @46
+    v12 = IteratorResume v10 @46
+    v13 = ResultAt v12 @46
+    v14 = ResultAt v12 index=1 @46
+    Branch v13 -> taken b3(), notTaken b4() @46
+  b3():
+    v15 = Builtin builtin=GlobalThis @100
+    v16 = PropGet v15 key="print" [isFreeName] @100
+    v17 = String string="end" @106
+    v18 = Call v16, -, v17 calleeName="print" @100
+    v19 = Undefined @100
+    Return v19 @100
+  b4():
+    Jump -> next b5() @46
+  b5() handler=b12():
+    v20 = IteratorOpen v14 elementCount=2 [isDestructuring] @57
+    Jump -> next b6() @57
+  b6() handler=b11():
+    v21 = IteratorResume v20 stepIndex=0 @57
+    v22 = ResultAt v21 @57
+    v23 = ResultAt v21 index=1 @57
+    Jump -> next b7() @58
+  b7() handler=b11():
+    v24 = IteratorResume v20 stepIndex=1 @57
+    v25 = ResultAt v24 @57
+    v26 = ResultAt v24 index=1 @57
+    Jump -> next b8() @63
+  b8() handler=b11():
+    Jump -> next b9() @63
+  b9() handler=b12():
+    IteratorClose v20 @57
+    Jump -> next b10() @57
+  b10() handler=b12():
+    v28 = Builtin builtin=GlobalThis @81
+    v29 = PropGet v28 key="print" [isFreeName] @81
+    v30 = Call v29, -, v23, v26 calleeName="print" @81
+    Jump -> next b2() @81
+  b11() role=IterationCleanup subject=v20 handler=b12():
+    v31 = CatchException @57
+    IteratorClose v20 completion=Throw @57
+    Rethrow v31 @57
+  b12() role=IterationCleanup subject=v10:
+    v33 = CatchException @46
+    IteratorClose v10 completion=Throw @46
+    Rethrow v33 @46
+}
+entry module=m0

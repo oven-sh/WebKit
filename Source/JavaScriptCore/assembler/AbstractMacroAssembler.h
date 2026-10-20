@@ -29,6 +29,7 @@
 #include "AbortReason.h"
 #include "AssemblerBuffer.h"
 #include "AssemblerCommon.h"
+#include "AssemblerPolicy.h"
 #include "AssemblyComments.h"
 #include "CPU.h"
 #include "CodeLocation.h"
@@ -37,12 +38,16 @@
 #include "MacroAssemblerCodeRef.h"
 #include "MacroAssemblerHelpers.h"
 #include "Options.h"
+#include "RelocationKind.h"
+#include <span>
+#include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Platform.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SharedTask.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 
@@ -61,6 +66,22 @@ struct OSRExit;
 }
 
 #define JIT_COMMENT(jit, ...) do { if (Options::needDisassemblySupport()) [[unlikely]] { (jit).comment(__VA_ARGS__); } else { (void) jit; } } while (0)
+
+enum class ImmediateProvenance : uint8_t { Integer, Pointer };
+
+struct WideImmediate {
+    uint32_t offset;
+    ImmediateProvenance provenance;
+    uint64_t value;
+
+    friend bool operator==(const WideImmediate&, const WideImmediate&) = default;
+};
+
+// offset is the final offset of the linked label, which is not the first byte of the instruction on every CPU.
+struct ExternalLink {
+    uint32_t offset;
+    uintptr_t target;
+};
 
 class AbstractMacroAssemblerBase {
     WTF_MAKE_TZONE_NON_HEAP_ALLOCATABLE(AbstractMacroAssemblerBase);
@@ -82,7 +103,17 @@ public:
         return Success;
     }
 
-    void disableConstantBlinding() { m_blindsConstants = false; }
+    const AssemblerPolicy& policy() const { return m_policy; }
+
+    [[nodiscard]] static bool addToDistance32(std::span<uint8_t> word, int64_t distance)
+    {
+        RELEASE_ASSERT(word.size() == sizeof(int32_t));
+        int64_t sum = static_cast<int64_t>(WTF::unalignedLoad<int32_t>(word.data())) + distance;
+        if (!isRepresentableAs<int32_t>(sum))
+            return false;
+        WTF::unalignedStore<int32_t>(word.data(), static_cast<int32_t>(sum));
+        return true;
+    }
 
 protected:
     uint32_t random()
@@ -91,13 +122,38 @@ protected:
             initializeRandom();
         return m_randomSource->getUint32();
     }
-    bool blindsConstants() const { return m_blindsConstants; }
+    bool blindsConstants() const { return m_policy.blindsConstants; }
+
+    NEVER_INLINE void appendWideImmediate(uint32_t offset, ImmediateProvenance provenance, uint64_t value)
+    {
+        bool isPointer = provenance == ImmediateProvenance::Pointer && value;
+        bool fitsInt32 = static_cast<int64_t>(value) == static_cast<int32_t>(value);
+        bool fitsUInt32 = value == static_cast<uint32_t>(value);
+        if (!isPointer && (fitsInt32 || fitsUInt32))
+            return;
+
+        WideImmediate immediate { offset, provenance, value };
+        if (!m_wideImmediates.isEmpty() && m_wideImmediates.last() == immediate)
+            return;
+        m_wideImmediates.append(immediate);
+    }
+
+    void didEmitPatchablePointer()
+    {
+        if (m_policy.recordsProcessAddresses) [[unlikely]]
+            ++m_patchablePointerCount;
+    }
+
+    AssemblerPolicy m_policy { AssemblerPolicy::forJIT() };
 
 private:
+    friend class LinkBuffer;
+
     JS_EXPORT_PRIVATE void initializeRandom();
 
     std::optional<WeakRandom> m_randomSource;
-    bool m_blindsConstants { true };
+    unsigned m_patchablePointerCount { 0 };
+    Vector<WideImmediate> m_wideImmediates;
 };
 
 template <class AssemblerType>
@@ -108,12 +164,6 @@ public:
     friend class SuppressRegisterAllocationValidation;
 
     template<PtrTag tag> using CodeRef = MacroAssemblerCodeRef<tag>;
-
-    enum class CPUIDCheckState {
-        NotChecked,
-        Clear,
-        Set
-    };
 
     class Jump;
 
@@ -300,12 +350,14 @@ public:
         
         explicit constexpr TrustedImmPtr(const void* value)
             : m_value(value)
+            , m_provenance(ImmediateProvenance::Pointer)
         {
         }
 
         template<typename ReturnType, typename... Arguments>
         explicit TrustedImmPtr(ReturnType(*value)(Arguments...))
             : m_value(reinterpret_cast<void*>(value))
+            , m_provenance(ImmediateProvenance::Pointer)
         {
         }
 
@@ -313,6 +365,7 @@ public:
         template<typename ReturnType, typename... Arguments>
         explicit TrustedImmPtr(ReturnType(SYSV_ABI *value)(Arguments...))
             : m_value(reinterpret_cast<void*>(value))
+            , m_provenance(ImmediateProvenance::Pointer)
         {
         }
 #endif
@@ -337,6 +390,7 @@ public:
         }
 
         const void* m_value { nullptr };
+        ImmediateProvenance m_provenance { ImmediateProvenance::Integer };
     };
 
     struct ImmPtr : private TrustedImmPtr
@@ -406,11 +460,13 @@ public:
 #if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
         explicit constexpr TrustedImm64(TrustedImmPtr ptr)
             : m_value(ptr.asIntptr())
+            , m_provenance(ptr.m_provenance)
         {
         }
 #endif
 
         int64_t m_value;
+        ImmediateProvenance m_provenance { ImmediateProvenance::Integer };
     };
 
     struct Imm64 : private TrustedImm64 {
@@ -870,6 +926,15 @@ public:
         return Label(this);
     }
     
+    void setPolicy(const AssemblerPolicy& policy)
+    {
+        RELEASE_ASSERT(!m_assembler.codeSize());
+        m_policy = policy;
+#if CPU(X86_64)
+        m_assembler.setRecordsJumps(policy.recordsLinkedSites || policy.shortensJumps);
+#endif
+    }
+
     void padBeforePatch()
     {
         // Rely on the fact that asking for a label already does the padding.
@@ -977,9 +1042,9 @@ public:
     }
 
     template<PtrTag tag>
-    static void linkJump(void* code, Jump jump, CodeLocationLabel<tag> target)
+    static decltype(auto) linkJump(void* code, Jump jump, CodeLocationLabel<tag> target)
     {
-        AssemblerType::linkJump(code, jump.m_label, target.dataLocation());
+        return AssemblerType::linkJump(code, jump.m_label, target.dataLocation());
     }
 
     static void linkPointer(void* code, AssemblerLabel label, void* value)
@@ -1134,6 +1199,15 @@ protected:
 public:
     AssemblerType m_assembler;
 protected:
+
+    void recordImmediate(TrustedImm64 imm)
+    {
+        if (m_policy.recordsProcessAddresses) [[unlikely]]
+            appendWideImmediate(m_assembler.labelIgnoringWatchpoints().offset(), imm.m_provenance, static_cast<uint64_t>(imm.m_value));
+    }
+
+    void recordImmediate(TrustedImmPtr imm) { recordImmediate(TrustedImm64(imm)); }
+    void recordPointer(const void* pointer) { recordImmediate(TrustedImmPtr(pointer)); }
 
 #if ENABLE(DFG_REGISTER_ALLOCATION_VALIDATION)
     bool m_suppressRegisterValidation { false };

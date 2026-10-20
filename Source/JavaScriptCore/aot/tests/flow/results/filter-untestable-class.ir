@@ -1,0 +1,78 @@
+# A class without an instance test may hold any object: a parameter declared as one takes a closure. A class with an instance test holds its instances only, and two classes that are tested by one cell type hold each other's instances. The sharing mode tells the two classes of buffers apart
+# RUN: flow
+# CHECK: function f1 callers=AllKnown
+# CHECK: function f2 reachability=Unreached
+# CHECK: function f3 callers=AllKnown
+# CHECK: function f5 reachability=Unreached
+# RUN(INSTANCE): flow
+# INSTANCE-NOT: variable g0 {{*}}Map
+# INSTANCE-NOT: variable g0 {{*}}cause=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 kind=Assertion
+typesite w1 kind=Assertion
+typesite w2 kind=Assertion
+variable g0 name="outsideTestable" declared={type=anything}
+variable g1 name="second" declared={type=anything}
+variable g2 name="third" declared={type=anything}
+variable g3 name="fourth" declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f4
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f2
+    PutModuleVariable v3 variable=g1
+    v5 = GetModuleVariable variable=g1
+    v6 = Claim v5 castType=undefined|null|Map site=w0
+    v7 = Call v6
+    v8 = Builtin builtin=Uint8Array
+    v9 = Construct v8
+    v10 = NewClosure function=f3
+    PropSet v9, v10 key="run" mode=Strict
+    PutModuleVariable v9 variable=g2
+    v13 = GetModuleVariable variable=g2
+    v14 = Claim v13 castType=undefined|null|Buffer site=w1
+    v15 = PropGet v14 key="run"
+    v16 = Call v15, v14 calleeKey="run"
+    v17 = Builtin builtin=SharedArrayBuffer
+    v18 = Construct v17
+    v19 = NewClosure function=f5
+    PropSet v18, v19 key="run" mode=Strict
+    PutModuleVariable v18 variable=g3
+    v22 = GetModuleVariable variable=g3
+    v23 = Claim v22 castType=undefined|null|ArrayBuffer site=w2
+    v24 = PropGet v23 key="run"
+    v25 = Call v24, v23 calleeKey="run"
+    v26 = Builtin builtin=Map
+    v27 = Construct v26
+    v28 = TypeTest v27 testedType=Map
+    Branch v28 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return
+  b2(v29):
+    PutModuleVariable v29 variable=g0
+    Return
+}
+function f1 name="throughUntestable" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="throughTestable" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="throughSameCellType" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="takesUntestable" parameters=[{type=undefined|null|Iterator}] results=[{type=anything}] {
+  b0(v0: undefined|null|Iterator):
+    v1 = Call v0
+    Return
+}
+function f5 name="throughOtherSharingMode" results=[{type=anything}] {
+  b0():
+    Return
+}

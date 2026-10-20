@@ -1,0 +1,17 @@
+# With literal values switched off no position lists the regular expression literals that reach it
+# OPTIONS: disable=flow:LiteralValues
+# RUN: flow
+# CHECK: variable g0 type=RegExp<pristine[Storage, Names, AsCreated]> written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="tested" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="subject"
+    v1 = NewRegExp pattern="a+"
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v1 key="test"
+    v4 = Call v3, v1, v0 calleeKey="test"
+    Return
+}

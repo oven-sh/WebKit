@@ -96,17 +96,34 @@
 # x86_64: means just x86-64.
 # arm64: means just arm64.
 # 64: means x86-64 or arm64.
+#
+# Directives describe what an opcode does to the condition flags. Put them on the first overload. They
+# apply to every overload and every form of the opcode:
+#
+# /definesFlags: sets the flags to the result of a comparison.
+# /usesFlags: reads the flags.
+# /preservesFlags: no form touches the flags, on any architecture that has the opcode.
+# /preservesFlagsOnARM64: no arm64 form touches the flags.
+#
+# An opcode that neither defines nor preserves the flags clobbers them. Air::validate() requires that on
+# every path to a use, the flags are defined and nothing clobbers them in between.
+#
+# Two more directives describe where an opcode can fault. They too go on the first overload and apply to
+# every overload and every form:
+#
+# /accessesMemoryFirst: a form with one memory operand accesses it in its first machine instruction.
+# /mayFault: some operand values fault though no form accesses memory.
 
 # Note that the opcodes here have a leading capital (Add32) but must correspond to MacroAssembler
 # API that has a leading lower-case (add32).
 
 # The default Kind, so a deleted Inst becomes Padding, and it is also what padInterference() inserts
 # where two instructions must not be adjacent for liveness analysis to be sound.
-Padding /nocode
+Padding /nocode /preservesFlags
 
-Nop
+Nop /preservesFlags
 
-Add32 U:G:32, U:G:32, ZD:G:32
+Add32 U:G:32, U:G:32, ZD:G:32 /accessesMemoryFirst
     Imm, Tmp, Tmp
     Tmp, Tmp, Tmp
 
@@ -138,7 +155,7 @@ x86_64: Add16 U:G:16, UD:G:16
     Tmp, Addr
     Tmp, Index
 
-64: Add64 U:G:64, UD:G:64
+64: Add64 U:G:64, UD:G:64 /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Tmp
     x86_64: Imm, Addr
     x86_64: Imm, Index
@@ -152,7 +169,7 @@ x86_64: Add16 U:G:16, UD:G:16
     Imm, Tmp, Tmp
     Tmp, Tmp, Tmp
 
-AddDouble U:F:64, U:F:64, D:F:64
+AddDouble U:F:64, U:F:64, D:F:64 /accessesMemoryFirst
     Tmp, Tmp, Tmp
     x86_64: Addr, Tmp, Tmp
     x86_64: Tmp, Addr, Tmp
@@ -162,7 +179,7 @@ x86_64: AddDouble U:F:64, UD:F:64
     Tmp, Tmp
     Addr, Tmp
 
-AddFloat U:F:32, U:F:32, D:F:32
+AddFloat U:F:32, U:F:32, D:F:32 /accessesMemoryFirst
     Tmp, Tmp, Tmp
     x86_64: Addr, Tmp, Tmp
     x86_64: Tmp, Addr, Tmp
@@ -172,7 +189,7 @@ x86_64: AddFloat U:F:32, UD:F:32
     Tmp, Tmp
     Addr, Tmp
 
-Sub32 U:G:32, UZD:G:32
+Sub32 U:G:32, UZD:G:32 /accessesMemoryFirst
     Tmp, Tmp
     x86_64: Imm, Addr
     x86_64: Imm, Index
@@ -186,7 +203,7 @@ arm64: Sub32 U:G:32, U:G:32, ZD:G:32
     Tmp, Tmp, Tmp
     Tmp, Imm, Tmp
 
-64: Sub64 U:G:64, UD:G:64
+64: Sub64 U:G:64, UD:G:64 /accessesMemoryFirst
     Tmp, Tmp
     x86_64: Imm, Addr
     x86_64: Imm, Index
@@ -329,7 +346,7 @@ arm64: Div64 U:G:64, U:G:64, D:G:64
 arm64: UDiv64 U:G:64, U:G:64, D:G:64
     Tmp, Tmp, Tmp
 
-MulDouble U:F:64, U:F:64, D:F:64
+MulDouble U:F:64, U:F:64, D:F:64 /accessesMemoryFirst
     Tmp, Tmp, Tmp
     x86_64: Addr, Tmp, Tmp
     x86_64: Tmp, Addr, Tmp
@@ -339,7 +356,7 @@ x86_64: MulDouble U:F:64, UD:F:64
     Tmp, Tmp
     Addr, Tmp
 
-MulFloat U:F:32, U:F:32, D:F:32
+MulFloat U:F:32, U:F:32, D:F:32 /accessesMemoryFirst
     Tmp, Tmp, Tmp
     x86_64: Addr, Tmp, Tmp
     x86_64: Tmp, Addr, Tmp
@@ -375,16 +392,16 @@ x86_64: X86ConvertToDoubleWord32 U:G:32, ZD:G:32
 x86_64: X86ConvertToQuadWord64 U:G:64, D:G:64
     Tmp*, Tmp*
 
-x86_64: X86Div32 UZD:G:32, UZD:G:32, U:G:32
+x86_64: X86Div32 UZD:G:32, UZD:G:32, U:G:32 /mayFault
     Tmp*, Tmp*, Tmp
 
-x86_64: X86UDiv32 UZD:G:32, UZD:G:32, U:G:32
+x86_64: X86UDiv32 UZD:G:32, UZD:G:32, U:G:32 /mayFault
     Tmp*, Tmp*, Tmp
 
-x86_64: X86Div64 UZD:G:64, UZD:G:64, U:G:64
+x86_64: X86Div64 UZD:G:64, UZD:G:64, U:G:64 /mayFault
     Tmp*, Tmp*, Tmp
 
-x86_64: X86UDiv64 UZD:G:64, UZD:G:64, U:G:64
+x86_64: X86UDiv64 UZD:G:64, UZD:G:64, U:G:64 /mayFault
     Tmp*, Tmp*, Tmp
 
 # If we add other things like Lea that are UA, we may need to lower
@@ -680,6 +697,20 @@ CountLeadingZeros32 U:G:32, ZD:G:32
     Tmp, Tmp
     x86_64: Addr, Tmp
 
+x86_64: CountPopulation32 U:G:32, ZD:G:32
+    Tmp, Tmp
+    Addr, Tmp
+
+x86_64: CountPopulation64 U:G:64, D:G:64
+    Tmp, Tmp
+    Addr, Tmp
+
+arm64: CountPopulation32 U:G:32, ZD:G:32, S:F:64
+    Tmp, Tmp, Tmp
+
+arm64: CountPopulation64 U:G:64, D:G:64, S:F:64
+    Tmp, Tmp, Tmp
+
 ConvertDoubleToFloat U:F:64, D:F:32
     Tmp, Tmp
     x86_64: Addr, Tmp
@@ -692,7 +723,7 @@ ConvertFloatToDouble U:F:32, D:F:64
 # the platform. I'm not entirely sure that this is a good thing; it might be better to just have a
 # Move64 instruction. OTOH, our MacroAssemblers already have this notion of "move()" that basically
 # means movePtr.
-Move U:G:Ptr, D:G:Ptr
+Move U:G:Ptr, D:G:Ptr /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Tmp
     Imm, Tmp as signExtend32ToPtr
     BigImm, Tmp
@@ -723,7 +754,7 @@ arm64: MoveWithIncrement64 UD:G:64, D:G:64
     Tmp, PreIndex as store64
     Tmp, PostIndex as store64
 
-Move32 U:G:32, ZD:G:32
+Move32 U:G:32, ZD:G:32 /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Tmp as zeroExtend32ToWord
     Addr, Tmp as load32
     Index, Tmp as load32
@@ -746,19 +777,19 @@ arm64: MoveWithIncrement32 UD:G:32, ZD:G:32
 Move32 U:G:32, ZD:G:32, S:G:32
     Addr, Addr, Tmp
 
-arm64: LoadPair32 U:G:64, D:G:32, D:G:32
+arm64: LoadPair32 U:G:64, D:G:32, D:G:32 /preservesFlags
     Addr, Tmp, Tmp
 
-arm64: LoadPair64 U:G:128, D:G:64, D:G:64
+arm64: LoadPair64 U:G:128, D:G:64, D:G:64 /preservesFlags
     Addr, Tmp, Tmp
 
-arm64: StorePair32 U:G:32, U:G:32, D:G:64
+arm64: StorePair32 U:G:32, U:G:32, D:G:64 /preservesFlags
     Tmp, Tmp, Addr
     ZeroReg, Tmp, Addr
     Tmp, ZeroReg, Addr
     ZeroReg, ZeroReg, Addr
 
-arm64: StorePair64 U:G:64, U:G:64, D:G:128
+arm64: StorePair64 U:G:64, U:G:64, D:G:128 /preservesFlags
     Tmp, Tmp, Addr
     ZeroReg, Tmp, Addr
     Tmp, ZeroReg, Addr
@@ -770,7 +801,7 @@ arm64: StorePair64 U:G:64, U:G:64, D:G:128
 64: SignExtend16To64 U:G:16, D:G:64
     Tmp, Tmp
 
-64: SignExtend32To64 U:G:32, D:G:64
+64: SignExtend32To64 U:G:32, D:G:64 /accessesMemoryFirst
     Tmp, Tmp
     Addr, Tmp as load32SignedExtendTo64
     Index, Tmp as load32SignedExtendTo64
@@ -795,7 +826,7 @@ SignExtend16To32 U:G:16, ZD:G:32
     x86_64: Addr, Tmp as load16SignedExtendTo32
     x86_64: Index, Tmp as load16SignedExtendTo32
 
-MoveFloat U:F:32, D:F:32
+MoveFloat U:F:32, D:F:32 /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Tmp as moveDouble
     Addr, Tmp as loadFloat
     Index, Tmp as loadFloat
@@ -806,7 +837,7 @@ MoveFloat U:F:32, D:F:32
 MoveFloat U:F:32, D:F:32, S:F:32
     Addr, Addr, Tmp
 
-MoveDouble U:F:64, D:F:64
+MoveDouble U:F:64, D:F:64 /preservesFlagsOnARM64 /accessesMemoryFirst
     Tmp, Tmp
     Addr, Tmp as loadDouble
     Index, Tmp as loadDouble
@@ -817,19 +848,19 @@ MoveDouble U:F:64, D:F:64
 MoveDouble U:F:64, D:F:64, S:F:64
     Addr, Addr, Tmp
 
-arm64: LoadPairFloat U:F:64, D:F:32, D:F:32
+arm64: LoadPairFloat U:F:64, D:F:32, D:F:32 /preservesFlags
     Addr, Tmp, Tmp
 
-arm64: LoadPairDouble U:F:128, D:F:64, D:F:64
+arm64: LoadPairDouble U:F:128, D:F:64, D:F:64 /preservesFlags
     Addr, Tmp, Tmp
 
-arm64: StorePairFloat U:F:32, U:F:32, D:F:64
+arm64: StorePairFloat U:F:32, U:F:32, D:F:64 /preservesFlags
     Tmp, Tmp, Addr
 
-arm64: StorePairDouble U:F:64, U:F:64, D:F:128
+arm64: StorePairDouble U:F:64, U:F:64, D:F:128 /preservesFlags
     Tmp, Tmp, Addr
 
-64: MoveVector U:F:128, D:F:128
+64: MoveVector U:F:128, D:F:128 /preservesFlagsOnARM64
     Tmp, Tmp
     Addr, Tmp as loadVector
     Index, Tmp as loadVector
@@ -860,14 +891,14 @@ MoveFloatTo32 U:F:32, D:G:32
     Addr, Tmp as load32
     Index, Tmp as load32
 
-Load8 U:G:8, ZD:G:32
+Load8 U:G:8, ZD:G:32 /accessesMemoryFirst
     Addr, Tmp
     Index, Tmp
 
 arm64: LoadAcq8 U:G:8, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-Store8 U:G:8, D:G:8
+Store8 U:G:8, D:G:8 /accessesMemoryFirst
     Tmp, Index
     Tmp, Addr
     x86_64: Imm, Index
@@ -878,28 +909,28 @@ Store8 U:G:8, D:G:8
 arm64: StoreRel8 U:G:8, D:G:8 /effects
     Tmp, SimpleAddr
 
-Load8SignedExtendTo32 U:G:8, ZD:G:32
+Load8SignedExtendTo32 U:G:8, ZD:G:32 /accessesMemoryFirst
     Addr, Tmp
     Index, Tmp
 
 arm64: LoadAcq8SignedExtendTo32 U:G:8, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-Load16 U:G:16, ZD:G:32
+Load16 U:G:16, ZD:G:32 /accessesMemoryFirst
     Addr, Tmp
     Index, Tmp
 
 arm64: LoadAcq16 U:G:16, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-Load16SignedExtendTo32 U:G:16, ZD:G:32
+Load16SignedExtendTo32 U:G:16, ZD:G:32 /accessesMemoryFirst
     Addr, Tmp
     Index, Tmp
 
 arm64: LoadAcq16SignedExtendTo32 U:G:16, ZD:G:32 /effects
     SimpleAddr, Tmp
 
-Store16 U:G:16, D:G:16
+Store16 U:G:16, D:G:16 /accessesMemoryFirst
     Tmp, Index
     Tmp, Addr
     x86_64: Imm, Index
@@ -1500,6 +1531,7 @@ Test32 U:G:32, U:G:32, U:G:32, ZD:G:32
 
 64: Test64 U:G:32, U:G:64, U:G:64, ZD:G:32
     x86_64: ResCond, Tmp, Imm, Tmp
+    x86_64: ResCond, Addr, Tmp, Tmp
     ResCond, Tmp, Tmp, Tmp
 
 CompareDouble U:G:32, U:F:64, U:F:64, ZD:G:32
@@ -1518,18 +1550,38 @@ arm64: CompareFloatWithZero U:G:32, U:F:32, ZD:G:32
 # These perform comparison and set NZCV flags without storing result to register
 # IMPORTANT: /effects prevents Air from reordering or inserting flag-clobbering instructions.
 
-arm64: CompareOnFlags32 U:G:32, U:G:32 /effects
+64: CompareOnFlags32 U:G:32, U:G:32 /effects /definesFlags
     Tmp, Tmp
     Tmp, Imm
+    x86_64: Tmp, Addr
+    x86_64: Addr, Tmp
+    x86_64: Addr, Imm
+    x86_64: Index, Imm
 
-arm64: CompareOnFlags64 U:G:64, U:G:64 /effects
+64: CompareOnFlags64 U:G:64, U:G:64 /effects /definesFlags
     Tmp, Tmp
     Tmp, Imm
+    x86_64: Tmp, Addr
+    x86_64: Addr, Tmp
+    x86_64: Addr, Imm
+    x86_64: Index, Tmp
 
-arm64: CompareOnFlagsFloat U:F:32, U:F:32 /effects
+# Test instructions that only set flags. A user names the condition on (value & mask) as a comparison with zero:
+# Equal, NotEqual, LessThan and GreaterThanOrEqual stand for Zero, NonZero, Signed and PositiveOrZero.
+
+64: TestOnFlags32 U:G:32, U:G:32 /effects /definesFlags
+    Tmp, Tmp
+    Tmp, BitImm
+
+64: TestOnFlags64 U:G:64, U:G:64 /effects /definesFlags
+    Tmp, Tmp
+    x86_64: Tmp, BitImm
+    x86_64: Addr, Tmp
+
+arm64: CompareOnFlagsFloat U:F:32, U:F:32 /effects /definesFlags
     Tmp, Tmp
 
-arm64: CompareOnFlagsDouble U:F:64, U:F:64 /effects
+arm64: CompareOnFlagsDouble U:F:64, U:F:64 /effects /definesFlags
     Tmp, Tmp
 
 # Conditional compare instructions (ARM64 ccmp/fccmp).
@@ -1539,24 +1591,24 @@ arm64: CompareOnFlagsDouble U:F:64, U:F:64 /effects
 # If the condition is false, sets flags to the NZCV default value.
 # /effects prevents Air from reordering or inserting flag-clobbering instructions.
 
-arm64: CompareConditionallyOnFlags32 U:G:32, U:G:32, U:G:8, U:G:8 /effects
+arm64: CompareConditionallyOnFlags32 U:G:32, U:G:32, U:G:8, U:G:8 /effects /usesFlags /definesFlags
     Tmp, Tmp, Imm, RelCond
     Tmp, Imm, Imm, RelCond
 
-arm64: CompareConditionallyOnFlags64 U:G:64, U:G:64, U:G:8, U:G:8 /effects
+arm64: CompareConditionallyOnFlags64 U:G:64, U:G:64, U:G:8, U:G:8 /effects /usesFlags /definesFlags
     Tmp, Tmp, Imm, RelCond
     Tmp, Imm, Imm, RelCond
 
-arm64: CompareConditionallyOnFlagsFloat U:F:32, U:F:32, U:G:8, U:G:8 /effects
+arm64: CompareConditionallyOnFlagsFloat U:F:32, U:F:32, U:G:8, U:G:8 /effects /usesFlags /definesFlags
     Tmp, Tmp, Imm, RelCond
 
-arm64: CompareConditionallyOnFlagsDouble U:F:64, U:F:64, U:G:8, U:G:8 /effects
+arm64: CompareConditionallyOnFlagsDouble U:F:64, U:F:64, U:G:8, U:G:8 /effects /usesFlags /definesFlags
     Tmp, Tmp, Imm, RelCond
 
 # Note that branches have some logic in AirOptimizeBlockOrder.cpp. If you add new branches, please make sure
 # you opt them into the block order optimizations.
 
-Branch8 U:G:32, U:G:8, U:G:8 /branch
+Branch8 U:G:32, U:G:8, U:G:8 /branch /accessesMemoryFirst
     x86_64: RelCond, Addr, Imm
     x86_64: RelCond, Index, Imm
 
@@ -1564,7 +1616,7 @@ x86_64: Branch16 U:G:32, U:G:16, U:G:16 /branch
     RelCond, Addr, Imm
     RelCond, Index, Imm
 
-Branch32 U:G:32, U:G:32, U:G:32 /branch
+Branch32 U:G:32, U:G:32, U:G:32 /branch /accessesMemoryFirst
     x86_64: RelCond, Addr, Imm
     RelCond, Tmp, Tmp
     RelCond, Tmp, Imm
@@ -1572,7 +1624,7 @@ Branch32 U:G:32, U:G:32, U:G:32 /branch
     x86_64: RelCond, Addr, Tmp
     x86_64: RelCond, Index, Imm
 
-64: Branch64 U:G:32, U:G:64, U:G:64 /branch
+64: Branch64 U:G:32, U:G:64, U:G:64 /branch /accessesMemoryFirst
     RelCond, Tmp, Tmp
     RelCond, Tmp, Imm
     x86_64: RelCond, Tmp, Addr
@@ -1580,11 +1632,11 @@ Branch32 U:G:32, U:G:32, U:G:32 /branch
     x86_64: RelCond, Addr, Imm
     x86_64: RelCond, Index, Tmp
 
-BranchTest8 U:G:32, U:G:8, U:G:8 /branch
+BranchTest8 U:G:32, U:G:8, U:G:8 /branch /accessesMemoryFirst
     x86_64: ResCond, Addr, BitImm
     x86_64: ResCond, Index, BitImm
 
-BranchTest32 U:G:32, U:G:32, U:G:32 /branch
+BranchTest32 U:G:32, U:G:32, U:G:32 /branch /accessesMemoryFirst
     ResCond, Tmp, Tmp
     ResCond, Tmp, BitImm
     x86_64: ResCond, Addr, BitImm
@@ -1592,7 +1644,7 @@ BranchTest32 U:G:32, U:G:32, U:G:32 /branch
 
 # Warning: forms that take an immediate will sign-extend their immediate. You probably want
 # BranchTest32 in most cases where you use an immediate.
-64: BranchTest64 U:G:32, U:G:64, U:G:64 /branch
+64: BranchTest64 U:G:32, U:G:64, U:G:64 /branch /accessesMemoryFirst
     ResCond, Tmp, Tmp
     arm64: ResCond, Tmp, BitImm64
     x86_64: ResCond, Tmp, BitImm
@@ -1624,7 +1676,7 @@ arm64: BranchFloatWithZero U:G:32, U:F:32 /branch
 
 # Branch on already-set condition flags (for use after ccmp)
 # /effects ensures this stays adjacent to the preceding ccmp instruction
-arm64: BranchOnFlags U:G:32 /branch /effects
+64: BranchOnFlags U:G:32 /branch /effects /usesFlags /preservesFlags
     RelCond
 
 BranchAdd32 U:G:32, U:G:32, U:G:32, ZD:G:32 /branch
@@ -1725,11 +1777,20 @@ BranchNeg32 U:G:32, UZD:G:32 /branch
 64: MoveConditionallyTest64 U:G:32, U:G:64, U:G:64, U:G:Ptr, UD:G:Ptr
     ResCond, Tmp, Tmp, Tmp, Tmp
     x86_64: ResCond, Tmp, Imm, Tmp, Tmp
+    x86_64: ResCond, Addr, Tmp, Tmp, Tmp
 
 64: MoveConditionallyTest64 U:G:32, U:G:64, U:G:64, U:G:Ptr, U:G:Ptr, D:G:Ptr
     ResCond, Tmp, Tmp, Tmp, Tmp, Tmp
     x86_64: ResCond, Tmp, Imm, Tmp, Tmp, Tmp
+    x86_64: ResCond, Addr, Tmp, Tmp, Tmp, Tmp
     arm64: ResCond, Tmp, Tmp, Tmp, ZeroReg, Tmp
+
+64: MoveConditionallyOnFlags64 U:G:32, U:G:Ptr, UD:G:Ptr /effects /usesFlags /preservesFlags
+    RelCond, Tmp, Tmp
+
+64: MoveConditionallyOnFlags64 U:G:32, U:G:Ptr, U:G:Ptr, D:G:Ptr
+    RelCond, Tmp, Tmp, Tmp
+    arm64: RelCond, Tmp, ZeroReg, Tmp
 
 arm64: MoveConditionallyIncremented32 U:G:32, U:G:32, U:G:32, U:G:Ptr, U:G:Ptr, D:G:Ptr
     RelCond, Tmp, Tmp, Tmp, Tmp, Tmp
@@ -1822,7 +1883,7 @@ MemoryFence /effects
 StoreFence /effects
 LoadFence /effects
 
-Jump /branch
+Jump /branch /preservesFlags
 
 RetVoid /return
 
@@ -2256,3 +2317,9 @@ custom ColdCCall
 # to produce the side-exit code.
 custom WasmBoundsCheck
 
+# Sets up the frame that Code::frameLayout() describes. The first operand is an Imm, the number of scratch
+# registers. Those registers follow it, and then the registers whose values the setup stores in the frame.
+custom EnterFrame
+
+# Tears that frame down. The operands are the callee-save registers it restores.
+custom LeaveFrame

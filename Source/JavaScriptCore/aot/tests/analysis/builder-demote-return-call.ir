@@ -1,0 +1,92 @@
+# A returned call becomes the call, marked as a demoted tail call, one value for each cast that does something, and a return
+# FORM: AsRead
+# RUN: demote-return-call function=f0 block=b1
+# RUN(WRITTEN): demote-return-call function=f1 block=b0
+# RUN(TYPE): demote-return-call function=f2 block=b0
+# RUN(PREDICTED): demote-return-call function=f3 block=b0
+# RUN(NONE): demote-return-call function=f4 block=b0
+# RUN(BESIDE): demote-return-call function=f6 block=b0
+# RUN(LIST): demote-return-call function=f7 block=b0
+# RUN(RETURN): demote-return-call function=f0 block=b2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="nothingUpcastClaim" parameters=[{type=boolean}, {type=Array<number|string>}] results=[{type=Array<number|string>}] {
+  b0(v0: boolean, v1: Array<number|string>):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect function=f5
+    ReturnCall v2 casts=[{declared={type=undefined|Array<number>} resolution=Nothing}, {declared={type=undefined|Array<number|string>} resolution=Upcast}, {declared={type=Array<number|string>} resolution=Claim}]
+  b2():
+    Return v1
+}
+# CHECK: function f0
+# CHECK: b1():
+# CHECK-NEXT: v2: undefined|Array<number> = CallDirect function=f5 [isDemotedTailCall]
+# CHECK-NEXT: [[upcast]]: undefined|Array<number|string> = Upcast v2 castType=undefined|Array<number|string>
+# CHECK-NEXT: [[claim]]: Array<number|string> = Claim [[upcast]] castType=Array<number|string>
+# CHECK-NEXT: Return [[claim]]
+# CHECK-NEXT: b2():
+# RETURN-NOT: function f0
+# RETURN: error: bad argument block=b2
+# RETURN-NOT: function f0
+function f1 name="claimOfWrittenLayout" parameters=[{type=anything}] results=[{type=object written=L0}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=object written=L0} resolution=Claim}]
+}
+# WRITTEN: function f1
+# WRITTEN: v1: anything = Call v0 [isDemotedTailCall]
+# WRITTEN-NEXT: [[claim]]: object = Claim v1 castType=object
+# WRITTEN-NEXT: [[predict]]: object ~ L0 = Predict [[claim]] predicted=L0
+# WRITTEN-NEXT: Return [[predict]]
+function f2 name="claimOfType" parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=object} resolution=Claim}]
+}
+# TYPE: function f2
+# TYPE: v1: anything = Call v0 [isDemotedTailCall]
+# TYPE-NEXT: [[claim]]: object = Claim v1 castType=object
+# TYPE-NEXT: Return [[claim]]
+function f3 name="prediction" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=anything predicted=number} resolution=Prediction}]
+}
+# PREDICTED: function f3
+# PREDICTED: v1: anything = Call v0 [isDemotedTailCall]
+# PREDICTED-NEXT: [[predict]]: anything ~ number = Predict v1 predicted=number
+# PREDICTED-NEXT: Return [[predict]]
+function f4 name="noCast" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    ReturnCall v1
+}
+# NONE: function f4
+# NONE: v1: anything = Call v0 [isDemotedTailCall]
+# NONE-NEXT: Return v1
+function f5 name="callee" results=[{type=undefined|Array<number>}] {
+  b0():
+    Return
+}
+function f6 name="callBesideTailCall" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    v2 = Call v0, -, v1
+    ReturnCall v2
+}
+# BESIDE: function f6
+# BESIDE: v1: anything = Call v0
+# BESIDE-NOT: isDemotedTailCall
+# BESIDE: v2: anything = Call v0, -, v1 [isDemotedTailCall]
+# BESIDE-NEXT: Return v2
+function f7 name="callWithList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = CallList v0, -, v1
+    ReturnCall v2
+}
+# LIST: function f7
+# LIST: v2: anything = CallList v0, -, v1 [isDemotedTailCall]
+# LIST-NEXT: Return v2

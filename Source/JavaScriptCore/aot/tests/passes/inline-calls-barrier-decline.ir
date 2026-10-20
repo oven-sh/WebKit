@@ -1,0 +1,62 @@
+# A hot call of a function that no copy in another frame can run is reported as a call that was not inlined
+# FORM: Prepared
+# OPTIONS: report=Declines heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# RUN(ABSENT): pass InlineCalls
+# STATISTIC: InlineDecisionBarrier = 3
+# STATISTIC: InlineDecisionInline = 1
+# CHECK: outcome: Changed
+# CHECK-NEXT: decline HotCallNotInlined f2 v3 None [0]
+# CHECK-NOT: decline
+# ABSENT-NOT: reason=
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0 mode=Strict
+
+function f0 name="evaluatesText" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return v2
+}
+function f1 name="doubles" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f2 name="callInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# CHECK-LABEL: name="callInLoop"
+# CHECK: v3: anything = CallDirect v0 function=f0
+
+function f3 name="callOutsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="callOutsideLoops"
+# CHECK: v1: anything = CallDirect v0 function=f0
+
+function f4 name="callInLoopBesideInlinedCall" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean, v2: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0 function=f0
+    v5 = CallDirect v2 function=f1
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: name="callInLoopBesideInlinedCall"
+# CHECK: v4: anything = CallDirect v0 function=f0
+# CHECK-NOT: function=f1

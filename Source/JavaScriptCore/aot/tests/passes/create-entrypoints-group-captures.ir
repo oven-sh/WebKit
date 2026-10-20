@@ -1,0 +1,45 @@
+# A group entrypoint reads the captures of its member from the closure, which it knows to be a closure of that member
+# FORM: Prepared
+# RUN: pass GroupCallsByValue CreateEntrypoints
+# STATISTIC: GroupEntrypoints = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=f1|f2|f3|f4|f5}] results=[{type=anything}] {
+  b0(v0: f1|f2|f3|f4|f5):
+    v1 = Call v0 accessSite=0 callees=[f1, f2, f3, f4, f5]
+    Return v1
+}
+function f1 name="captures" kind=Arrow captures=[{type=number}, {type=string}] results=[{type=number}] {
+  b0(v0: number, v1: string):
+    Return v0
+}
+function f2 name="namesItself" flags=[TakesCallee] results=[{type=number}] {
+  b0(v0: function):
+    v1 = Double number=1.5
+    Return v1
+}
+function f3 name="third" kind=Arrow results=[{type=number}] {
+  b0():
+    v0 = Double number=1.5
+    Return v0
+}
+function f4 name="fourth" kind=Arrow results=[{type=number}] {
+  b0():
+    v0 = Double number=1.5
+    Return v0
+}
+function f5 name="fifth" kind=Arrow results=[{type=number}] {
+  b0():
+    v0 = Double number=1.5
+    Return v0
+}
+# CHECK: name="captures"{{*}}role=GroupEntrypoint
+# CHECK-NEXT: b0([[closure]]: f1|f2|f3|f4|f5):
+# CHECK-NEXT: [[own]]: f1 = AssumeType [[closure]] castType=f1
+# CHECK-NEXT: [[first]]: number = GetCapture [[own]] function=f1
+# CHECK-NEXT: [[second]]: string = GetCapture [[own]] function=f1 index=1
+# CHECK-NEXT: = CallDirect [[first]], [[second]] function=f1
+# CHECK: name="namesItself"{{*}}role=GroupEntrypoint
+# CHECK-NEXT: b0([[otherClosure]]: f1|f2|f3|f4|f5):
+# CHECK-NEXT: [[callee]]: f2 = AssumeType [[otherClosure]] castType=f2
+# CHECK-NEXT: = CallDirect [[callee]] function=f2

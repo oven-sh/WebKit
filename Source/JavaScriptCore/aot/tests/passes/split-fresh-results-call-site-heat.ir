@@ -1,0 +1,81 @@
+# Whether a call of a result wrapper is expanded goes by the heat of its block: a loop of a function that runs once is not cold, the code around the loop is, and so is the path that throws in a function that the loop calls
+# FORM: AsRead
+# RUN: pipeline SplitFreshResults
+# OPTIONS: check=VerifyEachPass only-passes=EstimateHeat,SplitFreshResults,SinkAllocations,SimplifyControlFlow,EliminateDeadCode
+# STATISTIC: FreshResultsSplit = 1
+# STATISTIC: ResultsReturnedInRegisters = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="x"
+    v3 = ToNumber v2
+    Jump -> next b1(v0, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=1000
+    v8 = Less v4, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallDirect v4 function=f1
+    v10 = PropGet v9 key="y"
+    v11 = ToNumber v10
+    v12 = Add v5, v11
+    v13 = CallDirect v4 function=f2
+    v14 = ToNumber v13
+    v15 = Add v12, v14
+    v16 = Integer integer=1
+    v17 = Add v4, v16
+    Jump -> next b1(v17, v15)
+  b3():
+    Return v5
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: b0():
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK: LoopHint
+# CHECK-NOT: function=f1
+# CHECK: [[call]]:{{*}}= CallDirect {{*}} function=[[worker]]
+# CHECK-NEXT: = ResultAt [[call]] index=1
+# CHECK-NOT: function=f1
+# CHECK-NOT: NewObject
+# CHECK-NOT: key="y"
+
+function f1 name="point" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="point" module=m0 role=ResultWrapper
+# CHECK: creator=ResultWrapper{worker=[[worker]]
+
+function f2 name="calledInLoop" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b2(), notTaken b1()
+  b1():
+    v2 = CallDirect v0 function=f1
+    v3 = PropGet v2 key="x"
+    Throw v3
+  b2():
+    v4 = CallDirect v0 function=f1
+    v5 = PropGet v4 key="x"
+    Return v5
+}
+# CHECK-LABEL: function f2 name="calledInLoop"
+# CHECK: [[rareCall]]:{{*}}= CallDirect v0 function=f1
+# CHECK-NEXT: = PropGet [[rareCall]] key="x"
+# CHECK: Throw
+# CHECK-NOT: function=f1
+# CHECK: [[usualCall]]:{{*}}= CallDirect v0 function=[[worker]]
+# CHECK-NEXT: = ResultAt [[usualCall]]
+# CHECK-NOT: function=f1
+# CHECK-NOT: NewObject
+# CHECK-NOT: key="x"
+# CHECK: Return

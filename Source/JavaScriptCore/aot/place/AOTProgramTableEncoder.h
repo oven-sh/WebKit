@@ -1,0 +1,166 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTInstanceLayout.h"
+#include "AOTPipeline.h"
+#include "AOTPlacement.h"
+#include "AOTProgramTables.h"
+#include "AOTStringConstantNumbering.h"
+#include "AOTTableWriter.h"
+#include <optional>
+#include <span>
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
+#include <wtf/text/ASCIILiteral.h>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+struct ProgramTableInputs {
+    const PipelineOutput& pipeline;
+    InstanceSizes instanceSizes;
+    const StringConstantNumbering& stringConstants;
+};
+
+struct EncodedProgramTables {
+    Vector<uint8_t> bytes;
+    BitVector namedStrings;
+};
+
+JS_EXPORT_PRIVATE EncodedProgramTables encodeProgramTables(const ProgramTableInputs&, BuildContext&);
+
+#define FOR_EACH_AOT_PROGRAM_TABLE_RULE(v) \
+    v(TableOutOfBounds) \
+    v(TableNotWritten) \
+    v(TableNotSorted) \
+    v(NameWithoutIdentifier) \
+    v(StringWithoutConstantNumber) \
+    v(TypeNotEncoded) \
+    v(DataNotEncoded) \
+    v(FunctionWithoutEntrypoint) \
+    v(FunctionNotListed) \
+    v(ClassCapturesMismatch) \
+    v(UnknownFieldFlag) \
+    v(ShapeWithoutLayout) \
+    v(NameLeftInObfuscatedBuild) \
+    v(KeyWithoutPromisedColumn) \
+    v(FieldMissingFromFieldTable) \
+    v(FieldTableEntryWithoutField)
+
+enum class ProgramTableRule : uint32_t {
+    None,
+#define AOT_PROGRAM_TABLE_RULE(name) name,
+    FOR_EACH_AOT_PROGRAM_TABLE_RULE(AOT_PROGRAM_TABLE_RULE)
+#undef AOT_PROGRAM_TABLE_RULE
+};
+
+JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramTableRule);
+
+constexpr size_t elementSizeOf(ProgramTableIndex index)
+{
+    switch (index) {
+#define AOT_PROGRAM_TABLE_ELEMENT_SIZE(accessor, ElementType) \
+    case ProgramTableIndex::accessor: \
+        return sizeof(ElementType);
+    FOR_EACH_AOT_PROGRAM_TABLE(AOT_PROGRAM_TABLE_ELEMENT_SIZE)
+#undef AOT_PROGRAM_TABLE_ELEMENT_SIZE
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
+struct TableEncoder {
+    TableEncoder(const ProgramTableInputs&, BuildContext&);
+
+    uint32_t stringNumber(StringID);
+    uint32_t stringNumberPlusOne(StringID id) { return id ? stringNumber(id) + 1 : 0; }
+    uint32_t stringConstantNumber(StringID);
+    uint32_t identifierNumber(PropertyKeyID) const;
+    uint32_t identifierNumberOfText(StringID) const;
+    uint32_t typeOffset(TypeID) const;
+    uint32_t dataNodeOf(DataID) const;
+    FunctionID findEntrypoint(FunctionID) const;
+    uint32_t entrypointOf(FunctionID) const;
+    uint32_t checkedOffset(uint32_t offset) const;
+    bool obfuscates() const { return build.options().obfuscates(); }
+
+    template<typename T>
+    void setTable(ProgramTableIndex index, std::span<const T> items)
+    {
+        RELEASE_ASSERT(sizeof(T) == elementSizeOf(index));
+        uint32_t offset = writer.append(items);
+        setTableRange(index, offset, static_cast<uint32_t>(items.size()));
+    }
+
+    template<typename T, size_t inlineCapacity>
+    void setTable(ProgramTableIndex index, const Vector<T, inlineCapacity>& items) { setTable(index, items.span()); }
+
+    void setTableRange(ProgramTableIndex index, uint32_t offset, uint32_t count)
+    {
+        header.ranges[static_cast<unsigned>(index)] = { offset, count };
+        writtenTables.set(static_cast<unsigned>(index));
+    }
+
+    void fail(ProgramTableRule, LayoutID = { }, FunctionID = { }) const;
+
+    const ProgramTableInputs& inputs;
+    const Program& program;
+    const FlowResults& flow;
+    const SlotPlan& slots;
+    const Placement& placement;
+    const IdentifierNumbering& identifiers;
+    BuildContext& build;
+    TableWriter writer;
+    ProgramTables header { };
+    BitVector writtenTables;
+    BitVector namedStrings;
+    Vector<uint32_t> typeOffsets;
+    Vector<uint32_t> dataNodes;
+    Vector<std::optional<uint32_t>> tablesInImage;
+    BitVector layoutsWithSharedName;
+};
+
+void encodeTypeTables(TableEncoder&);
+void encodeLayoutTables(TableEncoder&);
+void encodePropertyRunTable(TableEncoder&);
+void encodeFieldTable(TableEncoder&);
+void encodeStaticsTables(TableEncoder&);
+void encodeFunctionTables(TableEncoder&);
+void encodeModuleTables(TableEncoder&);
+void encodeDataTable(TableEncoder&);
+void encodeRequestTable(TableEncoder&);
+void encodeConstantTables(TableEncoder&);
+
+struct ClassRecordParts {
+    Vector<MethodData> methods;
+    uint32_t numberOfStaticMethods { 0 };
+    Vector<FieldData> staticFields;
+    Vector<MemberGuardData> memberGuards;
+    ClassData data { };
+};
+
+ClassRecordParts collectClassRecordParts(TableEncoder&, LayoutID);
+void encodeConstructors(TableEncoder&);
+void encodeBoundFunctions(TableEncoder&);
+
+struct DeclarationLocation {
+    uint32_t path { noDeclaredPath };
+    uint32_t line { 0 };
+};
+
+SlotData placedVariableSlot(const TableEncoder&, VariableID);
+bool retainsDeclarationLocation(TableEncoder&, LayoutID);
+DeclarationLocation declarationLocationOf(TableEncoder&, LayoutID);
+uint64_t encodeDataWord(TableEncoder&, const DataNode&);
+
+void checkProgramTables(const TableEncoder&, std::span<const uint8_t> tables);
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

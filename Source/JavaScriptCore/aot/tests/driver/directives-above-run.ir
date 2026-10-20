@@ -1,0 +1,19 @@
+# directives can come in any order, also above the RUN line they belong to
+# CHECK: Add
+# FORM: AsRead
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v0, v1
+    v3 = Mul v2, v2
+    v4 = Sub v3, v0
+    Return v4
+}
+function f1 name="sum2" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Negate v0
+    v2 = Mul v1, v1
+    Return v2
+}

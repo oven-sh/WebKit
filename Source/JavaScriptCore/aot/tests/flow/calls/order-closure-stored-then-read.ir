@@ -1,0 +1,119 @@
+# By use, a closure stored into a variable can be entered where the variable is read, a closure passed to a call at the call, and a closure over the environment of a loop iteration where it is stored, unlike one over an environment allocated in front of the loop. For the variables of the module the calls that flow has linked say more
+# RUN: flow-order timelines locations failed
+# CHECK: timeline f0: f1 after b0#6, f2 after b0#10, f3 after b0#10, f4 after b3#2, f5 after b4#0, f6 after f5:b3#2
+# CHECK-NEXT: timeline f0 by use: f1 after b0#4, f2 after b0#10, f3 after b0#10, f4 after b2#0, f5 after b4#0, f6 after f5:b2#0
+# CHECK-NEXT: timeline f5: f6 after b3#1
+# CHECK-NEXT: g0: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g1: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g2: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g3: Unknown AtMostOnce
+# CHECK-NEXT: L0.0: SetAtCreation Unknown
+# CHECK-NEXT: L1.0: Unknown AtMostOnce
+# CHECK-NEXT: L2.0: SetAtCreation Unknown
+# CHECK-NEXT: L3.0: StoredBeforeEveryRead Unknown
+# CHECK-NEXT: read-before-initialization g3
+# CHECK-NEXT: read-before-initialization L1.0
+# CHECK-NOT: read-before-initialization
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="aroundLoop" fields=[{key="held" declared={type=anything}}]
+layout L1 kind=Environment name="iteration" fields=[{key="k" declared={type=anything|absent}}]
+layout L2 kind=Environment name="aroundSecondLoop" fields=[{key="held" declared={type=anything}}]
+layout L3 kind=Environment name="allocatedOnce" fields=[{key="k" declared={type=anything|absent}}]
+variable g0 name="stored" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="x" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g2 name="passed" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g3 name="y" module=m0 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewClosure function=f1
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v0 variable=g1
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="stored"
+    v6 = Call v5
+    v7 = NewClosure function=f2
+    PutModuleVariable v7 variable=g2
+    v9 = NewClosure function=f3
+    v10 = Call v9, -, v7
+    PutModuleVariable v0 variable=g3
+    v12 = GetModuleVariable variable=g2
+    v13 = CheckInitialized v12 name="passed"
+    v14 = Call v13
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="flag" [isFreeName]
+    v17 = ToBoolean v16
+    v18 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v20 = NewObject layout=L1
+    v21 = NewClosure v20 function=f4
+    Branch v17 -> taken b2(), notTaken b3()
+  b2():
+    PutEnvironmentField v18, v21 layout=L0 field=0
+    Jump -> next b1()
+  b3():
+    PutEnvironmentField v20, v0 layout=L1 field=0
+    v24 = GetEnvironmentField v18 layout=L0 field=0
+    v25 = Call v24
+    Branch v17 -> taken b1(), notTaken b4()
+  b4():
+    v26 = CallDirect function=f5
+    Return
+}
+function f1 name="readStored" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="x"
+    Return v1
+}
+function f2 name="readPassed" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="y"
+    Return v1
+}
+function f3 name="invoke" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f4 name="readIteration" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    v2 = CheckInitialized v1 name="k"
+    Return v2
+}
+function f5 name="allocateInFrontOfLoop" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="flag" [isFreeName]
+    v3 = ToBoolean v2
+    v4 = NewObject -, v0 layout=L2 fields=[0]
+    v5 = NewObject layout=L3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = NewClosure v5 function=f6
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    PutEnvironmentField v4, v7 layout=L2 field=0
+    Jump -> next b1()
+  b3():
+    PutEnvironmentField v5, v0 layout=L3 field=0
+    v10 = GetEnvironmentField v4 layout=L2 field=0
+    v11 = Call v10
+    Branch v3 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+function f6 name="readAllocatedOnce" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    v2 = CheckInitialized v1 name="k"
+    Return v2
+}

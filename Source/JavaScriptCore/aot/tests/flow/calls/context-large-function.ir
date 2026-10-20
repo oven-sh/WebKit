@@ -1,0 +1,53 @@
+# A function with more values than the limit shares one instance among its call sites and the loss is reported, and a function that passes nothing on is shared without a loss
+# RUN: flow-solve instances nodes
+# RUN(INSPECTS): flow-solve instances
+# RUN(SITES): flow-solve instances
+# OPTIONS: limit=MaxFlowInstanceValues:4
+# LOSS: MaxFlowInstanceValues f1
+# CHECK: [[large]] f1 Proven
+# CHECK: , f2, v1) = {L0#[[a]]}
+# CHECK-NEXT: , f2, v2) = {L1#[[b]]}
+# CHECK: , f2, v7) = {L0#[[a]]|L1#[[b]]}
+# CHECK-NEXT: , f2, v8) = {L0#[[a]]|L1#[[b]]}
+# CHECK: ([[large]], f1, parameter 0) = {L0#[[a]]|L1#[[b]]}
+# INSPECTS: f0 Proven
+# SITES-NOT: f0 at
+# SITES-NOT: f1 at
+# SITES-NOT: f0 Generic
+# SITES-NOT: f1 Generic
+
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
+layout L0 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="passesNothingOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = StrictEq v0, v1
+    v3 = LogicalNot v2
+    v4 = LogicalNot v3
+    v5 = LogicalNot v4
+    Return v5
+}
+function f1 name="large" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Null
+    v2 = StrictEq v0, v1
+    v3 = LogicalNot v2
+    v4 = LogicalNot v3
+    v5 = LogicalNot v4
+    Return v0
+}
+function f2 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewClosure function=f0
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v1
+    v8 = Call v6, -, v2
+    Return
+}

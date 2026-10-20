@@ -188,8 +188,7 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         return true;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr size_t maxLeavesToRebalance = 32;
+    const uint64_t maxLeavesToRebalance = m_proc.limit(Limit::MaxLeavesToRebalance);
     if (leaves.size() > maxLeavesToRebalance) {
         size_t remainingLeafCount = leaves.size();
         if (op != Mul) {
@@ -204,10 +203,11 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
                 begin = end;
             }
         }
-        if (remainingLeafCount > maxLeavesToRebalance)
+        if (remainingLeafCount > maxLeavesToRebalance) {
+            m_proc.didReachLimit(Limit::MaxLeavesToRebalance, root->origin());
             return false;
+        }
     }
-#endif
 
     // Pair up rotate halves inside XOR / OR trees so the `(x >>> N) ^ (x << (W-N))`
     // idiom (and its sigma/Sigma chained variants) lowers to a single RotR instead of a
@@ -237,7 +237,6 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         //     Into this: RotR(value, M)
         //
         // And replace leaf with RotR.
-#if USE(BUN_JSC_ADDITIONS)
         Vector<Value*, 4> shlBases;
         for (Value* leaf : leaves) {
             if (leaf->opcode() == Shl && leaf->child(1)->hasInt32() && !shlBases.contains(leaf->child(0)))
@@ -245,9 +244,6 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         }
         for (Value* shlBase : shlBases) {
             auto& shlEntry = *shlIndicesByBase.find(shlBase);
-#else
-        for (auto& shlEntry : shlIndicesByBase) {
-#endif
             auto zshrIter = zshrIndicesByBase.find(shlEntry.key);
             if (zshrIter == zshrIndicesByBase.end())
                 continue;
@@ -314,7 +310,14 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
 
     // optLeaves can be empty for trees of BitXor where all leaves happen an even number of times.
     // In that case, we make the whole tree equivalent to the neutral element (which is 0 for BitXor).
-    if (constant != neutralElement(op) || optLeaves.isEmpty()) {
+    bool needsConstant = constant != neutralElement(op) || optLeaves.isEmpty();
+
+    // A chain takes each leaf where the client computed it: a load can be an operand in memory, and few leaves are alive at once.
+    bool buildsChain = m_proc.policy().optimization.chainsAssociativeOperations;
+    if (buildsChain && !foldedRotate && optLeaves.size() + needsConstant == numVisited)
+        return false;
+
+    if (needsConstant) {
         if (root->type() == Int32)
             optLeaves.append(insertionSet.insert<Const32Value>(indexInBlock, root->origin(), static_cast<int32_t>(constant)));
         else
@@ -329,6 +332,14 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         for (Value* leaf : optLeaves)
             dataLog(" ", *leaf);
         dataLog("\n");
+    }
+
+    if (buildsChain) {
+        Value* chain = optLeaves[0];
+        for (unsigned i = 1; i < optLeaves.size(); ++i)
+            chain = insertionSet.insert<Value>(indexInBlock, op, root->origin(), chain, optLeaves[i]);
+        root->replaceWithIdentity(chain);
+        return true;
     }
 
     // Finally we can build the balanced binary tree
@@ -351,7 +362,6 @@ bool OptimizeAssociativeExpressionTrees::run()
     // In the second one we optimize each such expression tree in turn.
     // We need the use counts to avoid duplicating code.
 
-#if USE(BUN_JSC_ADDITIONS)
     bool hasTreeOfThree = false;
     for (BasicBlock* block : m_proc) {
         for (Value* value : *block) {
@@ -370,7 +380,6 @@ bool OptimizeAssociativeExpressionTrees::run()
     }
     if (!hasTreeOfThree)
         return false;
-#endif
 
     m_proc.resetValueOwners();
 
@@ -390,10 +399,8 @@ bool OptimizeAssociativeExpressionTrees::run()
                 case BitOr:
                 case BitXor:
                     useCounts[child->index()]++;
-#if USE(BUN_JSC_ADDITIONS)
                     if (child->child(0)->opcode() != child->opcode() && child->child(1)->opcode() != child->opcode())
                         break;
-#endif
                     if (child->opcode() != value->opcode() || useCounts[child->index()] > 1) {
                         expressionTreeRoots.add(child);
                         rootOwners.add(child->owner);

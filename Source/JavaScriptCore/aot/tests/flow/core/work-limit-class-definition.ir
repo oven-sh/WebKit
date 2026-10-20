@@ -1,0 +1,212 @@
+# let calls = 0; class A { static get f() { calls++; return 1 } static set f(v) { calls += 10 } }  class B extends A { static early = [calls, (B.f = 3), calls].join(); static f = 2 }  print(B.early)
+# function define() { return class C { m() { return 1 } } }  define()
+# The definition of a class and of a member is recorded once the closure of the class has reached it, and the passes take the records for the whole definition.
+# The module body passes the work limit in the first run of its statements, while the closures are still on their way to the definitions. They are pushed on before the last run,
+# so A lists its accessor, and the store to B.f ahead of the field's initializer finds the setter above B.
+# C is defined in a function within the limit. The reads at the end of the module body are there to pass the limit.
+# OPTIONS: limit=MaxFlowWorkPerFunction:64
+# LOSS: MaxFlowWorkPerFunction f0
+# RUN: flow-apply
+# CHECK: name="A"{{*}} members=[{key="f" side=Static kind=Getter function=f2}, {key="f" side=Static kind=Setter function=f3}]
+# CHECK: name="C"{{*}} members=[{key="m" function=f8}]
+
+layout L0 kind=Instance name="A" module=m0 constructor=f1
+layout L1 kind=Instance name="B" module=m0 predictedBase=L0 constructor=f4 staticFields=[{key="early" variable=g4}, {key="f" variable=g5}] supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="C" module=m0 constructor=f7
+variable g0 name="calls" module=m0 declared={type=anything|absent predicted=number}
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="B" module=m0 declared={type=function|absent flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=anything predicted=string} owner=L1
+variable g5 module=m0 declared={type=anything predicted=number} owner=L1
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g1
+    v3 = NewClosure function=f2
+    DefineMethod v1, v3 layout=L0 side=Static methodKind=Getter key="f"
+    v5 = NewClosure function=f3
+    DefineMethod v1, v5 layout=L0 side=Static methodKind=Setter index=1 key="f"
+    v7 = FinishClass v1 layout=L0
+    v8 = ClaimDeclared v7 declared={type=anything predicted=function}
+    v9 = ClaimDeclared v7 declared={type=anything predicted=function}
+    v10 = Integer
+    v11 = Predict v10 predicted=number
+    PutModuleVariable v11 variable=g0
+    v13 = ResolveHeritage v9
+    v14 = NewClosure function=f4
+    v15 = NewClass v14, v9, v13 layout=L1
+    PutModuleVariable v15 variable=g3
+    v17 = FinishClass v15 layout=L1
+    v18 = ClaimDeclared v17 declared={type=anything predicted=function}
+    PutModuleVariable v18 variable=g2
+    v20 = ClaimDeclared v17 declared={type=anything predicted=function}
+    v21 = CallDirect v20 function=f5
+    v22 = ClaimDeclared v17 declared={type=anything predicted=function}
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="print" [isFreeName]
+    v25 = PropGet v22 key="early"
+    v26 = Predict v25 predicted=string
+    v27 = Call v24, -, v26 calleeName="print"
+    v28 = NewClosure function=f6
+    v29 = Call v28
+    v30 = PropGet v23 key="print" [isFreeName]
+    v31 = PropGet v23 key="print" [isFreeName]
+    v32 = PropGet v23 key="print" [isFreeName]
+    v33 = PropGet v23 key="print" [isFreeName]
+    v34 = PropGet v23 key="print" [isFreeName]
+    v35 = PropGet v23 key="print" [isFreeName]
+    v36 = PropGet v23 key="print" [isFreeName]
+    v37 = PropGet v23 key="print" [isFreeName]
+    v38 = PropGet v23 key="print" [isFreeName]
+    v39 = PropGet v23 key="print" [isFreeName]
+    v40 = PropGet v23 key="print" [isFreeName]
+    v41 = PropGet v23 key="print" [isFreeName]
+    v42 = PropGet v23 key="print" [isFreeName]
+    v43 = PropGet v23 key="print" [isFreeName]
+    v44 = PropGet v23 key="print" [isFreeName]
+    v45 = PropGet v23 key="print" [isFreeName]
+    v46 = PropGet v23 key="print" [isFreeName]
+    v47 = PropGet v23 key="print" [isFreeName]
+    v48 = PropGet v23 key="print" [isFreeName]
+    v49 = PropGet v23 key="print" [isFreeName]
+    v50 = PropGet v23 key="print" [isFreeName]
+    v51 = PropGet v23 key="print" [isFreeName]
+    v52 = PropGet v23 key="print" [isFreeName]
+    v53 = PropGet v23 key="print" [isFreeName]
+    v54 = PropGet v23 key="print" [isFreeName]
+    v55 = PropGet v23 key="print" [isFreeName]
+    v56 = PropGet v23 key="print" [isFreeName]
+    v57 = PropGet v23 key="print" [isFreeName]
+    v58 = PropGet v23 key="print" [isFreeName]
+    v59 = PropGet v23 key="print" [isFreeName]
+    v60 = PropGet v23 key="print" [isFreeName]
+    v61 = PropGet v23 key="print" [isFreeName]
+    v62 = PropGet v23 key="print" [isFreeName]
+    v63 = PropGet v23 key="print" [isFreeName]
+    v64 = PropGet v23 key="print" [isFreeName]
+    v65 = PropGet v23 key="print" [isFreeName]
+    v66 = PropGet v23 key="print" [isFreeName]
+    v67 = PropGet v23 key="print" [isFreeName]
+    v68 = PropGet v23 key="print" [isFreeName]
+    v69 = PropGet v23 key="print" [isFreeName]
+    v70 = PropGet v23 key="print" [isFreeName]
+    v71 = PropGet v23 key="print" [isFreeName]
+    v72 = PropGet v23 key="print" [isFreeName]
+    v73 = PropGet v23 key="print" [isFreeName]
+    v74 = PropGet v23 key="print" [isFreeName]
+    v75 = PropGet v23 key="print" [isFreeName]
+    v76 = PropGet v23 key="print" [isFreeName]
+    v77 = PropGet v23 key="print" [isFreeName]
+    v78 = PropGet v23 key="print" [isFreeName]
+    v79 = PropGet v23 key="print" [isFreeName]
+    v80 = PropGet v23 key="print" [isFreeName]
+    v81 = PropGet v23 key="print" [isFreeName]
+    v82 = PropGet v23 key="print" [isFreeName]
+    v83 = PropGet v23 key="print" [isFreeName]
+    v84 = PropGet v23 key="print" [isFreeName]
+    v85 = PropGet v23 key="print" [isFreeName]
+    v86 = PropGet v23 key="print" [isFreeName]
+    v87 = PropGet v23 key="print" [isFreeName]
+    v88 = PropGet v23 key="print" [isFreeName]
+    v89 = PropGet v23 key="print" [isFreeName]
+    v90 = Undefined
+    Return v90
+}
+function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="f" module=m0 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="calls"
+    v2 = Increment v1
+    v3 = ClaimDeclared v2 declared={type=anything predicted=number}
+    v4 = GetModuleVariable variable=g0
+    v5 = CheckInitialized v4 name="calls"
+    PutModuleVariable v3 variable=g0
+    v7 = Integer integer=1
+    v8 = ClaimDeclared v7 declared={type=anything predicted=number}
+    Return v8
+}
+function f3 name="f" module=m0 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything predicted=number}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="calls"
+    v3 = Integer integer=10
+    v4 = Add v2, v3
+    v5 = ClaimDeclared v4 declared={type=anything predicted=number}
+    v6 = GetModuleVariable variable=g0
+    v7 = CheckInitialized v6 name="calls"
+    PutModuleVariable v5 variable=g0
+    v9 = Undefined
+    Return v9
+}
+function f4 name="B" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1()
+  b1():
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] {
+  b0(v0: function):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="calls"
+    v3 = GetModuleVariable variable=g2
+    v4 = CheckInitialized v3 name="B"
+    v5 = Integer integer=3
+    v6 = ClaimDeclared v5 declared={type=anything predicted=number}
+    PropSet v4, v6 key="f"
+    v8 = GetModuleVariable variable=g0
+    v9 = CheckInitialized v8 name="calls"
+    v10 = NewArray v2, v6, v9 contents=anything
+    v11 = Predict v10 predicted=Array<number>
+    v12 = PropGet v11 key="join"
+    v13 = Predict v12 predicted=function
+    v14 = Call v13, v11 calleeKey="join" calleeName="join"
+    v15 = Predict v14 predicted=string
+    PropDefine v0, v15 key="early"
+    v17 = Integer integer=2
+    v18 = ClaimDeclared v17 declared={type=anything predicted=number}
+    PropDefine v0, v18 key="f"
+    v20 = Undefined
+    Return v20
+}
+function f6 name="define" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    v1 = NewClass v0 layout=L2
+    v2 = NewClosure function=f8
+    DefineMethod v1, v2 layout=L2 key="m"
+    v4 = FinishClass v1 layout=L2
+    Return v4
+}
+function f7 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f8 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+entry module=m0

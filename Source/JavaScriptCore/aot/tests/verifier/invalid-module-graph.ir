@@ -1,0 +1,18 @@
+# a library requests nothing, and a module named by an export or a required name is reached over requests, directly or not
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 4
+
+module m0 path="main" displayPath="main" requests=[{target=m1}]
+module m1 path="middle" displayPath="middle" requests=[{target=m2}, {target=m3}]
+module m2 path="last" displayPath="last"
+module m3 path="external" displayPath="external" kind=External referrer=m1
+module m4 path="goodDirect" displayPath="goodDirect" requests=[{target=m2}] exports=[{name="n" kind=Namespace module=m2}] requiredNames=[{module=m2 name="a"}]
+module m5 path="goodOverTwoRequests" displayPath="goodOverTwoRequests" requests=[{target=m0}] exports=[{name="i" kind=Indirect module=m3 importName="x"}, {name="n" kind=Namespace module=m2}] requiredNames=[{module=m2 name="a"}]
+module m6 path="goodItself" displayPath="goodItself" exports=[{name="n" kind=Namespace module=m6}]
+module m7 path="goodLibrary" displayPath="goodLibrary" flags=[IsLibrary]
+module m8 path="badLibraryWithRequest" displayPath="badLibraryWithRequest" flags=[IsLibrary] requests=[{target=m2}]
+module m9 path="badNamespaceNotReached" displayPath="badNamespaceNotReached" requests=[{target=m2}] exports=[{name="n" kind=Namespace module=m0}]
+module m10 path="badIndirectExportNotReached" displayPath="badIndirectExportNotReached" requests=[{target=m2}] exports=[{name="i" kind=Indirect module=m3 importName="x"}]
+module m11 path="badRequiredNameNotReached" displayPath="badRequiredNameNotReached" requiredNames=[{module=m2 name="a"}]
+entry module=m0

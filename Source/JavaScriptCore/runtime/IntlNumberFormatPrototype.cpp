@@ -27,7 +27,6 @@
 #include "config.h"
 #include "IntlNumberFormatPrototype.h"
 
-#include "AOTFormatPatterns.h"
 #include "BuiltinNames.h"
 #include "IntlNumberFormatInlines.h"
 #include "JSBoundFunction.h"
@@ -97,17 +96,6 @@ JSC_DEFINE_HOST_FUNCTION(intlNumberFormatFuncFormat, (JSGlobalObject* globalObje
     auto value = toIntlMathematicalValue(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
-#if ENABLE(AOT)
-    if (numberFormat->compiledPattern()) {
-        if (auto number = value.tryGetDouble()) {
-            if (String text = AOT::tryFormatWithCompiledPattern(globalObject, *numberFormat, number.value()); !text.isNull())
-                return JSValue::encode(jsString(vm, WTF::move(text)));
-        }
-        numberFormat->initializeIfDeferred(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-#endif
-
     if (auto number = value.tryGetDouble())
         RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->format(globalObject, number.value())));
 
@@ -155,10 +143,6 @@ JSC_DEFINE_HOST_FUNCTION(intlNumberFormatPrototypeFuncFormatRange, (JSGlobalObje
     auto* numberFormat = dynamicDowncast<IntlNumberFormat>(callFrame->thisValue());
     if (!numberFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.NumberFormat.prototype.formatRange called on value that's not a NumberFormat"_s));
-#if ENABLE(AOT)
-    numberFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     JSValue startValue = callFrame->argument(0);
     JSValue endValue = callFrame->argument(1);
@@ -192,10 +176,6 @@ JSC_DEFINE_HOST_FUNCTION(intlNumberFormatPrototypeFuncFormatToParts, (JSGlobalOb
     auto* numberFormat = dynamicDowncast<IntlNumberFormat>(callFrame->thisValue());
     if (!numberFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.NumberFormat.prototype.formatToParts called on value that's not a NumberFormat"_s));
-#if ENABLE(AOT)
-    numberFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     auto value = toIntlMathematicalValue(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
@@ -215,10 +195,6 @@ JSC_DEFINE_HOST_FUNCTION(intlNumberFormatPrototypeFuncFormatRangeToParts, (JSGlo
     auto* numberFormat = dynamicDowncast<IntlNumberFormat>(callFrame->thisValue());
     if (!numberFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.NumberFormat.prototype.formatRangeToParts called on value that's not a NumberFormat"_s));
-#if ENABLE(AOT)
-    numberFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     JSValue startValue = callFrame->argument(0);
     JSValue endValue = callFrame->argument(1);
@@ -251,10 +227,6 @@ JSC_DEFINE_HOST_FUNCTION(intlNumberFormatPrototypeFuncResolvedOptions, (JSGlobal
     RETURN_IF_EXCEPTION(scope, { });
     if (!numberFormat) [[unlikely]]
         return JSValue::encode(throwTypeError(globalObject, scope, "Intl.NumberFormat.prototype.resolvedOptions called on value that's not a NumberFormat"_s));
-#if ENABLE(AOT)
-    numberFormat->initializeIfDeferred(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-#endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(numberFormat->resolvedOptions(globalObject)));
 }

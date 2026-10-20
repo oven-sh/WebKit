@@ -1,0 +1,28 @@
+# On one edge into the merge the outcome comes from an earlier append than the cursor
+# FORM: Selected
+# RUN: raw-words
+# CHECK: function f0
+# CHECK: v10 BuilderCursor: productions v4.1 v7.1; bases v2
+# CHECK: error RawPointerOutlivesStorage b3 v11
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stale-companion-through-parameters" parameters=[{type=anything}, {type=boolean}] results=[{type=string}] {
+  b0(v0: anything, v1: boolean):
+    v2 = StringBuilderBegin
+    v3 = StringBuilderReserve v2 size=64
+    v4 = JSONAppendValue v2, v3, v0 jsonPosition=Element
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v5, v6)
+  b2():
+    v7 = JSONAppendValue v2, v6, v0 jsonPosition=Element
+    v8 = ResultAt v7 index=1
+    Jump -> next b3(v5, v8)
+  b3(v9, v10):
+    v11 = JSONAppendInteger v2, v10, v9
+    StringBuilderCommit v2, v11
+    v13 = StringBuilderFinish v2
+    Return v13
+}

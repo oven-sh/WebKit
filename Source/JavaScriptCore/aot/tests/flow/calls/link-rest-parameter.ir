@@ -1,0 +1,49 @@
+# The rest array holds each surplus argument at its position, undefined alone at a position no call fills, and undefined beside the argument once another call of the shared instance passes fewer
+# RUN: flow-solve nodes
+# CHECK: Position(Array@f1:rest, 0) = {L1#[[b]]}
+# CHECK-NEXT: Position(Array@f1:rest, 1) = {L2#[[c]]}
+# CHECK-NEXT: Position(Array@f1:rest, 2) = {undefined}
+# CHECK: Position(Array@f2:rest, 0) = {undefined|L1#[[b]]}
+# CHECK-NEXT: Position(Array@f2:rest, 1) = {undefined|L2#[[c]]}
+# CHECK-NEXT: Position(Array@f2:rest, 2) = {undefined}
+# RUN(THREE): flow-solve nodes
+# THREE: , f0, v1) = {L0#[[a]]}
+# THREE: , f1, parameter 0) = {L0#[[a]]}
+# THREE-NEXT: , f1, parameter 1) = {Array@f1:rest}
+# RUN(BOTH): flow-solve nodes
+# BOTH: , f0, v1) = {L0#[[a]]}
+# BOTH: , f2, parameter 0) = {L0#[[a]]}
+# BOTH-NEXT: , f2, parameter 1) = {Array@f2:rest}
+# RUN(SHARED): flow-solve instances
+# SHARED-COUNT-1: f2 Proven
+# SHARED-NOT: f2 Proven
+# RUN(COPIES): flow-solve instances
+# COPIES-NOT: f2 at
+# COPIES-NOT: f2 Generic
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="A" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="C" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v1, v2, v3
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v1, v2, v3
+    v8 = Call v6, -, v1
+    Return
+}
+function f1 name="calledWithThree" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    Return
+}
+function f2 name="calledWithThreeAndWithOne" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    Return
+}

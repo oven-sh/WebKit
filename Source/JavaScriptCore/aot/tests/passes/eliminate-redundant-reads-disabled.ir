@@ -1,0 +1,23 @@
+# With the pass off a repeated read of a module variable stays
+# FORM: Prepared
+# OPTIONS: disable=pass:EliminateRedundantReads
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="a" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="variableReadAfterRead" results=[{type=boolean}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g0
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="variableReadAfterRead"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: v2: boolean = StrictEq v0, v1
+# CHECK-NEXT: Return v2

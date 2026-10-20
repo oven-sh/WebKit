@@ -1,0 +1,123 @@
+# A static field is a variable: once the static initializer has defined it, every read and store through the class object or a subclass is an access to the variable, and its type has no undefined
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pipeline ResolveAccesses
+# RUN(ORDER): flow-order locations failed
+# ORDER: g4: StoredBeforeEveryRead Unknown
+# ORDER-NEXT: g5: StoredBeforeEveryRead AtMostOnce
+# ORDER-NEXT: g6: StoredBeforeEveryRead AtMostOnce
+# ORDER-NOT: read-before-initialization
+# CHECK: variable g4 module=m0 declared={type=int
+# CHECK: variable g5 module=m0 declared={type="c"
+# CHECK: variable g6 module=m0 declared={type=i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g4}, {key="label" variable=g5}]
+layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f5 staticFields=[{key="extra" variable=g6}] flags=[HasHeritage]
+variable g0 name="bump" module=m0 declared={type=function} initialization=Function function=f4 flags=[IsImmutable]
+variable g1 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="Counter" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g3 name="Child" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g4 module=m0 declared={type=anything predicted=number} owner=L0
+variable g5 module=m0 declared={type=anything predicted=string} owner=L0
+variable g6 module=m0 declared={type=anything predicted=number} owner=L1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key="next"
+    v4 = FinishClass v1 layout=L0
+    PutModuleVariable v4 variable=g2
+    v6 = CallDirect v4 function=f3
+    PutModuleVariable v4 variable=g1
+    v8 = ResolveHeritage v4
+    v9 = NewClosure function=f5
+    v10 = NewClass v9, v4, v8 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = CallDirect v11 function=f6
+    PutModuleVariable v11 variable=g3
+    v14 = PropGet v4 key="label"
+    v15 = GetModuleVariable variable=g0
+    v16 = Call v15
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="print" [isFreeName]
+    v19 = Call v18, -, v14, v16
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = GetModuleVariable variable=g5
+# CHECK-NOT: key="label"
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="next" kind=Method results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="Counter"
+    v2 = PropGet v1 key="count"
+    v3 = Integer integer=1
+    v4 = BitOr v2, v3
+    PropSet v1, v4 key="count"
+    v6 = PropGet v1 key="count"
+    Return v6
+}
+# CHECK-LABEL: function f2 name="next"
+# CHECK: [[before]]: int{{*}}= GetModuleVariable variable=g4
+# CHECK: PutModuleVariable [[sum]] variable=g4
+# CHECK: = GetModuleVariable variable=g4
+# CHECK-NOT: key="count"
+function f3 name="initializeCounter" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = Integer integer=0
+    PropDefine v0, v1 key="count"
+    v3 = String string="c"
+    PropDefine v0, v3 key="label"
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f3 name="initializeCounter"
+# CHECK: PutModuleVariable v1 variable=g4
+# CHECK: PutModuleVariable v3 variable=g5
+# CHECK-NOT: PropDefine
+function f4 name="bump" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="Counter"
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = GetModuleVariable variable=g3
+    v5 = CheckInitialized v4 name="Child"
+    v6 = PropGet v5 key="extra"
+    v7 = PropGet v5 key="count"
+    v8 = BitOr v6, v7
+    v9 = BitOr v8, v3
+    Return v9
+}
+# CHECK-LABEL: function f4 name="bump"
+# CHECK: = GetModuleVariable variable=g6
+# CHECK: = GetModuleVariable variable=g4
+# CHECK-NOT: PropGet
+function f5 name="Child" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f6 name="initializeChild" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
+  b0(v0: function):
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = BitOr v1, v2
+    PropDefine v0, v3 key="extra"
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f6 name="initializeChild"
+# CHECK: = GetModuleVariable variable=g4
+# CHECK: PutModuleVariable [[extra]] variable=g6
+# CHECK-NOT: key=

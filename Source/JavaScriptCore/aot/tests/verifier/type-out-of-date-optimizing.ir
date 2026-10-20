@@ -1,0 +1,22 @@
+# In the middle of the optimization stage a stored type may be wider than its rule gives, and never narrower
+# FORM: Prepared optimizing
+# RUN: verify optimizing
+# DIAGNOSTIC: TypeOutOfDate 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badNarrower" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1: number = Call v0
+    Return
+}
+function f1 name="badDisjoint" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1: string = Add v0, v0
+    Return
+}
+function f2 name="goodWider" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1: anything = Add v0, v0
+    v2: undefined|number = Add v0, v0
+    Return
+}

@@ -134,6 +134,7 @@ public:
 
     JS_EXPORT_PRIVATE static void assertOptionsAreCoherent();
     JS_EXPORT_PRIVATE static void notifyOptionsChanged();
+    static constexpr double sizeClassProgressionForCompiledCode = 1.1;
     JS_EXPORT_PRIVATE static double sizeClassProgressionWithAOT();
 
 #define DECLARE_OPTION_ACCESSORS(type_, name_, defaultValue_, availability_, description_) \
@@ -168,7 +169,6 @@ private:
 #if !PLATFORM(COCOA)
     static bool overrideAliasedOptionWithHeuristic(const char* name);
 #endif
-    static void overrideOptionsFromEnvironment();
 
     static void setAllJITCodeValidations(bool);
 

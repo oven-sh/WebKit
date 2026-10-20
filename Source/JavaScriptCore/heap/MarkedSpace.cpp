@@ -24,7 +24,6 @@
 #include "BlockDirectoryInlines.h"
 #include "HeapInlines.h"
 #include "IncrementalSweeper.h"
-#include "MarkedBlockCage.h"
 #include "MarkedBlockInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "WeakSetInlines.h"
@@ -202,7 +201,6 @@ void MarkedSpace::freeMemory()
         [&] (MarkedBlock::Handle* block) {
             freeBlock(block);
         });
-    MarkedBlockCage::decommitFreeBlocks();
     for (PreciseAllocation* allocation : m_preciseAllocations)
         allocation->destroy();
     forEachSubspace([&](Subspace& subspace) {
@@ -260,7 +258,7 @@ void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool 
     if (isNewAllocation) {
         // Existing code's ordering is calling `didAllocate` and increasing capacity.
         size_t size = allocation->cellSize();
-        heap().didAllocatePreciseAllocation(size, *allocation->subspace());
+        heap().didAllocate(size);
         m_capacity += size;
     }
 }
@@ -405,7 +403,6 @@ void MarkedSpace::shrink()
             directory.shrink();
             return IterationStatus::Continue;
         });
-    MarkedBlockCage::decommitFreeBlocks();
 }
 
 void MarkedSpace::beginMarking()

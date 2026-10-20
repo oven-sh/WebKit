@@ -1,0 +1,40 @@
+# With receiver sets switched off no access is stamped with its receivers, so no store names its field, and each access site names the switch as its loss, while site ids, callee sets and types stay
+# OPTIONS: disable=flow:ReceiverSets
+# RUN: flow-apply
+# RUN(NOWHERE): flow-apply
+# RUN(FLOW): flow
+# RUN(CALLS): flow
+# CHECK: = NewObject -, v0 layout=L0 fields=[0] allocationSite=0 allocationClass=0 [keepsShape]
+# CHECK: = Call v3, -, v1 accessSite=0 callees=[f1]
+# CHECK: = Call v3, -, v2 accessSite=1 callees=[f1]
+# CHECK: function f1 name="readAndStore" {{*}}parameters=[{type=L0|L1 written=anything}]
+# CHECK: = PropGet v0 key="x" accessSite=2
+# CHECK: PropSet v0, {{*}} key="x" accessSite=3
+# NOWHERE-NOT: receivers=
+# FLOW: access S0 function=f0 kind=Call
+# FLOW-NEXT: access S1 function=f0 kind=Call
+# FLOW-NEXT: access S2 function=f1 kind=Read loss cause=ResultDisabled
+# FLOW-NEXT: access S3 function=f1 kind=Store loss cause=ResultDisabled
+# CALLS-NOT: kind=Call loss
+# CALLS-NOT: storeNaming=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    Return
+}
+function f1 name="readAndStore" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    PropSet v0, v1 key="x" mode=Strict
+    Return v1
+}

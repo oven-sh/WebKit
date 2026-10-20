@@ -34,7 +34,7 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ControlFlowProfiler);
 
-NEVER_INLINE ControlFlowProfiler::ControlFlowProfiler()
+ControlFlowProfiler::ControlFlowProfiler()
     : m_dummyBasicBlock(BasicBlockLocation(-1, -1))
 {
 }

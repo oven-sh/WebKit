@@ -1,0 +1,33 @@
+# Nothing settles the promise, so nothing comes out of the await. The code behind it stays all the same: the frame is suspended for ever and holds what that code would read,
+# and whoever holds a weak reference to one of those values can tell whether the frame does
+# RUN: flow-apply
+# CHECK-LABEL: function f1 name="waits"
+# CHECK: [[result]]: anything = Await
+# CHECK-NOT: castType=never
+# CHECK: Return v0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Held" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="never" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Promise
+    v1 = NewClosure function=f2
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = CallDirect v5 function=f1
+    Return
+}
+function f1 name="waits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Await v1
+    Return v0
+}
+function f2 name="settlesNothing" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}

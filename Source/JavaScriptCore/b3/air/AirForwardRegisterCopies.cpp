@@ -11,6 +11,7 @@
 #include "AirCFG.h"
 #include "AirCode.h"
 #include "AirInstInlines.h"
+#include "AirOpcodeUtils.h"
 #include "AirPhaseScope.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
@@ -89,25 +90,6 @@ private:
     uint64_t m_zeroExtended { 0 };
 };
 
-bool mayZeroExtend(Opcode opcode)
-{
-    switch (opcode) {
-    case Move32:
-    case Load8:
-    case Load16:
-    case ZeroExtend8To32:
-    case ZeroExtend16To32:
-    case And32:
-    case Compare32:
-    case Compare64:
-    case Test32:
-    case Test64:
-        return true;
-    default:
-        return false;
-    }
-}
-
 } // anonymous namespace
 
 void forwardRegisterCopies(Code& code)
@@ -157,7 +139,7 @@ void forwardRegisterCopies(Code& code)
                 continue;
             }
             bool isPatch = inst.kind.opcode == Patch;
-            if (!isPatch && !mayZeroExtend(inst.kind.opcode)) {
+            if (!isPatch && !mayZeroExtendWord(inst.kind.opcode)) {
                 uint64_t named = 0;
                 inst.forEachTmpFast([&](Tmp& tmp) {
                     named |= bit(tmp.reg());
@@ -191,7 +173,8 @@ void forwardRegisterCopies(Code& code)
                 });
                 uint64_t kept = 0;
                 uint64_t fixed = 0;
-                if (auto* patchpoint = inst.origin ? inst.origin->as<PatchpointValue>() : nullptr) {
+                bool isLoweredFromOrigin = inst.origin && !inst.clobbersAtBlockEntry();
+                if (auto* patchpoint = isLoweredFromOrigin ? inst.origin->as<PatchpointValue>() : nullptr) {
                     unsigned first = 1 + code.proc().resultCount(patchpoint->type());
                     for (unsigned child = 0; child < patchpoint->numChildren(); ++child) {
                         Arg& arg = inst.args()[first + child];
@@ -229,7 +212,7 @@ void forwardRegisterCopies(Code& code)
                     tmp = Tmp(source);
                     didChange = true;
                 });
-                if (didChange && !inst.isValidForm())
+                if (didChange && !inst.isValidForm(code.targetFeatures()))
                     inst = original;
             }
             copies.forget(defined);

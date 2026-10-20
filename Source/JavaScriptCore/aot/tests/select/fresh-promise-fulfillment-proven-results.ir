@@ -1,0 +1,121 @@
+# An async function that ends before it suspends stores a result without the test for a thenable where the type of the result proves that a lookup of `then` finds nothing
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: FreshPromiseFulfillmentGroups = 9
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Closed" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L0] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+layout L1 name="Open" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L1] impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape]}
+layout L2 name="HoldsThen" fields=[{key="then" declared={type=undefined|f16} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L2] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType, LoseShape] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+function f0 name="closedRecord" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="closedRecord"
+# CHECK-NOT: IsNotThenable
+# CHECK: FulfillFreshPromise v1, v0
+# CHECK-NOT: ReturnAsyncResult
+function f1 name="closedRecord" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}
+function f2 name="closedRecordWithOrWithoutPromise" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: undefined|Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="closedRecordWithOrWithoutPromise"
+# CHECK-NOT: IsNotThenable
+# CHECK: [[isUndefined2]]: boolean = TypeTest v1 testedType=undefined
+# CHECK-NEXT: Branch [[isUndefined2]] -> taken [[without2]]({{*}}), notTaken [[with2]](| 0)
+# CHECK: [[with2]]([[promise2]]: Promise):
+# CHECK-NEXT: FulfillFreshPromise [[promise2]], v0
+# CHECK-NOT: ReturnAsyncResult
+function f3 name="closedRecordWithOrWithoutPromise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1}
+function f4 name="openRecord" role=CoroutineBody flags=[IsAsync] parameters=[{type=L1}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1} {
+  b0(v0: L1, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f4 name="openRecord"
+# CHECK: [[notThenable4]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable4]] -> taken [[fast4]](| 0), notTaken [[slow4]]()
+# CHECK: [[fast4]]([[guard4]]: guard):
+# CHECK-NEXT: FulfillFreshPromise v1, v0, [[guard4]]
+# CHECK: = ReturnAsyncResult v1, v0
+function f5 name="openRecord" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L1}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f4 promiseType=Promise promiseParameter=1}
+function f6 name="holderOfThen" role=CoroutineBody flags=[IsAsync] parameters=[{type=L2}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=1} {
+  b0(v0: L2, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f6 name="holderOfThen"
+# CHECK: [[notThenable6]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable6]] -> taken [[fast6]](| 0), notTaken [[slow6]]()
+# CHECK: [[fast6]]([[guard6]]: guard):
+# CHECK-NEXT: FulfillFreshPromise v1, v0, [[guard6]]
+# CHECK: = ReturnAsyncResult v1, v0
+function f7 name="holderOfThen" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L2}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f7 body=f6 promiseType=Promise promiseParameter=1}
+function f8 name="pristineArray" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f9 body=f8 promiseType=Promise promiseParameter=1} {
+  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f8 name="pristineArray"
+# CHECK-NOT: IsNotThenable
+# CHECK: FulfillFreshPromise v1, v0
+# CHECK-NOT: ReturnAsyncResult
+function f9 name="pristineArray" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f9 body=f8 promiseType=Promise promiseParameter=1}
+function f10 name="arrayThatMayHaveNames" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, proven>}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f10 promiseType=Promise promiseParameter=1} {
+  b0(v0: Array<number, proven>, v1: Promise):
+    v2 = ReturnAsyncResult v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f10 name="arrayThatMayHaveNames"
+# CHECK: [[notThenable10]]: boolean = IsNotThenable v0
+# CHECK-NEXT: Branch [[notThenable10]] -> taken [[fast10]](| 0), notTaken [[slow10]]()
+# CHECK: [[fast10]]([[guard10]]: guard):
+# CHECK-NEXT: FulfillFreshPromise v1, v0, [[guard10]]
+# CHECK: = ReturnAsyncResult v1, v0
+function f11 name="arrayThatMayHaveNames" role=CoroutineRamp flags=[IsAsync] parameters=[{type=Array<number, proven>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f10 promiseType=Promise promiseParameter=1}
+function f12 name="closedRecordInRareCode" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1} {
+  b0(v0: L0, v1: Promise):
+    v2 = PropGet v0 key="done"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = ReturnAsyncResult v1, v0
+    Return v4
+  b2():
+    v5 = Undefined
+    v6 = ReturnAsyncResult v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f12 name="closedRecordInRareCode"
+# CHECK-NOT: IsNotThenable
+# CHECK: frequency=Rare:
+# CHECK-NEXT: FulfillFreshPromise v1, v0
+# CHECK-NOT: ReturnAsyncResult
+function f13 name="closedRecordInRareCode" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f13 body=f12 promiseType=Promise promiseParameter=1}
+function f14 name="openRecordInRareCode" role=CoroutineBody flags=[IsAsync] parameters=[{type=L1}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f14 promiseType=Promise promiseParameter=1} {
+  b0(v0: L1, v1: Promise):
+    v2 = PropGet v0 key="done"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = ReturnAsyncResult v1, v0
+    Return v4
+  b2():
+    v5 = Undefined
+    v6 = ReturnAsyncResult v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f14 name="openRecordInRareCode"
+# CHECK-NOT: IsNotThenable
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = ReturnAsyncResult v1, v0
+function f15 name="openRecordInRareCode" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L1}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f14 promiseType=Promise promiseParameter=1}
+function f16 name="then" kind=Method parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Undefined
+    Return v1
+}

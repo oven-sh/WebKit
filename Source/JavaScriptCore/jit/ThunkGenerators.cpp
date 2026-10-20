@@ -459,18 +459,6 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> nativeForGenerator(VM& vm, ThunkFun
         break;
     }
 
-#if ASSERT_ENABLED
-    {
-        jit.subPtr(CCallHelpers::TrustedImm32(stackBytesClearedForCallSlowPath), CCallHelpers::stackPointerRegister);
-        jit.move(CCallHelpers::stackPointerRegister, GPRInfo::regT3);
-        jit.addPtr(CCallHelpers::TrustedImm32(stackBytesClearedForCallSlowPath), GPRInfo::regT3, GPRInfo::regT4);
-        auto loop = jit.label();
-        jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::Address(GPRInfo::regT3));
-        jit.addPtr(CCallHelpers::TrustedImm32(sizeof(Register)), GPRInfo::regT3);
-        jit.branchPtr(CCallHelpers::Below, GPRInfo::regT3, GPRInfo::regT4).linkTo(loop, &jit);
-        jit.addPtr(CCallHelpers::TrustedImm32(stackBytesClearedForCallSlowPath), CCallHelpers::stackPointerRegister);
-    }
-#endif
     jit.emitPutToCallFrameHeader(nullptr, CallFrameSlot::codeBlock);
     jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 

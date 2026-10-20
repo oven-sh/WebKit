@@ -1,0 +1,37 @@
+# A split on the callee has at most as many arms as the limit: the first methods by id get an arm, the others take the generic call
+# FORM: Prepared
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: pass ResolveBuiltins
+# LOSS: MaxDispatchCases x1 f0 v3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoMethods" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+}
+# CHECK-LABEL: function f0 name="twoMethods"
+# CHECK: [[isMapGet]]: boolean = TypeTest v2 testedType=builtin(MapPrototypeGet)
+# CHECK-NEXT: Branch [[isMapGet]] -> taken [[arm]](| 0), notTaken [[rest]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[arm]]([[mapGet]]: builtin(MapPrototypeGet)):
+# CHECK-NEXT: [[map]]: anything ~ Map = Predict v0 predicted=Map
+# CHECK-NEXT: anything = Call [[mapGet]], [[map]], v1 calleeKey="get"
+# CHECK-NOT: TypeTest
+# CHECK: [[rest]]([[otherGet]]: anything) frequency=Unlikely:
+# CHECK-NEXT: anything = Call [[otherGet]], v0, v1 calleeKey="get"
+# CHECK-NOT: TypeTest
+
+function f1 name="oneMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# CHECK-LABEL: function f1 name="oneMethod"
+# CHECK: [[isPush]]: boolean = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK: anything ~ Array = Predict v0 predicted=Array
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call {{*}}, v0, v1 calleeKey="push"

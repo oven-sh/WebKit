@@ -1,0 +1,178 @@
+# A method that the constructor calls on this is composed from the links of the solve: its stores count, and this leaks only where the method leaks it. Where the receiver may be another object or another method may run, its stores prove nothing
+# RUN(QUIET): flow-construction
+# RUN(LOUD): flow-construction
+# RUN(QUIETFIELDS): flow-solve nodes
+# RUN(LOUDFIELDS): flow-solve nodes
+# RUN(OTHER): flow-construction events constructors layouts
+# RUN(OTHERFIELDS): flow-solve nodes
+# RUN(SHAPE): flow-construction
+# RUN(CIRCLE): flow-construction
+# RUN(CIRCLEFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="e" declared={type=number} flags=[IsRequired]}, {key="f" declared={type=number} flags=[IsRequired]}, {key="g" declared={type=number} flags=[IsRequired]}, {key="h" declared={type=number} flags=[IsRequired]}, {key="i" declared={type=number} flags=[IsRequired]}, {key="j" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Announced" constructor=f3 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="MaybeOther" constructor=f5 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="Shape" constructor=f6 fields=[{key="id" declared={type=number} flags=[IsRequired]}]
+layout L4 kind=Instance name="Circle" predictedBase=L3 constructor=f8 fields=[{key="r" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+variable g0 name="Circle" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="reset"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="reset"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f2
+    DefineMethod v13, v14 layout=L2 key="reset"
+    v16 = FinishClass v13 layout=L2
+    v17 = Undefined
+    v18 = Construct v16, -, v17
+    v19 = Construct v16, -, v18
+    v20 = NewClosure function=f6
+    v21 = NewClass v20 layout=L3
+    v22 = NewClosure function=f7
+    DefineMethod v21, v22 layout=L3 key="init"
+    v24 = FinishClass v21 layout=L3
+    v25 = NewClosure function=f8
+    v26 = ResolveHeritage v24
+    v27 = NewClass v25, v24, v26 layout=L4
+    v28 = NewClosure function=f9
+    DefineMethod v27, v28 layout=L4 key="init"
+    v30 = FinishClass v27 layout=L4
+    PutModuleVariable v30 variable=g0
+    v32 = Construct v24
+    v33 = Construct v30
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = PropGet v2 key="reset"
+    v4 = Call v3, v2
+    v5 = Integer integer=3
+    PropSet v2, v5 key="c"
+    PropSet v2, v5 key="d"
+    PropSet v2, v5 key="e"
+    PropSet v2, v5 key="f"
+    PropSet v2, v5 key="g"
+    PropSet v2, v5 key="h"
+    PropSet v2, v5 key="i"
+    PropSet v2, v5 key="j"
+    Return v2
+}
+function f2 name="reset" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Integer integer=2
+    PropSet v0, v3 key="b"
+    Return
+}
+# QUIET: construction f1@i{{*}} root v2: DoesNotLeak before-leak "a" "b" "c" "d" "e" "f" "g" "h" "i" "j" at-exit "a" "b" "c" "d" "e" "f" "g" "h" "i" "j" read-early initial-order "a" "b" "c" "d" "e" "f" "g" "h" "i" "j" stores OnlyInitialOrder reads-from-prototype v3
+# QUIET-NOT: construction f1@i{{*}}: Unknown
+# QUIET: layout L0: DoesNotLeak OnlyAtConstruction set [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# QUIETFIELDS: DeclaredPart(L0#{{*}}, 0) = {1}
+# QUIETFIELDS: DeclaredPart(L0#{{*}}, 1) = {2}
+# QUIETFIELDS: DeclaredPart(L0#{{*}}, 2) = {3}
+# QUIETFIELDS: DeclaredPart(L0#{{*}}, 9) = {3}
+function f3 name="Announced" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = PropGet v2 key="reset"
+    v4 = Call v3, v2
+    v5 = Integer integer=3
+    PropSet v2, v5 key="c"
+    Return v2
+}
+function f4 name="reset" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="a"
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v0
+    v6 = Integer integer=2
+    PropSet v0, v6 key="b"
+    Return
+}
+# LOUD: construction f3@i{{*}} root v2: Unknown at f4:v5 before-leak "a" at-exit "a" "b" "c" read-early initial-order
+# LOUD-NOT: construction f3@i{{*}}: DoesNotLeak
+# LOUD: layout L1: Unknown
+# LOUDFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# LOUDFIELDS: DeclaredPart(L1#{{*}}, 1) = {undefined|2}
+# LOUDFIELDS: DeclaredPart(L1#{{*}}, 2) = {undefined|3}
+function f5 name="MaybeOther" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v3)
+  b3(v5):
+    v6 = PropGet v5 key="reset"
+    v7 = Call v6, v5
+    v8 = Integer integer=3
+    PropSet v3, v8 key="c"
+    Return v3
+}
+# OTHER: events f5 root v3 Allocation Tracked
+# OTHER-NEXT: b3:0 Read "reset" v6
+# OTHER-NEXT: b3:1 Call v7 operand 1
+# OTHER-NEXT: b3:3 Store exact "c" v9
+# OTHER-NEXT: b3:4 Exit
+# OTHER: construction f5@i{{*}} root v3: DoesNotLeak before-leak "c" at-exit "c" read-early "reset"
+# OTHER-NOT: construction f5@i{{*}} "a"
+# OTHER: layout L2: DoesNotLeak {{*}} set [2] orders
+# OTHERFIELDS: DeclaredPart(L2#{{*}}, 0) = {undefined|1}
+# OTHERFIELDS: DeclaredPart(L2#{{*}}, 1) = {undefined|2}
+# OTHERFIELDS: DeclaredPart(L2#{{*}}, 2) = {3}
+function f6 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    v3 = PropGet v2 key="init"
+    v4 = Call v3, v2
+    v5 = Integer integer=1
+    PropSet v2, v5 key="id"
+    Return v2
+}
+function f7 name="init" kind=Method results=[{type=anything}] {
+  b0():
+    Return
+}
+# SHAPE: construction f6@i{{*}} root v2: DoesNotLeak before-leak "id" at-exit "id" read-early initial-order
+# SHAPE-NOT: construction f6@i{{*}}: Unknown
+# SHAPE: layout L3: DoesNotLeak {{*}} set [0] orders
+function f8 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L4
+    Return v3
+}
+function f9 name="init" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="r"
+    Return
+}
+# CIRCLE: construction f8@i{{*}} root v3: DoesNotLeak before-leak "id" at-exit "id" read-early initial-order
+# CIRCLE-NOT: construction f8@i{{*}}: Unknown
+# CIRCLE: layout L4: DoesNotLeak {{*}} set [] orders
+# CIRCLEFIELDS: DeclaredPart(L4#{{*}}, 0) = {undefined|2}

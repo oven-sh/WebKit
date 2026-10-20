@@ -1,0 +1,266 @@
+# A name under which this holds itself, or a closure over itself, leaks this where it is read after the store: in the same function, in a helper, or by a setter that takes the stored value
+# RUN(HELPER): flow-construction events constructors layouts
+# RUN(HELPERFIELDS): flow-solve nodes
+# RUN(OTHERNAME): flow-construction events constructors layouts
+# RUN(OTHERNAMEFIELDS): flow-solve nodes
+# RUN(SETTER): flow-construction events constructors layouts
+# RUN(ITSELF): flow-construction events constructors layouts
+# RUN(BRANCH): flow-construction events constructors layouts
+# RUN(EARLY): flow-construction events constructors layouts
+# RUN(PASSED): flow-construction events constructors layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="ReadByHelper" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="HelperReadsOtherName" constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="TakenBySetter" constructor=f9 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Instance name="HoldsItself" constructor=f12 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="self" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Instance name="StoredInOneArm" constructor=f13 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything}}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L5 kind=Instance name="ReadBeforeStore" constructor=f15 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L6 kind=Instance name="StoredAndPassedOn" constructor=f17 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 key="setup"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f5
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f8
+    DefineMethod v7, v8 layout=L1 key="setup"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f9
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f11
+    DefineMethod v13, v14 layout=L2 methodKind=Setter key="handler"
+    v16 = FinishClass v13 layout=L2
+    v17 = Construct v16
+    v18 = NewClosure function=f12
+    v19 = NewClass v18 layout=L3
+    v20 = FinishClass v19 layout=L3
+    v21 = Construct v20
+    v22 = NewClosure function=f13
+    v23 = NewClass v22 layout=L4
+    v24 = FinishClass v23 layout=L4
+    v25 = Boolean boolean=true
+    v26 = Construct v24, -, v25
+    v27 = NewClosure function=f15
+    v28 = NewClass v27 layout=L5
+    v29 = FinishClass v28 layout=L5
+    v30 = Construct v29
+    v31 = NewClosure function=f17
+    v32 = NewClass v31 layout=L6
+    v33 = FinishClass v32 layout=L6
+    v34 = Construct v33
+    Return
+}
+function f1 name="ReadByHelper" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = CallDirect v2 function=f2
+    v4 = PropGet v2 key="setup"
+    v5 = Call v4, v2 calleeKey="setup"
+    v6 = Integer integer=2
+    PropSet v2, v6 key="y"
+    Return v2
+}
+function f2 name="initializeReadByHelper" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="x"
+    v3 = NewClosure v0 function=f3
+    PropDefine v0, v3 key="handler"
+    Return
+}
+function f3 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f4 name="setup" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="handler"
+    v2 = Call v1, v0 calleeKey="handler"
+    Return
+}
+# HELPER: events f2 root v0 EntryParameter Tracked
+# HELPER-NEXT: b0:1 Store exact "x" v2
+# HELPER-NEXT: b0:3 Store exact "handler" v4 self-reference
+# HELPER-NEXT: b0:4 Exit
+# HELPER: construction f1@i{{*}} root v2: Unknown at f1:v5 before-leak "x" "handler" at-exit "x" "handler" "y" read-early initial-order
+# HELPER-NOT: construction f1@i{{*}}: DoesNotLeak
+# HELPER: layout L0: Unknown at f1:v5 Unknown set [0, 1] orders
+# HELPERFIELDS: DeclaredPart(L0#{{*}}, 0) = {1}
+# HELPERFIELDS: DeclaredPart(L0#{{*}}, 2) = {undefined|2}
+function f5 name="HelperReadsOtherName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = CallDirect v2 function=f6
+    v4 = PropGet v2 key="setup"
+    v5 = Call v4, v2 calleeKey="setup"
+    v6 = Integer integer=2
+    PropSet v2, v6 key="y"
+    Return v2
+}
+function f6 name="initializeHelperReadsOtherName" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="x"
+    v3 = NewClosure v0 function=f7
+    PropDefine v0, v3 key="handler"
+    v5 = PropGet v0 key="x"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="format" [isFreeName]
+    v8 = Call v7, -, v5
+    Return
+}
+function f7 name="handler" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f8 name="setup" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# OTHERNAME: events f6 root v0 EntryParameter Tracked
+# OTHERNAME-NEXT: b0:1 Store exact "x" v2
+# OTHERNAME-NEXT: b0:3 Store exact "handler" v4 self-reference
+# OTHERNAME-NEXT: b0:4 Read exact "x" v5
+# OTHERNAME-NEXT: b0:8 Exit
+# OTHERNAME: construction f5@i{{*}} root v2: DoesNotLeak before-leak "x" "handler" "y" at-exit "x" "handler" "y" read-early initial-order "x" "handler" "y" stores OnlyInitialOrder self-references "handler"
+# OTHERNAME-NOT: construction f5@i{{*}}: Unknown
+# OTHERNAME: layout L1: DoesNotLeak OnlyAtConstruction set [0, 1, 2] orders [0, 1, 2]
+# OTHERNAMEFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# OTHERNAMEFIELDS: DeclaredPart(L1#{{*}}, 2) = {2}
+function f9 name="TakenBySetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = NewClosure v2 function=f10
+    PropSet v2, v5 key="handler"
+    v7 = Integer integer=2
+    PropSet v2, v7 key="y"
+    Return v2
+}
+function f10 name="handler" kind=Arrow captures=[{type=L2}] results=[{type=anything}] {
+  b0(v0: object ? L2):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f11 name="handler" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1
+    Return
+}
+# SETTER: events f9 root v2 Allocation Tracked
+# SETTER-NEXT: b0:3 Store exact "x" v4
+# SETTER-NEXT: b0:5 Store exact "handler" v6 self-reference
+# SETTER-NEXT: b0:7 Store exact "y" v8
+# SETTER-NEXT: b0:8 Exit
+# SETTER: construction f9@i{{*}} root v2: Unknown at f9:v6 before-leak "x" at-exit "x" "y"
+# SETTER-NOT: construction f9@i{{*}}: DoesNotLeak
+# SETTER: layout L2: Unknown at f9:v6 Unknown set [0] orders
+function f12 name="HoldsItself" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    PropSet v2, v2 key="self"
+    v6 = Integer integer=2
+    PropSet v2, v6 key="y"
+    Return v2
+}
+# ITSELF: events f12 root v2 Allocation Tracked
+# ITSELF-NEXT: b0:3 Store exact "x" v4
+# ITSELF-NEXT: b0:4 Store exact "self" v5 self-reference
+# ITSELF-NEXT: b0:6 Store exact "y" v7
+# ITSELF-NEXT: b0:7 Exit
+# ITSELF: construction f12@i{{*}} root v2: DoesNotLeak before-leak "x" "y" "self" at-exit "x" "y" "self" read-early initial-order "x" "self" "y" stores OnlyInitialOrder self-references "self"
+# ITSELF-NOT: construction f12@i{{*}}: Unknown
+# ITSELF: layout L3: DoesNotLeak OnlyAtConstruction set [0, 1, 2] orders [0, 1, 2]
+function f13 name="StoredInOneArm" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L4
+    v3 = NewObject v2 layout=L4
+    v4 = Integer integer=1
+    PropSet v3, v4 key="x"
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = NewClosure v3 function=f14
+    PropSet v3, v7 key="handler"
+    Jump -> next b2()
+  b2():
+    v9 = PropGet v3 key="handler"
+    v10 = Integer integer=2
+    PropSet v3, v10 key="y"
+    Return v3
+}
+function f14 name="handler" kind=Arrow captures=[{type=L4}] results=[{type=anything}] {
+  b0(v0: object ? L4):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# BRANCH: construction f13@i{{*}} root v3: Unknown at f13:v9 before-leak "x" at-exit "x" "y" read-early "handler"
+# BRANCH-NOT: construction f13@i{{*}}: DoesNotLeak
+# BRANCH: layout L4: Unknown at f13:v9 Unknown set [0] orders
+function f15 name="ReadBeforeStore" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = PropGet v2 key="handler"
+    v6 = NewClosure v2 function=f16
+    PropSet v2, v6 key="handler"
+    v8 = Integer integer=2
+    PropSet v2, v8 key="y"
+    Return v2
+}
+function f16 name="handler" kind=Arrow captures=[{type=L5}] results=[{type=anything}] {
+  b0(v0: object ? L5):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# EARLY: construction f15@i{{*}} root v2: DoesNotLeak before-leak "x" "handler" "y" at-exit "x" "handler" "y" read-early initial-order{{*}} reads-from-prototype v5
+# EARLY-NOT: construction f15@i{{*}}: Unknown
+# EARLY: layout L5: DoesNotLeak {{*}} set [0, 1, 2] orders
+function f17 name="StoredAndPassedOn" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = NewClosure v2 function=f18
+    PropSet v2, v5 key="handler"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="subscribe" [isFreeName]
+    v9 = Call v8, -, v5
+    v10 = Integer integer=2
+    PropSet v2, v10 key="y"
+    Return v2
+}
+function f18 name="handler" kind=Arrow captures=[{type=L6}] results=[{type=anything}] {
+  b0(v0: object ? L6):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+# PASSED: events f17 root v2 Allocation Tracked
+# PASSED-NEXT: b0:3 Store exact "x" v4
+# PASSED-NEXT: b0:5 Store exact "handler" v6 self-reference
+# PASSED-NEXT: b0:8 Leak v9
+# PASSED-NEXT: b0:10 Store exact "y" v11
+# PASSED-NEXT: b0:11 Exit
+# PASSED: construction f17@i{{*}} root v2: Unknown at f17:v9 before-leak "x" "handler" at-exit "x" "handler" "y"
+# PASSED-NOT: construction f17@i{{*}}: DoesNotLeak
+# PASSED: layout L6: Unknown at f17:v9 Unknown set [0, 1] orders

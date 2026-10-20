@@ -1,0 +1,41 @@
+# In fast code a mapped argument beyond the capacity and the barrier of a store call only in rare code, so a leaf that reads or stores mapped arguments sets no frame up at its entry
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
+# CHECK: f1: size={{*}} frame={{*}}@[[setup]]-
+# CHECK: f2: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: f3: size=
+# CHECK-NOT: frame=none
+# CHECK-NOT: @[[setup]]-
+# CHECK: f5: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="calls" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = Call v0
+    Return v1
+}
+function f2 name="read" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = GetMappedArgument v0 index=3
+    Return v1
+}
+function f3 name="store" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    SetMappedArgument v0, v1 index=1
+    Return
+}

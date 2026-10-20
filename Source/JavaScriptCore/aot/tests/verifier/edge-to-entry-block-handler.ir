@@ -1,0 +1,22 @@
+# block 0 is the handler of no block
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: EdgeToEntryBlock 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0
+    Return
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return
+}
+function f1 name="bad" results=[{type=undefined}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b0():
+    Return
+}

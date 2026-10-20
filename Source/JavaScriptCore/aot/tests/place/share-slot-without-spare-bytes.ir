@@ -1,0 +1,54 @@
+# A shared representation is wider than a field's own only where the cell has bytes to spare. The fields of Full take all 16 bytes behind the header, so its "small" stays as narrow as it is and the access has two groups
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts accesses
+# STATISTIC: SharedSlots = 1
+# STATISTIC: SharesRefused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Full" fields=[{key="wide" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="middle" declared={type=number} flags=[IsRequired]}, {key="small" declared={type=number} flags=[IsRequired]}, {key="other" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Roomy" fields=[{key="small" declared={type=number} flags=[IsRequired]}, {key="narrow" declared={type=number} flags=[IsRequired]}]
+layout L2 name="AlsoRoomy" fields=[{key="narrow" declared={type=number} flags=[IsRequired]}]
+variable g0 name="fullOrRoomy" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="roomy" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Integer integer=255
+    v5 = Integer integer=65535
+    v6 = BitAnd v2, v4
+    v7 = BitAnd v2, v5
+    v8 = NewObject -, v2, v3, v7, v6, v6 layout=L0 fields=[0, 1, 2, 3, 4]
+    v9 = FinishObject v8
+    v10 = NewObject -, v7, v6 layout=L1 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v7 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    PutModuleVariable v9 variable=g0
+    PutModuleVariable v11 variable=g0
+    PutModuleVariable v11 variable=g1
+    PutModuleVariable v13 variable=g1
+    v18 = GetModuleVariable variable=g0
+    v19 = PropGet v18 key="small"
+    v20 = GetModuleVariable variable=g1
+    v21 = PropGet v20 key="narrow"
+    v22 = PropGet v9 key="wide"
+    v23 = PropGet v9 key="text"
+    v24 = PropGet v9 key="middle"
+    v25 = PropGet v9 key="other"
+    Return
+}
+# CHECK: L0 CompiledObject size=32
+# CHECK: "small" Uint8 @
+# CHECK: L1 CompiledObject size=32
+# CHECK-NEXT: "small" Uint16 @
+# CHECK-NEXT: "narrow" Uint16 @
+# CHECK: "small" {L0 L1} read
+# CHECK-NEXT: 2 groups: {L0} Uint8 @{{*}}, {L1} Uint16 @
+# CHECK: "narrow" {L1 L2} read
+# CHECK-NEXT: one location Uint16 @

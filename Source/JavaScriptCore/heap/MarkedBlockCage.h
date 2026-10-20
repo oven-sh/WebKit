@@ -7,90 +7,97 @@
 
 #include "JSCConfig.h"
 #include <atomic>
+#include <bit>
+#include <expected>
+#include <limits>
+#include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC {
 
+class HeapCell;
 class JSCell;
-class MarkedBlockCageManager;
+class ReservedRangeHeap;
 
 class MarkedBlockCage {
     WTF_MAKE_NONCOPYABLE(MarkedBlockCage);
 public:
-    static void initialize();
+    enum class Error : uint8_t { Disabled, InvalidSize, ReservationFailed, BlocksOutsideCage };
+    [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> initialize();
+    [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> require();
 
-    MarkedBlockCage() = default;
+    MarkedBlockCage();
     ~MarkedBlockCage();
 
     static bool isEnabled() { return g_jscConfig.markedBlockCageSize; }
-    static bool contains(const void* pointer) { return std::bit_cast<uintptr_t>(pointer) - base() < g_jscConfig.markedBlockCageSize; }
+    static bool isRequired() { return s_isRequired.load(std::memory_order_relaxed); }
+    static void didAllocateOutside() { s_hasAllocationsOutside.store(true, std::memory_order_relaxed); }
 
     static constexpr unsigned shift = 3;
     static constexpr uint64_t maxSize = 1ull << (32 + shift);
     static constexpr uint32_t minIndex = 1 << 21;
-    static uintptr_t base()
-    {
-#if OS(DARWIN)
-        if (uintptr_t base = s_singleCageBase.load(std::memory_order_relaxed)) [[likely]]
-            return base;
-        return currentBaseSlow();
-#else
-        return s_currentBase;
-#endif
-    }
-    static uintptr_t currentBase() { return s_currentBase; }
-    static uint32_t encode(const JSCell* cell)
+    static uintptr_t baseOf(const void* pointerInCage) { return std::bit_cast<uintptr_t>(pointerInCage) & ~static_cast<uintptr_t>(maxSize - 1); }
+    static uint32_t encode(uintptr_t base, const void* cell)
     {
         uintptr_t bits = std::bit_cast<uintptr_t>(cell);
-        RELEASE_ASSERT(contains(cell) && !(bits & ((1 << shift) - 1)), bits);
+        RELEASE_ASSERT(bits - base < maxSize && !(bits & ((1 << shift) - 1)), bits, base);
         return static_cast<uint32_t>(bits >> shift);
     }
-    static JSCell* decode(uint32_t index) { return std::bit_cast<JSCell*>(base() + (static_cast<uintptr_t>(index) << shift)); }
+    static JSCell* decode(uintptr_t base, uint32_t index) { return std::bit_cast<JSCell*>(base + (static_cast<uintptr_t>(index) << shift)); }
 
-    static void require();
-    static bool isRequired() { return s_isRequired.load(std::memory_order_relaxed); }
-    static void didAllocateBlockOutside() { s_hasBlocksOutside.store(true, std::memory_order_relaxed); }
+    uintptr_t base() const { return m_base; }
+    size_t size() const { return m_size; }
+    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_base < m_size; }
 
-    static MarkedBlockCage* current() { return s_current; }
-    static void setCurrent(MarkedBlockCage* cage, uintptr_t base)
-    {
-        s_current = cage;
-        s_currentBase = base;
-    }
-    void makeCurrent();
+    void* tryAllocateAligned(size_t alignment, size_t);
+    void* tryAllocate(size_t);
+    void* tryReallocate(void*, size_t);
+    void free(void*);
 
-    void* tryAllocateBlock();
-    void freeBlock(void*);
-    bool owns(const void*) const;
-    bool isReserved() const { return m_manager.load(std::memory_order_acquire); }
     struct Indices {
         uintptr_t base { 0 };
         uint32_t first { 0 };
         uint32_t count { 0 };
     };
     Indices usedIndices() const;
-    static void decommitFreeBlocks();
+
     static void logExhaustion();
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
 
 private:
-    std::atomic<MarkedBlockCageManager*> m_manager { nullptr };
-    bool m_hasClaimedFirstManager { false };
+    void didAllocate(const void*, size_t);
 
-    static constinit thread_local MarkedBlockCage* s_current;
-    static constinit thread_local uintptr_t s_currentBase;
-#if OS(DARWIN)
-#if CPU(ARM64)
-    JS_EXPORT_PRIVATE static uintptr_t currentBaseSlow() __attribute__((preserve_most));
-#else
-    JS_EXPORT_PRIVATE static uintptr_t currentBaseSlow();
-#endif
-    JS_EXPORT_PRIVATE static std::atomic<uintptr_t> s_singleCageBase;
-#endif
+    ReservedRangeHeap* m_range { nullptr };
+    uintptr_t m_base { 0 };
+    size_t m_size { 0 };
+    bool m_sharesRange { false };
+    std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
+    std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };
+
     static std::atomic<bool> s_isRequired;
-    static std::atomic<bool> s_hasBlocksOutside;
+    static std::atomic<bool> s_hasAllocationsOutside;
     static std::atomic<ExhaustionHandler> s_exhaustionHandler;
 };
+
+ALWAYS_INLINE uintptr_t cageBaseOf(const HeapCell* holder)
+{
+    return MarkedBlockCage::baseOf(holder);
+}
+
+template<typename Visitor>
+ALWAYS_INLINE void visitNarrowReference(Visitor& visitor, const HeapCell* holder, uint32_t index)
+{
+    if (index >= MarkedBlockCage::minIndex)
+        visitor.appendUnbarriered(MarkedBlockCage::decode(cageBaseOf(holder), index));
+}
+
+template<typename Visitor>
+ALWAYS_INLINE void markNarrowAuxiliary(Visitor& visitor, const HeapCell* holder, uint32_t index)
+{
+    if (index >= MarkedBlockCage::minIndex)
+        visitor.markAuxiliary(MarkedBlockCage::decode(cageBaseOf(holder), index));
+}
 
 } // namespace JSC

@@ -27,6 +27,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Limits.h"
 #include <wtf/GraphNodeWorklist.h>
 #include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
@@ -71,17 +72,16 @@ bool replacePredecessor(BasicBlock* block, BasicBlock* from, BasicBlock* to)
     return changed;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 template<typename BasicBlock>
 class LargePredecessorLists {
 public:
     bool add(BasicBlock* block, BasicBlock* predecessor)
     {
-        Places* places = indicesIn(block);
-        if (!places)
+        PredecessorIndices* indices = tryGetIndices(block);
+        if (!indices)
             return addPredecessor(block, predecessor);
         auto& predecessors = block->predecessors();
-        if (!places->add(predecessor, predecessors.size()).isNewEntry)
+        if (!indices->add(predecessor, predecessors.size()).isNewEntry)
             return false;
         predecessors.append(predecessor);
         return true;
@@ -89,19 +89,19 @@ public:
 
     bool remove(BasicBlock* block, BasicBlock* predecessor)
     {
-        Places* places = indicesIn(block);
-        if (!places)
+        PredecessorIndices* indices = tryGetIndices(block);
+        if (!indices)
             return removePredecessor(block, predecessor);
-        auto found = places->find(predecessor);
-        if (found == places->end())
+        auto found = indices->find(predecessor);
+        if (found == indices->end())
             return false;
-        unsigned place = found->value;
-        places->remove(found);
+        unsigned index = found->value;
+        indices->remove(found);
         auto& predecessors = block->predecessors();
         BasicBlock* last = predecessors.takeLast();
-        if (place < predecessors.size()) {
-            predecessors[place] = last;
-            places->set(last, place);
+        if (index < predecessors.size()) {
+            predecessors[index] = last;
+            indices->set(last, index);
         }
         return true;
     }
@@ -114,33 +114,31 @@ public:
     }
 
 private:
-    static constexpr unsigned fewPredecessors = 64;
-    using Places = UncheckedKeyHashMap<BasicBlock*, unsigned>;
-    struct List {
-        Places places;
-        bool hasDuplicateBlock { false };
+    using PredecessorIndices = UncheckedKeyHashMap<BasicBlock*, unsigned>;
+    struct IndexedList {
+        PredecessorIndices indices;
+        bool hasDuplicatePredecessor { false };
     };
 
-    Places* indicesIn(BasicBlock* block)
+    PredecessorIndices* tryGetIndices(BasicBlock* block)
     {
-        bool hasFew = block->numPredecessors() < fewPredecessors;
-        if (hasFew && m_lists.isEmpty())
+        bool isSmall = block->numPredecessors() < Limits::minPredecessorsForIndexedList;
+        if (isSmall && m_lists.isEmpty())
             return nullptr;
         auto found = m_lists.find(block);
         if (found == m_lists.end()) {
-            if (hasFew)
+            if (isSmall)
                 return nullptr;
-            found = m_lists.add(block, List { }).iterator;
+            found = m_lists.add(block, IndexedList { }).iterator;
             auto& predecessors = block->predecessors();
             for (unsigned i = 0; i < predecessors.size(); ++i)
-                found->value.hasDuplicateBlock |= !found->value.places.add(predecessors[i], i).isNewEntry;
+                found->value.hasDuplicatePredecessor |= !found->value.indices.add(predecessors[i], i).isNewEntry;
         }
-        return found->value.hasDuplicateBlock ? nullptr : &found->value.places;
+        return found->value.hasDuplicatePredecessor ? nullptr : &found->value.indices;
     }
 
-    UncheckedKeyHashMap<BasicBlock*, List> m_lists;
+    UncheckedKeyHashMap<BasicBlock*, IndexedList> m_lists;
 };
-#endif
 
 template<typename BasicBlock>
 void updatePredecessorsAfter(BasicBlock* root)
@@ -165,33 +163,6 @@ void clearPredecessors(Vector<std::unique_ptr<BasicBlock>>& blocks)
     }
 }
 
-template<typename BasicBlock>
-void recomputePredecessors(Vector<std::unique_ptr<BasicBlock>>& blocks)
-{
-    clearPredecessors(blocks);
-#if USE(BUN_JSC_ADDITIONS)
-    Vector<uint8_t, 256> isDone(FillWith { }, blocks.size(), static_cast<uint8_t>(0));
-    Vector<BasicBlock*, 16> worklist;
-    worklist.append(blocks[0].get());
-    while (!worklist.isEmpty()) {
-        BasicBlock* block = worklist.takeLast();
-        if (std::exchange(isDone[block->index()], 1))
-            continue;
-        for (BasicBlock* successor : block->successorBlocks()) {
-            auto& predecessors = successor->predecessors();
-            if (!predecessors.isEmpty() && predecessors.last() == block)
-                continue;
-            predecessors.append(block);
-            if (!isDone[successor->index()])
-                worklist.append(successor);
-        }
-    }
-#else
-    updatePredecessorsAfter(blocks[0].get());
-#endif
-}
-
-#if USE(BUN_JSC_ADDITIONS)
 template<typename BasicBlock, typename Functor>
 void recomputePredecessorsFromRoots(Vector<std::unique_ptr<BasicBlock>>& blocks, const Functor& forEachRoot)
 {
@@ -215,7 +186,12 @@ void recomputePredecessorsFromRoots(Vector<std::unique_ptr<BasicBlock>>& blocks,
         }
     });
 }
-#endif
+
+template<typename BasicBlock>
+void recomputePredecessors(Vector<std::unique_ptr<BasicBlock>>& blocks)
+{
+    recomputePredecessorsFromRoots(blocks, [&](auto&& visit) { visit(blocks[0].get()); });
+}
 
 template<typename BasicBlock>
 bool isBlockDead(BasicBlock* block)

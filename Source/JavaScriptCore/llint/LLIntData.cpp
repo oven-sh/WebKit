@@ -26,6 +26,7 @@
 #include "config.h"
 #include "LLIntData.h"
 
+#include "AOTRemovableFeature.h"
 #include "CallLinkInfo.h"
 #include "InPlaceInterpreter.h"
 #include "JSCConfig.h"
@@ -66,11 +67,18 @@ static_assert(sizeof(OpcodeConfig) <= OpcodeConfigSizeToProtect);
 #if !ENABLE(C_LOOP)
 extern "C" void SYSV_ABI llint_entry(void*, void*, void*);
 extern "C" void SYSV_ABI llint_bytecode_entry(void*, void*, void*);
+#if ENABLE(AOT)
+extern "C" void SYSV_ABI llint_aot_entry(void*, void*, void*);
+#endif
 extern "C" void SYSV_ABI llint_webassembly_entry(void*, void*, void*);
 
 static NEVER_INLINE void installBytecodeInterpreter(JSC::Opcode* opcodeMap, JSC::Opcode* opcodeMapWide16, JSC::Opcode* opcodeMapWide32)
 {
     llint_bytecode_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+#if ENABLE(AOT)
+    if (Options::useAOT())
+        llint_aot_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+#endif
     g_opcodeConfig.bytecodePCRangeStart = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintBytecodePCRangeStart);
     g_opcodeConfig.bytecodePCRangeEnd = untagCodePtr<uintptr_t, CFunctionPtrTag>(llintBytecodePCRangeEnd);
 }
@@ -186,8 +194,8 @@ void initialize()
 
     // Step 1: fill in opcodeMaps.
     llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
-    installBytecodeInterpreter(opcodeMap, opcodeMapWide16, opcodeMapWide32);
-    installWebAssemblyInterpreter(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    callRemovable<RemovableFeature::Interpreter, RemovedFeatureStub::ReturnDefault, installBytecodeInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+    callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::ReturnDefault, installWebAssemblyInterpreter>(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 
 #if CPU(ARM64E)
     for (size_t i = 0; i < numOpcodeIDs; ++i) {
@@ -217,7 +225,7 @@ void initialize()
 
 #if ENABLE(WEBASSEMBLY)
     if (Options::useWasm())
-        IPInt::verifyInitialization();
+        callRemovable<RemovableFeature::WebAssembly, RemovedFeatureStub::ReturnDefault, IPInt::verifyInitialization>();
 #endif
 
     static_assert(llint_throw_from_slow_path_trampoline < UINT8_MAX);

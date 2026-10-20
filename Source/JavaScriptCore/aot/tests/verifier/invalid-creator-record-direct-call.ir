@@ -1,0 +1,63 @@
+# a direct call names a function with a body that is no entrypoint, and a call of a group names a group entrypoint
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 6
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="target" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="targetWithoutBody" results=[{type=anything}]
+function f2 name="genericEntrypoint" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    Return
+}
+function f3 name="groupEntrypoint" role=GroupEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 group=[f0] arguments=Registers} {
+  b0(v0: function):
+    Return
+}
+function f4 name="outlinedBodyWithoutBody" role=OutlinedBody results=[{type=anything}]
+function f5 name="groupEntrypointWithoutBody" role=GroupEntrypoint captures=[{type=function}] results=[{type=anything}] creator=Entrypoint{target=f0 group=[f0] arguments=Registers}
+function f6 name="badCallOfGenericEntrypoint" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = CallDirect v0 function=f2
+    Return
+}
+function f7 name="badCallOfGroupEntrypoint" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = CallDirect v0 function=f3
+    Return
+}
+function f8 name="badReturnedCallOfGenericEntrypoint" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = CallDirect v0 function=f2
+    ReturnCall v1
+}
+function f9 name="badCallOfDerivedFunctionWithoutBody" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f4
+    Return
+}
+function f10 name="badGroupCallOfSourceFunction" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = CallGroup v0 function=f13
+    Return
+}
+function f11 name="badGroupCallOfEntrypointWithoutBody" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = CallGroup v0 function=f5
+    Return
+}
+function f12 name="good" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    v1 = CallDirect function=f0
+    v2 = CallDirect function=f1
+    v3 = CallGroup v0 function=f3
+    v4 = CallDirect function=f0
+    ReturnCall v4
+}
+function f13 name="sourceWithCapture" captures=[{type=function}] results=[{type=anything}] {
+  b0(v0: function):
+    Return
+}

@@ -83,6 +83,12 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(GetterSetter* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_getter);
+        visitor.append(thisObject->m_setter);
+    }
+
     JSObject* getter() const LIFETIME_BOUND { return m_getter.get(); }
 
     JSObject* getterConcurrently() const
@@ -114,16 +120,6 @@ public:
         return OBJECT_OFFSETOF(GetterSetter, m_getter);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr uintptr_t getterShortcutIsCode = 1;
-    static constexpr uintptr_t getterReturnsTypedArrayByteLength = 2;
-    static constexpr uintptr_t getterReturnsTypedArrayByteOffset = 4;
-    void setGetterShortcut(uintptr_t what) { m_getterShortcut = what; }
-    static constexpr ptrdiff_t offsetOfGetterShortcut() { return OBJECT_OFFSETOF(GetterSetter, m_getterShortcut); }
-    uintptr_t getterShortcut() const { return m_getterShortcut; }
-    void setGetterCode(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) & getterShortcutIsCode ? 0 : std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }
-#endif
-
     static constexpr ptrdiff_t offsetOfSetter()
     {
         return OBJECT_OFFSETOF(GetterSetter, m_setter);
@@ -141,13 +137,6 @@ public:
 private:
     WriteBarrier<JSObject> m_getter;
     WriteBarrier<JSObject> m_setter;  
-#if USE(BUN_JSC_ADDITIONS)
-    uintptr_t m_getterShortcut { 0 };
-#endif
 };
-
-#if USE(BUN_JSC_ADDITIONS)
-static_assert(sizeof(GetterSetter) <= 32);
-#endif
 
 } // namespace JSC

@@ -1,0 +1,35 @@
+# A loop that is not hot keeps its unlikely paths: the copy would cost more code than it saves time
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=anything}, {type=number}] results=[{type=number|string|bigint}] {
+  b0(v0: anything, v1: number):
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b7()
+  b2():
+    v8 = TypeTest v4 testedType=number
+    Branch v8 -> taken b3(| 0), notTaken b5()
+  b3(v9):
+    v10 = TypeTest v0 testedType=number
+    Branch v10 -> taken b4(| 0), notTaken b5()
+  b4(v11):
+    v12 = Add v9, v11
+    Jump -> next b6(v12)
+  b5() frequency=Unlikely:
+    v13 = Add v4, v0
+    Jump -> next b6(v13)
+  b6(v14):
+    v15 = Increment v5
+    Jump -> next b1(v14, v15)
+  b7():
+    Return v4
+}

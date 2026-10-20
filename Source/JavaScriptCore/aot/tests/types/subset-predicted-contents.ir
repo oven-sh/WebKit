@@ -1,0 +1,19 @@
+# What is predicted of contents restricts nothing: a part is inside another with or without it, and a predicted layout is no proven one
+# RUN: subset
+# CHECK: t0 <= t1: yes overlaps: yes
+# CHECK: t0 <= t4: yes overlaps: yes
+# CHECK: t1 <= t0: yes overlaps: yes
+# CHECK: t1 <= t2: yes overlaps: yes
+# CHECK: t1 <= t3: no overlaps: yes
+# CHECK: t2 <= t1: yes overlaps: yes
+# CHECK: t3 <= t1: yes overlaps: yes
+# CHECK: t3 <= t2: yes overlaps: yes
+# CHECK: t4 <= t0: no overlaps: yes
+# CHECK: t4 <= t5: yes overlaps: yes
+# CHECK: t5 <= t4: yes overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Dog"
+layout L1 name="Cat"
+function f0 name="types" parameters=[{type=Array<object, proven>}, {type=Array<object ~ L0, proven>}, {type=Array<object ~ L1, proven>}, {type=Array<L0, proven>}, {type=Array<object ~ L0>}, {type=Array<object>}] results=[{type=undefined}]

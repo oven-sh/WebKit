@@ -1,0 +1,84 @@
+# A private read on an object that never got the field reads nothing and throws, so its handler catches the error of the run time; on an instance of the class, or on another object the field was defined on, it reads what was defined
+# RUN: flow-solve nodes
+# RUN(CHECK2): flow-solve nodes
+# RUN(CHECK3): flow-solve nodes
+# RUN(CHECK4): flow-solve nodes
+# RUN(CHECK5): flow-solve nodes
+# RUN(CHECK6): flow-solve nodes
+# CHECK: Variable(g1) = {opaque(Error)@host:-.error}
+# CHECK2: Variable(g2) = {L2#1}
+# CHECK3: Variable(g3) = {L2#1}
+# CHECK4: f1, parameter 0) = {L1#0}
+# CHECK5: f2, parameter 0) = {L0#4
+# CHECK6: Property(L1#2, #"x"@L0) = {L2#1}
+# RUN(ALL): flow-solve nodes
+# RUN(ALL2): flow-solve nodes
+# RUN(ALL3): flow-solve nodes
+# ALL-NOT: Variable(g0)
+# ALL2-NOT: f1, v2) =
+# ALL3-NOT: Property(L1#0, #"x"@L0) =
+# RUN(OBJECTS): flow-solve objects
+# RUN(OBJECTS2): flow-solve objects
+# OBJECTS: L1#0 mutations=[] uses=
+# OBJECTS2: L1#2 mutations=[AddProperty] uses=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Box" constructor=f3 fields=[{key=#"x"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}]
+layout L1 name="Unrelated" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Held" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="missingRead" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="missingCaught" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="presentRead" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="definedElsewhereRead" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = CallDirect v2 function=f1
+    v4 = NewObject -, v0 layout=L2 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0 layout=L1 fields=[0]
+    v7 = FinishObject v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L0
+    v10 = FinishClass v9 layout=L0
+    v11 = Construct v10, -, v5
+    v12 = CallDirect v11 function=f2
+    v13 = NewClassToken layout=L0
+    PrivateDefine v7, v13, v5 layout=L0 field=0
+    v15 = PrivateGet v7, v13 layout=L0 field=0
+    PutModuleVariable v15 variable=g3
+    Return
+}
+function f1 name="readsMissing" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClassToken layout=L0
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    PutModuleVariable v2 variable=g0
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    PutModuleVariable v4 variable=g1
+    Return
+}
+function f2 name="readsPresent" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClassToken layout=L0
+    v2 = PrivateGet v0, v1 layout=L0 field=0
+    PutModuleVariable v2 variable=g2
+    Return
+}
+function f3 name="Box" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = NewClassToken layout=L0
+    PrivateDefine v3, v4, v1 layout=L0 field=0
+    Return v3
+}

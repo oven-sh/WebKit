@@ -26,14 +26,16 @@
 #include "config.h"
 #include "HeapProfiler.h"
 
-#include "AOTRuntime.h"
-#include "AOTTypedObject.h"
 #include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
 #include "SubspaceInlines.h"
 #include "SymbolTable.h"
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(AOT)
+#include "AOTHeapHooks.h"
+#endif
 
 namespace JSC {
 
@@ -80,10 +82,8 @@ void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)
     if (analyzer) {
         materializeLazySymbolTablesForHeapAnalysis(m_vm);
 #if ENABLE(AOT)
-        for (AOT::Instance* instance : m_vm.m_aotInstances) {
-            if (instance->typed && instance->typed->realmIsLocked)
-                instance->typed->createNamesForHeapAnalysis(m_vm);
-        }
+        if (m_vm.hasCompiledCode())
+            AOT::HeapHooks::willAnalyzeHeap(m_vm);
 #endif
     }
     m_activeAnalyzer = analyzer;

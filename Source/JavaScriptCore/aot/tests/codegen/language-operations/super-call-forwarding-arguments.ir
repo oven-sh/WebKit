@@ -1,0 +1,32 @@
+# A constructor that hands all of its own arguments to a parent known only at run time goes through the stub that loads them into the registers of the convention. A call that forwards them has its own stub
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: operation operationAOTSuperConstruct x
+# CHECK: stub SuperConstructWithList x1
+# CHECK-NOT: stub CallWithList
+# CHECK-LABEL: f2: size=
+# CHECK: stub CallWithList x1
+# CHECK-NOT: stub SuperConstructWithList
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Derived" constructor=f0 flags=[HasHeritage]
+function f0 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f1 name="forwardsToParent" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    v2 = ConstructSuperForwardVarargs v1, v1 layout=L0 firstArgument=1
+    Return v2
+}
+function f2 name="forwardsToCallee" role=GenericEntrypoint captures=[{type=function}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0} {
+  b0(v0: function):
+    v1 = GetArgument argumentIndex=0
+    v2 = CallForwardVarargs v1, v1 firstArgument=1
+    Return v2
+}

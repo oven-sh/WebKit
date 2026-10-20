@@ -1,0 +1,90 @@
+# A symbol the program creates is a key with a name, one for each creating call, wherever the call stands: a store under it is a store by name. A store under a symbol nobody knows is not
+# RUN: flow-walk f0
+# CHECK: f0@i{{*}} v12 Set {symbol("state")@m0:300}
+# CHECK-NEXT: L2#[[inTry]]: Value own Proven L2#[[inTry]] symbol("state")@m0:300
+# CHECK-NEXT: f0@i{{*}} v19 Set {symbol*}
+# CHECK-NEXT: L3#[[unknown]]: Value own Predicted L3#[[unknown]] *
+# RUN(COMMONJS): flow-walk f1 symbols
+# COMMONJS: f1@i{{*}} v12 Set {symbol("state")@m1:100}
+# COMMONJS-NEXT: L0#[[inCommonJS]]: Value own Proven L0#[[inCommonJS]] symbol("state")@m1:100
+# COMMONJS: symbol("state")@m1:100 f1 v8
+# RUN(INITIALIZER): flow-walk f2 symbols
+# INITIALIZER: f2@i{{*}} v6 Set {symbol@m0:200}
+# INITIALIZER-NEXT: L1#[[inInitializer]]: Value own Proven L1#[[inInitializer]] symbol@m0:200
+# INITIALIZER: symbol@m0:200 f2 v2
+# RUN(TRY): flow-walk symbols
+# TRY: symbol("state")@m0:300 f0 v8
+# RUN(ONCE): flow-walk symbols
+# ONCE-NOT: cycle
+# RUN(OBJECTS): flow-solve objects
+# OBJECTS: L2#{{*}} mutations=[AddProperty] uses=[] events=[Allocated]
+# OBJECTS-NEXT: L3#{{*}} mutations=[AddProperty, StoreAfterCreation] uses=[] events=[Allocated, StoredByUnknownKey, StoredByComputedKey]
+# OBJECTS-NEXT: L0#{{*}} mutations=[AddProperty] uses=[] events=[Allocated]
+# OBJECTS-NEXT: L1#{{*}} mutations=[AddProperty] uses=[] events=[Allocated]
+# RUN(LINKS): flow-links calls builtins
+# LINKS-NOT: Accessor
+# LINKS-NOT: builtin i{{*}} v12
+# LINKS-NOT: builtin i{{*}} v6
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="state.cjs" displayPath="state.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+layout L0 name="InCommonJS"
+layout L1 name="InInitializer"
+layout L2 name="InTry"
+layout L3 name="UnknownSymbol"
+layout L4 kind=Instance name="Holder" constructor=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = RequireModule module=m1
+    v1 = NewClosure function=f3
+    v2 = NewClass v1 layout=L4
+    v3 = CallDirect v2 function=f2
+    v4 = FinishClass v2 layout=L4
+    v5 = Integer integer=1
+    v6 = Builtin builtin=Symbol
+    v7 = String string="state"
+    v8 = Call v6, -, v7 @300
+    v9 = NewObject layout=L2
+    v10 = FinishObject v9
+    v11 = Builtin builtin=MathRandom
+    ElemSet v10, v8, v5 mode=Strict
+    v13 = Call v11
+    v14 = ToString v13
+    v15 = Builtin builtin=SymbolFor
+    v16 = Call v15, -, v14
+    v17 = NewObject layout=L3
+    v18 = FinishObject v17
+    ElemSet v18, v16, v5 mode=Strict
+    Return
+  b1() role=CatchHandler:
+    v20 = CatchValue
+    Return
+}
+function f1 name="state" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Builtin builtin=Symbol
+    v7 = String string="state"
+    v8 = Call v6, -, v7 @100
+    v9 = NewObject layout=L0
+    v10 = FinishObject v9
+    v11 = Integer integer=1
+    ElemSet v10, v8, v11 mode=Strict
+    Return
+}
+function f2 name="initializeHolder" kind=Initializer flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Symbol
+    v2 = Call v1 @200
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = Integer integer=1
+    ElemSet v4, v2, v5 mode=Strict
+    Return
+}
+function f3 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}

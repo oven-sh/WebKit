@@ -1,0 +1,73 @@
+# A constructor that only stores fields and calls a method flow resolves does not leak this; passing this to native code or calling an unresolved method on it does
+# RUN: flow
+# STATISTIC: FlowConstructorsLeakingThis = 2
+# CHECK: layout L0 flow={{*}} thisLeak=DoesNotLeak
+# CHECK: layout L1 flow={
+# CHECK-NOT: thisLeak=
+# CHECK: layout L2 flow={
+# CHECK-NOT: thisLeak=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Tight" constructor=f1 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L1 kind=Instance name="Registered" constructor=f2 fields=[{key="x" declared={type=anything}}]
+layout L2 kind=Instance name="Unresolved" constructor=f3 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 key="setup"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f2
+    v7 = NewClass v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L2
+    v12 = FinishClass v11 layout=L2
+    v13 = PropGet v12 key="prototype"
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="outside" [isFreeName]
+    PropSet v13, v15 key="setup" mode=Strict
+    v17 = Construct v12
+    Return
+}
+function f1 name="Tight" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    v5 = PropGet v2 key="setup"
+    v6 = Call v5, v2
+    Return v2
+}
+function f2 name="Registered" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v2
+    Return v2
+}
+function f3 name="Unresolved" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    v5 = PropGet v2 key="setup"
+    v6 = Call v5, v2
+    Return v2
+}
+function f4 name="setup" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="y" mode=Strict
+    Return
+}

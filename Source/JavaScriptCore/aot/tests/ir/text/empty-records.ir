@@ -1,0 +1,15 @@
+# A nested record whose fields are all zero prints as empty braces in a list, a case with fields prints its braces, and a case without fields has none
+# RUN: round-trip
+# CHECK: expectedresult x0 type=anything validation=[{shape=Primitive{} type=string rules=[Integer, Minimum{}]}]
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: evalscope e0 bindings=[{}, {}]
+# CHECK-NEXT: function f0 name="frames" module=m0
+# CHECK: inlineFrames=[{}, {}]
+# CHECK-NEXT: data d0 root=Array{contents=anything elements=[Boolean{}, Null, Number{}]}
+# CHECK-NEXT: round trip: same
+
+expectedresult x0 type=anything validation=[{shape=Primitive{} type=string rules=[Integer, Minimum{}]}]
+module m0 path="main.js" displayPath="main.js"
+evalscope e0 bindings=[{}, {}]
+function f0 name="frames" results=[{type=undefined}] inlineFrames=[{}, {}]
+data d0 root=Array{contents=anything elements=[Boolean{}, Null, Number{}]}

@@ -1,0 +1,42 @@
+# Three bound functions over one bound function are called by one operation with two, two and one argument. The calls of the inner bound function share one statement with nodes of its own,
+# and a position that one of them leaves out reads undefined in the target. The first position is passed by all three and never reads undefined.
+# RUN: flow-solve nodes
+# CHECK: , f1, parameter 0) = {1}
+# CHECK-NEXT: , f1, parameter 1) = {undefined|1|"x"}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="bind"
+    v2 = Null
+    v3 = Call v1, v0, v2 calleeKey="bind"
+    v4 = PropGet v3 key="bind"
+    v5 = Integer integer=1
+    v6 = String string="x"
+    v7 = Call v4, v3, v2, v5, v5 calleeKey="bind"
+    v8 = Call v4, v3, v2, v5, v6 calleeKey="bind"
+    v9 = Call v4, v3, v2, v5 calleeKey="bind"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="first" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v7)
+  b2():
+    v13 = PropGet v10 key="second" [isFreeName]
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v8)
+  b4():
+    Jump -> next b5(v9)
+  b5(v15):
+    v16 = Call v15
+    Return
+}
+function f1 name="target" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

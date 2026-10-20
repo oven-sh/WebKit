@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "AOTRemovableFeature.h"
 #include "ExecutableInfo.h"
 #include "Lexer.h"
 #include "ModuleScopeData.h"
@@ -1875,13 +1876,6 @@ private:
 
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression createResolveAndUseVariable(TreeBuilder&, const Identifier*, bool isEval, const JSTextPosition&, const JSTokenLocation&);
 
-    template <class TreeBuilder> ALWAYS_INLINE TreeExpression wrapInAuditIfNeeded(TreeBuilder& context, TreeExpression expression, unsigned start)
-    {
-        if (m_auditSites) [[unlikely]]
-            return context.wrapInAuditIfNeeded(*m_auditSites, expression, start, m_lastTokenLocation.endOffset);
-        return expression;
-    }
-
     enum class FunctionDefinitionType { Expression, Declaration, Method };
     template <class TreeBuilder> NEVER_INLINE bool parseFunctionInfo(TreeBuilder&, FunctionNameRequirements, bool nameIsInContainingScope, ConstructorKind, SuperBinding, unsigned functionStart, ParserFunctionInfo<TreeBuilder>&, FunctionDefinitionType, std::optional<int> functionConstructorParametersEndPosition = std::nullopt);
     
@@ -2161,7 +2155,6 @@ private:
     bool m_seenArgumentsDotLength { false };
     // offset 192; too rarely touched for grouping to pay.
     ParserArena m_parserArena;
-    const AuditSites* m_auditSites;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };
     JSParserScriptMode m_scriptMode;
     SuperBinding m_superBinding;
@@ -2295,14 +2288,8 @@ NEVER_INLINE std::unique_ptr<ParsedNode> parse(
     const FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>* classElementDefinitions = nullptr,
     bool isInsideOrdinaryFunction = false)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parse<ParsedNode>);
     ASSERT(!source.provider()->source().isNull());
-
-#if USE(BUN_JSC_ADDITIONS)
-    if (source.provider()->hasNoSourceText()) [[unlikely]] {
-        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the executable was built without its source code, so it can't run in this context."_s, source.firstLine().oneBasedInt());
-        return nullptr;
-    }
-#endif
 
     MonotonicTime before;
     if (Options::reportParseTimes()) [[unlikely]]
@@ -2345,6 +2332,7 @@ NEVER_INLINE std::unique_ptr<ParsedNode> parseRootNode(
     ConstructorKind constructorKindForTopLevelFunctionExpressions = ConstructorKind::None,
     DebuggerParseData* debuggerParseData = nullptr)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parseRootNode<ParsedNode>);
     static_assert(std::is_same_v<ParsedNode, ProgramNode> || std::is_same_v<ParsedNode, ModuleProgramNode>);
     ASSERT(!source.provider()->source().isNull());
 
@@ -2378,8 +2366,9 @@ NEVER_INLINE std::unique_ptr<ParsedNode> parseRootNode(
     return result;
 }
 
-inline NEVER_INLINE std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
+NEVER_INLINE inline std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parseFunctionForFunctionConstructor);
     ASSERT(!source.provider()->source().isNull());
 
     MonotonicTime before;

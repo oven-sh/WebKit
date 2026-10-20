@@ -27,10 +27,11 @@
 
 #include "JSDestructibleObject.h"
 #include "StackFrame.h"
-#include <wtf/CompactPointerTuple.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
+
+namespace AOT { struct ReturnAddressTrace; }
     
 class Exception final : public JSCell {
 public:
@@ -46,8 +47,7 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack,
-        CaptureStackUnlessCaughtByCompiledCode
+        DoNotCaptureStack
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -65,7 +65,7 @@ public:
     JSValue value() const { return m_value.get(); }
     const Vector<StackFrame>& stack() const LIFETIME_BOUND
     {
-        if (m_returnAddressesAndFlags.pointer() || stackCaptureIsDeferred()) [[unlikely]]
+        if (returnAddresses()) [[unlikely]]
             const_cast<Exception*>(this)->materializeStack();
         return m_stack;
     }
@@ -83,13 +83,8 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
-    JS_EXPORT_PRIVATE void setTopFrameIsAtStackTraceItemSite();
-    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlags.type() & didNotifyInspectorOfThrowFlag; }
-    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() | didNotifyInspectorOfThrowFlag); }
-
-    bool stackCaptureIsDeferred() const { return m_returnAddressesAndFlags.type() & stackCaptureIsDeferredFlag; }
-    void finishDeferredStackCapture(VM&, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC);
-    void dropDeferredStackCapture();
+    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlag & didNotifyInspectorOfThrowFlag; }
+    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlag |= didNotifyInspectorOfThrowFlag; }
 
 #if ENABLE(WEBASSEMBLY)
     void tryUnwrapValueForJSTag(VM&);
@@ -104,17 +99,22 @@ private:
     bool tryRetainReturnAddresses(VM&);
     JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
+    static constexpr uintptr_t didNotifyInspectorOfThrowFlag = 1;
+    AOT::ReturnAddressTrace* returnAddresses() const { return std::bit_cast<AOT::ReturnAddressTrace*>(m_returnAddressesAndFlag & ~didNotifyInspectorOfThrowFlag); }
+    void setReturnAddresses(AOT::ReturnAddressTrace* returnAddresses) { m_returnAddressesAndFlag = std::bit_cast<uintptr_t>(returnAddresses) | (m_returnAddressesAndFlag & didNotifyInspectorOfThrowFlag); }
 
     WriteBarrier<Unknown> m_value;
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<Unknown> m_asyncContext;
 #endif
     Vector<StackFrame> m_stack;
-    static constexpr uint8_t didNotifyInspectorOfThrowFlag = 1;
-    static constexpr uint8_t stackCaptureIsDeferredFlag = 2;
-    CompactPointerTuple<AOT::ReturnAddressTrace*, uint8_t> m_returnAddressesAndFlags;
+    uintptr_t m_returnAddressesAndFlag { 0 };
 
     friend class LLIntOffsetsExtractor;
 };
+
+#if CPU(ADDRESS64)
+static_assert(sizeof(Exception) <= 48);
+#endif
 
 } // namespace JSC

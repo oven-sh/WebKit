@@ -1,0 +1,453 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTConstantEmitter.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBarrierEmitter.h"
+#include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
+#include "AOTConversionEmitter.h"
+#include "AOTElementEmitterAllocation.h"
+#include "AOTIdentifierNumbering.h"
+#include "AOTInstance.h"
+#include "AOTNumberLiteralStrings.h"
+#include "AOTPlacement.h"
+#include "AOTPureOperations.h"
+#include "AOTStaticsEmitter.h"
+#include "AOTStringConstantNumbering.h"
+#include "AOTStringTable.h"
+#include "AOTStubsConstants.h"
+#include "JSCJSValueInlines.h"
+#include "JSCellButterfly.h"
+#include "PureNaN.h"
+#include "SmallStrings.h"
+#include <bit>
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static std::optional<uint16_t> markerPrimitiveOf(JSValue value)
+{
+    if (!value)
+        return Primitive::Absent;
+    if (value.isUndefined())
+        return Primitive::Undefined;
+    if (value.isNull())
+        return Primitive::Null;
+    return std::nullopt;
+}
+
+static int64_t trackedIntegerOf(JSValue value)
+{
+    if (value.isInt32())
+        return value.asInt32();
+    RELEASE_ASSERT(value.isDouble() && isTrackedInteger(value.asDouble()));
+    return static_cast<int64_t>(value.asDouble());
+}
+
+static std::optional<uint8_t> singleLatin1CharacterOf(std::span<const uint8_t> text)
+{
+    if (text.size() > 2)
+        return std::nullopt;
+    Vector<char16_t> units = decodeProgramString(text);
+    if (units.size() != 1 || units[0] > maxSingleCharacterString)
+        return std::nullopt;
+    return static_cast<uint8_t>(units[0]);
+}
+
+static bool hasKeyCell(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+        return true;
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::PrivateName:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+ConstantEmitter::ConstantEmitter(CodeGenerator& generator)
+    : OperationEmitter(generator)
+{
+}
+
+void ConstantEmitter::generateUndefined(const ValueContext& value)
+{
+    define(value, constantOf(jsUndefined(), value.representation()));
+}
+
+void ConstantEmitter::generateNull(const ValueContext& value)
+{
+    define(value, constantOf(jsNull(), value.representation()));
+}
+
+void ConstantEmitter::generateAbsent(const ValueContext& value)
+{
+    define(value, constantOf(JSValue(), value.representation()));
+}
+
+void ConstantEmitter::generateBoolean(const ValueContext& value)
+{
+    define(value, constantOf(jsBoolean(value->boolean()), value.representation()));
+}
+
+void ConstantEmitter::generateInteger(const ValueContext& value)
+{
+    int64_t constant = value->integer();
+    if (value.representation() == Representation::Int64) {
+        define(value, integer(constant));
+        return;
+    }
+    define(value, constantOf(jsNumber(static_cast<double>(constant)), value.representation()));
+}
+
+void ConstantEmitter::generateDouble(const ValueContext& value)
+{
+    define(value, constantOf(jsNumber(purifyNaN(value->number())), value.representation()));
+}
+
+void ConstantEmitter::generateString(const ValueContext& value)
+{
+    StringID string = value->string();
+    if (value.representation() != Representation::LiteralString) {
+        defineCell(value, stringConstant(value, string));
+        return;
+    }
+    // Only a literal that something compares or stores as a word has a number. The word of any other is its string cell.
+    if (inputs().literalStrings.indexOf(string))
+        define(value, emitter<ConversionEmitter>().literalStringConstant(string));
+    else
+        define(value, LiteralStringWord(stringConstant(value, string).value()));
+}
+
+void ConstantEmitter::generateBigInt(const ValueContext& value)
+{
+    defineCell(value, bigIntConstant(value, value->digits()));
+}
+
+void ConstantEmitter::generateBuiltin(const ValueContext& value)
+{
+    defineCell(value, builtinCell(value, m_builtins.canonicalID(value->builtin())));
+}
+
+void ConstantEmitter::generateModuleBuiltin(const ValueContext& value)
+{
+    defineCell(value, moduleBuiltinCell(value, value->builtin(), value->module()));
+}
+
+void ConstantEmitter::generateData(const ValueContext& value)
+{
+    switch (value->encoding()) {
+    case DataEncoding::Unselected:
+        failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    case DataEncoding::Expanded:
+    case DataEncoding::ReadOnlyTree:
+    case DataEncoding::CopyOnWriteArray:
+        break;
+    }
+    std::optional<Request> request = value->request();
+    if (!request) {
+        failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    }
+    if (value->encoding() == DataEncoding::CopyOnWriteArray) {
+        defineCell(value, newCopyOnWriteArray(value, *request));
+        return;
+    }
+    defineCell(value, callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { word32(static_cast<int32_t>(request->value())) }));
+}
+
+// Every array of the site shares one storage, which the first of them creates. The others are a cell around it.
+CellPointer ConstantEmitter::newCopyOnWriteArray(const ValueContext& value, Request request)
+{
+    auto createOutOfLine = [&](bool isOnRarePath) {
+        return callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { word32(static_cast<int32_t>(request.value())) }, { .isOnRarePath = isOnRarePath });
+    };
+    const RequestRecord* record = m_placement.requests().recordAt(request);
+    const DataRecord* data = record ? std::get_if<DataRecord>(record) : nullptr;
+    const auto* elements = m_program.at(value->data()).root.tryAs<DataNode::Array>();
+    if (!data || !data->sharedStorageOffset || !elements || value.shape() == CodeShape::Compact)
+        return createOutOfLine(false);
+
+    build().statistics().count(StatisticID::CopyOnWriteArraysCreatedInline);
+    LBasicBlock outOfLine = newBlock();
+    Join<CellPointer> arrays(m_out);
+    Pointer storage(m_out.load64(emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *data->sharedStorageOffset)));
+    branchUnless(Condition(m_out.notNull(storage.value())), outOfLine);
+    Integer header = loadMutable64(Instance::offsetOfNewCopyOnWriteArrayHeader(indexingTypeOf(*elements)));
+    branchUnless(isNotZero(header), outOfLine);
+    arrays.add(ArrayAllocationEmitter(generator()).allocateArrayCell(header, offsetBy(storage, JSCellButterfly::offsetOfData()), outOfLine));
+
+    m_out.appendTo(outOfLine);
+    arrays.add(createOutOfLine(true));
+    return arrays.finish();
+}
+
+void ConstantEmitter::generateKeyConstant(const ValueContext& value)
+{
+    PropertyKeyID key = value->key();
+    if (value.representation() != Representation::LiteralString) {
+        defineCell(value, keyConstant(value, key));
+        return;
+    }
+    const PropertyKey& record = m_program.at(key);
+    RELEASE_ASSERT(record.kind == PropertyKeyKind::Text);
+    if (inputs().literalStrings.indexOf(record.text))
+        define(value, emitter<ConversionEmitter>().literalStringConstant(record.text));
+    else
+        define(value, LiteralStringWord(keyConstant(value, key).value()));
+}
+
+void ConstantEmitter::generateUnspecified(const ValueContext& value)
+{
+    define(value, zeroOf(value.representation()));
+}
+
+TypedPointer ConstantEmitter::cellWordInTable(const B3::AbstractHeap& heap, ptrdiff_t offsetOfTable, uint32_t number)
+{
+    Pointer table = loadImmutablePointer(offsetOfTable);
+    return m_out.address(heap, table.value(), static_cast<ptrdiff_t>(number) * sizeof(JSCell*));
+}
+
+template<typename Create>
+CellPointer ConstantEmitter::permanentCell(TypedPointer cellWord, bool isNarrow, const Create& create)
+{
+    if (isNarrow) {
+        NarrowReference reference(m_out.load32(cellWord));
+        CellPointer cell = decode(reference);
+        return either<CellPointer>(Condition(m_out.notZero32(reference.value())), [&] {
+            return cell;
+        }, create);
+    }
+    CellPointer cell(m_out.load64(cellWord));
+    return either<CellPointer>(Condition(m_out.notZero64(cell.value())), [&] {
+        return cell;
+    }, create);
+}
+
+CellPointer ConstantEmitter::stringConstant(const OperationContext& context, StringID id)
+{
+    std::span<const uint8_t> text = m_program.string(id);
+    if (text.empty())
+        return emptyString();
+    if (std::optional<uint8_t> character = singleLatin1CharacterOf(text))
+        return singleCharacterString(word32(*character));
+
+    // A string without a number has no root. As a pure function, B3 could reuse one result after a suspension, whose frame map has only what the IR says is live.
+    std::optional<uint32_t> number = inputs().stringConstants.numberOf(id);
+    if (!number)
+        return CellPointer(callStub(context, createConstant(CreatedConstant::NewString), { }, { .immediate = id.index() }).first);
+
+    bool isNarrow = !m_options.recorded.useWideReferences();
+    TypedPointer cellWord = isNarrow
+        ? instanceField(m_heaps.AOTInstance_stringCells, InstanceLayout::offsetOfStringCell(*number))
+        : cellWordInTable(m_heaps.AOTInstance_stringCells, AOT_INSTANCE_OFFSET(runtime.constants.wideStringCells), *number);
+    return permanentCell(cellWord, isNarrow, [&] {
+        return CellPointer(callStub(context, createConstant(CreatedConstant::String), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::StringConstant, *number), .isOnRarePath = true }).first);
+    });
+}
+
+CellPointer ConstantEmitter::keyConstant(const OperationContext& context, PropertyKeyID key)
+{
+    if (!hasKeyCell(m_program.at(key).kind))
+        return failWithoutCell(context, InternalErrorKind::OpcodeWithoutCode);
+    std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
+    if (!number)
+        return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
+
+    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(runtime.constants.keyCells), *number);
+    return permanentCell(cellWord, false, [&] {
+        return CellPointer(callStub(context, createConstant(CreatedConstant::Key), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::KeyConstant, *number), .isOnRarePath = true }).first);
+    });
+}
+
+CellPointer ConstantEmitter::bigIntConstant(const OperationContext& context, StringID digits)
+{
+    std::optional<uint32_t> number = m_placement.bigIntConstant(digits);
+    if (!number)
+        return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
+
+    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(runtime.constants.bigIntCells), *number);
+    return permanentCell(cellWord, false, [&] {
+        CallOptions options { .pureFunction = pureFunction(PureOperation::BigIntConstant, *number), .isOnRarePath = true };
+        return unboxCell(callOperation<Boxed>(context, RuntimeOperation::BigIntConstant, { word32(static_cast<int32_t>(*number)) }, options));
+    });
+}
+
+CellPointer ConstantEmitter::builtinCell(const OperationContext& context, BuiltinID id)
+{
+    return builtinCell(context, BuiltinCellKey::object(id));
+}
+
+CellPointer ConstantEmitter::builtinCell(const OperationContext& context, BuiltinCellKey key)
+{
+    std::optional<uint32_t> number = m_placement.builtinCell(key);
+    if (!number)
+        return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
+
+    auto callBuiltinCellStub = [&](bool isOnRarePath) {
+        return CellPointer(callStub(context, AOT::builtinCell(), { }, { .immediate = *number, .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = isOnRarePath }).first);
+    };
+    if (context.shape() != CodeShape::Fast)
+        return callBuiltinCellStub(false);
+
+    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_PREFIX_OFFSET(builtinCells), *number);
+    return permanentCell(cellWord, false, [&] {
+        return callBuiltinCellStub(true);
+    });
+}
+
+CellPointer ConstantEmitter::moduleBuiltinCell(const OperationContext& context, BuiltinID builtin, ModuleID module)
+{
+    auto callModuleBuiltinCell = [&](bool isOnRarePath) {
+        return callOperation<CellPointer>(context, RuntimeOperation::ModuleBuiltinCell, { word32(static_cast<int32_t>(builtin.index())), word32(static_cast<int32_t>(module.index())) }, { .isOnRarePath = isOnRarePath });
+    };
+    std::optional<uint32_t> offset = m_placement.moduleBuiltinCellOffset(builtin, module);
+    if (!offset)
+        return callModuleBuiltinCell(false);
+
+    TypedPointer cellWord = emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *offset);
+    return permanentCell(cellWord, false, [&] {
+        CellPointer cell = callModuleBuiltinCell(true);
+        m_out.store64(cell.value(), cellWord);
+        emitter<BarrierEmitter>().markCardOfStatics(*offset);
+        return cell;
+    });
+}
+
+CellPointer ConstantEmitter::keyConstant(PropertyKeyID key)
+{
+    std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
+    RELEASE_ASSERT(number);
+    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_OFFSET(runtime.constants.keyCells), *number);
+    return permanentCell(cellWord, false, [&] {
+        return callWithoutSite<CellPointer>(RuntimeOperation::KeyConstant, { word32(static_cast<int32_t>(*number)) }, { .pureFunction = pureFunction(PureOperation::KeyConstant, *number), .isOnRarePath = true });
+    });
+}
+
+CellPointer ConstantEmitter::builtinCell(BuiltinID id)
+{
+    std::optional<uint32_t> number = m_placement.builtinCell(id);
+    RELEASE_ASSERT(number);
+    TypedPointer cellWord = cellWordInTable(m_heaps.entire(AbstractHeap::AllocatorState), AOT_INSTANCE_PREFIX_OFFSET(builtinCells), *number);
+    return permanentCell(cellWord, false, [&] {
+        return callWithoutSite<CellPointer>(RuntimeOperation::BuiltinCell, { word32(static_cast<int32_t>(*number)) }, { .pureFunction = pureFunction(PureOperation::BuiltinCell, *number), .isOnRarePath = true });
+    });
+}
+
+Operand ConstantEmitter::constantOf(JSValue value, Representation representation)
+{
+    std::optional<uint16_t> marker = markerPrimitiveOf(value);
+    auto markerBits = [&] {
+        RELEASE_ASSERT(marker);
+        return ConversionEmitter::markerBits(*marker, representation);
+    };
+
+    switch (representation) {
+    case Representation::Void:
+        return { };
+    case Representation::JSValue:
+        return boxedConstant(value);
+    case Representation::Boolean:
+        RELEASE_ASSERT(value.isBoolean());
+        return boolean(value.asBoolean());
+    case Representation::Int32:
+        RELEASE_ASSERT(value.isInt32());
+        return word32(value.asInt32());
+    case Representation::Int64:
+        return integer(trackedIntegerOf(value));
+    case Representation::Double:
+        RELEASE_ASSERT(value.isNumber());
+        return number(value.asNumber());
+    case Representation::OptionalInt64:
+        return Operand(representation, m_out.constInt64(marker ? static_cast<int64_t>(markerBits()) : trackedIntegerOf(value)));
+    case Representation::OptionalDouble:
+        RELEASE_ASSERT(marker || value.isNumber());
+        return Operand(representation, m_out.constDouble(marker ? std::bit_cast<double>(markerBits()) : value.asNumber()));
+    case Representation::Cell32:
+        return Operand(representation, m_out.constInt32(static_cast<int32_t>(markerBits())));
+    case Representation::LiteralString:
+        return Operand(representation, m_out.constInt64(static_cast<int64_t>(markerBits())));
+    case Representation::Unchosen:
+    case Representation::Cell:
+    case Representation::RawWord:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Operand ConstantEmitter::zeroOf(Representation representation)
+{
+    switch (representation) {
+    case Representation::Void:
+        return { };
+    case Representation::Double:
+    case Representation::OptionalDouble:
+        return Operand(representation, m_out.constDouble(0));
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Cell32:
+        return Operand(representation, m_out.constInt32(0));
+    case Representation::Int64:
+    case Representation::OptionalInt64:
+    case Representation::Cell:
+    case Representation::JSValue:
+    case Representation::LiteralString:
+    case Representation::RawWord:
+        return Operand(representation, m_out.constInt64(0));
+    case Representation::Unchosen:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void ConstantEmitter::defineCell(const ValueContext& value, CellPointer cell)
+{
+    switch (value.representation()) {
+    case Representation::Cell:
+        define(value, cell);
+        return;
+    case Representation::JSValue:
+        define(value, boxCell(cell));
+        return;
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::Boolean:
+    case Representation::Int32:
+    case Representation::Int64:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+    case Representation::Cell32:
+    case Representation::LiteralString:
+    case Representation::RawWord:
+        failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void ConstantEmitter::failAndDefineZero(const ValueContext& value, InternalErrorKind kind)
+{
+    fail(value, kind);
+    define(value, zeroOf(value.representation()));
+}
+
+CellPointer ConstantEmitter::failWithoutCell(const OperationContext& context, InternalErrorKind kind)
+{
+    fail(context, kind);
+    return zeroOf(Representation::Cell).as<CellPointer>();
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

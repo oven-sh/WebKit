@@ -1,0 +1,49 @@
+# async function first() { return one }  async function second() { return two }  (await first())(); (await second())()
+# An await gives what the promise holds, and the promise of an async function holds what its body returns: each await finds the function of its own promise.
+# RUN: valueflow-solve calls
+# CHECK: f1 v3 -> f4
+# CHECK: f1 v7 -> f5
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = Await v1
+    v3 = Call v2
+    v4 = NewClosure function=f3
+    v5 = Call v4
+    v6 = Await v5
+    v7 = Call v6
+    Return
+}
+function f2 name="first" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    Return v0
+}
+function f3 name="second" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    Return v0
+}
+function f4 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}

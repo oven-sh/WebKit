@@ -1,0 +1,35 @@
+# A function of the library that only native code's own statements lead to is entered for calls that seen code may make and nobody has seen. It raises no event, and neither does a function of the library that only it calls:
+# the run time refuses the evaluator
+# RUN: flow-links unseen calls
+# CHECK: host - -> [[entered]] f2 Host Repeatedly
+# CHECK: f2 v1 -> [[called]] f3 Call
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f2 name="kept" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f3
+    Return v1
+}
+function f3 name="evaluate" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="eval" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}

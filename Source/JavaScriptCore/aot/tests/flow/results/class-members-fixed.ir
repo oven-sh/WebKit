@@ -1,0 +1,75 @@
+# A class whose prototype object keeps its members and its own prototype has fixed links, fixed members and complete names
+# RUN: flow
+# CHECK: layout L0 flow={{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f2 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="m" function=f2 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+# CHECK: layout L1 flow={{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f4 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="m" function=f4 mutability=Fixed closureUse=CalledOnly isWritableData=true}, {key="extra" isWritableData=true}]}
+# CHECK: layout L2 flow={{*}} classFlow={evaluations=AtMostOnce staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="m" function=f6 mutability=Fixed closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="m" function=f6 mutability=Fixed closureUse=CalledOnly isWritableData=true}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Stays" constructor=f1
+layout L1 kind=Instance name="Grows" constructor=f3
+layout L2 kind=Instance name="Reparented" constructor=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = PropGet v5 key="m"
+    v7 = Call v6, v5
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="m"
+    v12 = FinishClass v9 layout=L1
+    v13 = Integer integer=1
+    v14 = PropGet v12 key="prototype"
+    PropSet v14, v13 key="extra" mode=Strict
+    v16 = Construct v12
+    v17 = PropGet v16 key="m"
+    v18 = Call v17, v16
+    v19 = NewClosure function=f5
+    v20 = NewClass v19 layout=L2
+    v21 = NewClosure function=f6
+    DefineMethod v20, v21 layout=L2 key="m"
+    v23 = FinishClass v20 layout=L2
+    v24 = PropGet v23 key="prototype"
+    v25 = Builtin builtin=ObjectSetPrototypeOf
+    v26 = Call v25, -, v24, v5
+    v27 = Construct v23
+    v28 = PropGet v27 key="m"
+    v29 = Call v28, v27
+    Return
+}
+function f1 name="Stays" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Grows" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f6 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -45,7 +45,7 @@ static constexpr unsigned OverridesGetCallData = 1 << 2; // Need this flag if yo
 static constexpr unsigned OverridesGetOwnPropertySlot = 1 << 3;
 static constexpr unsigned OverridesGetPrototype = 1 << 4;
 static constexpr unsigned HasStaticPropertyTable = 1 << 5;
-static constexpr unsigned TypeOfReturnsFunction = 1 << 6;
+static constexpr unsigned IsPristine = 1 << 6;
 static constexpr unsigned TypeInfoPerCellBit = 1 << 7; // Unlike other inline flags, this will only be set on the cell itself and will not be set on the Structure.
 
 // Out of line flags.
@@ -61,10 +61,9 @@ static constexpr unsigned GetOwnPropertySlotIsImpureForPropertyAbsence = 1 << 15
 static constexpr unsigned InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero = 1 << 16;
 static constexpr unsigned StructureIsImmortal = 1 << 17;
 static constexpr unsigned OverridesPut = 1 << 18;
-static constexpr unsigned WouldHaveFixedProperties = 1 << 19;
+static constexpr unsigned WriteHooksHonorImmutableProperties = 1 << 19;
 static constexpr unsigned GetOwnPropertySlotMayBeWrongAboutDontEnum = 1 << 20;
 static constexpr unsigned OverridesIsExtensible = 1 << 21;
-static constexpr unsigned WouldHaveImmutableProperties = 1 << 22;
 
 static constexpr unsigned numberOfInlineBits = 8;
 
@@ -101,6 +100,7 @@ public:
     bool hasStaticPropertyTable() const { return isSetOnFlags1<HasStaticPropertyTable>(); }
     static bool overridesGetOwnPropertySlot(InlineTypeFlags flags) { return flags & OverridesGetOwnPropertySlot; }
     static bool hasStaticPropertyTable(InlineTypeFlags flags) { return flags & HasStaticPropertyTable; }
+    static bool isPristine(InlineTypeFlags flags) { return flags & IsPristine; }
     static bool perCellBit(InlineTypeFlags flags) { return flags & TypeInfoPerCellBit; }
     bool structureIsImmortal() const { return isSetOnFlags2<StructureIsImmortal>(); }
     bool overridesGetOwnPropertyNames() const { return isSetOnFlags2<OverridesGetOwnPropertyNames>(); }
@@ -109,8 +109,8 @@ public:
     bool overridesPut() const { return isSetOnFlags2<OverridesPut>(); }
     bool overridesGetPrototype() const { return isSetOnFlags1<OverridesGetPrototype>(); }
     bool overridesIsExtensible() const { return isSetOnFlags2<OverridesIsExtensible>(); }
-    bool wouldHaveFixedProperties() const { return isSetOnFlags2<WouldHaveFixedProperties>(); }
-    bool wouldHaveImmutableProperties() const { return isSetOnFlags2<WouldHaveImmutableProperties>(); }
+    bool isPristine() const { return isSetOnFlags1<IsPristine>(); }
+    bool writeHooksHonorImmutableProperties() const { return isSetOnFlags2<WriteHooksHonorImmutableProperties>(); }
     bool prohibitsPropertyCaching() const { return isSetOnFlags2<ProhibitsPropertyCaching>(); }
     bool getOwnPropertySlotIsImpure() const { return isSetOnFlags2<GetOwnPropertySlotIsImpure>(); }
     bool getOwnPropertySlotIsImpureForPropertyAbsence() const { return isSetOnFlags2<GetOwnPropertySlotIsImpureForPropertyAbsence>(); }

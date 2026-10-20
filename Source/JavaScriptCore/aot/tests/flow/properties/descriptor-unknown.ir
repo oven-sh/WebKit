@@ -1,0 +1,31 @@
+# A descriptor nobody knows gives its one receiver an unknown value, an unknown getter and an unknown setter under the key, and another receiver keeps its answers
+# RUN: flow-solve nodes
+# RUN(KEPT): flow-solve nodes
+# RUN(OBJECTS): flow-solve objects
+# CHECK: DeclaredPart(L0#{{*}}, 0) = {{*}}unknown}
+# CHECK: DeclaredPart(L0#{{*}}, 1) = {1}
+# CHECK: DeclaredPart(L1#{{*}}, 0) = {1}
+# CHECK: Getter(L0#{{*}}, "x") = {{*}}unknown
+# CHECK: Setter(L0#{{*}}, "x") = {{*}}unknown
+# KEPT-NOT: Getter(L1#
+# KEPT-NOT: Setter(L1#
+# KEPT-NOT: (L0#{{*}}, "y")
+# OBJECTS: L0#{{*}} mutations=[{{*}}RedefineProperty
+# OBJECTS: L1#{{*}} mutations=[] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Redefined" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="descriptor" [isFreeName]
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="x"
+    v7 = Call v5, -, v1, v6, v4
+    Return
+}

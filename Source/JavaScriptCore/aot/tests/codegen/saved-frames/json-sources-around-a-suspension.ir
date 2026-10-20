@@ -1,0 +1,62 @@
+# The run time is told which frame owns an open JSON source. A frame that was saved goes on at another address, so each JSONSourceOpen takes the frame pointer where it stands: one value for the two would be live across the suspension
+#   const parsed = JSON.parse('{"label":"parsed"}') as Holder; print(parsed.label)
+#   await 0
+#   const again = JSON.parse('[{"label":"text"}]') as Holder[]; print(parsed.label, again.length)
+# RUN: pipeline CheckPlacement
+# CHECK: role=CoroutineBody
+# CHECK: = JSONSourceOpen
+# CHECK: = AwaitBySavingFrame
+# CHECK: = JSONSourceOpen
+# RUN(CODE): compile
+# CODE: image not empty
+
+typesite w0 module=m0 position=138 kind=Assertion
+typesite w1 module=m0 position=152 kind=PropertyRead
+typesite w2 module=m0 position=167 kind=PromiseValue
+typesite w3 module=m0 position=226 kind=Assertion
+typesite w4 module=m0 position=242 kind=PropertyRead
+layout L0 name="Holder" module=m0 position=62 fields=[{key="label" declared={type=undefined|null|string predicted=string} flags=[IsRequired]}]
+module m0 path="main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0
+function f0 module=m0 kind=Module flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Builtin builtin=GlobalThis @102
+    v1 = PropGet v0 key="JSON" [isFreeName] @102
+    v2 = Predict v1 predicted=builtin(JSON) @102
+    v3 = PropGet v2 key="parse" @102
+    v4 = Predict v3 predicted=function @102
+    v5 = Predict v4 predicted=builtin(JSONParse) @102
+    v6 = String string="{\"label\":\"parsed\"}" @113
+    v7 = Call v5, v2, v6 calleeKey="parse" calleeName="parse" @107
+    v8 = ClaimDeclared v7 declared={type=undefined|null|object written=undefined|null|L0 predicted=L0 site=w0} @102
+    v9 = Builtin builtin=GlobalThis @146
+    v10 = PropGet v9 key="print" [isFreeName] @146
+    v11 = Predict v10 predicted=function @146
+    v12 = PropGet v8 key="label" @152
+    v13 = ClaimRead v12, v8 source=Field{key="label"} site=w1 @152
+    v14 = Call v11, -, v13 calleeName="print" @146
+    v15 = Integer @173
+    v16 = Await v15 @167
+    v17 = ClaimRead v16, v15 source=Contents{slot=Value} site=w2 @167
+    v18 = Builtin builtin=GlobalThis @190
+    v19 = PropGet v18 key="JSON" [isFreeName] @190
+    v20 = Predict v19 predicted=builtin(JSON) @190
+    v21 = PropGet v20 key="parse" @190
+    v22 = Predict v21 predicted=function @190
+    v23 = Predict v22 predicted=builtin(JSONParse) @190
+    v24 = String string="[{\"label\":\"text\"}]" @201
+    v25 = Call v23, v20, v24 calleeKey="parse" calleeName="parse" @195
+    v26 = ClaimDeclared v25 declared={type=undefined|null|Array<undefined|null|object> written=undefined|null|Array<undefined|null|L0> predicted=Array<L0> site=w3} @190
+    v27 = Builtin builtin=GlobalThis @236
+    v28 = PropGet v27 key="print" [isFreeName] @236
+    v29 = Predict v28 predicted=function @236
+    v30 = PropGet v8 key="label" @242
+    v31 = ClaimRead v30, v8 source=Field{key="label"} site=w4 @242
+    v32 = PropGet v26 key="length" @256
+    v33 = Predict v32 predicted=number @256
+    v34 = Call v29, -, v31, v33 calleeName="print" @236
+    v35 = Undefined @236
+    Return v35 @236
+}
+entry module=m0

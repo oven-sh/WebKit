@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "LLIntEntrypoint.h"
+#include "AOTInterpreterTripwire.h"
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "HeapInlines.h"
 #include "JITCode.h"
@@ -258,16 +260,11 @@ MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize siz
 
 NEVER_INLINE void setEntrypoint(CodeBlock* codeBlock)
 {
-    if (Options::crashIfInterpreterIsUsed()) [[unlikely]] {
-        auto* executable = codeBlock->ownerExecutable();
-        const String& url = executable->sourceURL();
-        bool isRuntimeCompiledSource = codeBlock->codeType() == EvalCode || url.isEmpty() || url.startsWith("evalmachine."_s) || url.startsWith("data:"_s) || url.startsWith("blob:"_s) || url == "[Command Line]"_s;
-        bool isInspectedProcessDebugger = url == "internal:debugger"_s && getenv("BUN_INSPECT");
-        if (!isRuntimeCompiledSource && !isInspectedProcessDebugger) {
-            dataLogLn("crashIfInterpreterIsUsed: ", codeBlock->codeType(), " ", codeBlock->inferredName(), " at ", url, ":", executable->firstLine());
-            CRASH();
-        }
-    }
+    JSC_REMOVABLE_DEFINITION(Interpreter, setEntrypoint);
+#if ENABLE(AOT)
+    if (codeBlock->vm().hasCompiledCode() || Options::crashIfInterpreterIsUsed())
+        AOT::willRunInInterpreter(codeBlock);
+#endif
 
     switch (codeBlock->codeType()) {
     case GlobalCode:

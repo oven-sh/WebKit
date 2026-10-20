@@ -33,16 +33,22 @@ namespace JSC { namespace B3 { namespace Air {
 
 class BasicBlock;
 class Code;
+struct Inst;
 
 // Returns a list of blocks sorted according to what would be the current optimal order. This shares
 // some properties with a pre-order traversal. In particular, each block will appear after at least
 // one of its predecessors.
 Vector<BasicBlock*> blocksInOptimizedOrder(Code&);
 
+bool canInvertBranch(const Inst&);
+void invertBranch(BasicBlock*);
+
 // Reorders the basic blocks to keep hot blocks at the top, and maximize the likelihood that a frequently
 // taken edge is just a fall-through.
 
 void optimizeBlockOrder(Code&);
+
+JS_EXPORT_PRIVATE void moveBlocksWithoutSuccessorsToEnd(Code&);
 
 } } } // namespace JSC::B3::Air
 

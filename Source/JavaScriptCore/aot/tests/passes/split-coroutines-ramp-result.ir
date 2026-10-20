@@ -1,0 +1,83 @@
+# How the declared result of a ramp and its Return come out for each declared result of the source
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsProvenPromise" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise<number, proven>}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="returnsProvenPromise"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise<number, proven>}]
+# CHECK: [[p0]]: Promise = NewPromise
+# CHECK-NEXT: [[r0]]: anything = CallDirect v0, [[p0]] function=f6
+# CHECK-NEXT: [[c0]]: Promise<number> = Claim [[r0]] castType=Promise<number> cause=AddedByPass
+# CHECK-NEXT: [[a0]]: Promise<number, proven> = AssumeType [[c0]] castType=Promise<number, proven>
+# CHECK-NOT: Return [[p0]]
+# CHECK: Return [[a0]]
+function f1 name="returnsPromise" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="returnsPromise"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise}]
+# CHECK: [[p1]]: Promise = NewPromise
+# CHECK-NEXT: [[r1]]: anything = CallDirect v0, [[p1]] function=f7
+# CHECK-NEXT: [[c1]]: Promise = Claim [[r1]] castType=Promise cause=AddedByPass
+# CHECK-NOT: Return [[p1]]
+# CHECK: Return [[c1]]
+function f2 name="returnsAnything" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="returnsAnything"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Promise written=anything}]
+# CHECK: [[p2]]: Promise = NewPromise
+# CHECK-NEXT: [[r2]]: anything = CallDirect v0, [[p2]] function=f8
+# CHECK-NEXT: [[c2]]: Promise = Claim [[r2]] castType=Promise cause=AddedByPass
+# CHECK-NOT: Return [[p2]]
+# CHECK: Return [[c2]]
+function f3 name="returnsNumber" flags=[IsAsync] parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="returnsNumber"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=number}]
+# CHECK: [[p3]]: Promise = NewPromise
+# CHECK-NEXT: [[r3]]: anything = CallDirect v0, [[p3]] function=f9
+# CHECK-NEXT: [[c3]]: number = Claim [[r3]] castType=number cause=AddedByPass
+# CHECK-NOT: Return [[p3]]
+# CHECK: Return [[c3]]
+function f4 name="generatorReturnsAnything" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    InitialYield
+    Return v1
+}
+# CHECK-LABEL: function f4 name="generatorReturnsAnything"
+# CHECK: role=CoroutineRamp
+# CHECK: results=[{type=Generator written=anything}]
+# CHECK: [[g4]]: Generator = NewGenerator v0 function=f4
+# CHECK-NEXT: = CallDirect v0, v1, [[g4]] function=f10
+# CHECK-NOT: Claim
+# CHECK: Return [[g4]]
+function f5 name="callsRamps" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = CallDirect v0 function=f3
+    Return v1
+}
+# CHECK-LABEL: function f5 name="callsRamps"
+# CHECK-NOT: role=
+# CHECK: v1: Promise = CallDirect v0 function=f2
+# CHECK-NEXT: v2: number = CallDirect v0 function=f3
+# CHECK-LABEL: function f6 name="returnsProvenPromise"

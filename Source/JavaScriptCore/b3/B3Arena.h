@@ -25,17 +25,19 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace B3 {
 
+class CompilationScratch;
+
 class Arena {
     WTF_MAKE_NONCOPYABLE(Arena);
 public:
-    Arena() = default;
+    JS_EXPORT_PRIVATE explicit Arena(CompilationScratch* = nullptr);
     JS_EXPORT_PRIVATE ~Arena();
 
     ALWAYS_INLINE void* allocate(size_t size, size_t alignment = sizeof(void*))
@@ -48,9 +50,9 @@ public:
         return allocateSlow(size, alignment);
     }
 
-    void setKeepsFirstChunkForThread(bool value) { m_keepsFirstChunkForThread = value; }
-
 private:
+    friend class CompilationScratch;
+
     struct Chunk {
         Chunk* next;
         size_t size;
@@ -61,19 +63,12 @@ private:
 
     JS_EXPORT_PRIVATE void* allocateSlow(size_t, size_t alignment);
 
-    struct ThreadChunk {
-        ~ThreadChunk();
-
-        Chunk* chunk { nullptr };
-    };
-    static ThreadChunk& threadChunk();
-
     uintptr_t m_head { 0 };
     uintptr_t m_end { 0 };
     Chunk* m_chunks { nullptr };
-    bool m_keepsFirstChunkForThread { false };
+    CompilationScratch* m_scratch { nullptr };
 };
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

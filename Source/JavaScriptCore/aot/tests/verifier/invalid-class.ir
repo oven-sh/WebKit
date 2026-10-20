@@ -1,0 +1,35 @@
+# the rules of classes: what only an instance layout has, which functions construct, who owns a static field
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidClass 12
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="record"
+layout L1 kind=Instance name="goodBaseClass" constructor=f0 staticFields=[{key="s" variable=g0}]
+layout L2 kind=Instance name="goodDerivedClass" predictedBase=L1 constructor=f1 flags=[HasHeritage]
+layout L3 kind=Instance name="goodConstructorFunction" constructor=f2 flags=[IsConstructorFunction]
+layout L4 kind=Instance name="goodWithoutConstructor"
+layout L5 kind=Instance name="badPredictedBaseIsRecord" predictedBase=L0 flags=[HasHeritage]
+layout L6 name="badStaticFieldOnRecord" staticFields=[{key="s" variable=g0}]
+layout L7 name="badHeritageOnRecord" flags=[HasHeritage]
+layout L8 kind=Instance name="badArrowConstructs" constructor=f3
+layout L9 kind=Instance name="badAsyncFunctionConstructs" constructor=f4
+layout L10 kind=Instance name="badMethodConstructs" constructor=f5
+layout L11 kind=Instance name="badDerivedConstructorWithoutHeritage" constructor=f6
+layout L12 kind=Instance name="badBaseConstructorWithHeritage" constructor=f7 flags=[HasHeritage]
+layout L13 kind=Instance name="badConstructorFunctionWithHeritage" constructor=f8 flags=[HasHeritage]
+layout L14 kind=Instance name="badClassConstructorWithoutNewTarget" constructor=f9
+layout L15 kind=Instance name="badClassConstructorWithThis" constructor=f10
+layout L16 kind=Instance name="badStaticFieldOfOtherClass" staticFields=[{key="s" variable=g0}]
+variable g0 name="s" module=m0 declared={type=anything} owner=L1
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Function" flags=[HasThis] results=[{type=anything}]
+function f3 name="arrow" kind=Arrow results=[{type=anything}]
+function f4 name="asynchronous" flags=[IsAsync] results=[{type=anything}]
+function f5 name="method" kind=Method flags=[HasThis] results=[{type=anything}]
+function f6 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="Function" flags=[HasThis] results=[{type=anything}]
+function f9 name="Base" kind=BaseConstructor results=[{type=anything}]
+function f10 name="Base" kind=BaseConstructor flags=[HasThis, HasNewTarget] results=[{type=anything}]

@@ -1,0 +1,35 @@
+# A call none of whose arguments fits the written type of the parameter is linked and keeps its callee: it throws in the entry of the callee. Nothing comes out of it, the parameter keeps its type as read, and the body is dead
+# FORM: AsRead
+# RUN: flow-apply
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="4"
+    v2 = Call v0, -, v1
+    v3 = Add v2, v2
+    Return v3
+}
+function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Integer integer=2
+    v2 = Mul v0, v1
+    v3 = CallDirect v2 function=f2
+    Return v3
+}
+function f2 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[call]]: anything = Call v0, -, v1 accessSite={{*}} callees=[f1]
+# CHECK-NEXT: never = AssumeType [[call]] castType=never
+# CHECK-NEXT: Unreachable
+# CHECK-LABEL: function f1 name="double"{{*}} parameters=[{type=undefined|null|number site=w0}]
+# CHECK: b0(v0: undefined|null|number):
+# CHECK: Unreachable
+# CHECK-NOT: Return
+# CHECK-LABEL: function f2 name="identity"

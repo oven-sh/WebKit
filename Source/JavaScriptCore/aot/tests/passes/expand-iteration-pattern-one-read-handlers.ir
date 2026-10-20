@@ -1,0 +1,99 @@
+# The steps of an array pattern become one read only when a handler around the pattern gets the same values from every step and from the close
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="handlerGetsOuterValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b6(v1):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b5(v1):
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    Jump -> next b3()
+  b3() handler=b5(v1):
+    v5 = IteratorResume v2 stepIndex=1
+    v6 = ResultAt v5 index=1
+    Jump -> next b4()
+  b4() handler=b6(v1):
+    IteratorClose v2
+    v8 = Add v4, v6
+    Return v8
+  b5(v9) role=IterationCleanup subject=v2 handler=b6(v9):
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b6(v12) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}
+# CHECK-LABEL: function f0 name="handlerGetsOuterValues"
+# CHECK: = DestructureIterable {{*}} count=2
+# ABSENT-LABEL: function f0 name="handlerGetsOuterValues"
+# ABSENT-NOT: key="next"
+
+function f1 name="handlerGetsFirstElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b6(v1):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b5(v1):
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    Jump -> next b3()
+  b3() handler=b5(v4):
+    v5 = IteratorResume v2 stepIndex=1
+    v6 = ResultAt v5 index=1
+    Jump -> next b4()
+  b4() handler=b6(v4):
+    IteratorClose v2
+    v8 = Add v4, v6
+    Return v8
+  b5(v9) role=IterationCleanup subject=v2 handler=b6(v9):
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b6(v12) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}
+# A second step that throws leaves the first element in the variable that the handler reads.
+# CHECK-LABEL: function f1 name="handlerGetsFirstElement"
+# CHECK: key="next"
+# ABSENT-LABEL: function f1 name="handlerGetsFirstElement"
+# ABSENT-NOT: DestructureIterable
+
+function f2 name="handlerOfCloseGetsElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1()
+  b1() handler=b5(v1):
+    v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b4(v1):
+    v3 = IteratorResume v2 stepIndex=0
+    v4 = ResultAt v3 index=1
+    v5 = IteratorResume v2 stepIndex=1
+    v6 = ResultAt v5 index=1
+    Jump -> next b3()
+  b3() handler=b5(v6):
+    IteratorClose v2
+    v8 = Add v4, v6
+    Return v8
+  b4(v9) role=IterationCleanup subject=v2 handler=b5(v9):
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b5(v12) role=CatchHandler:
+    v13 = CatchValue
+    Return v12
+}
+# A `return` that throws comes after both elements are bound.
+# CHECK-LABEL: function f2 name="handlerOfCloseGetsElement"
+# CHECK: key="next"
+# ABSENT-LABEL: function f2 name="handlerOfCloseGetsElement"
+# ABSENT-NOT: DestructureIterable

@@ -115,7 +115,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
-    v(Bool, validateRegExpFastMatcher, false, Normal, "runs both the flat program and the bytecode interpreter and crashes if they differ"_s) \
+    v(Bool, validateRegExpFlatProgram, false, Normal, "runs both the flat program and the bytecode interpreter and crashes if they differ"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
@@ -147,33 +147,23 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
-    v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the AOT image and program data mapped by the embedder. If false, both are ignored."_s) \
-    v(Bool, useAOTWideReferences, false, Normal, "When compiling with the typed AOT compiler: every reference in an object takes 64 bits. If false most take 32, and the MarkedBlocks of each heap of a process that runs the image have to fit in markedBlockCageSizeInMB."_s) \
-    v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the MarkedBlocks of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
-    v(Bool, verboseAOTCompilation, false, Normal, "Log which functions the AOT compiler compiles and why it rejects a function."_s) \
-    v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the time it spent outside parallel loops."_s) \
+    v(Bool, keepDenseArraysDense, false, Normal, "For testing. Arrays get the storage they get in a VM that runs ahead-of-time compiled code: a dense array stays Int32, Double or Contiguous."_s) \
+    v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the image the embedder registers. Turns the JIT off."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "jsc shell and testaot only. Path of an image written by testaot compile. Implies useAOT."_s) \
+    v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the cells of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
+    v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
+    v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
+    v(Bool, dumpAOTObjectCensusAtExit, false, Normal, "Print the live compiled objects by layout when the VM is destroyed."_s) \
+    v(OptionString, aotObjectCensusRequestPath, nullptr, Normal, "Whenever a file of this name exists, it is deleted and the live compiled objects by layout are written to <name>.1, <name>.2 and so on. The embedder looks for it about once a second."_s) \
+    v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
+    v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
+    v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
     v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
-    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name, or the code at <start offset> or <module>:<start offset> as in the map file."_s) \
+    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTIR, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name."_s) \
     v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
-    v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
-    v(OptionString, aotTypeCoverageCountsPath, nullptr, Normal, "With useAOTOperationCounters: what is counted is written to this path with .operations and .allocations appended, at each collection and when the VM is destroyed. %p stands for the process ID."_s) \
-    v(Bool, useAOTOperationCounters, false, Normal, "Count how often each C++ operation of the AOT runtime runs. In the jsc shell, aotOperationCount() reads a counter. With aotTypeCoverageCountsPath, the counters are written to that path with .operations appended at each collection and when the VM is destroyed. For tests and diagnostics."_s) \
-    v(Bool, forceAOTVeneers, false, Normal, "For testing. Route every direct call between functions in an image through a veneer, as if the target were out of range."_s) \
-    v(Unsigned, numberOfAOTStubCopiesForTesting, 0, Normal, "For testing. If nonzero: lay out an image as if calls reached only far enough for it to need about this many copies of the stubs, instead of 96 MB. Calls between functions that are then out of range go through veneers."_s) \
-    v(OptionString, aotGuardToDropForTesting, nullptr, Normal, "For testing the tests. When compiling: omit the branch to a rarely taken block that the compiler emits at <file>:<line> of its own source, so that the other block is always taken. A test should detect this.") \
-    v(OptionString, aotImageLimitToExceedForTesting, nullptr, Normal, "For testing. When compiling ahead of time: behave as if the first function exceeded this limit of a function record in the image: index, frame, callSites or slots; or as if the frame on the stack were larger than an image can describe: frameSize for the entry function of each module, functionFrameSize for every other function. The build has to stop with an error."_s) \
-    v(Unsigned, aotHotByTextForTesting, 0, Normal, "For testing. When compiling ahead of time: overrides the static hotness estimate. 1: only a function that contains a loop is hot, and only inside its loops, whatever calls or creates it. 2: every function is hot. 3: every function is cold, as the coldest part of a large program is. 4: the normal estimate, but no function is among the hottest of the program, as in most of a large program. 0: the normal estimate."_s) \
-    v(Bool, aotCountsBranches, false, Normal, "When compiling ahead of time: the code counts how often each side of every branch of the program runs. With useAOTOperationCounters and aotTypeCoverageCountsPath when it runs, the counts are among the operations: Branch:at:<module>:<position>:bc<2 * position, + 1 for the false side>. With aotMapFilePath the map names the modules. For the tool that proposes $likely and $unlikely."_s) \
-    v(Bool, aotIgnoresBranchHintsForTesting, false, Normal, "For testing. When compiling ahead of time: lay out code as if Bun's built-in modules had no $likely and no $unlikely."_s) \
-    v(OptionString, aotImagePath, nullptr, Normal, "jsc shell only. Path to the AOT image of the first script or module. Implies useAOT."_s) \
-    v(Unsigned, numberOfAOTCompilerThreads, 0, Normal, "Number of threads used to compile an image. Zero means one per processor."_s) \
-    v(Bool, logAOTFormatPatterns, false, Normal, "When compiling ahead of time: logs how many Intl formatters and toLocaleString calls have a constant locale and constant options, how many of them have a format pattern in the image, and why each of the others has none."_s) \
-    v(Unsigned, formatPatternsOfAnotherICUForTesting, 0, Normal, "For testing. 1: the format patterns of an AOT image count as made by another ICU than the one that runs, so each is planned again at its first use. 2: and each plan is refused, so ICU formats."_s) \
-    v(Bool, validateAOTTypedFacts, false, Normal, "For testing the typed AOT compiler. Compiled code checks every value against its type, which it otherwise trusts without a check, and crashes on a mismatch.") \
-    v(Unsigned, validateAOTNarrowReferences, 0, Normal, "For testing the typed AOT compiler. When compiling: wherever the collector can run, a 32-bit reference that is decoded, stored or compared afterwards must have a pointer to its object alive, which is all that the scan of the stack knows. 1: a function that breaks this fails the build. 2: it is only reported, in lines that begin with `AOT narrow reference:`.") \
-    v(Bool, auditAOTTypedAssertions, false, Normal, "Finds every place where a program compiled by the typed AOT compiler contradicts its types, in one run. Compiled code trusts no front-end type except unboxed numbers and booleans, and every access takes the generic path. When a value fails a type check (at a cast, `!`, a parameter, a result, a store, or the result of a read or a call), a line is printed to stderr, once per site, and the value is used unchanged; where it has to be stored as an unboxed number or boolean it is converted, and the line says so. A line is also printed for each `as` that changed its operand or let it through. Slow. Must be set when the program is compiled; the image records it.") \
-    v(Bool, countAOTTypedAllocations, false, Normal, "Counts the cells a program compiled by the typed AOT compiler allocates, by allocation and layout, its shape transitions and the fields it creates, and prints `AOT count:` records to stderr at exit. The program is optimized as usual, but every allocation calls into the runtime. Must be set when the program is compiled; the image records it.") \
+    v(Bool, useRegExpImageMode, false, Normal, "jsc and testRegExp. Yarr compiles every pattern as for an image, and that code runs. For running the regexp corpus against image mode."_s) \
+    v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC, or an image compiled with validation: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -182,7 +172,6 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
-    v(Bool, useImmutableIntrinsics, false, Normal, "Freeze the initial properties of built-in objects such as Object.prototype, Array.prototype and Math when a realm is created. See JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
     v(Bool, useBytecodeOptimizerTDZ, true, Normal, "bytecode optimizer: redundant TDZ check elimination") \
@@ -322,6 +311,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, warmUpMarkedBlockCount, 32, Normal, "how many MarkedBlocks the helper thread keeps ready with their pages already resident; 0 turns it off"_s) \
     v(Unsigned, warmUpMarkedBlockStartAfterBlocks, 64, Normal, "how many MarkedBlocks the process allocates before the helper thread starts; a program that stops before that never creates it"_s) \
     v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
+    v(Unsigned, disabledCollectorMechanisms, 0, Normal, "for measuring: a set of CollectorMechanism bits to turn off"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
     v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
     v(Bool, evacuateAuxiliaryBlocksAfterEveryFullCollection, false, Normal, "testing: evacuate every Auxiliary block after each full collection, wherever the mutator happens to be, and scribble the old copies"_s) \

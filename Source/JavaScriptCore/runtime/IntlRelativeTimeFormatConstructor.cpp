@@ -68,7 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlRelativeTimeFormat);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlRelativeTimeFormat);
 
 IntlRelativeTimeFormatConstructor::IntlRelativeTimeFormatConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlRelativeTimeFormat, constructIntlRelativeTimeFormat)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlRelativeTimeFormat), JSC_REGISTERED_HOST_FUNCTION(constructIntlRelativeTimeFormat))
 {
 }
 

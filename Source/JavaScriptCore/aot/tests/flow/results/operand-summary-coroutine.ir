@@ -1,0 +1,50 @@
+# The parameters of an async function or a generator are retained, because the frame outlives the call, and have their exact uses besides
+# RUN: flow
+# CHECK: function f1 parameter 0 uses=[Inspects, Retains, Calls] retainedIn=UnknownMemory
+# CHECK-NEXT: function f1 parameter 1 uses=[Inspects, Retains] retainedIn=UnknownMemory
+# CHECK-NEXT: function f1 parameter 2 uses=[Retains] retainedIn=UnknownMemory
+# CHECK: function f2 parameter 1 uses=[Inspects, Retains, Calls] retainedIn=UnknownMemory
+# CHECK-NEXT: function f2 parameter 2 uses=[Inspects, Retains] retainedIn=UnknownMemory
+# CHECK-NEXT: function f2 parameter 3 uses=[Retains] retainedIn=UnknownMemory
+# CHECK: function f3 parameter 0 uses=[Inspects, Calls] retainedIn=UnknownMemory
+# CHECK-NEXT: function f3 parameter 1 uses=[Inspects] retainedIn=UnknownMemory
+# CHECK-NEXT: function f3 parameter 2 uses=[] retainedIn=UnknownMemory
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Item" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = CallDirect v0, v2, v3 function=f1
+    v5 = NewClosure function=f2
+    v6 = CallDirect v5, v0, v2, v3 function=f2
+    v7 = CallDirect v0, v2, v3 function=f3
+    Return
+}
+function f1 name="asyncFunction" flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0
+    v4 = ToBoolean v1
+    Return
+}
+function f2 name="generator" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    InitialYield
+    v5 = Call v1
+    v6 = ToBoolean v2
+    Return
+}
+function f3 name="plainFunction" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Call v0
+    v4 = ToBoolean v1
+    Return
+}
+function f4 name="callback" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

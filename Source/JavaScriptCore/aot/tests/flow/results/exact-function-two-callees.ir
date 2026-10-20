@@ -1,0 +1,57 @@
+# An environment field that closures of two functions reach lists both, and a call through it returns what either returns
+# RUN: flow
+# CHECK: field L0.0 "handler" type=f2|f3 written=anything
+# CHECK: field L0.1 "plugin" type=anything predicted=f2 flow=
+# CHECK: function f4 result 0 type=int[1, 2] written=anything
+# RUN(APPLY): flow-apply
+# APPLY-LABEL: function f4 name="run"
+# APPLY: = Call {{*}}callees=[f2, f3]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="setup" fields=[{key="handler" declared={type=anything}}, {key="plugin" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fast" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="setup" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure function=f2
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewClosure function=f3
+    Jump -> next b3(v4)
+  b3(v5):
+    PutEnvironmentField v1, v5 layout=L0 field=0
+    v7 = GetEnvironmentField v1 layout=L0 field=0
+    PutEnvironmentField v1, v7 layout=L0 field=0
+    v9 = NewClosure function=f2
+    PutEnvironmentField v1, v9 layout=L0 field=1
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    v12 = NewClosure v1 function=f4
+    v13 = Call v12
+    Return v13
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="two" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f4 name="run" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Call v1
+    Return v2
+}

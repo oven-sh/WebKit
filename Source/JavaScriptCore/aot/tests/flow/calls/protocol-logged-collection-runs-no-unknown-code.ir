@@ -1,0 +1,41 @@
+# The formatter of console.log finds none of the members it looks for on a Map that nobody has changed: no unknown function is called
+# RUN: flow-links unknown
+# CHECK-NOT: unknown-callee {{*}} v17
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Entry" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="get"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = Builtin builtin=Set
+    v7 = Construct v6
+    v8 = PropGet v7 key="add"
+    v9 = Call v8, v7, v5 calleeKey="add"
+    v10 = Builtin builtin=ObjectPrototypeToString
+    v11 = Call v10, v7
+    v12 = Builtin builtin=Map
+    v13 = Construct v12
+    v14 = PropGet v13 key="set"
+    v15 = Call v14, v13, v5, v5 calleeKey="set"
+    v16 = Builtin builtin=ConsoleLog
+    v17 = Call v16, -, v13
+    v18 = Builtin builtin=JSONStringify
+    v19 = Call v18, -, v13
+    Return
+}
+function f1 name="Entry" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="get" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

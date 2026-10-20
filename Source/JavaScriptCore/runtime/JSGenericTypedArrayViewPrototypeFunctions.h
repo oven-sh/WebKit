@@ -269,7 +269,7 @@ static ALWAYS_INLINE void typedArrayViewForEachImpl(JSGlobalObject* globalObject
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -314,7 +314,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSet(VM& vm, JSGlobalOb
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncCopyWithin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -490,7 +490,7 @@ static ALWAYS_INLINE size_t typedArrayLastIndexOfImpl(typename ViewClass::Elemen
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -555,7 +555,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIncludes(VM& vm, JSGlo
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -600,7 +600,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncIndexOf(VM& vm, JSGlob
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -659,7 +659,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncJoin(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.fill
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -721,7 +721,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncLastIndexOf(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -815,7 +815,7 @@ inline EncodedJSValue genericTypedArrayViewProtoGetterFuncByteOffset(VM&, JSGlob
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.foreach
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -833,13 +833,13 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlob
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA {
-            cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
         return JSValue::encode(jsUndefined());
@@ -865,7 +865,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncForEach(VM& vm, JSGlob
     }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.map
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -893,15 +893,15 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalOb
     }, length);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue mapped = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue mapped = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, IterationStatus::Done);
 
             scope.release();
@@ -966,7 +966,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncMap(VM& vm, JSGlobalOb
     }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.filter
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -989,14 +989,14 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGloba
         return { };
     }
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto nativeValue) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, IterationStatus::Done);
 
             scope.release();
@@ -1053,7 +1053,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFilter(VM& vm, JSGloba
 #undef JSC_DISPATCH_TYPED_ARRAY
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.find
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1071,9 +1071,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalO
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1081,7 +1081,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalO
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1120,7 +1120,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFind(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findindex
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1138,9 +1138,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGl
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1148,7 +1148,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGl
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1187,7 +1187,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindIndex(VM& vm, JSGl
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findlast
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1205,9 +1205,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlo
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1215,7 +1215,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlo
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1254,7 +1254,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLast(VM& vm, JSGlo
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.findlastindex
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1272,9 +1272,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, 
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1282,7 +1282,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, 
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1321,7 +1321,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFindLastIndex(VM& vm, 
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.every
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1339,9 +1339,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobal
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1349,7 +1349,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobal
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1388,7 +1388,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncEvery(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.some
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1406,9 +1406,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalO
 
     JSValue thisArg = callFrame->argument(1);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(functorValue), 3);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(functorValue), callData, 3);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
 
@@ -1416,7 +1416,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalO
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) ALWAYS_INLINE_LAMBDA -> IterationStatus {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            JSValue result = cachedCall.callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
+            JSValue result = cachedCall->callWithArguments(globalObject, thisArg, element, jsNumber(index), thisObject);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, { });
 
             scope.release();
@@ -1455,7 +1455,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSome(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.reduce
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1479,9 +1479,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGloba
     JSValue accumulator = hasInitialValue ? callFrame->uncheckedArgument(1) : jsUndefined();
 
     bool initialized = hasInitialValue;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(callback), 4);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(callback), callData, 4);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Forward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) -> IterationStatus {
@@ -1491,7 +1491,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGloba
                 return IterationStatus::Continue;
             }
 
-            accumulator = cachedCall.callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
+            accumulator = cachedCall->callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
         return JSValue::encode(accumulator);
@@ -1524,7 +1524,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduce(VM& vm, JSGloba
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.reduceright
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1548,9 +1548,9 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JS
     JSValue accumulator = hasInitialValue ? callFrame->uncheckedArgument(1) : jsUndefined();
 
     bool initialized = hasInitialValue;
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(callback), 4);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(callback), callData, 4);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
 
         scope.release();
         typedArrayViewForEachImpl<ForEachDirection::Backward>(globalObject, vm, thisObject, length, [&](JSValue element, size_t index, auto) -> IterationStatus {
@@ -1560,7 +1560,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JS
                 return IterationStatus::Continue;
             }
 
-            accumulator = cachedCall.callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
+            accumulator = cachedCall->callWithArguments(globalObject, jsUndefined(), accumulator, element, jsNumber(index), thisObject);
             return IterationStatus::Continue;
         });
 
@@ -1594,7 +1594,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReduceRight(VM& vm, JS
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1610,7 +1610,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncReverse(VM& vm, JSGlob
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToReversed(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncToReversed(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.toReversed
 
@@ -1680,9 +1680,9 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
 
     auto result = src;
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, asObject(comparatorValue), 2);
-        RETURN_IF_EXCEPTION(scope, { });
+    auto cachedCall = CachedCall::tryCreate(globalObject, asObject(comparatorValue), callData, 2);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (cachedCall) [[likely]] {
         result = arrayStableSort<MergeStrategy::Simple>(vm, src, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1691,7 +1691,7 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
             JSValue rightValue = ViewClass::Adaptor::toJSValue(globalObject, right);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
 
-            JSValue jsResult = cachedCall.callWithArguments(globalObject, jsUndefined(), leftValue, rightValue);
+            JSValue jsResult = cachedCall->callWithArguments(globalObject, jsUndefined(), leftValue, rightValue);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
 
             RELEASE_AND_RETURN(scope, coerceComparatorResultToBoolean(globalObject, jsResult));
@@ -1730,7 +1730,7 @@ static inline EncodedJSValue genericTypedArrayViewProtoFuncSortImpl(VM& vm, JSGl
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1747,7 +1747,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSort(VM& vm, JSGlobalO
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.toSorted
 
@@ -1778,7 +1778,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncToSorted(VM& vm, JSGlo
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1841,7 +1841,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewPrivateFuncFromFast(VM& vm, JSG
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1965,7 +1965,7 @@ NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSlice(VM& vm, JSGlobal
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncSubarray(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncSubarray(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/ecma262/#sec-%typedarray%.prototype.subarray
 
@@ -2053,7 +2053,7 @@ static inline void validateIntegerIndex(JSGlobalObject* globalObject, ViewClass*
 }
 
 template<typename ViewClass>
-NEVER_INLINE EncodedJSValue genericTypedArrayViewProtoFuncWith(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
+inline EncodedJSValue genericTypedArrayViewProtoFuncWith(VM& vm, JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     // https://tc39.es/proposal-change-array-by-copy/#sec-%typedarray%.prototype.with
 

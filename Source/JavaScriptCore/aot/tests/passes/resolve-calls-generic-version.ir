@@ -1,0 +1,172 @@
+# A function unknown code can call has two versions: a site flow linked with proven arguments enters the proven one, every other site the one with the types as written
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveBuiltins,ResolveCalls,ChooseCallingConventions
+# RUN: pipeline ResolveCalls
+# RUN(LATER): pipeline ChooseCallingConventions
+# STATISTIC: FlowGenericVersions = 2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Result
+typesite w1 module=m0 position=20 kind=Result
+layout L0 name="Pair" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="odd" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="even" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewClosure function=f1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="input" [isFreeName]
+    v5 = PropGet v3 key="register" [isFreeName]
+    v6 = Call v5, -, v2
+    v7 = Call v2, -, v1
+    v8 = Call v2, -, v4
+    v9 = Undefined
+    v10 = PropGet v2 key="call"
+    v11 = Call v10, v2, v9, v4 calleeKey="call"
+    v12 = PropGet v2 key="apply"
+    v13 = Call v12, v2, v9 calleeKey="apply"
+    v14 = NewClosure function=f3
+    PutModuleVariable v14 variable=g0
+    v16 = PropGet v3 key="otherOdd" [isFreeName]
+    PutModuleVariable v16 variable=g0
+    v18 = NewClosure function=f2
+    PutModuleVariable v18 variable=g1
+    v20 = Integer integer=7
+    v21 = Call v18, -, v20
+    v22 = CallDirect v1, v5 function=f5
+    v23 = CallDirect function=f6
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: v1: L0 = NewObject
+# CHECK: = CallDirect v1 function=f1
+# CHECK-NEXT: v7:
+# CHECK-NEXT: = CallDirect v4 function=[[generic]]
+# CHECK-NEXT: v8:
+# CHECK: [[answer]]: anything{{*}}= CallDirect v20 function=f2 {{*}}resultCheck=ByCallers
+# CHECK-NEXT: : boolean = Claim [[answer]] castType=boolean site=w0
+# LATER-LABEL: function f0 name="main"
+# LATER: [[pair]]: L0 = NewObject
+# LATER: [[closure]]: f1 = NewClosure function=f1
+# LATER: [[input]]: anything = PropGet {{*}} key="input"
+# LATER: = CallDirect [[pair]] function=f1
+# LATER: = CallDirect [[input]] function=[[genericLater]]
+# LATER-NOT: = Call [[closure]]
+# LATER: = CallDirect [[input]] function=[[genericLater]]
+# LATER-NOT: = Call [[closure]]
+# LATER-NOT: overload=FunctionPrototypeApply/0
+# LATER: = CallDirect [[missing]] function=[[genericLater]]
+# LATER-NOT: = Call [[closure]]
+# LATER-NOT: overload=FunctionPrototypeApply/0
+function f1 name="sum" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="sum"
+# CHECK-NEXT: b0(v0: {{*}}L0):
+# LATER-LABEL: function f1 name="sum"
+function f2 name="even" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w0}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=true
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w0}}]
+}
+function f3 name="odd" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w1}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Boolean boolean=false
+    Return v3
+  b2():
+    v4 = GetModuleVariable variable=g1
+    v5 = Call v4, -, v0
+    ReturnCall v5 casts=[{declared={type=boolean site=w1}}]
+}
+function f4 name="product" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Mul v1, v2
+    Return v3
+}
+function f5 name="binds" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewClosure function=f4
+    v3 = Call v1, -, v2
+    v4 = Call v2, -, v0
+    v5 = Undefined
+    v6 = PropGet v2 key="bind"
+    v7 = Call v6, v2, v5 calleeKey="bind"
+    v8 = Call v7, -, v0
+    Return v8
+}
+# LATER-LABEL: function f5 name="binds"
+# LATER: [[target]]: f4 = NewClosure function=f4
+# LATER: = CallDirect v0 function=f4
+# LATER-NOT: overload=FunctionPrototypeBind/0
+# LATER: = NewClosure [[target]] function=[[bound]]
+# LATER: = CallDirect [[target]], v0 function=[[bound]]
+function f6 name="padding" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Undefined
+    v3 = Undefined
+    v4 = Undefined
+    v5 = Undefined
+    v6 = Undefined
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = Undefined
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Undefined
+    v26 = Undefined
+    v27 = Undefined
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Undefined
+    v33 = Undefined
+    v34 = Undefined
+    v35 = Undefined
+    v36 = Undefined
+    v37 = Undefined
+    v38 = Undefined
+    v39 = Undefined
+    Return
+}
+# CHECK: function [[generic]] name="sum"{{*}}role=GenericVersion{{*}}parameters=[{type=anything predicted=undefined|L0}]
+# LATER: function [[genericLater]] name="sum"{{*}}role=GenericVersion
+# LATER: function [[genericProduct]] name="product"{{*}}role=GenericVersion
+# LATER: function [[bound]] name="product"{{*}}role=BoundFunction captures=[{type=function}]{{*}}parameters=[{type=anything predicted=L0}]
+# LATER: = CallDirect {{*}} function=[[genericProduct]]

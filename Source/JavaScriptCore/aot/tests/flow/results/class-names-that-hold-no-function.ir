@@ -1,0 +1,76 @@
+# A name of a prototype object or of a class object that may hold something else than a function is listed without a function, so the list of names is complete:
+# a lookup of that name learns nothing, and a lookup of any other name passes the holder. A name that holds a function or a number is listed both ways and is not fixed
+# RUN: flow
+# CHECK: layout L0 flow={{*}} classFlow={{*}} prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="walk" function=f4{{*}}}] namedMembers=[{key="walk" function=f4 mutability=Fixed{{*}}}, {key="count" side=Static isWritableData=true}]
+# CHECK: layout L1 flow={{*}} classFlow={{*}} prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f5{{*}}}] namedMembers=[{key="name" isWritableData=true}, {key="run" function=f5 mutability=Fixed{{*}}}] hasAssignedPrototype=true prototypeBase=L0}
+# CHECK: layout L2 flow={{*}} classFlow={{*}} prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="pick" function=f4 isWritableData=true}] namedMembers=[{key="pick" function=f4 isWritableData=true}, {key="pick" isWritableData=true}] hasAssignedPrototype=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1 fields=[{key="name" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Child" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="FunctionOrNumber" constructor=f3 flags=[IsConstructorFunction]
+layout L3 name="literal" fields=[{key="pick" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f6
+    v2 = NewClosure function=f1
+    v3 = PropGet v2 key="prototype"
+    v4 = NewClosure function=f4
+    PropSet v3, v4 key="walk" mode=Strict
+    v6 = Integer integer=0
+    PropSet v2, v6 key="count" mode=Strict
+    v8 = NewClosure function=f2
+    v9 = Construct v2
+    PropSet v8, v9 key="prototype" mode=Strict
+    v11 = PropGet v8 key="prototype"
+    v12 = NewClosure function=f5
+    PropSet v11, v12 key="run" mode=Strict
+    v14 = NewClosure function=f3
+    v15 = PropGet v0 key="flag" [isFreeName]
+    v16 = ToBoolean v15
+    Branch v16 -> taken b1(), notTaken b2(v6)
+  b1():
+    Jump -> next b2(v4)
+  b2(v17: anything):
+    v18 = NewObject -, v17 layout=L3 fields=[0]
+    v19 = FinishObject v18
+    PropSet v14, v19 key="prototype" mode=Strict
+    v21 = Construct v8
+    v22 = Call v1, -, v21
+    v23 = Construct v14
+    v24 = Call v1, -, v23
+    Return
+}
+function f1 name="Parent" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = String string="nobody"
+    PropSet v0, v1 key="name" mode=Strict
+    Return
+}
+function f2 name="Child" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="FunctionOrNumber" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f4 name="walk" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f5 name="run" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f6 name="use" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="walk"
+    v2 = PropGet v0 key="name"
+    v3 = PropGet v0 key="pick"
+    Return v1
+}

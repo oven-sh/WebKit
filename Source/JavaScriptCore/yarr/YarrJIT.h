@@ -35,8 +35,10 @@
 #include "VM.h"
 #include "Yarr.h"
 #include "YarrPattern.h"
+#include <expected>
 #include <wtf/Atomics.h>
 #include <wtf/BitSet.h>
+#include <wtf/Function.h>
 #include <wtf/StackCheck.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
@@ -52,8 +54,10 @@ class VM;
 
 namespace Yarr {
 
+class CodeAddressing;
 class MatchingContextHolder;
 class YarrCodeBlock;
+struct CodeGenerationPolicy;
 
 enum class JITFailureReason : uint8_t {
     DecodeSurrogatePair,
@@ -64,6 +68,11 @@ enum class JITFailureReason : uint8_t {
     OffsetTooLarge,
     GeneratedCodeSizeTooLarge,
     LookbehindLayoutMismatch,
+    LookbehindJITDisabled,
+    UnsupportedCPU,
+    ProcessAddressInCode,
+    OutOfPCRelativeReach,
+    UnlistedSharedTable,
 };
 
 class BoyerMooreFastCandidates {
@@ -236,6 +245,10 @@ public:
 
     const uint8_t* addLatin1Table(const CharacterClass::ByteTable& table)
     {
+        for (auto& stored : m_latin1Tables) {
+            if (stored->data == table.data)
+                return stored->data.data();
+        }
         m_latin1Tables.append(makeUniqueRef<CharacterClass::ByteTable>(table));
         return m_latin1Tables.last()->data.data();
     }
@@ -296,15 +309,10 @@ public:
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
     size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
-#if USE(BUN_JSC_ADDITIONS)
     bool has8BitCode() { return !!m_ref8; }
     static constexpr ptrdiff_t offsetOf8BitCode() { return OBJECT_OFFSETOF(YarrCodeBlock, m_ref8); }
     static constexpr ptrdiff_t offsetOf16BitCode() { return OBJECT_OFFSETOF(YarrCodeBlock, m_ref16); }
     bool has16BitCode() { return !!m_ref16; }
-#else
-    bool has8BitCode() { return m_ref8.size(); }
-    bool has16BitCode() { return m_ref16.size(); }
-#endif
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_ref8 = ref;
@@ -316,19 +324,15 @@ public:
         saveMaps(WTF::move(maps));
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool has8BitCodeMatchOnly() { return !!m_matchOnly8 || m_imageCodeOutputSize; }
-    bool has16BitCodeMatchOnly() { return !!m_matchOnly16 || m_imageCodeOutputSize; }
-    void setCodeFromImage(const void* for8Bit, const void* for16Bit, unsigned sizeOfOutput)
+    bool has8BitCodeMatchOnly() { return !!m_matchOnly8; }
+    bool has16BitCodeMatchOnly() { return !!m_matchOnly16; }
+    bool isFromImage() const { return m_isFromImage; }
+    void setCodeFromImage(const void* for8Bit, const void* for16Bit)
     {
         m_ref8 = MacroAssemblerCodeRef<Yarr8BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr8BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for8Bit)));
         m_ref16 = MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit)));
-        m_imageCodeOutputSize = sizeOfOutput;
+        m_isFromImage = true;
     }
-#else
-    bool has8BitCodeMatchOnly() { return m_matchOnly8.size(); }
-    bool has16BitCodeMatchOnly() { return m_matchOnly16.size(); }
-#endif
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_matchOnly8 = matchOnly;
@@ -367,6 +371,7 @@ public:
     MatchResult execute(std::span<const Latin1Character> input, unsigned start, int* output, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCode());
+        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), output, matchingContext, retagCodePtr<Yarr8BitPtrTag, YarrEntryPtrTag>(m_ref8.code().taggedPtr())));
@@ -377,6 +382,7 @@ public:
     MatchResult execute(std::span<const char16_t> input, unsigned start, int* output, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCode());
+        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), output, matchingContext, retagCodePtr<Yarr16BitPtrTag, YarrEntryPtrTag>(m_ref16.code().taggedPtr())));
@@ -384,16 +390,10 @@ public:
         return MatchResult(untagCFunctionPtr<YarrJITCode16, Yarr16BitPtrTag>(m_ref16.code().taggedPtr())(input.data(), start, input.size(), output, matchingContext));
     }
 
-    ALWAYS_INLINE MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
+    MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCodeMatchOnly());
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_imageCodeOutputSize) {
-            Vector<int, 32> output;
-            output.grow(m_imageCodeOutputSize);
-            return execute(input, start, output.mutableSpan().data(), matchingContext);
-        }
-#endif
+        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly8BitPtrTag, YarrEntryPtrTag>(m_matchOnly8.code().taggedPtr())));
@@ -401,16 +401,10 @@ public:
         return MatchResult(untagCFunctionPtr<YarrJITCodeMatchOnly8, YarrMatchOnly8BitPtrTag>(m_matchOnly8.code().taggedPtr())(input.data(), start, input.size(), nullptr, matchingContext));
     }
 
-    ALWAYS_INLINE MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
+    MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCodeMatchOnly());
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_imageCodeOutputSize) {
-            Vector<int, 32> output;
-            output.grow(m_imageCodeOutputSize);
-            return execute(input, start, output.mutableSpan().data(), matchingContext);
-        }
-#endif
+        ASSERT(start <= input.size());
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly16BitPtrTag, YarrEntryPtrTag>(m_matchOnly16.code().taggedPtr())));
@@ -464,9 +458,7 @@ public:
         m_matchOnly8 = MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag>();
         m_matchOnly16 = MacroAssemblerCodeRef<YarrMatchOnly16BitPtrTag>();
         m_failureReason = std::nullopt;
-#if USE(BUN_JSC_ADDITIONS)
-        m_imageCodeOutputSize = 0;
-#endif
+        m_isFromImage = false;
         clearMaps();
         m_characterClassBitTables.clear();
     }
@@ -482,65 +474,51 @@ private:
     InlineStats m_matchOnly16Stats;
     Vector<UniqueRef<CharacterClassBitTable>> m_characterClassBitTables;
     RegExp* m_regExp { nullptr };
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned m_imageCodeOutputSize { 0 };
-#endif
+    bool m_isFromImage { false };
 
     std::optional<JITFailureReason> m_failureReason;
 };
 
-void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
+void jitCompile(const YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
 
-#if USE(BUN_JSC_ADDITIONS)
-struct YarrCodeForImage {
-    Vector<uint8_t> bytes;
-    struct TableReference {
-        uint32_t offset;
-        uint8_t reg;
-        std::span<const uint8_t> table;
-    };
-    Vector<TableReference> tables;
-    enum class OwnedTableKind : uint8_t { Other, BitPlane, CharacterClassTable, ClassTableForRoutine };
-    struct OwnedTableReference {
-        uint32_t offset;
-        uint8_t reg;
-        bool isFar;
-        uint32_t table;
-        OwnedTableKind kind { OwnedTableKind::Other };
-    };
-    Vector<Vector<uint8_t>> ownedTables;
-    Vector<OwnedTableReference> ownedTableReferences;
-    struct RoutineCall {
-        uint32_t offset;
-        uint32_t routine;
-        bool usesRegistersOnly { false };
-        bool isTailCall { false };
-    };
-    Vector<Vector<uint8_t>> routines;
-    Vector<RoutineCall> routineCalls;
-    struct LiteralLoad {
-        uint32_t offset;
-        uint64_t value;
-    };
-    Vector<LiteralLoad> literalLoads;
+struct CodeGenerationRequest {
+    const YarrPattern& pattern;
+    StringView patternString;
+    CharSize charSize;
+    ExecutionMode executionMode;
+    std::optional<StringView> sampleString;
+    YarrCodeBlock* codeBlock;
+    const CodeGenerationPolicy& policy;
+    Function<std::unique_ptr<CodeAddressing>(CCallHelpers&)> createCodeAddressing;
 };
-JS_EXPORT_PRIVATE std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern&, StringView patternString, CharSize, VM*, ExecutionMode, StackCheck&);
-JS_EXPORT_PRIVATE void tidyBodyForImage(YarrCodeForImage&);
+
+struct CodeGenerationAttempt;
+
+class GeneratedCode {
+    WTF_MAKE_NONCOPYABLE(GeneratedCode);
+public:
+    JS_EXPORT_PRIVATE explicit GeneratedCode(std::unique_ptr<CodeGenerationAttempt>);
+    JS_EXPORT_PRIVATE GeneratedCode(GeneratedCode&&);
+    JS_EXPORT_PRIVATE ~GeneratedCode();
+
+    JS_EXPORT_PRIVATE CCallHelpers& jit();
+    JS_EXPORT_PRIVATE CodeAddressing& addressing();
+    JS_EXPORT_PRIVATE bool hasElidedFrame() const;
+    JS_EXPORT_PRIVATE unsigned classTableLimitHits() const;
+    CodeGenerationAttempt& attempt() { return *m_attempt; }
+
+private:
+    std::unique_ptr<CodeGenerationAttempt> m_attempt;
+};
+
+JS_EXPORT_PRIVATE std::expected<GeneratedCode, JITFailureReason> generateCode(const CodeGenerationRequest&);
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+
 
 class YarrJITRegisters;
 
 void jitCompileInlinedTest(StackCheck*, StringView, OptionSet<Yarr::Flags>, CharSize, VM*, YarrBoyerMooreData&, CCallHelpers&, YarrJITRegisters&, unsigned reservedFrameSizeInBytes);
-#endif
-#else
-#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
-
-
-class YarrJITRegisters;
-
-void jitCompileInlinedTest(StackCheck*, StringView, OptionSet<Yarr::Flags>, CharSize, VM*, YarrBoyerMooreData&, CCallHelpers&, YarrJITRegisters&, unsigned reservedFrameSizeInBytes);
-#endif
 #endif
 
 } } // namespace JSC::Yarr

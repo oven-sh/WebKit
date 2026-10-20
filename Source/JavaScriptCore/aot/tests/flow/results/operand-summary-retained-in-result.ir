@@ -1,0 +1,60 @@
+# An argument stored in an object that the function allocates and only returns is retained in the result, and the caller sees no container for one stored a level deeper
+# RUN: flow
+# CHECK: function f1 parameter 0 uses=[Retains] retainedIn=Result
+# CHECK: function f2 parameter 0 uses=[Retains] retainedIn=Result
+# CHECK: function f3 parameter 0 uses=[Retains] retainedIn=Result
+# CHECK: function f4 parameter 0 uses=[Retains] retainedIn=UnknownMemory
+# CHECK: function f5 parameter 0 uses=[] retainedIn=UnknownMemory
+# CHECK: function f6 parameter 0 uses=[Retains] retainedIn=UnknownMemory
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Wrapper" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Item" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = CallDirect v1 function=f3
+    v5 = CallDirect v1 function=f4
+    v6 = CallDirect v1 function=f5
+    v7 = CallDirect v1 function=f6
+    Return
+}
+function f1 name="wrap" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="wrapByStore" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    PropSet v2, v0 key="x" mode=Strict
+    Return v2
+}
+function f3 name="wrapInArray" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything holes=[]
+    Return v1
+}
+function f4 name="wrapAndRemember" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+function f5 name="wrapAndDrop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return
+}
+function f6 name="wrapTwice" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    Return v2
+}

@@ -1,0 +1,46 @@
+# A closure stored into a position declared function needs no cast, because an exact function is inside function, and a value nobody knows is claimed
+# RUN: flow-apply
+# RUN(ALL): flow-apply
+# CHECK: variable g0 name="fits" module=m0 declared={type=f1|f2 written=function}
+# CHECK: variable g1 name="mixed" module=m0 declared={type=function predicted=f1}
+# CHECK: v3: f1 = NewClosure
+# CHECK-NEXT: v4: f2 = NewClosure
+# CHECK-NEXT: PutModuleVariable v3 variable=g0
+# CHECK-NEXT: PutModuleVariable v4 variable=g0
+# CHECK-NEXT: v7: f1|f2 = GetModuleVariable variable=g0
+# CHECK: PutModuleVariable v3 variable=g1
+# CHECK-NEXT: v10: function = Claim v1 castType=function cause=UnknownObject
+# ALL-NOT: = Claim v3
+# ALL-NOT: = Claim v4
+# ALL-NOT: = AssumeType v3
+# ALL-NOT: = AssumeType v4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="fits" declared={type=function} initialization=Uninitialized
+variable g1 name="mixed" declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    PutModuleVariable v3 variable=g0
+    PutModuleVariable v4 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -, v2
+    PutModuleVariable v3 variable=g1
+    v10 = ClaimDeclared v1 declared={type=function}
+    PutModuleVariable v10 variable=g1
+    Return
+}
+function f1 name="double" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="same" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}

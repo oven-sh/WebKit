@@ -1,0 +1,21 @@
+# The interpreter calls performIteration for evaluated text that spreads. `Function.prototype` reads the evaluator and calls nothing, so there is no text and nobody enters the function.
+# With a call: flow/calls/evaluator-that-is-called-needs-what-its-text-needs.ir
+# RUN: flow-links calls
+# CHECK-NOT: -> {{*}} f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = PropGet v1 key="prototype"
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f1 name="performIteration" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+runtimefunction id=74 function=f1

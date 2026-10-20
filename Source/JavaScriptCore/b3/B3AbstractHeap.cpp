@@ -60,7 +60,6 @@ void AbstractHeap::changeParent(AbstractHeap* parent)
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 void AbstractHeap::removeChildrenFrom(size_t first)
 {
     for (size_t i = first; i < m_children.size(); ++i) {
@@ -72,7 +71,6 @@ void AbstractHeap::removeChildrenFrom(size_t first)
     }
     m_children.shrink(first);
 }
-#endif
 
 void AbstractHeap::compute(unsigned begin)
 {
@@ -154,7 +152,6 @@ IndexedAbstractHeap::IndexedAbstractHeap(AbstractHeap* parent, const char* heapN
 
 IndexedAbstractHeap::~IndexedAbstractHeap() = default;
 
-#if USE(BUN_JSC_ADDITIONS)
 void IndexedAbstractHeap::retainCurrentHeaps()
 {
     RELEASE_ASSERT(m_largeIndices.isEmpty());
@@ -170,7 +167,6 @@ void IndexedAbstractHeap::removeTemporaryHeaps()
     m_largeIndices.clear();
     m_largeIndexNames.shrink(m_retainedHeapCount);
 }
-#endif
 
 const AbstractHeap& IndexedAbstractHeap::atSlow(ptrdiff_t index)
 {
@@ -244,7 +240,7 @@ void IndexedAbstractHeap::initialize(AbstractHeap& field, ptrdiff_t signedIndex)
             accumulator >>= 4;
         }
 
-        field.initialize(&m_heapForAnyIndex, characters.data(), m_offset + signedIndex * m_elementSize);
+        field.initialize(&m_heapForAnyIndex, characters.data(), m_offset + signedIndex * m_elementSize, m_heapForAnyIndex.mutability());
         return;
     }
 

@@ -1,0 +1,32 @@
+# A string that changes in the loop does not stop the other string of the loop from being flattened
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 2
+
+# CHECK-NOT: LoopHint
+# CHECK: [[flat]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v11: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
+# CHECK-NEXT: v12: string = StringRangeCharacterOrEmpty v8, -, -, v6
+# CHECK-NOT: FlattenString
+module m0 path="main.js" displayPath="main.js"
+function f0 name="one-of-two-strings-varies" parameters=[{type=string}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: string):
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = Undefined
+    Jump -> next b1(v3, v5, v2)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Less v6, v1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = CallBuiltin v0, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v12 = CallBuiltin v8, v6 overload=StringPrototypeCharAt/0 builtinCallForm=Whole
+    v13 = Add v6, v4
+    Jump -> next b1(v13, v11, v12)
+  b3():
+    Return v7
+}

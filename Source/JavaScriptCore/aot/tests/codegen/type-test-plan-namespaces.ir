@@ -1,0 +1,47 @@
+# A namespace object has no shape, so the layout of a module namespace is tested by the module of the object
+# FORM: Selected
+# RUN: type-test-plan t0 Cell t1 t3 JSValue t1 t3 JSValue t0 t6 Cell t4
+# CHECK: t0 Cell t1: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell IsNamespaceOf 1
+# CHECK-NEXT: t3 JSValue t1: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell IsNamespaceOf 1
+# CHECK-NEXT: t3 JSValue t0: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CHECK-NEXT: cell ShapeIn
+# CHECK-NEXT: cell IsNamespaceOf 1
+# CHECK-NEXT: t6 Cell t4: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CHECK-NEXT: cell IsNamespaceOf 1
+# CHECK-NEXT: cell IsNamespaceOf 2
+# CHECK-NOT: cell
+# RUN(RECORD): type-test-plan t0 Cell t2
+# RECORD: t0 Cell t2: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# RECORD-NEXT: cell ShapeIn
+# RECORD-NOT: cell
+# RUN(OTHERMODULE): type-test-plan t4 Cell t5 t0 Cell t4
+# OTHERMODULE: t4 Cell t5: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# OTHERMODULE-NEXT: cell IsNamespaceOf 2
+# OTHERMODULE-NEXT: t0 Cell t4: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# OTHERMODULE-NEXT: cell IsNamespaceOf 1
+# OTHERMODULE-NOT: cell
+# RUN(SETTLED): type-test-plan t2 Cell t1 t5 Cell t1 t5 Cell t4
+# SETTLED: t2 Cell t1: NeverPasses
+# SETTLED-NEXT: t5 Cell t1: NeverPasses
+# SETTLED-NEXT: t5 Cell t4: AlwaysPasses
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="first.js" displayPath="first.js" exports=[{name="a" variable=g7}]
+module m2 path="second.js" displayPath="second.js" exports=[{name="b" variable=g8}]
+layout L0 name="Point" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+variable g0 name="t0" declared={type=L0|L(m1)} initialization=Undefined
+variable g1 name="t1" declared={type=L(m1)} initialization=Undefined
+variable g2 name="t2" declared={type=L0} initialization=Undefined
+variable g3 name="t3" declared={type=anything} initialization=Undefined
+variable g4 name="t4" declared={type=L(m1)|L(m2)} initialization=Undefined
+variable g5 name="t5" declared={type=L(m2)} initialization=Undefined
+variable g6 name="t6" declared={type=L0|L(m1)|L(m2)} initialization=Undefined
+variable g7 name="a" module=m1 declared={type=number}
+variable g8 name="b" module=m2 declared={type=number}
+function f0 name="allocatePoint" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    Return v1
+}

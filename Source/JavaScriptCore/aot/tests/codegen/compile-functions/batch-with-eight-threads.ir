@@ -1,0 +1,742 @@
+# Thirty-eight small functions that share batches and a large one with a batch of its own are all compiled and counted on eight threads
+# FORM: AsRead
+# RUN: compile
+# OPTIONS: threads=8 check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations
+# STATISTIC: LoopsRotated >= 38
+# STATISTIC: NullChecksFoldedIntoAccesses >= 38
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Double number=1.5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Null
+    v5 = ToBoolean v1
+    Branch v5 -> taken b1(v3), notTaken b1(v4)
+  b1(v6):
+    v7 = ToNumber v1
+    v8 = CallDirect v6, v7 function=f1
+    v9 = CallDirect v6, v7 function=f2
+    v10 = CallDirect v6, v7 function=f3
+    v11 = CallDirect v6, v7 function=f4
+    v12 = CallDirect v6, v7 function=f5
+    v13 = CallDirect v6, v7 function=f6
+    v14 = CallDirect v6, v7 function=f7
+    v15 = CallDirect v6, v7 function=f8
+    v16 = CallDirect v6, v7 function=f9
+    v17 = CallDirect v6, v7 function=f10
+    v18 = CallDirect v6, v7 function=f11
+    v19 = CallDirect v6, v7 function=f12
+    v20 = CallDirect v6, v7 function=f13
+    v21 = CallDirect v6, v7 function=f14
+    v22 = CallDirect v6, v7 function=f15
+    v23 = CallDirect v6, v7 function=f16
+    v24 = CallDirect v6, v7 function=f17
+    v25 = CallDirect v6, v7 function=f18
+    v26 = CallDirect v6, v7 function=f19
+    v27 = CallDirect v6, v7 function=f20
+    v28 = CallDirect v6, v7 function=f21
+    v29 = CallDirect v6, v7 function=f22
+    v30 = CallDirect v6, v7 function=f23
+    v31 = CallDirect v6, v7 function=f24
+    v32 = CallDirect v6, v7 function=f25
+    v33 = CallDirect v6, v7 function=f26
+    v34 = CallDirect v6, v7 function=f27
+    v35 = CallDirect v6, v7 function=f28
+    v36 = CallDirect v6, v7 function=f29
+    v37 = CallDirect v6, v7 function=f30
+    v38 = CallDirect v6, v7 function=f31
+    v39 = CallDirect v6, v7 function=f32
+    v40 = CallDirect v6, v7 function=f33
+    v41 = CallDirect v6, v7 function=f34
+    v42 = CallDirect v6, v7 function=f35
+    v43 = CallDirect v6, v7 function=f36
+    v44 = CallDirect v6, v7 function=f37
+    v45 = CallDirect v6, v7 function=f38
+    v46 = CallDirect v1 function=f39
+    v47 = Call v1, -, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46
+    Return v47
+}
+function f1 name="small1" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f2 name="small2" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=2
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f3 name="small3" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=3
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f4 name="small4" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=4
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f5 name="small5" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=5
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f6 name="small6" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=6
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f7 name="small7" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=7
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f8 name="small8" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=8
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f9 name="small9" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=9
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f10 name="small10" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=10
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f11 name="small11" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=11
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f12 name="small12" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=12
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f13 name="small13" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=13
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f14 name="small14" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=14
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f15 name="small15" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=15
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f16 name="small16" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=16
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f17 name="small17" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=17
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f18 name="small18" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=18
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f19 name="small19" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=19
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f20 name="small20" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=20
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f21 name="small21" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=21
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f22 name="small22" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=22
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f23 name="small23" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=23
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f24 name="small24" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=24
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f25 name="small25" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=25
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f26 name="small26" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=26
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f27 name="small27" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=27
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f28 name="small28" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=28
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f29 name="small29" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=29
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f30 name="small30" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=30
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f31 name="small31" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=31
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f32 name="small32" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=32
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f33 name="small33" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=33
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f34 name="small34" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=34
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f35 name="small35" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=35
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f36 name="small36" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=36
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f37 name="small37" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=37
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f38 name="small38" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: null|object ? L0, v1: number):
+    v2 = Integer integer=38
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v3, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = PropGet v0 key="x"
+    v8 = Add v7, v3
+    Return v8
+}
+function f39 name="large" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v2 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v3 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v4 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v5 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v6 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v7 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v8 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v9 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v10 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v11 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v12 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v13 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v14 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v15 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v16 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v17 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v18 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v19 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v20 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v21 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v22 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v23 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v24 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v25 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v26 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v27 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v28 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v29 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v30 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v31 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v32 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v33 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v34 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v35 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v36 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v37 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v38 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v39 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v40 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v41 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v42 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v43 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v44 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v45 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v46 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v47 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v48 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v49 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v50 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v51 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v52 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v53 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v54 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v55 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v56 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v57 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v58 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v59 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v60 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v61 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v62 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v63 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v64 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    v65 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
+    Return v65
+}

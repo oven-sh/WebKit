@@ -33,8 +33,8 @@
 #include "ExceptionHelpers.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
-#include "FFIInvokeThunk.h"
 #include "FFISignature.h"
+#include "FFIStubs.h"
 #include "FFIType.h"
 #include "FrameTracers.h"
 #include "JSCInlines.h"
@@ -67,8 +67,9 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     }
     slots[argumentCount] = 0;
 
+    const Stubs* stubs = Stubs::current();
     CodePtr<JITThunkPtrTag> thunk;
-    if (!FFI_INVOKE_WITHOUT_JIT_SUPPORTED || Options::useJIT()) [[likely]] {
+    if (!stubs) [[likely]] {
         thunk = signature.invokeThunk();
         if (!thunk) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
@@ -76,10 +77,8 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
         }
     }
     auto invoke = [&] ALWAYS_INLINE_LAMBDA {
-#if FFI_INVOKE_WITHOUT_JIT_SUPPORTED
-        if (!thunk) [[unlikely]]
-            return invokeWithoutJIT(signature, function->target(), slots);
-#endif
+        if (stubs) [[unlikely]]
+            return invokeThroughStub(stubs->invoke(), signature, function->target(), slots);
         thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
     };
 

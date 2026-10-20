@@ -43,6 +43,7 @@
 #include "B3MemoryValueInlines.h"
 #include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
+#include "B3RelocatableValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3SwitchValue.h"
 #include "B3UpsilonValue.h"
@@ -82,41 +83,73 @@ namespace JSC { namespace B3 {
 
 namespace {
 
+constexpr bool isLoweredByLowerMacros(Opcode opcode)
+{
+    switch (opcode) {
+    case Mod:
+    case UMod:
+    case FMax:
+    case FMin:
+    case Div:
+    case Switch:
+    case Depend:
+    case AtomicWeakCAS:
+    case AtomicStrongCAS:
+    case AtomicXchgAdd:
+    case AtomicXchgAnd:
+    case AtomicXchgOr:
+    case AtomicXchgSub:
+    case AtomicXchgXor:
+    case AtomicXchg:
+    case VectorPopcnt:
+    case VectorNot:
+    case VectorNeg:
+    case VectorNotEqual:
+    case VectorAbove:
+    case VectorBelow:
+    case VectorGreaterThanOrEqual:
+    case VectorLessThanOrEqual:
+    case WasmStructGet:
+    case WasmStructSet:
+    case WasmStructNew:
+    case WasmArrayLength:
+    case WasmArrayGet:
+    case WasmArraySet:
+    case WasmArrayNew:
+    case WasmRefCast:
+    case WasmRefTest:
+        return true;
+    case Load8Z:
+    case Load16Z:
+        return !isX86();
+    default:
+        return false;
+    }
+}
+
 class LowerMacros {
 public:
     LowerMacros(Procedure& proc)
         : m_proc(proc)
         , m_blockInsertionSet(proc)
         , m_insertionSet(proc)
-#if !USE(BUN_JSC_ADDITIONS)
-        , m_useCounts(proc)
-#endif
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (!proc.positionIndependent())
-            m_useCounts.emplace(proc);
-#endif
     }
 
     bool run()
     {
         RELEASE_ASSERT(!m_proc.hasQuirks());
-#if USE(BUN_JSC_ADDITIONS)
-        bool mayFindSomething = !isX86() && (m_proc.hasEverAdded(Load8Z) || m_proc.hasEverAdded(Load16Z));
-        for (Opcode opcode : { Mod, UMod, FMax, FMin, Div, Switch, Depend, AtomicWeakCAS, AtomicStrongCAS, AtomicXchgAdd, AtomicXchgAnd, AtomicXchgOr, AtomicXchgSub, AtomicXchgXor, AtomicXchg,
-            VectorPopcnt, VectorNot, VectorNeg, VectorNotEqual, VectorAbove, VectorBelow, VectorGreaterThanOrEqual, VectorLessThanOrEqual,
-            WasmStructGet, WasmStructSet, WasmStructNew, WasmArrayLength, WasmArrayGet, WasmArraySet, WasmArrayNew, WasmRefCast, WasmRefTest })
-            mayFindSomething |= m_proc.hasEverAdded(opcode);
-        if (!mayFindSomething) {
+        bool mayFindWork = m_proc.hasEverAddedAny(isLoweredByLowerMacros);
+        if (!mayFindWork && !shouldValidateIR(m_proc)) {
             m_proc.setHasQuirks(true);
             return false;
         }
-#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
         }
         m_changed |= m_blockInsertionSet.execute();
+        RELEASE_ASSERT(mayFindWork || !m_changed);
         if (m_changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
@@ -174,7 +207,7 @@ private:
                 if (m_value->type() == Double) {
                     if constexpr (!isARM64()) {
                         // Non-ARM64: just call fmod directly.
-                        Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
+                        Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::FmodDouble, m_origin));
                         Value* result = m_insertionSet.insert<CCallValue>(m_index, Double, m_origin,
                             Effects::none(),
                             functionAddress,
@@ -203,7 +236,7 @@ private:
                     // truncateDoubleToInt32 (fcvtzs) + IToD (scvtf) round-trip.
                     auto emitInt32RoundTrip = [&](BasicBlock* block, Value* input) -> Value* {
 #if CPU(ARM64)
-                        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+                        if (m_proc.policy().supportsRoundingFloatToIntegerFloat()) {
                             PatchpointValue* patchpoint = block->appendNew<PatchpointValue>(m_proc, Double, m_origin);
                             patchpoint->append(input, ValueRep::SomeRegister);
                             patchpoint->effects = Effects::none();
@@ -259,7 +292,8 @@ private:
                     fastCase->appendNew<Value>(m_proc, Branch, m_origin, fastValid);
 
                     // Slow case: call fmod
-                    Value* functionAddress = slowCase->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
+                    Value* functionAddress = addressOf(m_proc, RuntimeFunction::FmodDouble, m_origin);
+                    slowCase->append(functionAddress);
                     Value* slowResult = slowCase->appendNew<CCallValue>(m_proc, Double, m_origin,
                         Effects::none(),
                         functionAddress,
@@ -282,7 +316,7 @@ private:
                 if (m_value->type() == Float) {
                     Value* numeratorAsDouble = m_insertionSet.insert<Value>(m_index, FloatToDouble, m_origin, m_value->child(0));
                     Value* denominatorAsDouble = m_insertionSet.insert<Value>(m_index, FloatToDouble, m_origin, m_value->child(1));
-                    Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
+                    Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::FmodDouble, m_origin));
                     Value* doubleMod = m_insertionSet.insert<CCallValue>(m_index, Double, m_origin,
                         Effects::none(),
                         functionAddress,
@@ -463,15 +497,10 @@ private:
                 // things.
                 
                 if (isX86()) {
-#if USE(BUN_JSC_ADDITIONS)
-                    if (m_value->opcode() == AtomicXchgSub && !m_useCounts)
-                        m_useCounts.emplace(m_proc);
-                    if (m_value->opcode() == AtomicXchgSub && m_useCounts->numUses(m_value)) {
-#else
-                    if (m_value->opcode() == AtomicXchgSub && m_useCounts.numUses(m_value)) {
-#endif
+                    if (m_value->opcode() == AtomicXchgSub && useCounts().numUses(m_value)) {
                         // On x86, xchgadd is better than xchgsub if it has any users.
                         m_value->setOpcodeUnsafely(AtomicXchgAdd);
+                        m_proc.didAddOpcode(AtomicXchgAdd);
                         m_value->child(0) = m_insertionSet.insert<Value>(
                             m_index, Neg, m_origin, m_value->child(0));
                     }
@@ -491,9 +520,10 @@ private:
                         break;
                 }
 
-                if (isARM64_LSE()) {
+                if (m_proc.policy().supportsAtomicMemoryOperations()) {
                     if (m_value->opcode() == AtomicXchgSub) {
                         m_value->setOpcodeUnsafely(AtomicXchgAdd);
+                        m_proc.didAddOpcode(AtomicXchgAdd);
                         m_value->child(0) = m_insertionSet.insert<Value>(
                             m_index, Neg, m_origin, m_value->child(0));
                     }
@@ -526,6 +556,7 @@ private:
                 // Sub-width load-acq on ARM64 always sign extends.
                 Value* newLoad = m_insertionSet.insertClone(m_index, memory);
                 newLoad->setOpcodeUnsafely(memory->opcode() == Load8Z ? Load8S : Load16S);
+                m_proc.didAddOpcode(newLoad->opcode());
                 
                 Value* newValue = m_insertionSet.insert<Value>(
                     m_index, BitAnd, m_origin, newLoad,
@@ -1063,6 +1094,7 @@ private:
             }
 
             default:
+                RELEASE_ASSERT(!isLoweredByLowerMacros(m_value->opcode()));
                 break;
             }
         }
@@ -1185,103 +1217,63 @@ private:
         before->updatePredecessorsAfter();
     }
 
-    void appendJumpThroughTableInCode(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end, BasicBlock* before, Value* index, size_t tableSize)
+    void appendJumpThroughOffsetTable(std::span<const SwitchCase> cases, FrequentedBlock fallThrough, BasicBlock* before, Value* index, size_t tableSize)
     {
-        auto addressLabel = Box<CCallHelpers::Label>::create();
-        PatchpointValue* tableAddress = before->appendNew<PatchpointValue>(m_proc, pointerType(), m_origin, cloningForbidden(Patchpoint));
-        tableAddress->effects = Effects::none();
-        tableAddress->setGenerator(
-            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
-                *addressLabel = jit.label();
-                GPRReg result = params[0].gpr();
-#if CPU(ARM64)
-                jit.m_assembler.adr(result, 0);
-#elif CPU(X86_64)
-                auto& buffer = jit.m_assembler.buffer();
-                buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(result) >> 3) << 2));
-                buffer.putByte(static_cast<int8_t>(0x8d));
-                buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(result) & 7) << 3 | 5));
-                buffer.putInt(0);
-#else
-                UNUSED_PARAM(result);
-                RELEASE_ASSERT_NOT_REACHED();
-#endif
-            });
+        unsigned jumpTable = m_proc.addJumpTable(tableSize);
+        Value* table = m_proc.addJumpTableAddress(m_origin, jumpTable);
+        before->append(table);
         Value* shifted = before->appendNew<Value>(m_proc, Shl, m_origin, index, before->appendIntConstant(m_proc, m_origin, Int32, getLSBSet(sizeof(int32_t))));
-        MemoryValue* offset = before->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, tableAddress));
-        offset->setControlDependent(false);
-        offset->setReadsMutability(B3::Mutability::Immutable);
-        Value* target = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, tableAddress, before->appendNew<Value>(m_proc, SExt32, m_origin, offset));
+        Value* address = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, table);
+        MemoryValue* load = before->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, address);
+        load->setControlDependent(false);
+        load->setReadsMutability(B3::Mutability::Immutable);
+        Value* target = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, table, before->appendNew<Value>(m_proc, SExt32, m_origin, load));
+
         PatchpointValue* patchpoint = before->appendNew<PatchpointValue>(m_proc, Void, m_origin, cloningForbidden(Patchpoint));
         patchpoint->effects = Effects();
         patchpoint->effects.terminal = true;
+        patchpoint->setRunsWithoutFrame(true);
         patchpoint->appendSomeRegister(target);
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
 
         before->clearSuccessors();
-        int64_t firstValue = cases[start].caseValue();
+        int64_t firstValue = cases.front().caseValue();
         BitVector handledIndices;
-        for (unsigned i = start; i < end; ++i) {
-            before->appendSuccessor(cases[i].target());
-            handledIndices.set(cases[i].caseValue() - firstValue);
+        for (const SwitchCase& switchCase : cases) {
+            before->appendSuccessor(switchCase.target());
+            handledIndices.set(switchCase.caseValue() - firstValue);
         }
         before->appendSuccessor(fallThrough);
 
+        Procedure::JumpTableRecord* record = &m_proc.jumpTable(jumpTable);
         patchpoint->setGenerator(
-            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            [record, handledIndices](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 jit.farJump(params[0].gpr(), NoPtrTag);
-                CCallHelpers::Label tableLabel = jit.label();
-#if USE(BUN_JSC_ADDITIONS)
-                params.proc().code().recordTableInCode(tableLabel, tableSize);
-#endif
-                jit.emitNops(tableSize * sizeof(int32_t));
                 Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
                 jit.addLinkTask(
                     [=](LinkBuffer& linkBuffer) {
-                        auto locationOf = [&](CCallHelpers::Label label) {
-                            return static_cast<uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr());
-                        };
-                        uint8_t* table = locationOf(tableLabel);
-                        auto distanceTo = [&](CCallHelpers::Label label) {
-                            return safeCast<int32_t>(locationOf(label) - table);
-                        };
-                        Vector<int32_t> entries(FillWith { }, tableSize, distanceTo(*labels.last()));
+                        record->targetOffsets.fill(linkBuffer.offsetOf(*labels.last()));
                         unsigned labelIndex = 0;
                         for (size_t entry : handledIndices)
-                            entries[entry] = distanceTo(*labels[labelIndex++]);
-                        performJITMemcpy<jitMemcpyRepatch>(table, entries.span().data(), tableSize * sizeof(int32_t));
-                        uint8_t* instruction = locationOf(*addressLabel);
-#if CPU(ARM64)
-                        uint32_t distance = safeCast<uint32_t>(table - instruction);
-                        RELEASE_ASSERT(distance < (1u << 20));
-                        uint32_t adr;
-                        memcpy(&adr, instruction, sizeof(adr));
-                        adr |= (distance & 3) << 29 | (distance >> 2) << 5;
-                        performJITMemcpy<jitMemcpyRepatch>(instruction, &adr, sizeof(adr));
-#elif CPU(X86_64)
-                        constexpr size_t instructionSize = 7;
-                        int32_t distance = safeCast<int32_t>(table - (instruction + instructionSize));
-                        performJITMemcpy<jitMemcpyRepatch>(instruction + instructionSize - sizeof(distance), &distance, sizeof(distance));
-#else
-                        UNUSED_PARAM(instruction);
-#endif
+                            record->targetOffsets[entry] = linkBuffer.offsetOf(*labels[labelIndex++]);
                     });
             });
     }
 
-#if USE(BUN_JSC_ADDITIONS)
+    static constexpr unsigned bitsPerBitTestWindow = 64;
+
     bool tryBuildBitTests(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart, unsigned end, BasicBlock* before)
     {
         unsigned size = end - start;
-        if (!m_proc.positionIndependent() || size < 4)
+        if (!m_proc.policy().switchLowering.usesBitTests || size < Limits::minCasesForBitTests)
             return false;
         uint64_t first = cases[start].caseValue();
         uint64_t limit = cases[end - 1].caseValue() - first;
-        if (limit >= 64)
+        if (limit >= bitsPerBitTestWindow)
             return false;
         bool needsRangeCheck = true;
-        if (hardStart && end < cases.size() && cases[end].caseValue() - 1 - first < 64) {
+        if (hardStart && end < cases.size() && cases[end].caseValue() - 1 - first < bitsPerBitTestWindow) {
             limit = cases[end].caseValue() - 1 - first;
             needsRangeCheck = false;
         }
@@ -1290,7 +1282,7 @@ private:
             FrequentedBlock target;
             uint64_t mask { 0 };
         };
-        Vector<BitTest, 3> tests;
+        Vector<BitTest, 4> tests;
         uint64_t covered = 0;
         for (unsigned i = start; i < end; ++i) {
             FrequentedBlock target = cases[i].target();
@@ -1298,8 +1290,10 @@ private:
                 continue;
             size_t index = tests.findIf([&](const BitTest& test) { return test.target.block() == target.block(); });
             if (index == notFound) {
-                if (tests.size() == 3)
+                if (tests.size() == m_proc.limit(Limit::MaxBitTestTargets)) {
+                    m_proc.didReachLimit(Limit::MaxBitTestTargets, m_origin);
                     return false;
+                }
                 index = tests.size();
                 tests.append(BitTest { target });
             }
@@ -1311,8 +1305,8 @@ private:
                 return b.target.isRare();
             return std::popcount(a.mask) > std::popcount(b.mask);
         });
-        bool coversAll = covered == (limit == 63 ? ~0ull : (1ull << (limit + 1)) - 1);
-        if (!coversAll && needsRangeCheck && first < 64 && first + limit < 64) {
+        bool coversAll = covered == (limit == bitsPerBitTestWindow - 1 ? ~0ull : (1ull << (limit + 1)) - 1);
+        if (!coversAll && needsRangeCheck && first < bitsPerBitTestWindow && first + limit < bitsPerBitTestWindow) {
             for (BitTest& test : tests)
                 test.mask <<= first;
             limit += first;
@@ -1364,19 +1358,17 @@ private:
         before->appendNew<Value>(m_proc, Jump, m_origin);
         return true;
     }
-#endif
 
-#if USE(BUN_JSC_ADDITIONS)
-    unsigned nearestWindowBoundary(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
+    unsigned findNearestWindowBoundary(unsigned medianIndex, const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end)
     {
-        if (!m_proc.positionIndependent())
+        if (!m_proc.policy().switchLowering.usesBitTests)
             return medianIndex;
-        Vector<BasicBlock*, 3> targets;
+        Vector<BasicBlock*, 4> targets;
         for (unsigned i = start; i < end; ++i) {
             BasicBlock* target = cases[i].target().block();
             if (target == fallThrough.block() || targets.contains(target))
                 continue;
-            if (targets.size() == 3)
+            if (targets.size() == m_proc.limit(Limit::MaxBitTestTargets))
                 return medianIndex;
             targets.append(target);
         }
@@ -1384,7 +1376,7 @@ private:
         unsigned minDistance = end - start;
         for (unsigned first = start; first < end;) {
             unsigned next = first;
-            while (next < end && static_cast<uint64_t>(cases[next].caseValue()) - static_cast<uint64_t>(cases[first].caseValue()) < 64)
+            while (next < end && static_cast<uint64_t>(cases[next].caseValue()) - static_cast<uint64_t>(cases[first].caseValue()) < bitsPerBitTestWindow)
                 ++next;
             unsigned distance = next < medianIndex ? medianIndex - next : next - medianIndex;
             if (next < end && distance < minDistance) {
@@ -1395,16 +1387,14 @@ private:
         }
         return nearest;
     }
-#endif
 
     void recursivelyBuildSwitch(
         const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart,
         unsigned end, BasicBlock* before)
     {
-#if USE(BUN_JSC_ADDITIONS)
         if (tryBuildBitTests(cases, fallThrough, start, hardStart, end, before))
             return;
-#endif
+
         Value* child = m_value->child(0);
         Type type = child->type();
         
@@ -1414,13 +1404,9 @@ private:
         // shift off the uninteresting bits. On the other hand, it's not clear that this would
         // actually be any better than what we have done here and it's not clear that it would be
         // better than a binary switch.
-#if USE(BUN_JSC_ADDITIONS)
-        const unsigned minCasesForTable = m_proc.positionIndependent() ? 128 : 7;
-#else
-        const unsigned minCasesForTable = 7;
-#endif
+        const SwitchLoweringPolicy& policy = m_proc.policy().switchLowering;
         const unsigned densityLimit = 4;
-        if (end - start >= minCasesForTable && (!m_proc.positionIndependent() || isARM64())) {
+        if (end - start >= policy.minCasesForJumpTable) {
             CheckedInt64 firstValue = cases[start].caseValue();
             CheckedInt64 lastValue = cases[end - 1].caseValue();
             CheckedInt64 range = lastValue - firstValue + 1;
@@ -1433,8 +1419,8 @@ private:
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
 
-                if (m_proc.keepsDataInCode()) {
-                    appendJumpThroughTableInCode(cases, fallThrough, start, end, before, index, tableSize);
+                if (m_proc.policy().addressing.isPositionIndependent) {
+                    appendJumpThroughOffsetTable(cases.subspan(start, end - start), fallThrough, before, index, tableSize);
                     return;
                 }
 
@@ -1535,9 +1521,7 @@ private:
         }
 
         unsigned medianIndex = std::midpoint(start, end);
-#if USE(BUN_JSC_ADDITIONS)
-        medianIndex = nearestWindowBoundary(medianIndex, cases, fallThrough, start, end);
-#endif
+        medianIndex = findNearestWindowBoundary(medianIndex, cases, fallThrough, start, end);
 
         BasicBlock* left = m_blockInsertionSet.insertAfter(m_block);
         BasicBlock* right = m_blockInsertionSet.insertAfter(m_block);
@@ -1553,6 +1537,13 @@ private:
 
         recursivelyBuildSwitch(cases, fallThrough, start, hardStart, medianIndex, left);
         recursivelyBuildSwitch(cases, fallThrough, medianIndex, true, end, right);
+    }
+
+    Value* appendStructureIDBase(BasicBlock* block)
+    {
+        if (m_proc.policy().addressing.isPositionIndependent)
+            m_proc.fail(FailureKind::AbsoluteAddress, m_origin);
+        return block->appendIntConstant(m_proc, m_origin, Int64, structureIDBase());
     }
 
     Value* emitRefTestOrCast(WasmRefTypeCheckValue* typeCheck, BasicBlock* before, BasicBlock* continuation)
@@ -1654,7 +1645,7 @@ private:
 
             Value* isNull = nullptr;
             if (referenceIsNullable) {
-                if (auto offset = castAccessOffset(); Options::useWasmFaultSignalHandler() && offset && offset.value() <= Wasm::maxAcceptableOffsetForNullReference()) {
+                if (auto offset = castAccessOffset(); m_proc.policy().upstream.usesWasmFaultSignalHandler && offset && offset.value() <= Wasm::maxAcceptableOffsetForNullReference()) {
                     isNull = constant(Int32, 0);
                     canTrap = true;
                 } else
@@ -1756,7 +1747,7 @@ private:
                 }
                 Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
                 Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, structureID);
-                structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, appendStructureIDBase(currentBlock));
                 Value* rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
                 auto* kind = currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, m_origin, rtt, safeCast<int32_t>(Wasm::RTT::offsetOfKind()));
                 kind->setControlDependent(false);
@@ -1770,6 +1761,8 @@ private:
         } else {
             ([&] {
                 MemoryValue* rtt;
+                if (m_proc.policy().addressing.isPositionIndependent)
+                    m_proc.fail(FailureKind::AbsoluteAddress, m_origin);
                 auto* targetRTTPointer = constant(Int64, std::bit_cast<uintptr_t>(targetRTT.get()));
                 if (targetRTT->kind() == Wasm::RTTKind::Function)
                     rtt = currentBlock->appendNew<MemoryValue>(m_proc, wrapTrapping(B3::Load), Int64, m_origin, value, safeCast<int32_t>(WebAssemblyFunctionBase::offsetOfRTT()));
@@ -1794,7 +1787,7 @@ private:
                         if (targetRTT->displaySizeExcludingThis() < WebAssemblyGCStructure::inlinedDisplaySize) {
                             Value* objectStructureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
                             Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, objectStructureID);
-                            structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                            structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, appendStructureIDBase(currentBlock));
                             auto* ancestorStructureID = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, Int32, m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfInlinedDisplay() + targetRTT->displaySizeExcludingThis() * sizeof(WriteBarrierStructureID)));
                             ancestorStructureID->setReadsMutability(B3::Mutability::Immutable);
                             ancestorStructureID->setControlDependent(false);
@@ -1808,7 +1801,7 @@ private:
                     {
                         Value* structureID = currentBlock->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, value, safeCast<int32_t>(JSCell::structureIDOffset()));
                         Value* structure = currentBlock->appendNew<Value>(m_proc, ZExt32, m_origin, structureID);
-                        structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, currentBlock->appendIntConstant(m_proc, m_origin, Int64, structureIDBase()));
+                        structure = currentBlock->appendNew<Value>(m_proc, BitOr, m_origin, structure, appendStructureIDBase(currentBlock));
                         rtt = currentBlock->appendNew<MemoryValue>(m_proc, B3::Load, pointerType(), m_origin, structure, safeCast<int32_t>(WebAssemblyGCStructure::offsetOfRTT()));
                     }
                     if (targetRTT->isFinalType()) {
@@ -1991,14 +1984,17 @@ private:
                 extIndex, m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, elementSize)));
     }
 
+    UseCountsWithoutUsingInstructions& useCounts()
+    {
+        if (!m_useCounts)
+            m_useCounts.emplace(m_proc);
+        return *m_useCounts;
+    }
+
     Procedure& m_proc;
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;
-#if USE(BUN_JSC_ADDITIONS)
     std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
-#else
-    UseCountsWithoutUsingInstructions m_useCounts;
-#endif
     BasicBlock* m_block;
     unsigned m_index;
     Value* m_value;

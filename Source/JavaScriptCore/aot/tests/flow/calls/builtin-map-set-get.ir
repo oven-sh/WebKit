@@ -1,0 +1,59 @@
+# What Map.prototype.set stores is what Map.prototype.get of the same map answers, beside undefined, and neither the map nor what it holds is in a sink
+# RUN: flow-solve nodes objects sinks
+# RUN(SECOND): flow-solve nodes objects
+# CHECK: , f0, v1) = {L0#[[key]]}
+# CHECK: , f0, v3) = {L1#[[first]]}
+# CHECK: , f0, v5) = {L2#[[second]]}
+# CHECK: , f0, v8) = {Map@f0:[[one]]}
+# CHECK: , f0, v12) = {undefined|L1#[[first]]}
+# CHECK: DeclaredPart(Map@f0:[[one]], 0) = {L0#[[key]]}
+# CHECK-NEXT: DeclaredPart(Map@f0:[[one]], 1) = {L1#[[first]]}
+# CHECK: L0#[[key]] mutations=[] uses=
+# CHECK-NEXT: L1#[[first]] mutations=[] uses=
+# CHECK-NEXT: L2#[[second]] mutations=[] uses=
+# CHECK: Map@f0:[[one]] mutations=[StoreAfterCreation] uses=
+# CHECK-LABEL: nativeCode {
+# CHECK-NOT: L0#
+# CHECK-NOT: L1#
+# CHECK-NOT: L2#
+# CHECK-NOT: Map@f0
+# CHECK-LABEL: unknownJavaScript {
+# CHECK-NOT: L0#
+# CHECK-NOT: L1#
+# CHECK-NOT: L2#
+# CHECK-NOT: Map@f0
+# SECOND: , f0, v1) = {L0#[[key]]}
+# SECOND: , f0, v5) = {L2#[[second]]}
+# SECOND: , f0, v13) = {Map@f0:[[two]]}
+# SECOND: , f0, v17) = {undefined|L2#[[second]]}
+# SECOND: DeclaredPart(Map@f0:[[two]], 0) = {L0#[[key]]}
+# SECOND-NEXT: DeclaredPart(Map@f0:[[two]], 1) = {L2#[[second]]}
+# SECOND: Map@f0:[[two]] mutations=[StoreAfterCreation] uses=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Key" fields=[{key="k" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="First" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Second" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v0 layout=L2 fields=[0]
+    v6 = FinishObject v5
+    v7 = Builtin builtin=Map
+    v8 = Construct v7
+    v9 = PropGet v8 key="set"
+    v10 = Call v9, v8, v2, v4 calleeKey="set"
+    v11 = PropGet v8 key="get"
+    v12 = Call v11, v8, v2 calleeKey="get"
+    v13 = Construct v7
+    v14 = PropGet v13 key="set"
+    v15 = Call v14, v13, v2, v6 calleeKey="set"
+    v16 = PropGet v13 key="get"
+    v17 = Call v16, v13, v2 calleeKey="get"
+    Return
+}

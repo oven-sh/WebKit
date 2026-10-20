@@ -6,424 +6,282 @@
 #include "config.h"
 #include "B3CountedLoops.h"
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
-#include "B3InsertionSetInlines.h"
-#include "B3PhaseScope.h"
+#include "B3DominatingConditions.h"
+#include "B3LoopUtilities.h"
+#include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 
 namespace JSC { namespace B3 {
 
+Type CountedLoop::type() const
+{
+    return bound->type();
+}
+
 namespace {
 
-std::optional<Opcode> invertedRelation(Opcode relation)
-{
-    switch (relation) {
-    case LessThan:
-        return GreaterEqual;
-    case LessEqual:
-        return GreaterThan;
-    case GreaterThan:
-        return LessEqual;
-    case GreaterEqual:
-        return LessThan;
-    case Below:
-        return AboveEqual;
-    case BelowEqual:
-        return Above;
-    case Above:
-        return BelowEqual;
-    case AboveEqual:
-        return Below;
-    default:
-        return std::nullopt;
-    }
-}
-
-Opcode flippedRelation(Opcode relation)
-{
-    switch (relation) {
-    case LessThan:
-        return GreaterThan;
-    case LessEqual:
-        return GreaterEqual;
-    case GreaterThan:
-        return LessThan;
-    case GreaterEqual:
-        return LessEqual;
-    case Below:
-        return Above;
-    case BelowEqual:
-        return AboveEqual;
-    case Above:
-        return Below;
-    default:
-        return BelowEqual;
-    }
-}
+struct AffineNode {
+    Value* operand { nullptr };
+    Int128 addend { 0 };
+    IntegerInterval exactResults;
+};
 
 } // anonymous namespace
 
-const Vector<UpsilonValue*, 2>* UpsilonsByPhi::find(Value* phi) const
+static std::optional<AffineNode> affineNodeFor(Value* value, Signedness signedness)
 {
-    if (!m_map.size()) {
-        m_map.resize(m_proc.values().size());
-        for (Value* value : m_proc.values()) {
-            if (auto* upsilon = value->as<UpsilonValue>())
-                m_map[upsilon->phi()].append(upsilon);
+    if (!value->type().isInt())
+        return std::nullopt;
+    IntegerInterval allResults = fullInterval(value->type(), signedness);
+    IntegerInterval nonNegativeInt32 { 0, std::numeric_limits<int32_t>::max() };
+    switch (value->opcode()) {
+    case Identity:
+    case Trunc:
+        return AffineNode { value->child(0), 0, allResults };
+    case SExt32:
+        return AffineNode { value->child(0), 0, signedness == Signedness::Signed ? allResults : nonNegativeInt32 };
+    case ZExt32:
+        return AffineNode { value->child(0), 0, signedness == Signedness::Unsigned ? allResults : nonNegativeInt32 };
+    case Add: {
+        unsigned constantIndex = value->child(1)->hasInt() ? 1 : 0;
+        Value* constant = value->child(constantIndex);
+        Value* operand = value->child(1 - constantIndex);
+        if (!constant->hasInt() || operand->hasInt())
+            return std::nullopt;
+        return AffineNode { operand, constant->asInt(), allResults };
+    }
+    case Sub:
+        if (!value->child(1)->hasInt())
+            return std::nullopt;
+        return AffineNode { value->child(0), -Int128 { value->child(1)->asInt() }, allResults };
+    default:
+        return std::nullopt;
+    }
+}
+
+std::expected<AffineForm, GaveUpReason> affineFormOf(const Procedure& proc, Value* value, Value* base, Signedness signedness)
+{
+    if (!base->type().isInt())
+        return makeUnexpected(GaveUpReason::NotCounted);
+
+    Vector<AffineNode, 8> chain;
+    while (value != base) {
+        std::optional<AffineNode> node = affineNodeFor(value, signedness);
+        if (!node)
+            return makeUnexpected(GaveUpReason::NotCounted);
+        if (chain.size() == proc.limit(Limit::MaxRangeAnalysisDepth)) {
+            proc.didReachLimit(Limit::MaxRangeAnalysisDepth, value->origin());
+            return makeUnexpected(GaveUpReason::NotCounted);
         }
+        chain.append(*node);
+        value = node->operand;
     }
-    auto& upsilons = m_map[phi];
-    return upsilons.isEmpty() ? nullptr : &upsilons;
+
+    Int128 offset = 0;
+    IntegerInterval exactBaseRange = fullInterval(base->type(), signedness);
+    for (unsigned index = chain.size(); index--;) {
+        const AffineNode& node = chain[index];
+        offset += node.addend;
+        exactBaseRange.min = std::max<Int128>(exactBaseRange.min, node.exactResults.min - offset);
+        exactBaseRange.max = std::min<Int128>(exactBaseRange.max, node.exactResults.max - offset);
+    }
+    if (exactBaseRange.min > exactBaseRange.max || !fullInterval(Int64, Signedness::Signed).contains({ offset, offset }))
+        return makeUnexpected(GaveUpReason::NotCounted);
+    return AffineForm { static_cast<int64_t>(offset), exactBaseRange };
 }
 
-static Value* lastValuePassedTo(BasicBlock* block, Value* phi)
+static bool advancesByStep(const Procedure& proc, Value* value, const InductionRecord& record)
 {
-    for (unsigned index = block->size(); index--;) {
-        auto* upsilon = block->at(index)->as<UpsilonValue>();
-        if (upsilon && upsilon->phi() == phi)
-            return upsilon->child(0);
-    }
-    return nullptr;
+    auto form = affineFormOf(proc, value, record.phi, Signedness::Signed);
+    return form && form->offset == record.step;
 }
 
-std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant)
+static std::expected<void, GaveUpReason> findTestBlock(const CountedLoopInputs& inputs, const InductionRecord& record, CountedLoop& result, bool& isNonZero)
 {
-    for (unsigned i = loop.size(); i--;) {
-        if (loops.innerMostLoopOf(loop.at(i)) != &loop)
-            return std::nullopt;
-    }
-    CountedLoop result;
-    result.header = loop.header();
-    for (BasicBlock* predecessor : loop.header()->predecessors()) {
-        BasicBlock*& slot = loops.belongsTo(predecessor, loop) ? result.latch : result.preHeader;
-        if (slot)
-            return std::nullopt;
-        slot = predecessor;
-    }
-    if (!result.preHeader || result.preHeader->last()->opcode() != Jump || !result.latch || result.latch->last()->opcode() != Jump || result.latch->numPredecessors() != 1)
-        return std::nullopt;
-    result.test = result.latch->predecessor(0);
-    if (result.test->last()->opcode() != Branch)
-        return std::nullopt;
-    result.latchSuccessorIndex = result.test->successorBlock(0) == result.latch ? 0 : 1;
-    if (loops.belongsTo(result.test->successorBlock(1 - result.latchSuccessorIndex), loop))
-        return std::nullopt;
-
-    Value* condition = result.test->last()->child(0);
-    if (condition->numChildren() != 2 || condition->child(0)->type() != Int64)
-        return std::nullopt;
-    auto inverted = invertedRelation(condition->opcode());
-    if (!inverted)
-        return std::nullopt;
-    result.relation = result.latchSuccessorIndex ? *inverted : condition->opcode();
-    bool boundIsFirst = isInvariant(condition->child(0));
-    result.bound = condition->child(boundIsFirst ? 0 : 1);
-    result.next = condition->child(boundIsFirst ? 1 : 0);
-    if (boundIsFirst)
-        result.relation = flippedRelation(result.relation);
-    if (!isInvariant(result.bound) || isInvariant(result.next))
-        return std::nullopt;
-
-    for (Value* value : *result.latch) {
-        auto* upsilon = value->as<UpsilonValue>();
-        if (upsilon && upsilon->child(0) == result.next && upsilon->phi()->owner == loop.header())
-            result.inductionVariable = upsilon->phi();
-    }
-    if (!result.inductionVariable || lastValuePassedTo(result.latch, result.inductionVariable) != result.next)
-        return std::nullopt;
-    result.start = lastValuePassedTo(result.preHeader, result.inductionVariable);
-    if (!result.start || lastValuePassedTo(loop.header(), result.inductionVariable))
-        return std::nullopt;
-
-    Value* increment = result.next;
-    if (increment->opcode() == Phi) {
-        auto* found = upsilonsByPhi.find(increment);
-        if (!found || found->size() != 2)
-            return std::nullopt;
-        auto& upsilons = *found;
-        unsigned indexOfConstant = upsilons[0]->child(0)->hasInt64() ? 0 : 1;
-        if (!upsilons[indexOfConstant]->child(0)->hasInt64())
-            return std::nullopt;
-        result.saturation = upsilons[indexOfConstant]->child(0)->asInt64();
-        increment = upsilons[1 - indexOfConstant]->child(0);
-    }
-    if (increment->opcode() == SExt32 && increment->child(0)->opcode() == Trunc) {
-        increment = increment->child(0)->child(0);
-        result.wrapsAroundInt32 = true;
-    }
-    if (increment->opcode() != Add || increment->child(0) != result.inductionVariable || !increment->child(1)->hasInt64())
-        return std::nullopt;
-    result.step = increment->child(1)->asInt64();
-    if (!result.step || result.step > maxIterationsPerStrip || result.step < -maxIterationsPerStrip || (result.step > 0) != result.increases())
-        return std::nullopt;
-    if (result.saturation && (result.isUnsigned() || *result.saturation == std::numeric_limits<int64_t>::min() || *result.saturation == std::numeric_limits<int64_t>::max()))
-        return std::nullopt;
-    return result;
-}
-
-std::optional<CountedLoop> analyzeTopTestedCountedLoop(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut)
-{
-    CountedLoop result;
-    result.header = loop.header();
-    result.preHeader = preHeader;
-    result.test = test;
-    bool firstStays = loops.belongsTo(test->successorBlock(0), loop);
-    if (test->last()->opcode() != Branch || firstStays == loops.belongsTo(test->successorBlock(1), loop))
-        return std::nullopt;
-    result.latchSuccessorIndex = firstStays ? 0 : 1;
-    result.latch = test->successorBlock(result.latchSuccessorIndex);
-    if (result.latch == loop.header() || condition->numChildren() != 2 || condition->child(0)->type() != Int64)
-        return std::nullopt;
-    auto inverted = invertedRelation(condition->opcode());
-    if (!inverted)
-        return std::nullopt;
-    result.relation = result.latchSuccessorIndex ? *inverted : condition->opcode();
-    bool boundIsFirst = isInvariant(condition->child(0));
-    result.bound = condition->child(boundIsFirst ? 0 : 1);
-    result.inductionVariable = condition->child(boundIsFirst ? 1 : 0);
-    if (boundIsFirst)
-        result.relation = flippedRelation(result.relation);
-    if (!isInvariant(result.bound) || result.inductionVariable->opcode() != Phi || result.inductionVariable->owner != loop.header())
-        return std::nullopt;
-    auto* upsilons = upsilonsByPhi.find(result.inductionVariable);
-    if (!upsilons)
-        return std::nullopt;
-    for (UpsilonValue* upsilon : *upsilons) {
-        if (upsilon->owner == preHeader) {
-            result.start = upsilon->child(0);
-            continue;
-        }
-        if (!loops.belongsTo(upsilon->owner, loop))
-            return std::nullopt;
-        if (isLeftOut(upsilon->owner))
-            continue;
-        if (result.next && result.next != upsilon->child(0))
-            return std::nullopt;
-        result.next = upsilon->child(0);
-    }
-    if (!result.start || !result.next)
-        return std::nullopt;
-    Value* increment = result.next;
-    if (increment->opcode() == SExt32 && increment->child(0)->opcode() == Trunc) {
-        increment = increment->child(0)->child(0);
-        result.wrapsAroundInt32 = true;
-    }
-    if (increment->opcode() != Add || increment->child(0) != result.inductionVariable || !increment->child(1)->hasInt64())
-        return std::nullopt;
-    result.step = increment->child(1)->asInt64();
-    if (!result.step || result.step > maxIterationsPerStrip || result.step < -maxIterationsPerStrip || (result.step > 0) != result.increases())
-        return std::nullopt;
-    if (result.wrapsAroundInt32 && result.isUnsigned())
-        return std::nullopt;
-    return result;
-}
-
-bool relationHoldsOnEntry(const CountedLoop& loop)
-{
-    static constexpr unsigned maxNumberOfBlocks = 4;
-    auto isSame = [](Value* a, Value* b) {
-        return a == b || (a->hasInt64() && b->hasInt64() && a->asInt64() == b->asInt64());
-    };
-    BasicBlock* block = loop.preHeader;
-    for (unsigned i = 0; i < maxNumberOfBlocks && block->numPredecessors() == 1; ++i) {
-        BasicBlock* predecessor = block->predecessor(0);
-        Value* condition = predecessor->last()->opcode() == Branch ? predecessor->last()->child(0) : nullptr;
-        if (condition && condition->numChildren() == 2 && predecessor->successorBlock(0) != predecessor->successorBlock(1)) {
-            if (auto inverted = invertedRelation(condition->opcode())) {
-                Opcode relation = predecessor->successorBlock(0) == block ? condition->opcode() : *inverted;
-                if (relation == loop.relation && isSame(condition->child(0), loop.start) && isSame(condition->child(1), loop.bound))
-                    return true;
-                if (flippedRelation(relation) == loop.relation && isSame(condition->child(1), loop.start) && isSame(condition->child(0), loop.bound))
-                    return true;
-            }
-        }
-        block = predecessor;
-    }
-    return false;
-}
-
-std::optional<bool> evaluateComparisonWithBound(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, Value* bound)
-{
-    if (!invertedRelation(opcode))
-        return std::nullopt;
-    if (left == bound && right == loop.inductionVariable)
-        opcode = flippedRelation(opcode);
-    else if (left != loop.inductionVariable || right != bound)
-        return std::nullopt;
-    if (opcode == loop.relation)
-        return true;
-    if (*invertedRelation(opcode) == loop.relation)
-        return false;
-    return std::nullopt;
-}
-
-static std::optional<bool> evaluateComparisonWithLimit(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, bool boundIsZeroExtendedWord = false)
-{
-    static constexpr int64_t maxConstant = 1ll << 31;
-    if (!invertedRelation(opcode))
-        return std::nullopt;
-    auto isSmall = [](Value* value) {
-        return value->hasInt64() && value->asInt64() >= -maxConstant && value->asInt64() <= maxConstant;
-    };
-    auto addedToVariable = [&](Value* value) -> std::optional<int64_t> {
-        if (value == loop.inductionVariable)
-            return 0;
-        if (value->opcode() == Add && value->child(0) == loop.inductionVariable && isSmall(value->child(1)))
-            return value->child(1)->asInt64();
-        return std::nullopt;
-    };
-    Value* limit = right;
-    std::optional<int64_t> added = addedToVariable(left);
-    if (!added) {
-        added = addedToVariable(right);
-        opcode = flippedRelation(opcode);
-        limit = left;
-    }
-    if (!added || (limit->opcode() != ZExt32 && !(boundIsZeroExtendedWord && limit == loop.bound)) || loop.saturation)
-        return std::nullopt;
-    int64_t least;
-    int64_t maxMinusLimit;
-    if (loop.increases()) {
-        if (loop.bound != limit || loop.includesEqual() || loop.wrapsAroundInt32 || !isSmall(loop.start))
-            return std::nullopt;
-        least = loop.start->asInt64();
-        maxMinusLimit = -1;
-    } else {
-        Value* start = loop.start;
-        if (loop.isUnsigned() || !isSmall(loop.bound) || start->opcode() != Add || start->child(0) != limit || !isSmall(start->child(1)))
-            return std::nullopt;
-        least = loop.bound->asInt64() + (loop.includesEqual() ? 0 : 1);
-        if (loop.wrapsAroundInt32 && least + loop.step < std::numeric_limits<int32_t>::min())
-            return std::nullopt;
-        maxMinusLimit = start->child(1)->asInt64();
-    }
-    if (least + *added < 0 || maxMinusLimit + *added >= 0)
-        return std::nullopt;
-    return opcode == LessThan || opcode == LessEqual || opcode == Below || opcode == BelowEqual;
-}
-
-static std::optional<CountedLoop> analyzeLoopWithCarriedLimit(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi)
-{
-    auto result = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
-        return !loops.belongsTo(value->owner, loop) || value->opcode() == ZExt32;
-    });
-    if (!result || !result->increases() || result->bound->opcode() != ZExt32 || !loops.belongsTo(result->bound->owner, loop))
-        return std::nullopt;
-    Value* limit = nullptr;
-    for (Value* value : *result->latch) {
-        auto* upsilon = value->as<UpsilonValue>();
-        if (upsilon && upsilon->child(0) == result->bound && upsilon->phi()->owner == loop.header())
-            limit = upsilon->phi();
-    }
-    if (!limit || lastValuePassedTo(result->latch, limit) != result->bound || lastValuePassedTo(loop.header(), limit))
-        return std::nullopt;
-    auto* upsilons = upsilonsByPhi.find(limit);
-    if (!upsilons || upsilons->size() != 2)
-        return std::nullopt;
-    Value* limitOnEntry = lastValuePassedTo(result->preHeader, limit);
-    if (!limitOnEntry || limitOnEntry->opcode() != ZExt32)
-        return std::nullopt;
-    result->bound = limitOnEntry;
-    if (!relationHoldsOnEntry(*result))
-        return std::nullopt;
-    result->bound = limit;
-    return result;
-}
-
-bool foldComparisonsWithBounds(Procedure& proc)
-{
-    PhaseScope phaseScope(proc, "foldComparisonsWithBounds"_s);
-    NaturalLoops& loops = proc.naturalLoops();
-    if (!loops.numLoops())
-        return false;
-    proc.resetValueOwners();
-    UpsilonsByPhi upsilonsByPhi(proc);
-    InsertionSet insertionSet(proc);
-    bool changed = false;
-    for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
-        const NaturalLoop& loop = loops.loop(loopIndex);
-        auto countedLoop = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
-            return !loops.belongsTo(value->owner, loop);
-        });
-        if (!countedLoop) {
-            auto loopWithLimit = analyzeLoopWithCarriedLimit(loops, loop, upsilonsByPhi);
-            if (!loopWithLimit)
+    isNonZero = true;
+    if (inputs.test)
+        result.test = inputs.test->block;
+    else {
+        for (unsigned i = inputs.loop.size(); i--;) {
+            BasicBlock* block = inputs.loop.at(i);
+            if (block->last()->opcode() != Branch)
                 continue;
-            for (unsigned i = loop.size(); i--;) {
-                BasicBlock* block = loop.at(i);
-                for (unsigned index = 0; index < block->size(); ++index) {
-                    Value* value = block->at(index);
-                    if (value->numChildren() != 2)
-                        continue;
-                    auto outcome = evaluateComparisonWithLimit(*loopWithLimit, value->opcode(), value->child(0), value->child(1), true);
-                    if (!outcome)
-                        continue;
-                    value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
-                    changed = true;
-                }
-                insertionSet.execute(block);
-            }
-            continue;
-        }
-        if (!relationHoldsOnEntry(*countedLoop))
-            continue;
-        for (unsigned i = loop.size(); i--;) {
-            BasicBlock* block = loop.at(i);
-            for (unsigned index = 0; index < block->size(); ++index) {
-                Value* value = block->at(index);
-                if (value->numChildren() != 2)
-                    continue;
-                auto outcome = evaluateComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
-                if (!outcome)
-                    outcome = evaluateComparisonWithLimit(*countedLoop, value->opcode(), value->child(0), value->child(1));
-                if (!outcome)
-                    continue;
-                value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
-                changed = true;
-            }
-            insertionSet.execute(block);
+            DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
+            if (condition.value->foldIdentity() != record.test)
+                continue;
+            if (result.test)
+                return makeUnexpected(GaveUpReason::NotCounted);
+            result.test = block;
+            isNonZero = condition.isNonZero;
         }
     }
-    return changed;
+    if (!result.test || result.test->last()->opcode() != Branch)
+        return makeUnexpected(GaveUpReason::NotCounted);
+
+    bool firstStays = inputs.loops.belongsTo(result.test->successorBlock(0), inputs.loop);
+    if (firstStays == inputs.loops.belongsTo(result.test->successorBlock(1), inputs.loop))
+        return makeUnexpected(GaveUpReason::NotCounted);
+    result.latchSuccessorIndex = firstStays ? 0 : 1;
+    result.latch = result.test->successorBlock(result.latchSuccessorIndex);
+    return { };
 }
 
-Value* appendStripEnd(Procedure& proc, BasicBlock* block, const CountedLoop& loop, Value* from, Value* bound, bool relationMayNotHold)
+static std::expected<void, GaveUpReason> readTest(const CountedLoopInputs& inputs, const InductionRecord& record, CountedLoop& result)
 {
-    Origin origin = from->origin();
-    bool hasTerminal = block->size() && block->last()->effects().terminal;
-    auto append = [&](Value* value) {
-        if (hasTerminal)
-            block->appendNonTerminal(value);
-        else
-            block->append(value);
-        return value;
+    bool isNonZero = true;
+    if (auto found = findTestBlock(inputs, record, result, isNonZero); !found)
+        return found;
+
+    Value* test = record.test;
+    if (!test->child(0)->type().isInt())
+        return makeUnexpected(GaveUpReason::NotCounted);
+    std::optional<Opcode> inverted = invertedRelation(test->opcode());
+    if (!inverted)
+        return makeUnexpected(GaveUpReason::NotCounted);
+    bool continuesWhenTrue = !result.latchSuccessorIndex == isNonZero;
+    Opcode relation = continuesWhenTrue ? test->opcode() : *inverted;
+
+    auto isTested = [&](Value* operand) {
+        return operand == record.phi || operand == record.next;
     };
-    auto constant = [&](int64_t value) {
-        return append(proc.add<Const64Value>(origin, value));
-    };
-    bool isIncreasing = loop.increases();
-    if (!from->isConstant())
-        from = append(proc.add<Value>(Opaque, origin, from));
-    Value* distance = append(isIncreasing ? proc.add<Value>(Sub, origin, bound, from) : proc.add<Value>(Sub, origin, from, bound));
-    Value* most = constant(maxIterationsPerStrip);
-    Value* length = append(proc.add<Value>(Select, origin, append(proc.add<Value>(Below, origin, distance, most)), distance, most));
-    Value* end = append(proc.add<Value>(isIncreasing ? Add : Sub, origin, from, length));
-    if (loop.saturation) {
-        Value* limit = constant(*loop.saturation + (loop.includesEqual() ? (isIncreasing ? -1 : 1) : 0));
-        end = append(proc.add<Value>(Select, origin, append(proc.add<Value>(isIncreasing ? LessThan : GreaterThan, origin, end, limit)), end, limit));
+    Value* left = test->child(0)->foldIdentity();
+    Value* right = test->child(1)->foldIdentity();
+    if (isTested(left) == isTested(right))
+        return makeUnexpected(GaveUpReason::NotCounted);
+    Value* tested = isTested(left) ? left : right;
+    result.bound = isTested(left) ? right : left;
+    result.relation = isTested(left) ? relation : flippedRelation(relation);
+    result.isTopTested = tested == record.phi;
+    if (result.isTopTested && result.latch == result.header)
+        return makeUnexpected(GaveUpReason::NotCounted);
+    if (!inputs.isInvariant(result.bound))
+        return makeUnexpected(GaveUpReason::BoundNotInvariant);
+    return { };
+}
+
+static std::expected<void, GaveUpReason> readCounter(const CountedLoopInputs& inputs, const InductionRecord& record, CountedLoop& result)
+{
+    for (UpsilonValue* upsilon : inputs.phiChildren[record.phi]) {
+        Value* input = upsilon->child(0)->foldIdentity();
+        if (upsilon->owner == result.preHeader) {
+            if (result.start)
+                return makeUnexpected(GaveUpReason::NotCounted);
+            result.start = input;
+            continue;
+        }
+        if (!inputs.loops.belongsTo(upsilon->owner, inputs.loop))
+            return makeUnexpected(GaveUpReason::NotCounted);
+        if (input != record.next && !advancesByStep(inputs.proc, input, record))
+            return makeUnexpected(GaveUpReason::NotCounted);
     }
-    if (!relationMayNotHold)
-        return end;
-    if (isIncreasing && !loop.saturation && bound->opcode() == ZExt32 && from->hasInt64() && (loop.isUnsigned() ? !from->asInt64() : from->asInt64() <= 0))
-        return end;
-    int64_t noStrip = loop.isUnsigned() ? (isIncreasing ? 0 : -1) : isIncreasing ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
-    return append(proc.add<Value>(Select, origin, append(proc.add<Value>(loop.relation, origin, from, bound)), end, constant(noStrip)));
+    if (!result.start || !advancesByStep(inputs.proc, record.next, record))
+        return makeUnexpected(GaveUpReason::NotCounted);
+
+    result.inductionVariable = record.phi;
+    result.next = record.next;
+    result.step = record.step;
+    if (!result.step || result.step > Limits::maxCountedLoopStep || result.step < -Limits::maxCountedLoopStep || (result.step > 0) != result.increases())
+        return makeUnexpected(GaveUpReason::NotCounted);
+    return { };
+}
+
+static std::expected<void, GaveUpReason> computeSafeBound(const CountedLoopInputs& inputs, const InductionRecord& record, CountedLoop& loop)
+{
+    const Procedure& proc = inputs.proc;
+    Signedness signedness = loop.signedness();
+    bool increases = loop.increases();
+    bool recordProvesNoWrap = record.doesNotWrap && signedness == Signedness::Signed;
+    auto form = affineFormOf(proc, loop.next, loop.inductionVariable, signedness);
+    if (!form)
+        return makeUnexpected(form.error());
+    IntegerInterval exactBaseRange = form->exactBaseRange;
+    IntegerInterval full = fullInterval(loop.type(), signedness);
+    Int128 strict = loop.includesEqual() ? 0 : 1;
+    loop.farthestSafeBound = increases ? std::min<Int128>(exactBaseRange.max + strict, full.max) : std::max<Int128>(exactBaseRange.min - strict, full.min);
+
+    IntegerInterval counter = intervalFor(proc, loop.start, signedness);
+    for (UpsilonValue* upsilon : inputs.phiChildren[loop.inductionVariable]) {
+        if (upsilon->owner != loop.preHeader)
+            counter = counter.join(intervalFor(proc, upsilon->child(0), signedness));
+    }
+    IntegerInterval known = intervalFor(proc, loop.inductionVariable, signedness);
+    counter.min = std::max(counter.min, known.min);
+    counter.max = std::min(counter.max, known.max);
+    if (!recordProvesNoWrap && (increases ? counter.min < exactBaseRange.min : counter.max > exactBaseRange.max))
+        return makeUnexpected(GaveUpReason::CounterMayWrap);
+    loop.boundIsSafe = loop.isSafeBound(intervalFor(proc, loop.bound, signedness));
+    loop.counterRangeIsSafe = recordProvesNoWrap || (increases ? counter.max <= exactBaseRange.max : counter.min >= exactBaseRange.min);
+    return { };
+}
+
+static std::expected<CountedLoop, GaveUpReason> analyzeWithRecord(const CountedLoopInputs& inputs, BasicBlock* preHeader, const InductionRecord& record)
+{
+    CountedLoop result;
+    result.preHeader = preHeader;
+    result.header = inputs.loop.header();
+    if (auto outcome = readTest(inputs, record, result); !outcome)
+        return makeUnexpected(outcome.error());
+    if (auto outcome = readCounter(inputs, record, result); !outcome)
+        return makeUnexpected(outcome.error());
+    if (auto outcome = computeSafeBound(inputs, record, result); !outcome)
+        return makeUnexpected(outcome.error());
+    result.relationHoldsOnEntry = record.relationHoldsOnEntry || relationHoldsOnEntry(inputs.proc, result, result.bound);
+    return result;
+}
+
+std::expected<CountedLoop, GaveUpReason> analyzeCountedLoop(const CountedLoopInputs& inputs)
+{
+    BasicBlock* preHeader = findPreHeader(inputs.loops, inputs.loop);
+    if (!preHeader)
+        return makeUnexpected(GaveUpReason::SeveralEntries);
+
+    GaveUpReason reason = GaveUpReason::NotCounted;
+    for (Value* phi : *inputs.loop.header()) {
+        if (phi->opcode() != Phi)
+            continue;
+        std::optional<InductionRecord> record = inputs.proc.knownInduction(phi);
+        if (!record || !record->test)
+            continue;
+        if (inputs.test && inputs.test->condition->foldIdentity() != record->test)
+            continue;
+        auto result = analyzeWithRecord(inputs, preHeader, *record);
+        if (result) {
+            inputs.proc.count(Counter::KnownInductionsUsed);
+            return result;
+        }
+        reason = result.error();
+    }
+    return makeUnexpected(reason);
+}
+
+bool relationHoldsOnEntry(Procedure& proc, const CountedLoop& loop, Value* boundOnEntry)
+{
+    Signedness signedness = loop.signedness();
+    if (evaluateComparison(loop.relation, intervalFor(proc, loop.start, signedness), intervalFor(proc, boundOnEntry, signedness)) == TriState::True)
+        return true;
+    return isRelationImpliedAt(proc, loop.preHeader, loop.relation, loop.start, boundOnEntry);
+}
+
+TriState evaluateComparisonWithBound(const CountedLoop& loop, Opcode opcode, Value* left, Value* right)
+{
+    if (!invertedRelation(opcode))
+        return TriState::Indeterminate;
+    if (left == loop.bound && right == loop.inductionVariable)
+        opcode = flippedRelation(opcode);
+    else if (left != loop.inductionVariable || right != loop.bound)
+        return TriState::Indeterminate;
+    if (opcode == loop.relation)
+        return TriState::True;
+    if (*invertedRelation(opcode) == loop.relation)
+        return TriState::False;
+    return TriState::Indeterminate;
 }
 
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

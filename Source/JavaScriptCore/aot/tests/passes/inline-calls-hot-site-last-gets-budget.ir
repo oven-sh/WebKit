@@ -1,0 +1,64 @@
+# The bytes a caller may still grow by go to its hottest call first, wherever that call stands in the function
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=MaxInlinedCallerBytes:200
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 2
+# STATISTIC: InlineDecisionCallerSizeLimit = 2
+# LOSS: MaxInlinedCallerBytes x2
+# LOSS: MaxInlineHeadBytes f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Mul v0, v0
+    v2 = Mul v1, v0
+    v3 = Mul v2, v0
+    v4 = Mul v3, v0
+    v5 = Mul v4, v0
+    v6 = Mul v5, v0
+    v7 = Mul v6, v0
+    v8 = Mul v7, v0
+    v9 = Mul v8, v0
+    v10 = Mul v9, v0
+    v11 = Mul v10, v0
+    v12 = Mul v11, v0
+    v13 = Mul v12, v0
+    Return v13
+}
+
+function f1 name="callInLoopLast" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: number, v1: boolean):
+    v2 = CallDirect v0 function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v2 function=f0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: name="callInLoopLast"
+# CHECK: b0(v0: number, v1: boolean):
+# CHECK-NEXT: v2: number = CallDirect v0 function=f0
+# CHECK: LoopHint
+# CHECK-NEXT: Jump
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-13: = Mul
+# CHECK-NOT: = Mul
+
+function f2 name="bothCallsOutsideLoops" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f0
+    Jump -> next b1()
+  b1():
+    v2 = CallDirect v1 function=f0
+    Return v2
+}
+# CHECK-LABEL: name="bothCallsOutsideLoops"
+# CHECK: b0(v0: number):
+# CHECK-NEXT: Jump
+# CHECK: b1():
+# CHECK-NEXT: = CallDirect v1 function=f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-13: = Mul
+# CHECK-NOT: = Mul

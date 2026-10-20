@@ -1,0 +1,42 @@
+# In a program as read a layout in a type stands for every layout declared under it, and a declared position keeps it as the written type beside object
+# RUN: round-trip
+# CHECK: layout L0 name="I"
+# CHECK-NEXT: layout L1 kind=Instance name="C" supertypes=[L0]
+# CHECK-NEXT: layout L2 kind=Instance name="D" predictedBase=L1 flags=[HasHeritage]
+# CHECK-NEXT: layout L3 name="J"
+# CHECK-NEXT: layout L4 kind=Environment
+# CHECK-NEXT: variable g0 module=m0 declared={type=anything predicted=L0|L1|L2}
+# CHECK-NEXT: variable g1 module=m0 declared={type=object written=L0|L1|L2}
+# CHECK-NEXT: variable g2 module=m0 declared={type=null|object written=null|L1|L2}
+# CHECK-NEXT: variable g3 module=m0 declared={type=object written=L2|L3}
+# CHECK-NEXT: variable g4 module=m0 declared={type=object written=L1|L2 predicted=L2}
+# CHECK-NEXT: variable g5 module=m0 declared={type=Array<L1|L2>}
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="f" module=m0 captures=[{type=env L4}] thisType={type=anything} parameters=[{type=object written=L1|L2}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: env L4, v1: object):
+# CHECK-NEXT: v2 = Predict v1 predicted=L1|L2
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+layout L0 name="I"
+layout L1 kind=Instance name="C" supertypes=[L0]
+layout L2 kind=Instance name="D" predictedBase=L1 flags=[HasHeritage]
+layout L3 name="J"
+layout L4 kind=Environment
+variable g0 module=m0 declared={type=anything predicted=L0}
+variable g1 module=m0 declared={type=L0}
+variable g2 module=m0 declared={type=null|L1}
+variable g3 module=m0 declared={type=L2|L3}
+variable g4 module=m0 declared={type=object written=L1 predicted=L2}
+variable g5 module=m0 declared={type=Array<L1>}
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" module=m0 captures=[{type=env L4}] thisType={type=anything} parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: env L4, v1: L1):
+    v2 = Predict v1 predicted=L1
+    Return v2
+}
+entry module=m0

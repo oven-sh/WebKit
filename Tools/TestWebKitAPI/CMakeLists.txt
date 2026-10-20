@@ -73,6 +73,7 @@ set(TestWTF_SOURCES
     Tests/WTF/DataMutex.cpp
     Tests/WTF/DateMath.cpp
     Tests/WTF/Deque.cpp
+    Tests/WTF/Dominators.cpp
     Tests/WTF/DragonBoxTest.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
     Tests/WTF/EnumSet.cpp
@@ -105,6 +106,7 @@ set(TestWTF_SOURCES
     Tests/WTF/LifecycleLogger.cpp
     Tests/WTF/LineEnding.cpp
     Tests/WTF/ListHashSet.cpp
+    Tests/WTF/Liveness.cpp
     Tests/WTF/Lock.cpp
     Tests/WTF/Logger.cpp
     Tests/WTF/Markable.cpp
@@ -142,6 +144,7 @@ set(TestWTF_SOURCES
     Tests/WTF/RunLoop.cpp
     Tests/WTF/SHA1.cpp
     Tests/WTF/SIMDHelpers.cpp
+    Tests/WTF/SSACalculator.cpp
     Tests/WTF/SafeStrerror.cpp
     Tests/WTF/SaturatingArithmeticOperations.cpp
     Tests/WTF/Scope.cpp
@@ -212,6 +215,12 @@ set(TestWTF_FRAMEWORKS
     WTF
     bmalloc
 )
+
+# Same as jsc: the static archives leave mi_* unresolved under USE_EXTERNAL_MIMALLOC.
+if (USE_EXTERNAL_MIMALLOC)
+    list(APPEND TestWTF_SOURCES ${JAVASCRIPTCORE_DIR}/shell/ExternalMimallocShims.cpp)
+    list(APPEND TestWTF_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(TestWTF)
 

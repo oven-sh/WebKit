@@ -31,6 +31,7 @@
 
 #include "AirArgInlines.h"
 #include "AirCode.h"
+#include "AirFrameStates.h"
 #include "AirInst.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
@@ -60,10 +61,11 @@ static inline Width LEGACY_NODELETE accessWidth(Opcode opcode)
     }
 }
 
-static bool tryStorePair(Code& code, BasicBlock* block, unsigned current, Inst& inst)
+static bool tryStorePair(Code& code, BasicBlock* block, unsigned current, Inst& inst, bool frameIsSetUp)
 {
     Width instWidth = accessWidth(inst.kind.opcode);
     int64_t instOffset = static_cast<int64_t>(inst.args()[1].offset());
+    int64_t bytesBelowFrameRecord = code.bytesBelowFrameRecord();
     unsigned limit = std::min(current, AirOptimizePairedLoadStoreInternal::scanInstructions);
     RegisterSet clobbered;
     for (unsigned count = 1; count <= limit; ++count) {
@@ -131,11 +133,11 @@ static bool tryStorePair(Code& code, BasicBlock* block, unsigned current, Inst& 
                 if ((argBase == Tmp(CCallHelpers::stackPointerRegister) || argBase == Tmp(GPRInfo::callFrameRegister)) && (inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(GPRInfo::callFrameRegister))) {
                     int64_t instOffsetFromFP = instOffset;
                     if (inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister))
-                        instOffsetFromFP = instOffset - code.frameSize();
+                        instOffsetFromFP = instOffset - bytesBelowFrameRecord;
 
                     int64_t argOffsetFromFP = argOffset;
                     if (argBase == Tmp(CCallHelpers::stackPointerRegister))
-                        argOffsetFromFP = argOffset - code.frameSize();
+                        argOffsetFromFP = argOffset - bytesBelowFrameRecord;
 
                     Range<int64_t> argRange(argOffsetFromFP, argOffsetFromFP + bytesForWidth(argWidth));
                     Range<int64_t> instRange(instOffsetFromFP, instOffsetFromFP + bytesForWidth(instWidth));
@@ -236,9 +238,9 @@ static bool tryStorePair(Code& code, BasicBlock* block, unsigned current, Inst& 
 
         // Because str pimm only takes unsigned offset, we tend to pick stackPointerRegister based offsetting.
         // But it is possible that framePointerRegister based offsetting can offer a benefit here.
-        if (target.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister)) {
-            int64_t instOffsetFromFP = instOffset - code.frameSize();
-            int64_t targetOffsetFromFP = targetOffset - code.frameSize();
+        if (frameIsSetUp && target.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister)) {
+            int64_t instOffsetFromFP = instOffset - bytesBelowFrameRecord;
+            int64_t targetOffsetFromFP = targetOffset - bytesBelowFrameRecord;
 
             if (isValidOffset(instOffsetFromFP) && targetOffsetFromFP == (instOffsetFromFP + bytesForWidth(instWidth))) {
                 Inst newInst(pairOpcode, target.origin, inst.args()[0], target.args()[0], Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), static_cast<int32_t>(instOffsetFromFP)));
@@ -259,7 +261,6 @@ static bool tryStorePair(Code& code, BasicBlock* block, unsigned current, Inst& 
     return false;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& inst)
 {
     Width instWidth = accessWidth(inst.kind.opcode);
@@ -272,8 +273,9 @@ static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& i
     auto isFrameRegister = [](Tmp tmp) {
         return tmp == Tmp(CCallHelpers::stackPointerRegister) || tmp == Tmp(GPRInfo::callFrameRegister);
     };
+    int64_t bytesBelowFrameRecord = code.bytesBelowFrameRecord();
     auto fromFP = [&](Tmp tmp, int64_t offset) {
-        return tmp == Tmp(CCallHelpers::stackPointerRegister) ? offset - static_cast<int64_t>(code.frameSize()) : offset;
+        return tmp == Tmp(CCallHelpers::stackPointerRegister) ? offset - bytesBelowFrameRecord : offset;
     };
     auto mayOverlap = [&](const Arg& arg, Width width) {
         if (!arg.isAddr() && !arg.isSimpleAddr())
@@ -319,12 +321,15 @@ static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& i
     return false;
 }
 
-#endif
 bool optimizePairedLoadStore(Code& code)
 {
     constexpr bool verbose = false;
 
     PhaseScope phaseScope(code, "optimizePairedLoadStore"_s);
+    const bool pairsMemoryAccesses = code.policy().peepholes.pairsMemoryAccesses;
+    std::optional<FrameStates> frameStates;
+    if (code.policy().frame.emitsFrame)
+        frameStates.emplace(code);
 
     if (verbose) {
         dataLog("Air before an iteration of optimizePairedLoadStore:\n");
@@ -335,9 +340,12 @@ bool optimizePairedLoadStore(Code& code)
     for (BasicBlock* block : code) {
         // Bun: removed all at once below. Removing each where it is found is quadratic in the size of the block.
         bool removedAny = false;
+        bool frameIsSetUp = !frameStates || frameStates->atTail(block) == FrameState::SetUp;
         unsigned index = block->size();
         while (index--) {
             Inst& inst = block->at(index);
+            if (inst.kind.opcode == EnterFrame || inst.kind.opcode == LeaveFrame)
+                frameIsSetUp = inst.kind.opcode == LeaveFrame;
             if (inst.hasNonArgEffects())
                 continue;
 
@@ -350,23 +358,21 @@ bool optimizePairedLoadStore(Code& code)
                 if ((inst.args()[0].isGPTmp() || inst.args()[0].isZeroReg()) && inst.args()[1].isAddr()) {
                     // sp & fp slot usage is, in particular, different for call args and spills.
                     // We would like to do stp merging only for spills.
-                    if ((inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(CCallHelpers::framePointerRegister)) && !inst.kind.spill && !code.proc().positionIndependent())
+                    if ((inst.args()[1].base() == Tmp(CCallHelpers::stackPointerRegister) || inst.args()[1].base() == Tmp(CCallHelpers::framePointerRegister)) && !inst.kind.spill && !pairsMemoryAccesses)
                         continue;
-                    if (tryStorePair(code, block, index, inst)) {
+                    if (tryStorePair(code, block, index, inst, frameIsSetUp)) {
                         block->at(index) = Inst();
                         removedAny = true;
                         changed = true;
                     }
                     continue;
                 }
-#if USE(BUN_JSC_ADDITIONS)
-                if (code.proc().positionIndependent() && inst.args()[0].isAddr() && inst.args()[1].isGPTmp() && tryLoadPair(code, block, index, inst)) {
+                if (pairsMemoryAccesses && inst.args()[0].isAddr() && inst.args()[1].isGPTmp() && tryLoadPair(code, block, index, inst)) {
                     block->at(index) = Inst();
                     removedAny = true;
                     changed = true;
                     continue;
                 }
-#endif
                 break;
             }
 

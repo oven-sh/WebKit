@@ -1,0 +1,19 @@
+# The field access of a slot operation is placement's
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}]
+function f0 name="bad" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1, v1 key="a" receivers=[L0] level=Proven fieldAccess=0
+    Return
+}
+function f1 name="good" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1, v1 key="a" receivers=[L0] level=Proven
+    Return
+}

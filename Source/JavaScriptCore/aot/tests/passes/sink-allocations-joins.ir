@@ -1,0 +1,273 @@
+# Allocations that meet at a block parameter stay virtual as one object
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsMergedAtJoins = 4
+# STATISTIC: TailsDuplicatedForSinking = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Line" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="joinWithFoldedEdge" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v3)
+  b3(v5):
+    v6 = PropGet v5 key="x" receivers=[L0]
+    Return v6
+}
+# CHECK-LABEL: function f0 name="joinWithFoldedEdge"
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b2()
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1, v0)
+# CHECK: b3([[x1]]: anything, {{*}}: anything):
+# CHECK-NEXT: v6: anything = Upcast [[x1]] castType=anything
+
+function f1 name="twoLayouts" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    SwitchOnShape v5 layoutSets=[[L0], [L1]] -> case b4(| 0), case b5(| 0), otherwise b6()
+  b4(v6):
+    v7 = GetSlotOrUndefined v5, v6 key="y" receivers=[L0] level=Predicted
+    Return v7
+  b5(v8):
+    v9 = GetSlotOrUndefined v5, v8 key="end" receivers=[L1] level=Predicted
+    Return v9
+  b6():
+    v10 = PropGet v5 key="x"
+    Return v10
+}
+# CHECK-LABEL: function f1 name="twoLayouts"
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[first6]]: 1 = Integer integer=1
+# CHECK: Jump -> next b3([[first6]], v0, v1, 
+# CHECK: b2():
+# CHECK: [[second6]]: 2 = Integer integer=2
+# CHECK: Jump -> next b3([[second6]], v1, 
+# CHECK: b3([[tag6]]: i32, 
+# CHECK-NOT: SwitchOnShape
+# CHECK: Switch [[tag6]] cases=[1] -> case b4({{*}}), otherwise b5({{*}})
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK-NOT: PropGet
+
+function f2 name="literalOrParameter" parameters=[{type=anything}, {type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: boolean, v3: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b2():
+    Jump -> next b3(v1)
+  b3(v5):
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Call v0, -, v5
+    Return v6
+  b5():
+    Return v0
+}
+# CHECK-LABEL: function f2 name="literalOrParameter"
+# CHECK-NOT: NewObject
+# CHECK: b2():
+# CHECK: Jump -> next b3({{*}}, v1, 
+# CHECK: b3([[tag7]]: i32, [[cell7]]: object, 
+# CHECK: b4():
+# CHECK-NEXT: Switch [[tag7]] cases=[
+# CHECK: ([[built7]]: object):
+# CHECK-NEXT: = Call v0, -, [[built7]]
+# CHECK: Jump -> next {{*}}([[cell7]])
+# CHECK: [[literal7]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next {{*}}([[literal7]])
+# CHECK-NOT: NewObject
+
+function f3 name="sourceLiveAfterJoin" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b4()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v0, -, v5, v3
+    Return v6
+  b4():
+    v7 = PropGet v3 key="x" receivers=[L0]
+    Return v7
+}
+# CHECK-LABEL: function f3 name="sourceLiveAfterJoin"
+# CHECK: b0(
+# CHECK-NEXT: Switch
+# CHECK: b1():
+# CHECK-NEXT: [[built9]]:{{*}}= NewObject -, v0, v1
+# CHECK: Jump -> next b3([[built9]], 
+# CHECK: b2():
+# CHECK-NEXT: v4:{{*}}= NewObject -, v1, v0
+# CHECK: Jump -> next b3(v4, 
+# CHECK: b3(v5: 
+# CHECK: b4():
+# CHECK-NEXT: v7: anything = Upcast v0 castType=anything
+
+function f4 name="sourceComparedAfterJoin" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=boolean}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = StrictEq v5, v3
+    Return v6
+}
+# CHECK-LABEL: function f4 name="sourceComparedAfterJoin"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[copy10]](v3)
+# CHECK: b2():
+# CHECK: Jump -> next b3(v4)
+# CHECK: b3(v5: 
+# CHECK-NEXT: = StrictEq v5, v3
+# CHECK: [[copy10]]([[source10]]: 
+# CHECK-NEXT: = StrictEq [[source10]], v3
+
+function f5 name="differentOrdersPassedOn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L0 fields=[1, 0]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v0, -, v5
+    Return v6
+}
+# CHECK-LABEL: function f5 name="differentOrdersPassedOn"
+# CHECK: b1():
+# CHECK-NEXT: v3:{{*}}= NewObject
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK: b2():
+# CHECK-NEXT: v4:{{*}}= NewObject
+# CHECK-NEXT: Jump -> next b3(v4)
+
+function f6 name="differentLayoutsPassedOn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Call v0, -, v5
+    Return v6
+}
+# CHECK-LABEL: function f6 name="differentLayoutsPassedOn"
+# CHECK: b1():
+# CHECK-NEXT: v3:{{*}}= NewObject
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK: b2():
+# CHECK-NEXT: v4:{{*}}= NewObject
+# CHECK-NEXT: Jump -> next b3(v4)
+
+function f7 name="literalOrParameterPassedOn" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v4):
+    v5 = Call v0, -, v4
+    Return v5
+}
+# CHECK-LABEL: function f7 name="literalOrParameterPassedOn"
+# CHECK: b1():
+# CHECK-NEXT: v3:{{*}}= NewObject
+# CHECK-NEXT: Jump -> next b3(v3)
+
+function f8 name="joinSourceBuiltWithHolder" parameters=[{type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: object, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v3, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3, v4)
+  b2():
+    v5 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5, v1)
+  b3(v6, v7):
+    PropSet v6, v2 key="y" mode=Strict receivers=[L0]
+    v9 = PropGet v7 key="x"
+    v10 = PropGet v9 key="y"
+    Return v10
+}
+# CHECK-LABEL: function f8 name="joinSourceBuiltWithHolder"
+# CHECK: b1():
+# CHECK-NEXT: [[held14]]:{{*}}= NewObject -, v0, v0
+# CHECK-NEXT: [[holder14]]:{{*}}= NewObject -, [[held14]], v0
+# CHECK: Jump -> next b3([[held14]], [[holder14]]
+# CHECK: b3([[join14]]: object{{*}}, [[other14]]: object
+# CHECK: PropSet [[join14]], v2 key="y"
+# CHECK-NEXT: = PropGet [[other14]] key="x"
+
+function f9 name="builtObjectMeetsLiteralAfterMerge" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean, v3: boolean):
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Switch v1 cases=[0, 1] -> case b1(), case b5(), otherwise b8()
+  b1():
+    v5 = Call v0, -, v4
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b6(v4)
+  b5():
+    v6 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b6(v6)
+  b6(v7):
+    Branch v3 -> taken b7(), notTaken b8()
+  b7():
+    v8 = PropGet v7 key="y" receivers=[L0]
+    Return v8
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f9 name="builtObjectMeetsLiteralAfterMerge"
+# CHECK: b0(
+# CHECK-NEXT: Switch
+# CHECK: b1():
+# CHECK-NEXT: [[built15]]:{{*}}= NewObject -, v0, v0
+# CHECK: b4([[cell15]]: object):
+# CHECK: Jump -> next b6({{*}}, [[cell15]], 
+# CHECK: b5():
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b6({{*}}, v0, v1)
+# CHECK: b6([[tag15]]: i32, 
+# CHECK: b7():
+# CHECK-NEXT: Switch [[tag15]] cases=[
+# CHECK: ([[read15]]: object):
+# CHECK-NEXT: = PropGet [[read15]] key="y"
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]

@@ -1,0 +1,46 @@
+# A loader that is called as a value gets the path of the running module only when its key gets undefined, after the order of execution was computed: whoever holds the namespace object may read an export before its store
+# RUN: flow-order failed locations
+# RUN(NODES): flow-solve nodes
+# CHECK: read-before-initialization g0
+# CHECK: g0: Unknown AtMostOnce
+# NODES: Variable(g0) = {undefined|1}
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0 exports=[{name="x" variable=g0}]
+module m1 path="/app/other.js" displayPath="other.js" body=f2
+entry module=m0
+layout L0 name="Table" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="undefined" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="x" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="key" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="early" module=m0 declared={type=function} initialization=Function function=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = Call v0
+    v2 = String string="a"
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=1
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f1 name="early" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = String string="/app/other.js"
+    v1 = String string="/app/main.js"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = GetModuleVariable variable=g1
+    v5 = ElemGet v3, v4
+    v6 = TypeTest v5 testedType=string
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    v8 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v9 = Call v8, -, v7
+    v10 = PropGet v9 key="x"
+    Return v10
+  b2():
+    Return
+}
+function f2 name="other" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

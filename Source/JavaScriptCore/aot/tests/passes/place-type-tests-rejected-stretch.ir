@@ -1,0 +1,37 @@
+# A stretch whose copy cannot be made keeps its operations as they are, and the function is left as it was
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 1
+# STATISTIC: StretchesGuarded = 0
+# STATISTIC: TypeTestsPlaced = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="branchBehindStretch" parameters=[{type=object predicted=L0}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything, v2: number):
+    v3 = PropGet v0 key="a"
+    v4 = TypeTest v1 testedType=string
+    v5 = PropGet v0 key="b"
+    v6 = Add v2, v2
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    Return v7
+  b2():
+    Return v6
+}
+# CHECK: outcome: Unchanged
+# CHECK-NEXT: decline StretchNotGuarded f0 v3
+# CHECK-LABEL: function f0 name="branchBehindStretch"
+# CHECK: b0(v0: object ~ L0, v1: anything, v2: number):
+# CHECK-NEXT: v3:{{*}}= PropGet v0 key="a"
+# CHECK-NEXT: v4: boolean = TypeTest v1 testedType=string
+# CHECK-NEXT: v5:{{*}}= PropGet v0 key="b"
+# CHECK-NEXT: v6: number = Add v2, v2
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v7: string):
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }

@@ -1,0 +1,16 @@
+# The origin of a fused read names an inline frame of its function
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = PropGetChain v0 key="a" secondKey="b" readOrigin={position=3 inlineFrame=5}
+    Return
+}
+function f1 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = PropGetChain v0 key="a" secondKey="b" readOrigin={position=3}
+    Return
+}

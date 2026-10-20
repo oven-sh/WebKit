@@ -1,0 +1,64 @@
+# A store under a handler is not certain behind the handler: the operation in front of it may throw
+# RUN(CAUGHT): flow-construction
+# RUN(PLAIN): flow-construction
+# RUN(CAUGHTFIELDS): flow-solve nodes
+# RUN(PLAINFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Caught" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Plain" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    v3 = FinishClass v2 layout=L0
+    v4 = Construct v3, -, v0
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Construct v7, -, v0
+    Return
+}
+function f1 name="Caught" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = Call v1
+    PropSet v3, v4 key="x"
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v6 = CatchValue
+    Jump -> next b3()
+  b3():
+    v7 = Integer integer=1
+    PropSet v3, v7 key="y"
+    Return v3
+}
+# CAUGHT: construction f1@i{{*}} root v3: DoesNotLeak before-leak "y" at-exit "y" read-early initial-order stores Unknown
+# CAUGHT-NOT: construction f1@i{{*}} "x"
+# CAUGHT: layout L0: DoesNotLeak Unknown set [1] orders
+# CAUGHTFIELDS: DeclaredPart(L0#{{*}}, 0) = {undefined|7}
+# CAUGHTFIELDS: DeclaredPart(L0#{{*}}, 1) = {1}
+function f2 name="Plain" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Call v1
+    PropSet v3, v4 key="x"
+    v6 = Integer integer=1
+    PropSet v3, v6 key="y"
+    Return v3
+}
+# PLAIN: construction f2@i{{*}} root v3: DoesNotLeak before-leak "x" "y" at-exit "x" "y" read-early initial-order "x" "y" stores OnlyInitialOrder
+# PLAIN: layout L1: DoesNotLeak OnlyAtConstruction set [0, 1] orders [0, 1]
+# PLAINFIELDS: DeclaredPart(L1#{{*}}, 0) = {7}
+# PLAINFIELDS: DeclaredPart(L1#{{*}}, 1) = {1}
+function f3 name="seven" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}

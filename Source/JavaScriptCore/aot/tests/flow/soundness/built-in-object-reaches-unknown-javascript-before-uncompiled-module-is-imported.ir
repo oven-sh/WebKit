@@ -1,0 +1,36 @@
+# A built-in object reaches unknown JavaScript while no unseen code can run. An import of a module that the image does not hold as compiled code, reached later, lets such code run:
+# whatever the rules for that object left out until then is there at the end
+# OPTIONS: check=FlowFixpoint
+# RUN: flow-solve objects
+# CHECK: Math mutations=[ReachNativeCode, ReachUnknownJavaScript
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/late.js" displayPath="late.js" body=f2 requests=[{target=m2}]
+module m2 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m1
+entry module=m0
+function f0 name="main" module=m0 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"hostFunctionWithoutEntry" [isFreeName]
+    v2 = Builtin builtin=Math
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f1
+    v5 = NewClosure function=f3
+    v6 = Call v4, -, v5
+    v7 = Call v4, -, v6
+    v8 = Call v7
+    Return v8
+}
+function f1 name="same" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="late" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="load" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}

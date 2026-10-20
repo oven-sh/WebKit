@@ -1,0 +1,48 @@
+# Closures of more functions than a dispatch has arms reach a call: the functions and the calls form a group
+# FORM: Prepared
+# RUN: pass GroupCallsByValue
+# STATISTIC: GroupCallsByValueChanges = 1
+# CHECK: group g0 members=[f3, f4, f5, f6, f7, f8] sites=[a0, a1] this=[omitted] arguments=[{{*}}[number, string], [number]]
+# CHECK-NOT: group
+# CHECK-NOT: generic callers none
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passesNumbers" parameters=[{type=f3|f4|f5|f6|f7|f8}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7|f8, v1: number):
+    v2 = Call v0, -, v1, v1 accessSite=0 callees=[f3, f4, f5, f6, f7, f8]
+    Return v2
+}
+function f1 name="passesStringFirst" parameters=[{type=f3|f4|f5|f6|f7|f8}, {type=string}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3|f4|f5|f6|f7|f8, v1: string, v2: number):
+    v3 = Call v0, -, v1, v2 accessSite=1 callees=[f3, f4, f5, f6, f7, f8]
+    Return v3
+}
+function f2 name="calleeOfAnyFunctionType" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number):
+    v2 = Call v0, -, v1, v1 accessSite=2 callees=[f3, f4, f5, f6, f7, f8]
+    Return v2
+}
+function f3 name="first" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f4 name="second" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f5 name="third" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f6 name="fourth" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f7 name="fifth" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}
+function f8 name="sixth" kind=Arrow parameters=[{type=number|string}, {type=number}] results=[{type=number}] {
+  b0(v0: number|string, v1: number):
+    Return v1
+}

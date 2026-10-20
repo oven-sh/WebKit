@@ -1,0 +1,43 @@
+# Each value that reaches a locale operand of a built-in gives a record: a constant tag, the tags of an array literal, the default of the host for a missing or undefined operand, unknown for anything else
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: locale Unknown f1:v2
+# CHECK: locale HostDefault f0:v3
+# CHECK-NOT: locale HostDefault
+# CHECK: locale Constant "de-DE" f0:v2
+# CHECK: locale Constant "en" f0:v9
+# CHECK: locale Constant "fr" f0:v9
+# ALL-NOT: locale Constant "ja"
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="format" variable=g0}]
+entry module=m0 hostReads=[{exportName="format"}]
+variable g0 name="format" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=IntlNumberFormat
+    v1 = String string="de-DE"
+    v2 = Construct v0, -, v1
+    v3 = Construct v0
+    v4 = Undefined
+    v5 = Construct v0, -, v4
+    v6 = String string="en"
+    v7 = String string="fr"
+    v8 = NewArray v6, v7 contents=anything
+    v9 = Construct v0, -, v8
+    v10 = NewClosure function=f1
+    PutModuleVariable v10 variable=g0
+    Return
+}
+function f1 name="format" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=IntlNumberFormat
+    v2 = Construct v1, -, v0
+    Return v2
+}
+function f2 name="unreached" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=IntlNumberFormat
+    v1 = String string="ja"
+    v2 = Construct v0, -, v1
+    Return v2
+}

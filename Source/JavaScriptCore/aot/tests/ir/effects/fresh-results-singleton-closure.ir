@@ -1,0 +1,37 @@
+# The closure of a constructor function that is evaluated once and captures nothing is the one of the closure table: an instance allocated before this operation ran may already name it through `constructor`, so the result is not fresh. A closure that this operation creates is
+# FORM: Prepared
+# RUN: result-freshness
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L1 kind=Instance name="Capturing" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L2 kind=Instance name="Many" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={prototypeProperty=Fixed}
+function f0 name="Once" flags=[HasThis] thisType={type=object written=L0} results=[{type=undefined}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f1 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=object written=L1} results=[{type=undefined}] {
+  b0(v0: number, v1: object ? L1):
+    Return
+}
+function f2 name="Many" flags=[HasThis] thisType={type=object written=L2} results=[{type=undefined}] {
+  b0(v0: object ? L2):
+    Return
+}
+function f3 name="plain" results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="creates" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewClosure function=f0
+    v2 = NewClosure v0 function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v1 NewClosure: unknown
+# CHECK-NEXT: v2 NewClosure: fresh
+# CHECK-NEXT: v3 NewClosure: fresh
+# CHECK-NEXT: v4 NewClosure: fresh

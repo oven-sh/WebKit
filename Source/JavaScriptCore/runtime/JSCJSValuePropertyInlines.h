@@ -85,7 +85,7 @@ ALWAYS_INLINE bool JSValue::getPropertySlot(JSGlobalObject* globalObject, Proper
             if (hasProperty)
                 return true;
         }
-        object = synthesizePrototype(globalObject, propertyName, false);
+        object = synthesizePrototype(globalObject);
         EXCEPTION_ASSERT(!!scope.exception() == !object);
         if (!object) [[unlikely]]
             return false;

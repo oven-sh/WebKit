@@ -46,7 +46,7 @@ static JSC_DECLARE_HOST_FUNCTION(callWeakRef);
 static JSC_DECLARE_HOST_FUNCTION(constructWeakRef);
 
 WeakObjectRefConstructor::WeakObjectRefConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callWeakRef, constructWeakRef)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callWeakRef), JSC_REGISTERED_HOST_FUNCTION(constructWeakRef))
 {
 }
 

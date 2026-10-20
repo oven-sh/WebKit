@@ -1,0 +1,53 @@
+# A variable, a field of an environment and the result of a function get the type of what reaches them: primitives by kind, strings that are keys by their text, functions and built-ins by name,
+# instances of built-in classes by class, objects whose layout keeps its shape by layout
+# RUN: valueflow-apply
+# CHECK: layout L1 {{*}}fields=[{key="floor" declared={type=builtin(MathFloor) written=anything}
+# CHECK: variable g0 name="count" {{*}}declared={type=undefined|int written=anything}
+# CHECK: variable g1 name="handler" {{*}}declared={type=undefined|f1 written=anything}
+# CHECK: variable g2 name="record" {{*}}declared={type=undefined|L0 written=anything}
+# CHECK: variable g3 name="list" {{*}}declared={type=undefined|Array written=anything}
+# CHECK: variable g4 name="mode" {{*}}declared={type=undefined|"fast"|"slow" written=anything}
+# CHECK: [[result]]: anything = Call v2 {{*}}callees=[f1]
+# CHECK: true = AssumeType [[result]] castType=true
+# CHECK: function f1 name="handler" {{*}}results=[{type=true written=anything}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="count" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="handler" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="record" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="list" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="mode" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Record" fields=[{key="fast" declared={type=anything} flags=[IsRequired]}, {key="slow" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Environment name="main" fields=[{key="floor" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    PutModuleVariable v2 variable=g1
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutModuleVariable v4 variable=g2
+    v6 = NewArray v0 contents=anything
+    PutModuleVariable v6 variable=g3
+    v8 = String string="fast"
+    PutModuleVariable v8 variable=g4
+    v10 = String string="slow"
+    PutModuleVariable v10 variable=g4
+    v12 = Builtin builtin=MathFloor
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = NewClosure v13 function=f2
+    v15 = Call v14
+    v16 = Call v2
+    Return v16
+}
+function f1 name="handler" results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    Return v0
+}
+function f2 name="inner" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}

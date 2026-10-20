@@ -1,0 +1,40 @@
+# A call of a callee nobody knows is recorded, hands its argument to native code without any other mutation and answers the unknown value
+# RUN: flow-links unknown
+# RUN(SINKS): flow-solve nodes objects sinks
+# CHECK: unknown-callee [[helper]] v2 Call
+# CHECK-NOT: unknown-callee {{*}} v{{*}} Call
+# SINKS: Variable(g0) = {{*}}unknown
+# SINKS: L0#[[passed]] mutations=[ReachNativeCode] uses=
+# SINKS: L1#{{*}} mutations=[] uses=
+# SINKS: nativeCode {{*}}L0#[[passed]]
+# SINKS-NOT: L1#
+# SINKS: unknownJavaScript {
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PassedToClosure" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="result" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    v5 = NewClosure function=f2
+    v6 = Call v5, -, v4
+    Return
+}
+function f1 name="callsLinkTimeConstant" role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = LinkTimeConstant constant=0
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f2 name="known" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

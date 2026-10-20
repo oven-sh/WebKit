@@ -166,7 +166,8 @@ PreciseAllocation* PreciseAllocation::tryCreateForLowerTierPrecise(JSC::Heap& he
     static_assert(halfAlignment == 8, "We assume that memory returned by malloc has alignment >= 8.");
 
     void* space = subspace->alignedMemoryAllocator()->tryAllocateMemory(adjustedAlignmentAllocationSize);
-    RELEASE_ASSERT(space);
+    if (!space)
+        return nullptr;
 
     unsigned adjustment = halfAlignment;
     space = std::bit_cast<void*>(std::bit_cast<uintptr_t>(space) + halfAlignment);

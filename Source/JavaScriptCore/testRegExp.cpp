@@ -161,9 +161,6 @@ int main(int argc, char** argv)
     timeBeginPeriod(1);
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
-    JSC::installCompilers();
-#endif
     JSC::initialize();
 
     // We can't use destructors in the following code because it uses Windows
@@ -458,6 +455,10 @@ static bool runFromFiles(GlobalObject* globalObject, const Vector<String>& files
         printf("%u tests run, %u failures\n", tests, failures);
     else
         printf("%u tests passed\n", tests);
+#if USE(BUN_JSC_ADDITIONS)
+    if (failures)
+        success = false;
+#endif
 
 #if ENABLE(REGEXP_TRACING)
     vm.dumpRegExpTrace();

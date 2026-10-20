@@ -28,6 +28,7 @@
 #include <JavaScriptCore/GCConductor.h>
 #include <JavaScriptCore/GCRequest.h>
 #include <JavaScriptCore/MachineStackMarker.h>
+#include <JavaScriptCore/SlotVisitor.h>
 #include <wtf/AutomaticThread.h>
 #include <wtf/Box.h>
 #include <wtf/ConcurrentPtrHashSet.h>
@@ -117,6 +118,8 @@ public:
     size_t LEGACY_NODELETE totalBytesAllocatedThisCycle();
     size_t LEGACY_NODELETE totalMaxEdenSize();
 
+    bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
+
     void dump(PrintStream&) const;
 
 private:
@@ -157,7 +160,8 @@ private:
     bool anyMutatorHasConnWithLock() WTF_REQUIRES_LOCK(*m_threadLock);
     void assertConn(GCConductor);
 
-    bool isNotRunning() const { return m_currentPhase == CollectorPhase::NotRunning && m_nextPhase == CollectorPhase::NotRunning && !m_hasQueuedRequest.load(std::memory_order_relaxed); }
+    bool isNotRunning() const;
+    bool canSkipMarking();
 
     bool shouldCollectInCollectorThread() WTF_REQUIRES_LOCK(*m_threadLock);
     CollectionScope decideCollectionScope();
@@ -193,8 +197,8 @@ private:
     // The per-heap part of the Begin and End phases.
     void beginCollectionInEachHeap(CollectionScope, MonotonicTime startTime);
     void setUpVisitors(CollectionScope);
+    static bool startsHelpersLazily();
     void startHelpers();
-    bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
     void endCollectionInEachHeap();
 
     void stopThePeriphery();
@@ -235,6 +239,7 @@ private:
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
+    Vector<DeferredRootRegion> m_deferredRootRegions;
 
     // Cells whose visit lost a race, to be revisited before marking can terminate.
     std::unique_ptr<MarkStackArray> m_raceMarkStack;

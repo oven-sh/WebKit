@@ -1,0 +1,84 @@
+# A callback runs at most once when the entry of the built-in says it is called once, from one site outside every cycle; a callback called per element, repeatedly or later, and a closure that reaches nativeCode, may run any number of times
+# RUN: flow
+# CHECK: function f0 executions=AtMostOnce
+# CHECK: function f1 {{*}}executions=AtMostOnce
+# CHECK: function f2
+# CHECK-NOT: executions=
+# CHECK: function f8
+# CHECK: indirect f0 S2 -> f1 BuiltinCallback Once
+# CHECK-NEXT: indirect f0 S3 -> f7 BuiltinCallback Once
+# CHECK-NEXT: indirect f0 S4 -> f7 BuiltinCallback Once
+# CHECK-NEXT: indirect f0 S7 -> f2 BuiltinCallback PerElement
+# CHECK-NEXT: indirect f0 S8 -> f3 BuiltinCallback Repeatedly
+# CHECK-NEXT: indirect f0 S9 -> f4 BuiltinCallback Later
+# CHECK-NEXT: indirect f0 S12 -> f6 BuiltinCallback Once cycle
+# CHECK: indirect - - -> f5 Host
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=Map
+    v2 = Construct v1
+    v3 = PropGet v2 key="getOrInsertComputed"
+    v4 = NewClosure function=f1
+    v5 = Call v3, v2, v0, v4
+    v6 = NewClosure function=f7
+    v7 = Call v3, v2, v0, v6
+    v8 = Call v3, v2, v0, v6
+    v9 = Builtin builtin=Uint8Array
+    v10 = Construct v9, -, v0
+    v11 = PropGet v10 key="forEach"
+    v12 = NewClosure function=f2
+    v13 = Call v11, v10, v12
+    v14 = Builtin builtin=JSONStringify
+    v15 = NewClosure function=f3
+    v16 = Call v14, -, v0, v15
+    v17 = Builtin builtin=QueueMicrotask
+    v18 = NewClosure function=f4
+    v19 = Call v17, -, v18
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = NewClosure function=f5
+    v23 = Call v21, -, v22
+    v24 = NewClosure function=f6
+    v25 = Builtin builtin=MathRandom
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v27 = Call v3, v2, v0, v24
+    v28 = Call v25
+    v29 = ToBoolean v28
+    Branch v29 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="calledOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="calledPerElement" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="calledRepeatedly" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f4 name="calledLater" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="reachesNativeCode" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="calledOnceInLoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="calledOnceAtTwoSites" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

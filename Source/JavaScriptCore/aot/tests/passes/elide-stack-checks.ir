@@ -1,0 +1,168 @@
+# A function that only checked callers enter needs no stack check of its own
+# FORM: Selected
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksCoveredByCallers = 13
+# STATISTIC: StackChecksDeferredToCallee = 1
+# LOSS: UncheckedStackBytes x1 f7
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f3
+    v2 = CallDirect function=f4
+    v3 = CallDirect function=f6
+    v4 = CallDirect function=f16
+    v5 = CallDirect function=f18
+    v6 = NewClosure function=f16
+    v7 = NewClosure function=f18
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="register" [isFreeName]
+    v10 = Call v9, -, v6, v7
+    Return v10
+}
+
+function f1 name="outer" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f2 name="inner" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f3 name="selfRecursive" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f3
+    Return v0
+}
+
+function f4 name="cycleA" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f5
+    Return v0
+}
+
+function f5 name="cycleB" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f4
+    Return v0
+}
+
+function f6 name="chain0" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f7
+    Return v0
+}
+
+function f7 name="chain1" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f8
+    Return v0
+}
+
+function f8 name="chain2" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f9
+    Return v0
+}
+
+function f9 name="chain3" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f10
+    Return v0
+}
+
+function f10 name="chain4" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f11
+    Return v0
+}
+
+function f11 name="chain5" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f12
+    Return v0
+}
+
+function f12 name="chain6" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f13
+    Return v0
+}
+
+function f13 name="chain7" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f14
+    Return v0
+}
+
+function f14 name="chain8" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f15
+    Return v0
+}
+
+function f15 name="chain9" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f16 name="closure" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f17 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
+  b0(v0: f16, v1: anything):
+    v2 = CallDirect function=f16
+    ReturnCall v2
+}
+
+function f18 name="closureNeverCalledByValue" results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f19 name="closureNeverCalledByValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f18}] thisType={type=anything} results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
+  b0(v0: f18, v1: anything):
+    v2 = CallDirect function=f18
+    ReturnCall v2
+}
+
+function f20 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
+  b0(v0: f16, v1: anything, v2: anything):
+    v3 = Call v2
+    v4 = CallDirect function=f16
+    ReturnCall v4
+}
+# CHECK: f0 stack check: Required
+# CHECK-NEXT: f1 stack check: CoveredByCallers
+# CHECK-NEXT: f2 stack check: CoveredByCallers
+# CHECK-NEXT: f3 stack check: Required
+# CHECK-NEXT: f4 stack check: Required
+# CHECK-NEXT: f5 stack check: CoveredByCallers
+# CHECK-NEXT: f6 stack check: CoveredByCallers
+# CHECK-NEXT: f7 stack check: Required
+# CHECK-NEXT: f8 stack check: CoveredByCallers
+# CHECK-NEXT: f9 stack check: CoveredByCallers
+# CHECK-NEXT: f10 stack check: CoveredByCallers
+# CHECK-NEXT: f11 stack check: CoveredByCallers
+# CHECK-NEXT: f12 stack check: CoveredByCallers
+# CHECK-NEXT: f13 stack check: CoveredByCallers
+# CHECK-NEXT: f14 stack check: CoveredByCallers
+# CHECK-NEXT: f15 stack check: CoveredByCallers
+# CHECK-NEXT: f16 stack check: Required
+# CHECK-NEXT: f17 stack check: DeferredToCallee
+# CHECK-NEXT: f18 stack check: CoveredByCallers
+# CHECK-NEXT: f19 stack check: Required
+# CHECK-NEXT: f20 stack check: Required
+# CHECK-NEXT: outcome: Unchanged

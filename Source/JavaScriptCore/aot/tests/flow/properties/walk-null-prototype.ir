@@ -1,0 +1,36 @@
+# The chain of a literal whose prototype is null ends at the literal: a read under an unknown string finds its own fields and absence. The same literal without the operation goes on to Object.prototype
+# RUN: flow-walk prototypes
+# CHECK: f0@i{{*}} v8 Get {[0,4294967294], string*}
+# CHECK-NEXT: L0#[[bare]]: Value own Proven L0#[[bare]] "x"
+# CHECK-NEXT: L0#[[bare]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v11 Get {[0,4294967294], string*}
+# CHECK-NEXT: L0#[[plain]]: Value own Proven L0#[[plain]] "x"
+# CHECK: L0#[[plain]]: BuiltinMember Proven ObjectPrototype "toString" ObjectPrototypeToString
+# CHECK: L0#[[plain]]: Absent Proven
+# CHECK: L0#[[bare]] -> null
+# CHECK-NOT: unknown
+# CHECK: L0#[[plain]] -> ObjectPrototype
+# CHECK-NOT: L0#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Dictionary" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Null
+    SetLiteralPrototype v1, v2
+    v4 = FinishObject v1
+    v5 = Builtin builtin=MathRandom
+    v6 = Call v5
+    v7 = ToString v6
+    v8 = ElemGet v4, v7
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    v10 = FinishObject v9
+    v11 = ElemGet v10, v7
+    Return
+  b1() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}

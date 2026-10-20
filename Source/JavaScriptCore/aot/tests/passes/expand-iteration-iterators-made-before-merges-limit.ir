@@ -1,0 +1,41 @@
+# An arm past the limit on dispatch cases is not added: control from its block runs the protocol on the iterator that the call made
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: pass ExpandIteration
+# LOSS: MaxDispatchCases x1 f0 v5
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="keysOrValues" parameters=[{type=Map<string, number>}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Map<string, number>, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallBuiltin v0 overload=MapPrototypeKeys/0
+    Jump -> next b3(v2)
+  b2():
+    v3 = CallBuiltin v0 overload=MapPrototypeValues/0
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = IteratorOpen v4
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b5(), notTaken b4()
+  b5():
+    Return v9
+}
+# CHECK-LABEL: function f0 name="keysOrValues"
+# CHECK: v2: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0
+# CHECK: [[nothing]]: MapIterator = Unspecified valueType=MapIterator
+# CHECK-NEXT: Jump -> next b3([[nothing]],
+# CHECK: v3: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
+# CHECK-NEXT: [[other]]: 1 = Integer integer=1
+# CHECK: Jump -> next b3(v3, [[other]],
+# CHECK-NEXT: b3(v4: MapIterator, [[arm]]: int[0, 1], [[map]]: Map<string, number>):
+# CHECK-NEXT: Switch [[arm]] cases=[0] -> case [[walk]](), otherwise [[protocol]]()
+# CHECK: = MapNext [[map]],
+# CHECK: [[protocol]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v4 key=@@iterator

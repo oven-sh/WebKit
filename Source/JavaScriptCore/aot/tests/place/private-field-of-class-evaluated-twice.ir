@@ -1,0 +1,62 @@
+# A private field and the brand, which holds the token of the class evaluation, have slots of the layout, whether the class is evaluated once or more often. After its second evaluation the sites of a class take the generic path, so the definitions of such a class are in the program by name, and a definition by name needs a slot that can be absent: the run time throws where the field exists
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Once" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"count"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="visible" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Twice" constructor=f3 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"count"@L1 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="visible" declared={type=number} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClassToken layout=L0
+    v4 = NewClosure v3 function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Construct v6, -, v2
+    PutModuleVariable v7 variable=g0
+    v9 = CallDirect v2 function=f2
+    v10 = CallDirect v2 function=f2
+    Return
+}
+function f1 name="Once" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything, v2: number):
+    v3 = GetConstructPrototype v1 layout=L0
+    v4 = NewObject v3 layout=L0
+    PrivateDefine v4, v0, v0 layout=L0
+    PrivateDefine v4, v0, v2 layout=L0 field=1
+    PropDefine v4, v2 key="visible"
+    Return v4
+}
+function f2 name="evaluate" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewClassToken layout=L1
+    v2 = NewClosure v1 function=f3
+    v3 = NewClass v2 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Construct v4, -, v0
+    PutModuleVariable v5 variable=g0
+    Return
+}
+function f3 name="Twice" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: classtoken, v1: anything, v2: number):
+    v3 = GetConstructPrototype v1 layout=L1
+    v4 = NewObject v3 layout=L1
+    PrivateDefine v4, v0, v0 layout=L1
+    PrivateDefine v4, v0, v2 layout=L1 field=1
+    PropDefine v4, v2 key="visible"
+    Return v4
+}
+
+# CHECK: L0 CompiledObject size=48
+# CHECK-NEXT: .0 #"#"@L0 Cell @32
+# CHECK-NEXT: .1 #"count"@L0 Double @16
+# CHECK-NEXT: .2 "visible" Double @24
+# CHECK-NEXT: L1 CompiledObject size=48
+# CHECK-NEXT: .0 #"#"@L1 JSValue @32
+# CHECK-NEXT: .1 #"count"@L1 OptionalDouble @16
+# CHECK-NEXT: .2 "visible" Double @24

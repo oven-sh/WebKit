@@ -71,8 +71,6 @@ void AbstractValue::set(Graph& graph, const FrozenValue& value, StructureClobber
     }
     
     m_type = speculationFromValue(value.value());
-    if ((m_type & SpecArray) && Options::useImmutableIntrinsics()) [[unlikely]]
-        m_type |= SpecDerivedArray;
     m_value = value.value();
     
     checkConsistency();

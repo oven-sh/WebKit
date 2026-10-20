@@ -331,8 +331,6 @@ public:
     BinaryOperand getFromOperandStack(int) { return m_topBinaryExpr; }
     void shrinkOperandStackBy(int& operandStackDepth, int amount) { operandStackDepth -= amount; }
     void appendBinaryOperation(const JSTokenLocation&, int& operandStackDepth, int&, BinaryOperand, BinaryOperand) { operandStackDepth++; }
-    void auditLastBinaryOperand(const AuditSites&) { }
-    ExpressionType wrapInAuditIfNeeded(const AuditSites&, ExpressionType expression, unsigned, unsigned) { return expression; }
     void operatorStackAppend(int& operatorStackDepth, int, int) { operatorStackDepth++; }
     int popOperandStack(int&) { int res = m_topBinaryExpr; m_topBinaryExpr = 0; return res; }
     

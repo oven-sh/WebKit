@@ -1,0 +1,33 @@
+# An object that a built-in allocates and nobody describes answers every read with its undeclared part and the unknown. A property the program stored on it is a value like any other
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v2 Get {"code"}
+# CHECK: opaque(Error)@f0:[[site]]: Value own Predicted opaque(Error)@f0:[[site]] *
+# CHECK: opaque(Error)@f0:[[site]]: Unknown own Predicted opaque(Error)@f0:[[site]] *
+# CHECK: f0@i{{*}} v5 Get {"tag"}
+# CHECK-NEXT: opaque(Error)@f0:[[site]]: Value own Proven opaque(Error)@f0:[[site]] "tag"
+# CHECK: f0@i{{*}} v8 Get {"code"}
+# CHECK-NEXT: L0#[[record]]: Absent Proven
+# CHECK-NOT: Unknown
+# RUN(NODES): flow-solve nodes
+# NODES: Local(i{{*}}, f0, v8) = {undefined}
+# NODES: Property(opaque(Error)@f0:v1{{*}}, "tag") = {1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=Error
+    v1 = Construct v0
+    v2 = PropGet v1 key="code"
+    v3 = Integer integer=1
+    PropSet v1, v3 key="tag" mode=Strict
+    v5 = PropGet v1 key="tag"
+    v6 = NewObject -, v3 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = PropGet v7 key="code"
+    Return
+  b1() role=CatchHandler:
+    v9 = CatchValue
+    Return
+}

@@ -269,7 +269,6 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfStart(); }
     static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfEnd(); }
-    static constexpr ptrdiff_t offsetOfIsScheduledToRun() { return OBJECT_OFFSETOF(MicrotaskQueue, m_isScheduledToRun); }
 #endif
 
 protected:

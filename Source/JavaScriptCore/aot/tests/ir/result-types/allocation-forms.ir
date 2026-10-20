@@ -1,0 +1,19 @@
+# The forms of allocation(..) that allocation.ir does not have: a layout of the built-ins table, a class without contents, and contents of a class other than Array
+# FORM: Prepared optimizing
+# RUN: result-types
+# CHECK: v2: object ~ L(IteratorResult)
+# CHECK-NEXT: v3: L(IteratorResult)
+# CHECK-NEXT: v4: Promise<Array<string>>
+# CHECK-NEXT: v5: Promise
+# CHECK-NEXT: v6: Array
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="a" parameters=[{type=string}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: string, v1: boolean):
+    v2 = CreateIteratorResult v0, v1
+    v3 = CreateIteratorResult v0, v1 [keepsShape]
+    v4 = PromiseAllOfElements v0, v0 contents=Array<string>
+    v5 = NewPromise
+    v6 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    Return
+}

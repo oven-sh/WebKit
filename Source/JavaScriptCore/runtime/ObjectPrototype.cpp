@@ -21,7 +21,6 @@
 #include "config.h"
 #include "ObjectPrototype.h"
 
-#include "AOTFunction.h"
 #include "ArrayConstructor.h"
 #include "GetterSetter.h"
 #include "HasOwnPropertyCache.h"
@@ -32,6 +31,10 @@
 
 #if PLATFORM(IOS) || PLATFORM(VISION)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#endif
+
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
 #endif
 
 namespace JSC {
@@ -107,9 +110,15 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    if (thisObject->type() == ObjectType) {
-        if (std::optional<bool> isOwn = AOT::Typed::compiledObjectHasOwnProperty(thisObject, propertyName.uid()))
-            return *isOwn;
+    if (thisObject->structure()->isCompiledStructure()) {
+        switch (AOT::PropertyWalk::hasOwnProperty(thisObject, propertyName.uid())) {
+        case AOT::PropertyWalk::Presence::Present:
+            return true;
+        case AOT::PropertyWalk::Presence::Absent:
+            return false;
+        case AOT::PropertyWalk::Presence::Unknown:
+            break;
+        }
     }
 #endif
     Structure* structure = thisObject->structure();

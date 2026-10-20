@@ -27,7 +27,6 @@
 #include "config.h"
 #include "CachedCall.h"
 
-#include "AOTRuntime.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSFunction.h"
@@ -37,18 +36,18 @@
 
 namespace JSC {
 
-CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int argumentCount)
+static JSGlobalObject* calleeRealm(const CallData& callData)
+{
+    RELEASE_ASSERT(callData.type == CallData::Type::JS || callData.type == CallData::Type::Compiled);
+    return callData.type == CallData::Type::JS ? callData.js.scope->realm() : callData.compiled.realm;
+}
+
+CachedCall::CachedCall(ConstructionKey, JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
-#if ENABLE(AOT)
-    , m_entryScope(m_vm, function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope()->realm() : function->realm())
-    , m_functionExecutable(function->type() != JSFunctionType || uncheckedDowncast<JSFunction>(function)->isHostFunction() ? nullptr : uncheckedDowncast<JSFunction>(function)->jsExecutable())
-    , m_scope(function->type() == JSFunctionType ? uncheckedDowncast<JSFunction>(function)->scope() : nullptr)
-#else
-    , m_entryScope(m_vm, uncheckedDowncast<JSFunction>(function)->scope()->realm())
-    , m_functionExecutable(uncheckedDowncast<JSFunction>(function)->jsExecutable())
-    , m_scope(uncheckedDowncast<JSFunction>(function)->scope())
-#endif
+    , m_entryScope(m_vm, calleeRealm(callData))
+    , m_functionExecutable(callData.type == CallData::Type::JS ? callData.js.functionExecutable : nullptr)
+    , m_scope(callData.type == CallData::Type::JS ? callData.js.scope : nullptr)
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -57,7 +56,6 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int arg
         m_valid = !scope.exception();
     });
 #endif
-    ASSERT(isSlimClosureType(function->type()) || !m_functionExecutable == uncheckedDowncast<JSFunction>(function)->isHostFunctionNonInline());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
@@ -75,25 +73,24 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* function, int arg
         return;
     }
 
-#if ENABLE(AOT)
-    if (!m_functionExecutable) {
-        m_addressForCall = (function->type() == JSFunctionType ? AOT::closureEntrypoint() : AOT::slimClosureEntrypoint()).taggedPtr();
-        m_protoCallFrame.init(nullptr, m_entryScope.globalObject(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+    if (callData.type == CallData::Type::Compiled) {
+        m_addressForCall = const_cast<void*>(callData.compiled.entrypoint);
+        m_protoCallFrame.init(nullptr, callData.compiled.realm, callee, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
         return;
     }
-#endif
 
-    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, uncheckedDowncast<JSFunction>(function));
+    auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, uncheckedDowncast<JSFunction>(callee));
     if (scope.exception()) [[unlikely]]
         return;
     m_numParameters = newCodeBlock->numParameters();
-    m_protoCallFrame.init(newCodeBlock, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+    m_protoCallFrame.init(newCodeBlock, callee->realm(), callee, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
 }
 
 void CachedCall::relink()
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(m_functionExecutable);
     auto* codeBlock = m_vm.interpreter.prepareForCachedCall(*this, this->function());
     RETURN_IF_EXCEPTION(scope, void());
     m_protoCallFrame.setCodeBlock(codeBlock);

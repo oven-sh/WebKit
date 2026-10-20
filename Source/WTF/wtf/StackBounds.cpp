@@ -37,7 +37,6 @@
 #endif
 
 #if OS(LINUX)
-#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -147,62 +146,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // OS(OPENBSD)
 
-#if OS(LINUX)
-static bool s_usesAuxiliaryVectorForMainThread;
-static pthread_t s_mainThread;
-
-void StackBounds::useAuxiliaryVectorForMainThread()
-{
-    s_mainThread = pthread_self();
-    s_usesAuxiliaryVectorForMainThread = true;
-}
-
-static void* endOfInitialStack(size_t stackLimit, size_t pageSize)
-{
-    auto* executableName = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
-    if (!executableName)
-        return nullptr;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    uintptr_t end = reinterpret_cast<uintptr_t>(executableName) + strlen(executableName) + 1 + sizeof(void*);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    uintptr_t stackPointer = reinterpret_cast<uintptr_t>(currentStackPointer());
-    if (end % pageSize || stackPointer >= end || end - stackPointer > stackLimit)
-        return nullptr;
-    return reinterpret_cast<void*>(end);
-}
-
-NEVER_INLINE StackBounds StackBounds::mainThreadStackBoundsFromAuxiliaryVector()
-{
-    rlimit limit;
-    getrlimit(RLIMIT_STACK, &limit);
-    rlim_t size = limit.rlim_cur;
-    if (size == RLIM_INFINITY)
-        size = 8 * MB;
-    rlim_t pageSize = static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
-    void* origin = endOfInitialStack(size, pageSize);
-    if (!origin)
-        return emptyBounds();
-    size -= pageSize;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    void* bound = static_cast<char*>(origin) - size;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    static char** oldestEnviron = environ;
-    StackBounds stackBounds { origin, bound };
-    if (stackBounds.contains(oldestEnviron))
-        stackBounds = { oldestEnviron, bound };
-    return stackBounds;
-}
-#endif
-
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-#if OS(LINUX)
-    if (s_usesAuxiliaryVectorForMainThread && pthread_equal(pthread_self(), s_mainThread)) [[unlikely]] {
-        auto bounds = mainThreadStackBoundsFromAuxiliaryVector();
-        if (!bounds.isEmpty())
-            return bounds;
-    }
-#endif
     auto ret = newThreadStackBounds(pthread_self());
 #if OS(LINUX)
     // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)

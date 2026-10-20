@@ -1,0 +1,208 @@
+# In a landing block a guard is available only if nothing in the covered block may have ended it before the throw
+# FORM: Prepared
+# RUN: guards points
+# RUN(SUMMARIES): guards points summaries function=f3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="unknownCodeInCoveredBlock" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3) handler=b3():
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    v5 = Call v1
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: []
+# CHECK-NEXT: b3 available at head: []
+# CHECK-NEXT: b4 available at head: []
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: []
+# CHECK-NEXT: b2:0 available: []
+# CHECK-NEXT: b3:0 available: []
+# CHECK-NEXT: b3:1 available: []
+# CHECK-NEXT: b4:0 available: []
+
+function f1 name="unknownCodeBeforeTheTest" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = Call v1
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4) handler=b3():
+    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    v6 = Claim v5 castType=number
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    v8 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    Return v8
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v4 facts: [Shape of v0 by v3 reads ShapeWords[L0]]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v4.0]
+# CHECK-NEXT: b2 available at head: [v4.0]
+# CHECK-NEXT: b3 available at head: [v4.0]
+# CHECK-NEXT: b4 available at head: []
+# CHECK: b1:0 available: [v4]
+# CHECK-NEXT: b1:1 available: [v4]
+# CHECK-NEXT: b1:2 available: [v4]
+# CHECK-NEXT: b2:0 available: [v4]
+# CHECK-NEXT: b3:0 available: [v4]
+# CHECK-NEXT: b3:1 available: [v4]
+# CHECK-NEXT: b3:2 available: [v4]
+# CHECK-NEXT: b4:0 available: []
+
+function f2 name="oneOfTwoCoveredBlocksEndsIt" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3) handler=b4():
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    v5 = Claim v4 castType=number
+    Jump -> next b2()
+  b2() handler=b4():
+    v6 = Call v1
+    Jump -> next b3()
+  b3():
+    Return v5
+  b4() role=CatchHandler:
+    v7 = CatchValue
+    Return v7
+  b5():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: [v3.0]
+# CHECK-NEXT: b3 available at head: []
+# CHECK-NEXT: b4 available at head: []
+# CHECK-NEXT: b5 available at head: []
+
+function f3 name="calleeRunsUnknownCodeBeforeItThrows" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: object, v1: boolean):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3) handler=b3():
+    v4 = CallDirect v1 function=f4
+    Jump -> next b2()
+  b2():
+    Return v0
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+  b4():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: []
+# CHECK-NEXT: b3 available at head: []
+# SUMMARIES-LABEL: function f3
+# SUMMARIES-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# SUMMARIES-NEXT: b0 available at head: []
+# SUMMARIES-NEXT: b1 available at head: [v3.0]
+# SUMMARIES-NEXT: b2 available at head: [v3.0]
+# SUMMARIES-NEXT: b3 available at head: []
+# SUMMARIES-NEXT: b4 available at head: []
+# SUMMARIES: b1:0 available: [v3]
+# SUMMARIES-NEXT: b1:1 available: [v3]
+# SUMMARIES-NEXT: b2:0 available: [v3]
+# SUMMARIES-NEXT: b3:0 available: []
+function f4 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="log" [isFreeName]
+    v3 = Call v2, -, v0
+    Throw v0
+}
+
+function f5 name="endedGuardAsHandlerArgument" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
+  b0(v0: object, v1: function):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3) handler=b3(v3):
+    v4 = Call v1
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+  b4():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK-NEXT: v5 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: []
+# CHECK-NEXT: b3 available at head: []
+
+function f6 name="guardAsHandlerArgument" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3) handler=b3(v3):
+    v4 = Claim v1 castType=number
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    v7 = GetSlotOrUndefined v0, v5 key="x" receivers=[L0] level=Proven
+    Return v7
+  b4():
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v3 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK-NEXT: v5 facts: [Shape of v0 by v2 reads ShapeWords[L0]]
+# CHECK: b1 available at head: [v3.0]
+# CHECK-NEXT: b2 available at head: [v3.0]
+# CHECK-NEXT: b3 available at head: [v3.0 v5.0]
+# CHECK: b3:0 available: [v3 v5]
+# CHECK-NEXT: b3:1 available: [v3 v5]
+# CHECK-NEXT: b3:2 available: [v3 v5]
+
+function f7 name="thrownObjectIsWrittenThroughTheCaughtValue" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1() handler=b2():
+    Throw v2
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Claim v4 castType=object
+    DefineGetter v5, v0 key="z"
+    Return v3
+}
+# CHECK-LABEL: function f7
+# CHECK: b2 available at head: [v2.0 v2.1 v2.2 v2.3]
+# CHECK: b2:0 available: [v2]
+# CHECK-NEXT: b2:1 available: [v2]
+# CHECK-NEXT: b2:2 available: [v2]
+# CHECK-NEXT: b2:3 available: []

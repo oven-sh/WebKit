@@ -1,0 +1,756 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+
+#if ENABLE(AOT)
+
+#include "AOTBuildContext.h"
+#include "AOTChildProcess.h"
+#include "AOTCompactTable.h"
+#include "AOTCompile.h"
+#include "AOTCompileOptionWords.h"
+#include "AOTIRParser.h"
+#include "AOTImage.h"
+#include "AOTLoadedProgramTestSupport.h"
+#include "AOTProgramFile.h"
+#include "AOTShellProcess.h"
+#include "AOTTemporaryFile.h"
+#include "AOTThreads.h"
+#include "ErrorInstance.h"
+#include "JSBigInt.h"
+#include "JSCInlines.h"
+#include "JSMapInlines.h"
+#include "JSSetInlines.h"
+#include "ObjectConstructor.h"
+#include "Options.h"
+#include "Symbol.h"
+#include "TopExceptionScope.h"
+#include <stdlib.h>
+#include <wtf/DataLog.h>
+#include <wtf/text/MakeString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+namespace JSC::AOT {
+
+std::span<const NativeTest> compactTableTests();
+
+using Width = CompactTable::Width;
+using SlotKind = CompactTable::SlotKind;
+using Status = CompactTable::Status;
+
+static constexpr ASCIILiteral programText =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "entry module=m0\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    Return\n"
+    "}\n"_s;
+
+static Vector<uint8_t> compileWithReferences(ASCIILiteral referencesWord)
+{
+    Vector<uint8_t> image;
+    runOnBuildThread([&] {
+        Wire::CompileOptions options = makeDefaultCompileOptions();
+        AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
+        BuildContext build(options);
+        std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programText)), Typed::IRForm::AsRead, build);
+        AOT_TEST_CHECK(program);
+        std::unique_ptr<CompileOutput> output = compileParsedProgram(WTF::move(program), build);
+        AOT_TEST_CHECK(!output->image.isEmpty());
+        image = WTF::move(output->image);
+    });
+    return image;
+}
+
+static void runWithReferences(ASCIILiteral testName, ASCIILiteral referencesWord, LoadedProgramTest body)
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(testName, programText, body);
+        return;
+    }
+
+    TemporaryFile image(".image"_s, compileWithReferences(referencesWord).span());
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()) };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that uses the image with ", referencesWord, " ", result.description());
+        failNativeTest(__FILE__, __LINE__, testName.characters());
+    }
+}
+
+namespace {
+
+class Collection {
+public:
+    enum class Kind : bool { Set, Map };
+
+    Collection(LoadedProgram& program, Kind kind)
+        : m_program(program)
+        , m_kind(kind)
+    {
+        VM& vm = program.vm();
+        JSGlobalObject* realm = program.realm();
+        m_owner.set(vm, kind == Kind::Set ? static_cast<JSObject*>(JSSet::create(vm, realm->setStructure())) : static_cast<JSObject*>(JSMap::create(vm, realm->mapStructure())));
+    }
+
+    JSObject* owner() { return m_owner.get(); }
+    CompactTable* table() { return CompactTable::tableOf(owner()); }
+
+    void add(JSValue key, JSValue value = { })
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_program.vm());
+        if (m_kind == Kind::Set)
+            uncheckedDowncast<JSSet>(owner())->add(m_program.realm(), key);
+        else
+            uncheckedDowncast<JSMap>(owner())->set(m_program.realm(), key, value);
+        AOT_TEST_CHECK(!scope.exception());
+    }
+
+    bool remove(JSValue key)
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_program.vm());
+        bool result = m_kind == Kind::Set ? uncheckedDowncast<JSSet>(owner())->remove(m_program.realm(), key) : uncheckedDowncast<JSMap>(owner())->remove(m_program.realm(), key);
+        AOT_TEST_CHECK(!scope.exception());
+        return result;
+    }
+
+    std::optional<uint32_t> find(JSValue key)
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_program.vm());
+        std::optional<uint32_t> entry = table()->find(m_program.realm(), key);
+        AOT_TEST_CHECK(!scope.exception());
+        return entry;
+    }
+
+    bool has(JSValue key) { return !!find(key); }
+
+    JSValue get(JSValue key)
+    {
+        std::optional<uint32_t> entry = find(key);
+        return entry ? table()->valueAt(*entry) : JSValue();
+    }
+
+    Vector<JSValue> keysInOrder()
+    {
+        Vector<JSValue> keys;
+        for (CompactStorage::Position position = CompactTable::next(m_program.vm(), table(), 0); position.storage; position = CompactTable::next(m_program.vm(), position.storage, position.entry + 1))
+            keys.append(position.key);
+        return keys;
+    }
+
+private:
+    LoadedProgram& m_program;
+    Kind m_kind;
+    Strong<JSObject> m_owner;
+};
+
+} // anonymous namespace
+
+static JSString* numberedString(LoadedProgram& program, ASCIILiteral prefix, unsigned number)
+{
+    return jsString(program.vm(), makeString(prefix, number));
+}
+
+static String textOf(JSValue string)
+{
+    return asString(string)->tryGetValue().data;
+}
+
+static bool usesWideReferences()
+{
+    return Image::current()->header().options.useWideReferences();
+}
+
+static void testTableStartsSmall(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(!usesWideReferences());
+    Collection set(program, Collection::Kind::Set);
+    AOT_TEST_CHECK(!set.table());
+    set.add(numberedString(program, "key"_s, 0));
+    CompactTable* table = set.table();
+    AOT_TEST_CHECK(table && table->isLive() && table->isHeapTable() && !table->isInImage());
+    AOT_TEST_CHECK(table->structure() == CompactTable::structureOf(program.vm()));
+    AOT_TEST_CHECK(table->size() == 1 && table->used() == 1);
+    AOT_TEST_CHECK(table->capacity() >= CompactTable::initialCapacity && CompactTable::slotKindFor(table->capacity()) == SlotKind::Tag);
+    AOT_TEST_CHECK(table->keyWidth() == Width::Narrow && table->valueWidth() == Width::None && !table->hasValues());
+
+    Collection map(program, Collection::Kind::Map);
+    map.add(numberedString(program, "key"_s, 0), numberedString(program, "value"_s, 0));
+    AOT_TEST_CHECK(map.table()->keyWidth() == Width::Narrow && map.table()->valueWidth() == Width::Narrow && map.table()->hasValues());
+}
+
+static void testWideReferencesStartWide(LoadedProgram& program)
+{
+    AOT_TEST_CHECK(usesWideReferences());
+    Collection set(program, Collection::Kind::Set);
+    set.add(numberedString(program, "key"_s, 0));
+    AOT_TEST_CHECK(set.table()->keyWidth() == Width::Wide && set.table()->valueWidth() == Width::None);
+    Collection map(program, Collection::Kind::Map);
+    map.add(jsNumber(1.5), jsNumber(2.5));
+    AOT_TEST_CHECK(map.table()->keyWidth() == Width::Wide && map.table()->valueWidth() == Width::Wide);
+    AOT_TEST_CHECK(map.get(jsNumber(1.5)) == jsNumber(2.5) && !map.has(jsNumber(2.5)));
+}
+
+static void testKeysThatAreNoNumbersStayNarrow(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    constexpr unsigned numberOfStrings = 100000;
+    Collection set(program, Collection::Kind::Set);
+    for (unsigned number = 0; number < numberOfStrings; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    CompactTable* table = set.table();
+    AOT_TEST_CHECK(table->size() == numberOfStrings && table->keyWidth() == Width::Narrow);
+    AOT_TEST_CHECK(table->used() + 5 <= table->capacity());
+    uint32_t capacity = table->capacity();
+
+    const JSValue others[] = { jsUndefined(), jsNull(), jsBoolean(true), Symbol::create(vm), constructEmptyObject(program.realm()) };
+    for (unsigned i = 0; i < std::size(others); ++i) {
+        AOT_TEST_CHECK(!set.has(others[i]));
+        set.add(others[i]);
+        AOT_TEST_CHECK(set.table() == table && table->isLive());
+        AOT_TEST_CHECK(table->capacity() == capacity && table->keyWidth() == Width::Narrow);
+        AOT_TEST_CHECK(table->used() == numberOfStrings + i + 1 && table->size() == numberOfStrings + i + 1);
+        AOT_TEST_CHECK(set.find(others[i]) == numberOfStrings + i && table->keyAt(numberOfStrings + i) == others[i]);
+    }
+    for (JSValue absent : { jsBoolean(false), JSValue(Symbol::create(vm)), JSValue(constructEmptyObject(program.realm())), jsNumber(1), JSValue(jsString(vm, String("undefined"_s))) })
+        AOT_TEST_CHECK(!set.has(absent));
+
+    set.add(jsNumber(1.5));
+    CompactTable* wider = set.table();
+    AOT_TEST_CHECK(wider != table && table->status() == Status::Replaced);
+    AOT_TEST_CHECK(wider->keyWidth() == Width::Wide && wider->size() == numberOfStrings + 6);
+    AOT_TEST_CHECK(set.find(jsNumber(1.5)) == numberOfStrings + 5);
+    for (unsigned i = 0; i < std::size(others); ++i)
+        AOT_TEST_CHECK(set.find(others[i]) == numberOfStrings + i);
+    for (unsigned number = 0; number < numberOfStrings; number += 997)
+        AOT_TEST_CHECK(set.find(numberedString(program, "key"_s, number)) == number);
+    AOT_TEST_CHECK(!set.has(numberedString(program, "key"_s, numberOfStrings)) && !set.has(jsNumber(2.5)));
+}
+
+static void testNumberWidensTheKeyColumnAndKeepsTheOrder(LoadedProgram& program)
+{
+    for (JSValue number : { jsNumber(1.5), jsNumber(7), jsNumber(-0.0), jsDoubleNumber(PNaN) }) {
+        Collection map(program, Collection::Kind::Map);
+        Vector<JSValue> expected;
+        MarkedArgumentBuffer roots;
+        for (unsigned i = 0; i < 20; ++i) {
+            JSString* key = numberedString(program, "key"_s, i);
+            roots.append(key);
+            expected.append(key);
+            map.add(key, key);
+        }
+        AOT_TEST_CHECK(map.table()->keyWidth() == Width::Narrow && map.table()->valueWidth() == Width::Narrow);
+        map.add(number, expected[0]);
+        AOT_TEST_CHECK(map.table()->keyWidth() == Width::Wide && map.table()->valueWidth() == Width::Narrow);
+
+        Vector<JSValue> keys = map.keysInOrder();
+        AOT_TEST_CHECK(keys.size() == 21);
+        for (unsigned i = 0; i < 20; ++i)
+            AOT_TEST_CHECK(keys[i] == expected[i] && map.get(expected[i]) == expected[i]);
+        AOT_TEST_CHECK(keys[20].isNumber() && map.get(number) == expected[0]);
+    }
+}
+
+static void testNumberWidensTheValueColumn(LoadedProgram& program)
+{
+    Collection map(program, Collection::Kind::Map);
+    MarkedArgumentBuffer keys;
+    for (unsigned i = 0; i < 10; ++i) {
+        keys.append(numberedString(program, "key"_s, i));
+        map.add(keys.at(i), i % 2 ? jsUndefined() : keys.at(i));
+    }
+    AOT_TEST_CHECK(map.remove(keys.at(1)) && map.remove(keys.at(4)));
+    AOT_TEST_CHECK(map.table()->valueWidth() == Width::Narrow);
+
+    map.add(keys.at(6), jsNumber(42));
+    AOT_TEST_CHECK(map.table()->valueWidth() == Width::Wide && map.table()->keyWidth() == Width::Narrow);
+    AOT_TEST_CHECK(map.table()->size() == 8);
+    for (unsigned i = 0; i < 10; ++i) {
+        if (i == 1 || i == 4)
+            AOT_TEST_CHECK(!map.has(keys.at(i)));
+        else if (i == 6)
+            AOT_TEST_CHECK(map.get(keys.at(i)) == jsNumber(42));
+        else
+            AOT_TEST_CHECK(map.get(keys.at(i)) == (i % 2 ? jsUndefined() : keys.at(i)));
+    }
+
+    map.add(numberedString(program, "key"_s, 10), jsNumber(1.5));
+    AOT_TEST_CHECK(map.get(numberedString(program, "key"_s, 10)) == jsNumber(1.5) && map.table()->size() == 9);
+}
+
+static JSValue evaluate(LoadedProgram& program, ASCIILiteral source)
+{
+    return program.realms().evaluate(program.realms().plain(), source);
+}
+
+static void testKeysFindEachOtherAsSameValueZeroSays(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Collection map(program, Collection::Kind::Map);
+    JSValue one = evaluate(program, "1n"_s);
+    JSValue large = evaluate(program, "2n ** 70n"_s);
+    map.add(jsNumber(-0.0), jsString(vm, String("zero"_s)));
+    map.add(jsDoubleNumber(PNaN), jsString(vm, String("nan"_s)));
+    map.add(one, jsString(vm, String("one"_s)));
+    map.add(large, jsString(vm, String("large"_s)));
+    AOT_TEST_CHECK(map.table()->size() == 4);
+
+    AOT_TEST_CHECK(map.find(jsNumber(0)) == 0u && map.find(jsNumber(-0.0)) == 0u && map.find(jsDoubleNumber(0.0)) == 0u);
+    AOT_TEST_CHECK(map.table()->keyAt(0) == jsNumber(0));
+    AOT_TEST_CHECK(map.find(jsDoubleNumber(PNaN)) == 1u && map.find(evaluate(program, "0 / 0"_s)) == 1u && map.find(evaluate(program, "-(0 / 0)"_s)) == 1u);
+    AOT_TEST_CHECK(map.find(evaluate(program, "2n - 1n"_s)) == 2u && map.find(evaluate(program, "BigInt(1)"_s)) == 2u);
+    JSValue otherLarge = evaluate(program, "2n ** 69n * 2n"_s);
+    AOT_TEST_CHECK(otherLarge != large && map.find(otherLarge) == 3u);
+
+    for (JSValue absent : { jsNumber(1), evaluate(program, "'1'"_s), evaluate(program, "'0'"_s), evaluate(program, "0n"_s), evaluate(program, "-1n"_s), evaluate(program, "2n ** 70n + 1n"_s), evaluate(program, "-(2n ** 70n)"_s), evaluate(program, "2 ** 70"_s), evaluate(program, "'NaN'"_s), jsUndefined() })
+        AOT_TEST_CHECK(!map.has(absent));
+
+    map.add(jsNumber(0), jsString(vm, String("zero again"_s)));
+    map.add(otherLarge, jsString(vm, String("large again"_s)));
+    AOT_TEST_CHECK(map.table()->size() == 4);
+    AOT_TEST_CHECK(map.remove(jsNumber(-0.0)) && !map.has(jsNumber(0)) && map.remove(evaluate(program, "1n"_s)) && !map.has(one));
+    AOT_TEST_CHECK(map.table()->size() == 2);
+
+    AOT_TEST_CHECK(map.find(jsNumber(1.0)) == map.find(jsDoubleNumber(1.0)));
+    map.add(jsDoubleNumber(5.0), jsNull());
+    AOT_TEST_CHECK(map.has(jsNumber(5)) && map.find(jsNumber(5)) == map.find(jsDoubleNumber(5.0)));
+}
+
+static void testBigIntsStayNarrow(LoadedProgram& program)
+{
+    Collection set(program, Collection::Kind::Set);
+    set.add(evaluate(program, "2n ** 70n"_s));
+    set.add(evaluate(program, "2n ** 71n"_s));
+    AOT_TEST_CHECK(set.table()->keyWidth() == Width::Narrow && set.table()->size() == 2);
+    AOT_TEST_CHECK(set.find(evaluate(program, "2n ** 71n"_s)) == 1u && !set.has(evaluate(program, "2n ** 72n"_s)));
+}
+
+static void checkEveryKeyAt(LoadedProgram& program, unsigned count)
+{
+    Collection set(program, Collection::Kind::Set);
+    for (unsigned number = 0; number < count; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    CompactTable* table = set.table();
+    AOT_TEST_CHECK(table->size() == count && table->used() == count && table->capacity() >= count);
+    for (unsigned number = 0; number < count; ++number)
+        AOT_TEST_CHECK(set.find(numberedString(program, "key"_s, number)) == number);
+    for (unsigned number = count; number < count + 300; ++number)
+        AOT_TEST_CHECK(!set.has(numberedString(program, "key"_s, number)));
+}
+
+static void testEverySlotKindOfSmallTables(LoadedProgram& program)
+{
+    static_assert(CompactTable::slotKindFor(8) == SlotKind::Tag && CompactTable::slotKindFor(9) == SlotKind::Short);
+    static_assert(CompactTable::slotKindFor(254) == SlotKind::Short && CompactTable::slotKindFor(255) == SlotKind::Long);
+    static_assert(CompactTable::slotKindFor((1 << 20) - 2) == SlotKind::Long && CompactTable::slotKindFor((1 << 20) - 1) == SlotKind::Huge);
+    for (unsigned count : { 1u, 4u, 5u, 8u, 9u, 63u, 64u, 65u, 253u, 254u, 255u, 256u, 1000u })
+        checkEveryKeyAt(program, count);
+}
+
+static void testTablesCreatedAtTheSlotKindBoundaries(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    for (uint32_t minCapacity : { 8u, 9u, 254u, 255u }) {
+        CompactTable* table = CompactTable::tryCreate(program.realm(), Width::Narrow, Width::None, minCapacity);
+        AOT_TEST_CHECK(table && !scope.exception());
+        AOT_TEST_CHECK(table->capacity() >= minCapacity && !table->size() && !table->used());
+        AOT_TEST_CHECK(!table->find(program.realm(), numberedString(program, "key"_s, 0)));
+    }
+}
+
+static void testDeletionOfHalfAndGrowth(LoadedProgram& program)
+{
+    constexpr unsigned count = 1000;
+    Collection map(program, Collection::Kind::Map);
+    for (unsigned number = 0; number < count; ++number)
+        map.add(numberedString(program, "key"_s, number), numberedString(program, "value"_s, number));
+    CompactTable* before = map.table();
+    for (unsigned number = 0; number < count; number += 2)
+        AOT_TEST_CHECK(map.remove(numberedString(program, "key"_s, number)));
+    AOT_TEST_CHECK(!map.remove(numberedString(program, "key"_s, 0)));
+    AOT_TEST_CHECK(map.table() == before && before->size() == count / 2 && before->used() == count);
+    for (unsigned number = 0; number < count; ++number)
+        AOT_TEST_CHECK(map.has(numberedString(program, "key"_s, number)) == !!(number % 2));
+
+    for (unsigned number = count; number < 3 * count; ++number)
+        map.add(numberedString(program, "key"_s, number), numberedString(program, "value"_s, number));
+    AOT_TEST_CHECK(map.table() != before && before->status() == Status::Replaced);
+    AOT_TEST_CHECK(map.table()->size() == count / 2 + 2 * count);
+
+    Vector<JSValue> keys = map.keysInOrder();
+    AOT_TEST_CHECK(keys.size() == count / 2 + 2 * count);
+    for (unsigned index = 0; index < keys.size(); ++index) {
+        unsigned number = index < count / 2 ? 2 * index + 1 : index + count / 2;
+        AOT_TEST_CHECK(textOf(keys[index]) == makeString("key"_s, number));
+        AOT_TEST_CHECK(textOf(map.get(keys[index])) == makeString("value"_s, number));
+    }
+    for (unsigned number = 0; number < count; number += 2)
+        AOT_TEST_CHECK(!map.has(numberedString(program, "key"_s, number)));
+
+    map.add(numberedString(program, "key"_s, 0), jsNull());
+    AOT_TEST_CHECK(textOf(map.keysInOrder().last()) == "key0"_s);
+}
+
+static void checkReplacedTables(LoadedProgram& program, Collection::Kind kind, bool keysAreNumbers, bool valuesAreNumbers, unsigned deletedStride)
+{
+    constexpr unsigned count = 700;
+    auto keyAt = [&](unsigned number) {
+        return keysAreNumbers ? jsNumber(number) : numberedString(program, "key"_s, number);
+    };
+    auto valueAt = [&](unsigned number) {
+        return valuesAreNumbers ? jsNumber(number + 0.5) : numberedString(program, "value"_s, number);
+    };
+    auto isDeleted = [&](unsigned number) {
+        return deletedStride && !(number % deletedStride);
+    };
+
+    Collection collection(program, kind);
+    unsigned numberOfTables = 0;
+    CompactTable* last = nullptr;
+    for (unsigned number = 0; number < count; ++number) {
+        collection.add(keyAt(number), valueAt(number));
+        if (isDeleted(number))
+            AOT_TEST_CHECK(collection.remove(keyAt(number)));
+        if (collection.table() != std::exchange(last, collection.table()))
+            ++numberOfTables;
+    }
+    AOT_TEST_CHECK(numberOfTables > 8);
+    AOT_TEST_CHECK(collection.table()->keyWidth() == (keysAreNumbers ? Width::Wide : Width::Narrow));
+    AOT_TEST_CHECK(collection.table()->valueWidth() == (kind == Collection::Kind::Set ? Width::None : valuesAreNumbers ? Width::Wide : Width::Narrow));
+
+    Vector<JSValue> keys = collection.keysInOrder();
+    unsigned index = 0;
+    for (unsigned number = 0; number < count; ++number) {
+        AOT_TEST_CHECK(collection.has(keyAt(number)) == !isDeleted(number));
+        if (isDeleted(number))
+            continue;
+        AOT_TEST_CHECK(index < keys.size() && collection.find(keys[index++]) == collection.find(keyAt(number)));
+        if (kind == Collection::Kind::Set)
+            continue;
+        JSValue value = collection.get(keyAt(number));
+        AOT_TEST_CHECK(valuesAreNumbers ? value == valueAt(number) : textOf(value) == makeString("value"_s, number));
+    }
+    AOT_TEST_CHECK(index == keys.size() && collection.table()->size() == keys.size());
+}
+
+static void testReplacedTablesKeepEntriesOfEveryWidth(LoadedProgram& program)
+{
+    for (unsigned deletedStride : { 0u, 2u, 3u, 7u }) {
+        for (bool keysAreNumbers : { false, true }) {
+            checkReplacedTables(program, Collection::Kind::Set, keysAreNumbers, false, deletedStride);
+            for (bool valuesAreNumbers : { false, true })
+                checkReplacedTables(program, Collection::Kind::Map, keysAreNumbers, valuesAreNumbers, deletedStride);
+        }
+    }
+}
+
+static void testPositionInReplacedTableLeadsToTheSuccessor(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Collection set(program, Collection::Kind::Set);
+    for (unsigned number = 0; number < 8; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    CompactTable* first = set.table();
+    AOT_TEST_CHECK(set.remove(numberedString(program, "key"_s, 1)) && set.remove(numberedString(program, "key"_s, 2)) && set.remove(numberedString(program, "key"_s, 6)));
+    for (unsigned number = 8; set.table() == first; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    AOT_TEST_CHECK(first->status() == Status::Replaced);
+
+    auto keyFrom = [&](uint32_t entry) {
+        CompactStorage::Position position = CompactTable::next(vm, first, entry);
+        AOT_TEST_CHECK(position.storage == set.table());
+        return textOf(position.key);
+    };
+    AOT_TEST_CHECK(keyFrom(0) == "key0"_s);
+    AOT_TEST_CHECK(keyFrom(1) == "key3"_s && keyFrom(2) == "key3"_s && keyFrom(3) == "key3"_s);
+    AOT_TEST_CHECK(keyFrom(4) == "key4"_s && keyFrom(5) == "key5"_s);
+    AOT_TEST_CHECK(keyFrom(6) == "key7"_s && keyFrom(7) == "key7"_s && keyFrom(8) == "key8"_s);
+
+    CompactTable* second = set.table();
+    CompactTable::clear(program.realm(), set.owner());
+    AOT_TEST_CHECK(second->status() == Status::Cleared && set.table() != second && !set.table()->size());
+    AOT_TEST_CHECK(!CompactTable::next(vm, first, 3).storage && !CompactTable::next(vm, second, 0).storage);
+    set.add(numberedString(program, "later"_s, 0));
+    for (JSCell* storage : { static_cast<JSCell*>(first), static_cast<JSCell*>(second) }) {
+        CompactStorage::Position position = CompactTable::next(vm, storage, 5);
+        AOT_TEST_CHECK(position.storage == set.table() && !position.entry && textOf(position.key) == "later0"_s);
+    }
+}
+
+static void testFindByCharacters(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Collection set(program, Collection::Kind::Set);
+    set.add(jsString(vm, String("alpha"_s)));
+    set.add(Symbol::create(vm));
+    set.add(jsString(vm, String("beta"_s)));
+    set.add(constructEmptyObject(program.realm()));
+    static constexpr char16_t wideCharacters[] = { 'g', 'a', 'm', 'm', 'a' };
+    set.add(jsString(vm, String(std::span(wideCharacters))));
+    CompactTable* table = set.table();
+    AOT_TEST_CHECK(table->find("alpha"_span8) == 0u && table->find("beta"_span8) == 2u && table->find("gamma"_span8) == 4u);
+    AOT_TEST_CHECK(!table->find("alph"_span8) && !table->find("alphaa"_span8) && !table->find(""_span8) && !table->find("delta"_span8));
+
+    JSString* rope = jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("pha"_s)));
+    JSString* substring = jsSubstring(program.realm(), jsString(vm, String("the beta version"_s)), 4, 4);
+    AOT_TEST_CHECK(rope->isRope() && substring->isSubstring());
+    AOT_TEST_CHECK(set.find(rope) == 0u && set.find(substring) == 2u);
+    AOT_TEST_CHECK(!set.has(jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("ph"_s)))));
+}
+
+static void testCopyIsIndependent(LoadedProgram& program)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    Collection set(program, Collection::Kind::Set);
+    for (unsigned number = 0; number < 20; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    AOT_TEST_CHECK(set.remove(numberedString(program, "key"_s, 3)));
+    CompactTable* copy = set.table()->tryCopy(program.realm());
+    AOT_TEST_CHECK(copy && !scope.exception() && copy != set.table());
+    AOT_TEST_CHECK(copy->size() == 19 && copy->isLive());
+    set.add(numberedString(program, "key"_s, 3));
+    AOT_TEST_CHECK(set.remove(numberedString(program, "key"_s, 5)));
+    AOT_TEST_CHECK(!copy->find(program.realm(), numberedString(program, "key"_s, 3)) && copy->find(program.realm(), numberedString(program, "key"_s, 5)));
+    AOT_TEST_CHECK(copy->size() == 19);
+}
+
+static bool takeOutOfMemoryError(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    Exception* exception = scope.exception();
+    if (!exception)
+        return false;
+    auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+    bool isOutOfMemoryError = error && error->isOutOfMemoryError();
+    scope.clearException();
+    return isOutOfMemoryError;
+}
+
+static void testOutOfMemoryThrowsAndLeavesTheTableUsable(LoadedProgram& program)
+{
+    Collection set(program, Collection::Kind::Set);
+    for (unsigned number = 0; number < 10; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    CompactTable* table = set.table();
+
+    AOT_TEST_CHECK(!CompactTable::tryCreate(program.realm(), Width::Narrow, Width::None, CompactTable::maxCapacity + 1));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    AOT_TEST_CHECK(!CompactTable::tryCreate(program.realm(), Width::Wide, Width::Wide, UINT32_MAX));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+
+    AOT_TEST_CHECK(set.table() == table && table->isLive() && table->size() == 10);
+    for (unsigned number = 0; number < 10; ++number)
+        AOT_TEST_CHECK(set.find(numberedString(program, "key"_s, number)) == number);
+    for (unsigned number = 10; number < 100; ++number)
+        set.add(numberedString(program, "key"_s, number));
+    AOT_TEST_CHECK(set.table()->size() == 100 && set.find(numberedString(program, "key"_s, 99)) == 99u);
+}
+
+static void testKeysSurviveCollections(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Collection map(program, Collection::Kind::Map);
+    for (unsigned number = 0; number < 500; ++number)
+        map.add(numberedString(program, "key"_s, number), numberedString(program, "value"_s, number));
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        vm.heap.collectSync(scope);
+        for (unsigned number = 0; number < 500; ++number) {
+            JSValue value = map.get(numberedString(program, "key"_s, number));
+            AOT_TEST_CHECK(value && vm.heap.isMarked(value.asCell()) && textOf(value) == makeString("value"_s, number));
+        }
+        map.add(numberedString(program, "young"_s, static_cast<unsigned>(scope)), numberedString(program, "young value"_s, 0));
+    }
+    vm.heap.collectSync(CollectionScope::Eden);
+    AOT_TEST_CHECK(textOf(map.get(numberedString(program, "young"_s, static_cast<unsigned>(CollectionScope::Full)))) == "young value0"_s);
+}
+
+static void checkIntegerKeys(LoadedProgram& program, uint32_t count, SlotKind expectedSlotKind)
+{
+    Collection set(program, Collection::Kind::Set);
+    for (uint32_t number = 0; number < count; ++number)
+        set.add(jsNumber(number));
+    CompactTable* table = set.table();
+    AOT_TEST_CHECK(table->size() == count && table->used() == count);
+    AOT_TEST_CHECK(CompactTable::slotKindFor(table->capacity()) == expectedSlotKind);
+    uint32_t step = std::max<uint32_t>(count / 200000, 1);
+    for (uint32_t number = 0; number < count; number += step)
+        AOT_TEST_CHECK(set.find(jsNumber(number)) == number);
+    for (uint32_t number : { count - 3, count - 2, count - 1 })
+        AOT_TEST_CHECK(set.find(jsNumber(number)) == number);
+    for (uint32_t number = count; number < count + 200000; ++number)
+        AOT_TEST_CHECK(!set.has(jsNumber(number)));
+    AOT_TEST_CHECK(!set.has(jsNumber(-1)) && !set.has(jsNumber(0.5)));
+}
+
+static void testTableCreatedWithTheLargestLongSlots(LoadedProgram& program)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(program.vm());
+    for (uint32_t count : { CompactTable::maxCapacityWithLongSlots, CompactTable::maxCapacityWithLongSlots + 1 }) {
+        AOT_TEST_CHECK(count == 1048574 || count == 1048575);
+        CompactTable* table = CompactTable::tryCreate(program.realm(), Width::Wide, Width::None, count);
+        AOT_TEST_CHECK(table && !scope.exception() && table->capacity() >= count);
+    }
+    checkIntegerKeys(program, 1048574, SlotKind::Huge);
+    checkIntegerKeys(program, 1048575, SlotKind::Huge);
+}
+
+static void testLongSlotsBelowTheBoundary(LoadedProgram& program)
+{
+    checkIntegerKeys(program, 500000, SlotKind::Long);
+}
+
+static void testIndexWiderThanTheHash(LoadedProgram& program)
+{
+    constexpr uint32_t count = 12582912 + 1000;
+    static_assert(CompactTable::probeStartFor(24, 0xabcdef) == 0xabcdef && CompactTable::probeStartFor(25, 0xabcdef) == 0xabcdef << 1);
+    checkIntegerKeys(program, count, SlotKind::Huge);
+}
+
+static constexpr ASCIILiteral programThatProbesSet = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="registry" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key="countPresent"
+    Return
+}
+function f1 name="countPresent" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Claim v0 castType=i32
+    v4 = Claim v1 castType=i32
+    v5 = Claim v2 castType=i32
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Set"
+    v8 = Construct v7, -
+    v9 = Integer integer=0
+    v10 = Integer integer=1
+    Jump -> next b1(v9)
+  b1(v11):
+    LoopHint
+    v13 = Less v11, v3
+    Branch v13 -> taken b2(), notTaken b3()
+  b2():
+    v14 = PropGet v8 key="add"
+    v15 = Call v14, v8, v11
+    v16 = Add v11, v10
+    Jump -> next b1(v16)
+  b3():
+    Jump -> next b4(v4, v9)
+  b4(v17, v18):
+    LoopHint
+    v20 = Less v17, v5
+    Branch v20 -> taken b5(), notTaken b6()
+  b5():
+    v21 = PropGet v8 key="has"
+    v22 = Call v21, v8, v17
+    v23 = ToBoolean v22
+    Branch v23 -> taken b7(), notTaken b8()
+  b6():
+    Return v18
+  b7():
+    v24 = Add v18, v10
+    Jump -> next b9(v24)
+  b8():
+    Jump -> next b9(v18)
+  b9(v25):
+    v26 = Add v17, v10
+    Jump -> next b4(v26, v25)
+}
+)IR"_s;
+
+static void testIndexWiderThanTheHashInCompiledCode()
+{
+    for (ASCIILiteral referencesWord : { "references=narrow"_s, "references=wide"_s }) {
+        std::unique_ptr<CompileOutput> output;
+        runOnBuildThread([&] {
+            Wire::CompileOptions options = makeDefaultCompileOptions();
+            AOT_TEST_CHECK(!applyOptionWord(options, referencesWord));
+            BuildContext build(options);
+            std::unique_ptr<Typed::Program> program = Typed::parseProgram(Typed::withStandInLibrary(String(programThatProbesSet)), Typed::IRForm::AsRead, build);
+            AOT_TEST_CHECK(program);
+            output = compileParsedProgram(WTF::move(program), build);
+            AOT_TEST_CHECK(!output->image.isEmpty() && output->entryModuleIDs.size() == 1);
+        });
+        TemporaryFile image(".image"_s, output->image.span());
+        Vector<String> arguments {
+            makeString("--aotImagePath="_s, image.path()),
+            String("-e"_s),
+            makeString("globalThis.registry = { }; runCompiledEntryPoint("_s, output->entryModuleIDs[0], R"js().then(() => {
+    let count = 12582912 + 1000;
+    print(registry.countPresent(10, 5, 15));
+    print(registry.countPresent(300, -10, 310));
+    print(registry.countPresent(count, -50000, count + 50000));
+}).catch(error => print("the script threw " + error));)js"_s),
+        };
+        ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
+        String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
+        if (!result.exitedWith(EXIT_SUCCESS) || printed != "5\n300\n12583912\n"_s)
+            dataLog("with ", referencesWord, " the shell ", result.description(), " and printed\n", printed);
+        AOT_TEST_CHECK(result.exitedWith(EXIT_SUCCESS) && printed == "5\n300\n12583912\n"_s);
+    }
+}
+
+template<const ASCIILiteral& referencesWord, LoadedProgramTest body>
+static void runNativeTestWithReferences()
+{
+    for (const NativeTest& test : compactTableTests()) {
+        if (test.run == &runNativeTestWithReferences<referencesWord, body>) {
+            runWithReferences(test.name, referencesWord, body);
+            return;
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static constexpr ASCIILiteral narrowReferences = "references=narrow"_s;
+static constexpr ASCIILiteral wideReferences = "references=wide"_s;
+template<LoadedProgramTest body> static constexpr void (*narrow)() = runNativeTestWithReferences<narrowReferences, body>;
+template<LoadedProgramTest body> static constexpr void (*wide)() = runNativeTestWithReferences<wideReferences, body>;
+
+std::span<const NativeTest> compactTableTests()
+{
+    static constexpr NativeTest tests[] = {
+        { "compact-table/table-starts-small"_s, narrow<testTableStartsSmall> },
+        { "compact-table/keys-that-are-no-numbers-stay-narrow"_s, narrow<testKeysThatAreNoNumbersStayNarrow> },
+        { "compact-table/number-widens-the-key-column-and-keeps-the-order"_s, narrow<testNumberWidensTheKeyColumnAndKeepsTheOrder> },
+        { "compact-table/number-widens-the-value-column"_s, narrow<testNumberWidensTheValueColumn> },
+        { "compact-table/keys-find-each-other-as-same-value-zero-says"_s, narrow<testKeysFindEachOtherAsSameValueZeroSays> },
+        { "compact-table/big-ints-stay-narrow"_s, narrow<testBigIntsStayNarrow> },
+        { "compact-table/every-slot-kind-of-small-tables"_s, narrow<testEverySlotKindOfSmallTables> },
+        { "compact-table/tables-created-at-the-slot-kind-boundaries"_s, narrow<testTablesCreatedAtTheSlotKindBoundaries> },
+        { "compact-table/deletion-of-half-and-growth"_s, narrow<testDeletionOfHalfAndGrowth> },
+        { "compact-table/replaced-tables-keep-entries-of-every-width"_s, narrow<testReplacedTablesKeepEntriesOfEveryWidth> },
+        { "compact-table/position-in-replaced-table-leads-to-the-successor"_s, narrow<testPositionInReplacedTableLeadsToTheSuccessor> },
+        { "compact-table/find-by-characters"_s, narrow<testFindByCharacters> },
+        { "compact-table/copy-is-independent"_s, narrow<testCopyIsIndependent> },
+        { "compact-table/out-of-memory-throws-and-leaves-the-table-usable"_s, narrow<testOutOfMemoryThrowsAndLeavesTheTableUsable> },
+        { "compact-table/keys-survive-collections"_s, narrow<testKeysSurviveCollections> },
+        { "compact-table/wide-references/start-wide"_s, wide<testWideReferencesStartWide> },
+        { "compact-table/wide-references/keys-find-each-other-as-same-value-zero-says"_s, wide<testKeysFindEachOtherAsSameValueZeroSays> },
+        { "compact-table/wide-references/every-slot-kind-of-small-tables"_s, wide<testEverySlotKindOfSmallTables> },
+        { "compact-table/wide-references/deletion-of-half-and-growth"_s, wide<testDeletionOfHalfAndGrowth> },
+        { "compact-table/wide-references/position-in-replaced-table-leads-to-the-successor"_s, wide<testPositionInReplacedTableLeadsToTheSuccessor> },
+        { "compact-table/wide-references/keys-survive-collections"_s, wide<testKeysSurviveCollections> },
+        { "slow/compact-table/long-slots-below-the-boundary"_s, narrow<testLongSlotsBelowTheBoundary> },
+        { "slow/compact-table/table-created-with-the-largest-long-slots"_s, narrow<testTableCreatedWithTheLargestLongSlots> },
+        { "slow/compact-table/index-wider-than-the-hash"_s, narrow<testIndexWiderThanTheHash> },
+        { "slow/compact-table/compiled-code-probes-index-wider-than-the-hash"_s, testIndexWiderThanTheHashInCompiledCode },
+    };
+    return tests;
+}
+
+} // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#endif // ENABLE(AOT)

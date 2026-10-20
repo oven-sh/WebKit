@@ -1,0 +1,52 @@
+# A typed array converts what is stored into it, so its elements are those of its class, whatever the program stores: a read is an integer of that width, a number or a big integer. A view whose class nobody knows holds any of them
+# RUN: flow
+# CHECK: variable g0 type=Uint8Array<int[0, 255], proven
+# CHECK: variable g1 type=Int16Array<int[-32768, 32767], proven
+# CHECK: variable g2 type=Float64Array<number, proven
+# CHECK: variable g3 type=BigInt64Array<bigint, proven
+# CHECK: variable g4 type=undefined|int[0, 255]
+# CHECK: variable g5 type=undefined|number
+# CHECK: variable g6 type=undefined|bigint
+# CHECK: variable g7 type=undefined|int[-32768, 32767]|bigint
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="bytes" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="shorts" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="doubles" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="bigIntegers" module=m0 declared={type=anything} initialization=Uninitialized
+variable g4 name="byte" module=m0 declared={type=anything} initialization=Uninitialized
+variable g5 name="double" module=m0 declared={type=anything} initialization=Uninitialized
+variable g6 name="bigInteger" module=m0 declared={type=anything} initialization=Uninitialized
+variable g7 name="shortOrBigInteger" module=m0 declared={type=anything} initialization=Uninitialized
+variable g8 name="either" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    v1 = Builtin builtin=Uint8Array
+    v2 = Construct v1, -, v0
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=Int16Array
+    v5 = Construct v4, -, v0
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=Float64Array
+    v8 = Construct v7, -, v0
+    PutModuleVariable v8 variable=g2
+    v10 = Builtin builtin=BigInt64Array
+    v11 = Construct v10, -, v0
+    PutModuleVariable v11 variable=g3
+    v13 = Double number=1000.5
+    ElemSet v2, v0, v13 mode=Strict
+    v15 = ElemGet v2, v0
+    PutModuleVariable v15 variable=g4
+    v17 = ElemGet v8, v0
+    PutModuleVariable v17 variable=g5
+    v19 = ElemGet v11, v0
+    PutModuleVariable v19 variable=g6
+    PutModuleVariable v5 variable=g8
+    PutModuleVariable v11 variable=g8
+    v23 = GetModuleVariable variable=g8
+    v24 = ElemGet v23, v0
+    PutModuleVariable v24 variable=g7
+    Return
+}

@@ -165,13 +165,17 @@ Rules for an edit to an upstream test:
 
 ## The fork's own tests
 
-Not upstream's: a sync neither brings nor changes them. All are named `stress/bun-*.js`.
+Not upstream's: a sync neither brings nor changes them. Most are named `stress/bun-*.js`. Regression tests for fixes meant to go upstream are named the way upstream names its tests.
 
 | file | what it holds the engine to |
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
-| `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.def`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to mend.** |
-| `stress/bun-aot-malformed-program.js` | bytes that are no program of the front end make no image and crash nothing |
+| `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.def`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
+| `stress/multi-put-by-val-bigint-array.js` | a `put_by_val` that has seen several kinds of typed arrays still throws when a number is stored into a `BigInt64Array` or `BigUint64Array`, whatever the index |
+| `stress/switch-substring-16bit-base.js` | a `switch` over an 8-bit substring rope picks the right case after its base has turned 16-bit |
+| `stress/enumerator-has-own-property-check.js` | `hasOwnProperty.call(value, key)` and `Object.hasOwn(value, key)` inside `for (key in value)` keep the check that `value` is an object: a string is a cell too |
+| `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
+| `stress/multi-put-by-val-out-of-bounds-bigint64array.js`, `stress/ftl-has-own-property-in-for-in-over-string-constant.js`, `stress/array-sort-inline-int32-double-comparator.js` | earlier, smaller tests for the `MultiPutByVal`, `EnumeratorHasOwnProperty` and sort fixes |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
 the programs that test ahead-of-time compilation are in Bun's `test/aot`.

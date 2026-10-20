@@ -1,0 +1,28 @@
+# Unseen code hands out what it has: a built-in object that it has comes with every value out of it, so beside the unknown object it is no prediction. An object of the program beside the unknown object is one, and a built-in object alone is a proof
+# OPTIONS: admit=RuntimeCode
+# RUN: flow
+# CHECK: variable g0 type=anything flow=
+# CHECK: variable g1 type=anything predicted=L0 flow=
+# CHECK: variable g2 type=builtin(Function)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="unknownOrBuiltin" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="unknownOrPoint" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="builtinAlone" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v1, -, v2
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v2 variable=g2
+    Return
+}

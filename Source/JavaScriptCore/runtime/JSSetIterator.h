@@ -87,10 +87,6 @@ public:
             return { };
 
         if (!storage) {
-#if ENABLE(AOT)
-            if (isAtCompactTable()) [[unlikely]]
-                return nextInCompactTable(vm);
-#endif
             storage = iteratedObject()->storage();
             if (!storage) {
                 markClosed(sentinel);
@@ -103,7 +99,7 @@ public:
             setStorage(vm, storage);
         }
 
-        JSSet::Storage& storageRef = *uncheckedDowncast<JSSet::Storage>(storage);
+        JSCell& storageRef = *storage;
         auto result = JSSet::Helper::transitAndNext(vm, storageRef, entry());
         if (!result.storage) {
             markClosed(sentinel);
@@ -153,11 +149,6 @@ public:
     {
         markClosed(vm.orderedHashTableSentinel());
     }
-
-#if ENABLE(AOT)
-    bool isAtCompactTable() const { return iteratedObject()->m_compactTable || internalField(Field::Entry).get().isCell(); }
-    JS_EXPORT_PRIVATE JSValue nextInCompactTable(VM&);
-#endif
 
 private:
     JSSetIterator(VM& vm, Structure* structure)

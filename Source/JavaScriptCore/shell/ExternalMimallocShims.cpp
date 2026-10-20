@@ -37,3 +37,9 @@ extern "C" void mi_on_thread_idle(void) noexcept
 {
     mi_theap_collect(mi_theap_get_default(), /* force */ false);
 }
+
+// A value above 1 skips the teardown at process exit, like the consumer's MI_NO_PROCESS_DETACH.
+__attribute__((constructor)) static void skipProcessTeardown()
+{
+    mi_option_set_default(mi_option_destroy_on_exit, 2);
+}

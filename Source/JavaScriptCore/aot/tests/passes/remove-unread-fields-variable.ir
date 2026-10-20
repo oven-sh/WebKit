@@ -1,0 +1,75 @@
+# A variable is a location like a field: once every call through it is direct and no read is left, its store goes and the closure is never created. A variable that is still read, or that a namespace object shows, keeps its store
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,EliminateDeadCode,RemoveUnreadFields check=VerifyEachPass
+# STATISTIC: UnreadVariableStoresRemoved = 1
+# CHECK: variable g0 name="onlyCalled"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g1 name="readAsValue"{{*}}stores=AtMostOnce
+# CHECK: variable g2 name="exported"{{*}}stores=AtMostOnce
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="/library.js" displayPath="library.js" body=f1 exports=[{name="exported" variable=g2}]
+entry module=m0
+variable g0 name="onlyCalled" module=m0 declared={type=anything}
+variable g1 name="readAsValue" module=m0 declared={type=anything}
+variable g2 name="exported" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f3
+    PutModuleVariable v2 variable=g1
+    v4 = NewClosure function=f5
+    v5 = ModuleNamespace module=m1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="publish" [isFreeName]
+    v8 = Call v7, -, v4, v5
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: function=f2
+# CHECK: [[value]]: f3 = NewClosure function=f3
+# CHECK-NEXT: PutModuleVariable [[value]] variable=g1
+# CHECK-NOT: function=f2
+
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+# CHECK-LABEL: function f1 name="library"
+# CHECK: PutModuleVariable v0 variable=g2
+
+function f2 name="onlyCalled" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="effect" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f3 name="readAsValue" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="exported" module=m1 kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="effect" [isFreeName]
+    v2 = Call v1
+    Return
+}
+function f5 name="published" kind=Arrow results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g2
+    v3 = Call v2
+    v4 = GetModuleVariable variable=g1
+    Return v4
+}
+# CHECK-LABEL: function f5 name="published"
+# CHECK: = CallDirect function=f2
+# CHECK-NOT: variable=g0
+# CHECK: = GetModuleVariable variable=g1

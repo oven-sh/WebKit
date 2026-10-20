@@ -1,0 +1,53 @@
+# An async function and a generator keep a parameter that nothing uses, before they are split and after
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# RUN(SPLIT): pass SplitCoroutines RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 0
+# CHECK: outcome: Unchanged
+# CHECK-NOT: derivation=
+# SPLIT: outcome: Changed
+# SPLIT-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asynchronous" flags=[IsAsync] parameters=[{type=number}, {type=number}] results=[{type=Promise}] {
+  b0(v0: number, v1: number):
+    v2 = Await v0 @10
+    Return v2
+}
+# CHECK-LABEL: function f0 name="asynchronous"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: = Await v0
+# SPLIT-LABEL: function f0 name="asynchronous"{{*}}role=CoroutineRamp{{*}}parameters=[{type=number}, {type=number}]
+# SPLIT-NEXT: b0(v0: number, v1: number):
+# SPLIT: = CallDirect v0, v1, {{*}}function=f3
+
+function f1 name="generator" flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=number}] results=[{type=Generator}] {
+  b0(v0: function, v1: number, v2: number):
+    InitialYield @20
+    Return v1
+}
+# CHECK-LABEL: function f1 name="generator"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK-NEXT: b0(v0: function, v1: number, v2: number):
+# CHECK-NEXT: InitialYield
+# SPLIT-LABEL: function f1 name="generator"{{*}}role=CoroutineRamp{{*}}parameters=[{type=number}, {type=number}]
+# SPLIT-NEXT: b0(v0: function, v1: number, v2: number):
+# SPLIT: = CallDirect v0, v1, v2, {{*}}function=f4
+
+function f2 name="callsBoth" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number):
+    v2 = CallDirect v0, v1 function=f0
+    v3 = NewClosure function=f1
+    v4 = CallDirect v3, v0, v1 function=f1
+    v5 = NewArray v2, v4 contents=anything
+    Return v5
+}
+# CHECK-LABEL: function f2 name="callsBoth"
+# CHECK: = CallDirect v0, v1 function=f0
+# CHECK: = CallDirect v3, v0, v1 function=f1
+# SPLIT-LABEL: function f2 name="callsBoth"
+# SPLIT: = CallDirect v0, v1 function=f0
+# SPLIT: = CallDirect v3, v0, v1 function=f1
+
+# SPLIT-LABEL: function f3 name="asynchronous"{{*}}role=CoroutineBody{{*}}parameters=[{type=number}, {type=number}, {type=
+# SPLIT-LABEL: function f4 name="generator"{{*}}role=CoroutineBody{{*}}parameters=[{type=number}, {type=number}, {type=
+# SPLIT-NOT: function f5

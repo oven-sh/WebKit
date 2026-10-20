@@ -53,8 +53,6 @@ enum class BuiltinCodeIndex {
 static constexpr unsigned numberOfBuiltinCodes = 0 JSC_FOREACH_BUILTIN_CODE(COUNT_BUILTIN_CODE);
 #undef COUNT_BUILTIN_CODE
 
-// Every field is a function of the source characters alone, which is what lets the builtins generator
-// compute these at build time.
 // Emitted by the builtins generator, indexed by BuiltinCodeIndex.
 extern constinit const BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[numberOfBuiltinCodes];
 extern constinit const unsigned s_JSCBuiltinSourceStarts[numberOfBuiltinCodes]; // in s_JSCCombinedCode
@@ -72,9 +70,9 @@ SourceCode name##Source();
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
     static_assert(numberOfBuiltinCodes < 0x10000);
-    static std::span<const Latin1Character> sourceOf(unsigned index);
     bool hasCompiledFunction(BuiltinCodeIndex);
     BuiltinCode codeFor(BuiltinCodeIndex, Intrinsic);
+    FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
 
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
@@ -89,7 +87,6 @@ SourceCode name##Source();
 private:
     VM& m_vm;
 
-    FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
     UnlinkedFunctionExecutable* executableFor(BuiltinCodeIndex);
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);

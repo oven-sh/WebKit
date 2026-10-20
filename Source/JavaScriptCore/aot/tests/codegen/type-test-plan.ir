@@ -1,0 +1,90 @@
+# Which tests decide whether a value of one type has another type
+# FORM: Selected
+# RUN(NUMBERS): type-test-plan t0 JSValue t1 t0 JSValue t2 t0 JSValue t3 t4 Double t5 t5 Int32 t4 t4 Double t14
+# NUMBERS: t0 JSValue t1: NeedsTest pass=Undefined|Null|Integer|WholeNumber|FractionalNumber fail=False|True|String|Symbol|BigInt integers=any strings=0 objects=AllFail
+# NUMBERS-NEXT: t0 JSValue t2: NeedsTest pass=Integer fail=Undefined|Null|False|True|WholeNumber|FractionalNumber|String|Symbol|BigInt integers=[0, 10] strings=0 objects=AllFail
+# NUMBERS-NEXT: t0 JSValue t3: NeedsTest pass=Integer|WholeNumber|FractionalNumber fail=Undefined|Null|False|True|String|Symbol|BigInt integers=[3, 3] strings=0 objects=AllFail
+# NUMBERS-NEXT: t4 Double t5: NeedsTest pass=Integer fail=WholeNumber|FractionalNumber integers=[-2147483648, 2147483647] strings=0 objects=DoNotOccur
+# NUMBERS-NEXT: t5 Int32 t4: AlwaysPasses
+# NUMBERS-NEXT: t4 Double t14: NeverPasses
+# NUMBERS-NOT: cell
+# RUN(LAYOUTS): type-test-plan t0 JSValue t20 t0 JSValue t6 t0 JSValue t7 t6 Cell t8 t8 Cell t6 t6 Cell t7 t7 Cell t8
+# LAYOUTS: t0 JSValue t20: NeedsTest pass=none fail={{*}} objects=AllPass
+# LAYOUTS-NEXT: cell IsObject
+# LAYOUTS-NEXT: t0 JSValue t6: NeedsTest pass=none fail={{*}} objects=NeedTest
+# LAYOUTS-NEXT: cell ShapeIn [[both]]
+# LAYOUTS-NEXT: t0 JSValue t7: NeedsTest pass=none fail={{*}} objects=NeedTest
+# LAYOUTS-NEXT: cell ShapeIn [[first]]
+# LAYOUTS-NEXT: t6 Cell t8: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# LAYOUTS-NEXT: cell ShapeIn [[second]]
+# LAYOUTS-NEXT: t8 Cell t6: AlwaysPasses
+# LAYOUTS-NEXT: t6 Cell t7: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# LAYOUTS-NEXT: cell ShapeIn [[first]]
+# LAYOUTS-NEXT: t7 Cell t8: NeverPasses
+# RUN(CLASSES): type-test-plan t0 JSValue t9 t0 JSValue t10 t23 JSValue t10 t24 JSValue t10
+# CLASSES: t0 JSValue t9: NeedsTest pass=none fail={{*}} objects=NeedTest
+# CLASSES-NEXT: cell CellTypeIs ArrayType..DerivedArrayType
+# CLASSES-NEXT: t0 JSValue t10: NeverPasses
+# CLASSES-NEXT: t23 JSValue t10: NeedsTest pass=none fail=Undefined integers=any strings=0 objects=AllPass
+# CLASSES-NEXT: t24 JSValue t10: NeedsTest pass=none fail=none integers=any strings=0 objects=NeedTest
+# CLASSES-NEXT: cell CellTypeIs ArrayType..DerivedArrayType
+# RUN(FUNCTIONS): type-test-plan t0 JSValue t11 t0 JSValue t19 t0 JSValue t12
+# FUNCTIONS: t0 JSValue t11: NeedsTest pass=none fail={{*}} objects=NeedTest
+# FUNCTIONS-NEXT: cell IsClosureOf 1
+# FUNCTIONS-NEXT: t0 JSValue t19: NeedsTest pass=none fail={{*}} objects=NeedTest
+# FUNCTIONS-NEXT: cell IsCallable
+# FUNCTIONS-NEXT: t0 JSValue t12: NeedsTest pass=none fail={{*}} objects=NeedTest
+# FUNCTIONS-NEXT: cell IsBuiltinCell
+# RUN(SYMBOLS): type-test-plan t0 JSValue t13 t0 JSValue t22 t21 JSValue t13
+# SYMBOLS: t0 JSValue t13: NeedsTest pass=none fail={{*}}|Symbol|{{*}} objects=AllFail
+# SYMBOLS-NEXT: cell IsSymbol [[symbol]]
+# SYMBOLS-NEXT: t0 JSValue t22: NeedsTest pass=none fail={{*}}|Symbol|{{*}} objects=NeedTest
+# SYMBOLS-NEXT: cell ShapeIn
+# SYMBOLS-NEXT: cell IsSymbol [[symbol]]
+# SYMBOLS-NEXT: t21 JSValue t13: NeedsTest pass=Symbol fail=Undefined integers=any strings=0 objects=DoNotOccur
+# SYMBOLS-NOT: cell
+# RUN(STRINGS): type-test-plan t14 Cell t15 t16 Cell t15 t17 Cell t14 t15 Cell t16
+# STRINGS: t14 Cell t15: NeedsTest pass=String fail=none integers=any strings=2 objects=DoNotOccur
+# STRINGS-NEXT: t16 Cell t15: NeedsTest pass=LiteralString fail=none integers=any strings=2 objects=DoNotOccur
+# STRINGS-NEXT: t17 Cell t14: AlwaysPasses
+# STRINGS-NEXT: t15 Cell t16: AlwaysPasses
+# STRINGS-NOT: cell
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Point3" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
+variable g0 name="t0" declared={type=anything} initialization=Undefined
+variable g1 name="t1" declared={type=undefined|null|number} initialization=Undefined
+variable g2 name="t2" declared={type=int[0, 10]} initialization=Undefined
+variable g3 name="t3" declared={type=3|double} initialization=Undefined
+variable g4 name="t4" declared={type=number} initialization=Undefined
+variable g5 name="t5" declared={type=i32} initialization=Undefined
+variable g6 name="t6" declared={type=L0|L1} initialization=Undefined
+variable g7 name="t7" declared={type=L0} initialization=Undefined
+variable g8 name="t8" declared={type=L1} initialization=Undefined
+variable g9 name="t9" declared={type=Array} initialization=Undefined
+variable g10 name="t10" declared={type=Array<number, proven>} initialization=Undefined
+variable g11 name="t11" declared={type=f1} initialization=Undefined
+variable g12 name="t12" declared={type=builtin(Math)} initialization=Undefined
+variable g13 name="t13" declared={type=symbol@m0:1} initialization=Undefined
+variable g14 name="t14" declared={type=string} initialization=Undefined
+variable g15 name="t15" declared={type="a"|"b"} initialization=Undefined
+variable g16 name="t16" declared={type="a"|"b"|"c"} initialization=Undefined
+variable g17 name="t17" declared={type="a"} initialization=Undefined
+variable g18 name="t18" declared={type=undefined} initialization=Undefined
+variable g19 name="t19" declared={type=function} initialization=Undefined
+variable g20 name="t20" declared={type=object} initialization=Undefined
+variable g21 name="t21" declared={type=undefined|symbol@m0:1} initialization=Undefined
+variable g22 name="t22" declared={type=symbol@m0:1|L0} initialization=Undefined
+variable g23 name="t23" declared={type=undefined|Array<number, proven>} initialization=Undefined
+variable g24 name="t24" declared={type=L0|Array<number, proven>} initialization=Undefined
+function f0 name="allocatePoint" parameters=[{type=number}] results=[{type=L0}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    Return v1
+}
+function f1 name="allocatePoint3" parameters=[{type=number}] results=[{type=L1}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1] [keepsShape]
+    Return v1
+}

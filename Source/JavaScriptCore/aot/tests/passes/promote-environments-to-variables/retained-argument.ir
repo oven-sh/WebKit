@@ -1,0 +1,62 @@
+# What flow knows about a parameter follows the parameter when the captures in front of it go: an argument that the callee stores in a promoted environment leaves its frame, one that the callee only reads does not
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass only-passes=PromoteEnvironmentsToVariables,ComputeEffectSummaries,AllocateInFrames
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+# STATISTIC: ObjectsInFrames = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key=@"kept.0" declared={type=anything}}]
+layout L1 name="Kept" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L2 name="OnlyRead" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = Undefined
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = CallDirect v4, v2 function=f1
+    v6 = CallDirect v4, v2 function=f1
+    v7 = NewClosure v4 function=f4
+    v8 = PropGet v0 key="publish" [isFreeName]
+    v9 = Call v8, -, v7
+    Return
+}
+
+function f1 name="creates" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = NewObject -, v1 layout=L1 fields=[0] @10
+    v3 = CallDirect v0, v2 function=f2
+    v4 = NewObject -, v1 layout=L2 fields=[0] @20
+    v5 = CallDirect v0, v4 function=f3
+    Return v5
+}
+# CHECK-LABEL: function f1 name="creates"
+# CHECK: [[kept]]:{{*}}= NewObject {{*}}layout=L1
+# CHECK-NOT: storage=Frame
+# CHECK: = CallDirect [[kept]] function=f2
+# CHECK-NEXT: [[read]]:{{*}}= NewObject {{*}}layout=L2 {{*}}storage=Frame
+# CHECK-NEXT: = CallDirect [[read]] function=f3
+
+function f2 name="keeps" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+# CHECK-LABEL: function f2 name="keeps"
+# CHECK: PutModuleVariable {{*}}variable=g0
+
+function f3 name="reads" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = PropGet v1 key="x"
+    Return v2
+}
+
+function f4 name="published" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

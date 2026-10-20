@@ -44,7 +44,7 @@ class IsoSubspace;
 class IsoSubspace final : public Subspace {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(IsoSubspace, JS_EXPORT_PRIVATE);
 public:
-    JS_EXPORT_PRIVATE IsoSubspace(ASCIICString name, Heap&, const HeapCellType&, size_t, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* = nullptr, bool usesLowerTierWithAOT = false);
+    JS_EXPORT_PRIVATE IsoSubspace(ASCIICString name, Heap&, const HeapCellType&, size_t, uint8_t numberOfLowerTierPreciseCells, AlignedMemoryAllocator* = nullptr);
     JS_EXPORT_PRIVATE ~IsoSubspace() final;
 
     size_t cellSize() { return m_directory.cellSize(); }
@@ -89,8 +89,6 @@ public:
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
 
 private:
-    friend class JSC::LLIntOffsetsExtractor;
-
     LocalAllocator m_localAllocator;
 };
 

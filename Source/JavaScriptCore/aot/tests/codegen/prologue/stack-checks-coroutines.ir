@@ -1,0 +1,36 @@
+# The body of an async function and of a generator saves its frame when it suspends, so its frame is set up and checked at the entry
+# FORM: AsRead
+# RUN: generate-code
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:SplitFunctionsAtCalls
+# PLACED: function f4 name="awaits" {{*}}role=CoroutineBody
+# PLACED: function f5 name="yields" {{*}}role=CoroutineBody
+# CHECK: f4: size={{*}} frame={{*}}@{{*}} prologueChecks=1
+# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: f5: size={{*}} frame={{*}}@{{*}} prologueChecks=1
+# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: f6: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="awaits" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Await v0
+    Return v1
+}
+function f2 name="yields" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    InitialYield
+    v3 = Yield v1
+    v4 = ResultAt v3 index=0
+    Return v4
+}

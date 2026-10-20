@@ -29,11 +29,13 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirBlockEntryClobberSpecial.h"
 #include "AirBlockInsertionSet.h"
 #include "AirCCallSpecial.h"
 #include "AirCCallingConvention.h"
 #include "AirCode.h"
 #include "AirEmitShuffle.h"
+#include "AirFixSpillsAfterTerminals.h"
 #include "AirHelpers.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
@@ -44,9 +46,11 @@
 #include "B3CCallValue.h"
 #include "B3CheckSpecial.h"
 #include "B3Commutativity.h"
+#include "B3CompareChains.h"
 #include "B3Dominators.h"
 #include "B3ExtractValue.h"
 #include "B3FenceValue.h"
+#include "B3ImmediateForms.h"
 #include "B3MemoryValueInlines.h"
 #include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
@@ -123,15 +127,9 @@ class LowerToAir {
 public:
     LowerToAir(Procedure& procedure)
         : m_valueToTmp(procedure.values().size())
-#if USE(BUN_JSC_ADDITIONS)
-        , m_tmpRequests(procedure.values().size(), TmpRequest::None)
-#endif
         , m_phiToTmp(procedure.values().size())
         , m_blockToBlock(procedure.size())
         , m_useCounts(procedure)
-#if !USE(BUN_JSC_ADDITIONS)
-        , m_phiChildren(procedure)
-#endif
         , m_dominators(procedure.dominators())
         , m_procedure(procedure)
         , m_code(procedure.code())
@@ -182,23 +180,12 @@ public:
                     ensureTupleTmps(value, m_tupleValueToTmps);
                 break;
             }
-#if USE(BUN_JSC_ADDITIONS)
             case ArgumentReg: {
                 Reg reg = value->as<ArgumentRegValue>()->argumentReg();
-                if (m_procedure.namesPinnedArgumentRegistersDirectly() && reg.isGPR() && m_code.isPinned(reg) && reg != Reg(MacroAssembler::framePointerRegister))
+                if (m_procedure.policy().addressing.namesPinnedRegistersDirectly && reg.isGPR() && m_code.isPinned(reg) && reg != Reg(MacroAssembler::framePointerRegister))
                     m_valueToTmp[value] = Tmp(reg);
                 break;
             }
-            case SExt32:
-            case ZExt32: {
-                Value* word = value->child(0);
-                if (!m_procedure.positionIndependent() || word->opcode() != Load || word->type() != Int32 || word->as<MemoryValue>()->hasFence() || m_useCounts.numUses(word) < 2)
-                    break;
-                auto& extensions = m_sharedLoadExtensions.add(word, 0).iterator->value;
-                extensions |= value->opcode() == SExt32 ? 1 : 2;
-                break;
-            }
-#endif
             default:
                 break;
             }
@@ -243,11 +230,7 @@ public:
                 m_insts.beginGroup();
                 if (B3LowerToAirInternal::verbose)
                     dataLog("Lowering ", deepDump(m_procedure, m_value), ":\n");
-#if USE(BUN_JSC_ADDITIONS)
-                lowerAndRecordUnrequestedTmp();
-#else
                 lower();
-#endif
                 if (B3LowerToAirInternal::verbose) {
                     for (Inst& inst : m_insts.last().mutableSpan().subspan(m_insts.starts.last()))
                         dataLog("    ", inst, "\n");
@@ -257,195 +240,58 @@ public:
             finishAppendingInstructions(m_blockToBlock[block]);
         }
 
+        insertBlockEntryClobbers();
+
         m_blockInsertionSet.execute();
 
         Air::InsertionSet insertionSet(m_code);
         for (Inst& inst : m_prologue)
             insertionSet.insertInst(0, WTF::move(inst));
-#if USE(BUN_JSC_ADDITIONS)
-        replaceUnrequestedTmpDefinitionsWithPadding();
-#endif
         insertionSet.execute(m_code[0]);
     }
 
 private:
-#if USE(BUN_JSC_ADDITIONS)
-    enum class TmpRequest : uint8_t { None, Tentative, Firm };
-
-    struct TentativeRequest {
-        Value* requester;
-        Value* requested;
-    };
-
-    struct UnrequestedTmpDefinition {
-        Value* value;
-        Air::BasicBlock* block;
-        unsigned begin;
-        unsigned end;
-    };
-
-    ALWAYS_INLINE void recordTmpRequest(Value* value)
+    void insertBlockEntryClobbers()
     {
-        if (m_tentativeRequester) [[unlikely]] {
-            recordTentativeTmpRequest(value);
+        if (!m_procedure.hasEverAdded(Patchpoint))
             return;
-        }
-        m_tmpRequests[value] = TmpRequest::Firm;
-    }
-
-    NEVER_INLINE void recordTentativeTmpRequest(Value* value)
-    {
-        if (value == m_tentativeRequester) {
-            m_didRequestOwnTmp = true;
-            return;
-        }
-        TmpRequest& request = m_tmpRequests[value];
-        if (request == TmpRequest::Firm)
-            return;
-        request = TmpRequest::Tentative;
-        m_tentativeRequests.append({ m_tentativeRequester, value });
-    }
-
-    static bool requestsTentativelyWhileUnrequested(Value* value)
-    {
-        switch (value->opcode()) {
-        case Add:
-        case Sub:
-        case Neg:
-        case Shl:
-        case SShr:
-        case ZShr:
-        case BitAnd:
-        case BitOr:
-        case BitXor:
-        case SExt8:
-        case SExt16:
-        case SExt32:
-        case ZExt32:
-        case Equal:
-        case NotEqual:
-        case LessThan:
-        case GreaterThan:
-        case LessEqual:
-        case GreaterEqual:
-        case Above:
-        case Below:
-        case AboveEqual:
-        case BelowEqual:
-            return true;
-        default:
-            return false;
-        }
-    }
-
-    void lowerAndRecordUnrequestedTmp()
-    {
-        TmpRequest requestBeforeLowering = m_tmpRequests[m_value];
-        if (requestBeforeLowering == TmpRequest::Firm) {
-            lower();
-            return;
-        }
-        unsigned flushesBeforeLowering = m_numberOfFlushes;
-        unsigned begin = m_insts.insts.size();
-        bool isTentativeRequester = requestsTentativelyWhileUnrequested(m_value);
-        if (isTentativeRequester) {
-            m_tentativeRequester = m_value;
-            m_didRequestOwnTmp = false;
-            lower();
-            m_tentativeRequester = nullptr;
-        } else {
-            lower();
-            m_didRequestOwnTmp = m_tmpRequests[m_value] == TmpRequest::Firm;
-            m_tmpRequests[m_value] = requestBeforeLowering;
-        }
-        if (m_numberOfFlushes != flushesBeforeLowering || (isTentativeRequester && !m_didRequestOwnTmp)) [[unlikely]] {
-            m_tmpRequests[m_value] = TmpRequest::Firm;
-            return;
-        }
-        if ((m_didRequestOwnTmp || m_value->type().isTuple()) && m_insts.insts.size() != begin)
-            m_definitionsBeingAppended.append({ m_value, nullptr, begin, static_cast<unsigned>(m_insts.insts.size()) });
-    }
-
-    bool definesOnly(Inst& inst, Tmp tmp)
-    {
-        if (inst.hasNonArgEffects())
-            return false;
-        bool result = true;
-        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
-            if (Arg::isAnyDef(role) && role != Arg::Scratch && !(arg.isTmp() && arg.tmp() == tmp))
-                result = false;
-        });
-        return result;
-    }
-
-    bool isUsedByRemainingValue(const UnrequestedTmpDefinition& definition, Tmp tmp)
-    {
-        bool result = false;
-        for (unsigned index = definition.begin; index < definition.end; ++index) {
-            Inst& inst = definition.block->at(index);
-            if (definesOnly(inst, tmp))
+        IndexMap<B3::BasicBlock*, RegisterSet> clobbersAtEntry(m_procedure.size());
+        bool hasClobbers = false;
+        for (B3::BasicBlock* block : m_procedure) {
+            auto* patchpoint = block->last()->as<PatchpointValue>();
+            if (!patchpoint || !patchpoint->numberOfSuccessorClobbers())
                 continue;
-            inst.forEachTmpFast([&](Tmp& named) {
-                result |= named == tmp;
-            });
-        }
-        return result;
-    }
-
-    void replaceUnrequestedTmpDefinitionsWithPadding()
-    {
-        if (!m_tentativeRequests.isEmpty()) {
-            for (auto& definition : m_definitions) {
-                if (m_tmpRequests[definition.value] == TmpRequest::Firm || !requestsTentativelyWhileUnrequested(definition.value))
+            for (unsigned i = 0; i < block->numSuccessors(); ++i) {
+                RegisterSet clobbers = patchpoint->lateClobberedOnSuccessor(i);
+                if (clobbers.isEmpty())
                     continue;
-                Tmp tmp = m_valueToTmp[definition.value];
-                for (unsigned index = definition.begin; index < definition.end; ++index) {
-                    if (!definesOnly(definition.block->at(index), tmp)) {
-                        m_tmpRequests[definition.value] = TmpRequest::Firm;
-                        break;
-                    }
-                }
-            }
-            bool changed = true;
-            while (changed) {
-                changed = false;
-                for (auto& request : m_tentativeRequests) {
-                    if (m_tmpRequests[request.requester] == TmpRequest::Firm && m_tmpRequests[request.requested] != TmpRequest::Firm) {
-                        m_tmpRequests[request.requested] = TmpRequest::Firm;
-                        changed = true;
-                    }
-                }
+                clobbersAtEntry[block->successorBlock(i)].merge(clobbers);
+                hasClobbers = true;
             }
         }
-        for (auto& definition : m_definitions) {
-            if (m_tmpRequests[definition.value] == TmpRequest::Firm)
-                continue;
-            if (definition.value->type().isTuple()) {
-                const auto& tmps = m_tupleValueToTmps.find(definition.value)->value;
-                uint64_t extracted = m_extractedComponents.get(definition.value);
-                for (unsigned index = definition.begin; index < definition.end; ++index) {
-                    Inst& inst = definition.block->at(index);
-                    if (inst.kind.opcode == Air::Patch || inst.args().size() != 2 || !inst.args()[1].isTmp())
-                        continue;
-                    size_t component = tmps.find(inst.args()[1].tmp());
-                    if (component < 63 && !(extracted >> component & 1) && !isUsedByRemainingValue(definition, tmps[component]) && definesOnly(inst, tmps[component]))
-                        inst = Inst(Air::Padding, inst.origin);
-                }
-                continue;
+        if (!hasClobbers)
+            return;
+        Air::InsertionSet insertionSet(m_code);
+        Vector<std::pair<RegisterSet, Air::Special*>, 2> specials;
+        auto specialFor = [&](const RegisterSet& clobbers) {
+            for (auto& [registers, special] : specials) {
+                if (registers == clobbers)
+                    return special;
             }
-            Tmp tmp = m_valueToTmp[definition.value];
-            bool isConstant = definition.value->opcode() == Const64 || definition.value->opcode() == Const32;
-            if (!isConstant && isUsedByRemainingValue(definition, tmp))
+            Air::Special* special = m_code.addSpecial(makeUnique<Air::BlockEntryClobberSpecial>(clobbers));
+            specials.append({ clobbers, special });
+            return special;
+        };
+        for (B3::BasicBlock* block : m_procedure) {
+            if (clobbersAtEntry[block].isEmpty())
                 continue;
-            for (unsigned index = definition.begin; index < definition.end; ++index) {
-                Inst& inst = definition.block->at(index);
-                if (isConstant || definesOnly(inst, tmp))
-                    inst = Inst(Air::Padding, inst.origin);
-            }
+            Inst inst(Air::Patch, block->at(0), Arg::special(specialFor(clobbersAtEntry[block])));
+            inst.fillForms();
+            insertionSet.insertInst(0, WTF::move(inst));
+            insertionSet.execute(m_blockToBlock[block]);
         }
     }
 
-#endif
     bool LEGACY_NODELETE shouldCopyPropagate(Value* value)
     {
         switch (value->opcode()) {
@@ -467,6 +313,12 @@ private:
         }
     }
 
+    template<typename... Arguments>
+    bool isValidForm(Air::Opcode opcode, Arguments... kinds) const
+    {
+        return Air::isValidForm(m_code.targetFeatures(), opcode, kinds...);
+    }
+
     class ArgPromise {
         WTF_MAKE_NONCOPYABLE(ArgPromise);
     public:
@@ -485,6 +337,7 @@ private:
             std::swap(m_wasConsumed, other.m_wasConsumed);
             std::swap(m_wasWrapped, other.m_wasWrapped);
             std::swap(m_traps, other.m_traps);
+            std::swap(m_trapOrigin, other.m_trapOrigin);
         }
         
         ArgPromise(ArgPromise&& other)
@@ -507,6 +360,11 @@ private:
         void LEGACY_NODELETE setTraps(bool value)
         {
             m_traps = value;
+        }
+
+        void setTrapOrigin(Value* value)
+        {
+            m_trapOrigin = value;
         }
 
         static ArgPromise LEGACY_NODELETE tmp(Value* value)
@@ -545,6 +403,8 @@ private:
         {
             Inst result(std::forward<Args>(args)...);
             result.kind.effects |= m_traps;
+            if (m_trapOrigin)
+                result.origin = m_trapOrigin;
             m_wasWrapped = true;
             return result;
         }
@@ -560,6 +420,7 @@ private:
         bool m_wasConsumed { false };
         bool m_wasWrapped { false };
         bool m_traps { false };
+        Value* m_trapOrigin { nullptr };
     };
 
     // Consider using tmpPromise() in cases where you aren't sure that you want to pin the value yet.
@@ -637,24 +498,14 @@ private:
     // doesn't prevent us from trying loadPromise on the same value.
     Tmp tmp(Value* value)
     {
-#if USE(BUN_JSC_ADDITIONS)
-        recordTmpRequest(value);
-#endif
         Tmp& tmp = m_valueToTmp[value];
         if (!tmp) {
-#if USE(BUN_JSC_ADDITIONS)
-            Value* requested = value;
-#endif
             while (shouldCopyPropagate(value))
                 value = value->child(0);
 
             if (value->opcode() == FramePointer)
                 return Tmp(GPRInfo::callFrameRegister);
 
-#if USE(BUN_JSC_ADDITIONS)
-            if (value != requested)
-                m_tentativeRequests.append({ requested, value });
-#endif
             Tmp& realTmp = m_valueToTmp[value];
             if (!realTmp) {
                 realTmp = m_code.newTmp(value->resultBank());
@@ -687,10 +538,6 @@ private:
         case Patchpoint:
         case B3::CCall:
         case BottomTuple: {
-#if USE(BUN_JSC_ADDITIONS)
-            if (tupleValue != m_value)
-                m_extractedComponents.set(tupleValue, std::numeric_limits<uint64_t>::max());
-#endif
             return m_tupleValueToTmps.find(tupleValue)->value;
         }
         default:
@@ -726,10 +573,18 @@ private:
             m_locked.add(value);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
+    Tmp tmpForLowWord(Value* extension)
+    {
+        Value* operand = extension->child(0);
+        bool extensionFoldsOperand = operand->opcode() == Load && canBeInternal(operand);
+        if (m_procedure.policy().selection.extendsInstructionSelection && extensionFoldsOperand && !canBeInternal(extension))
+            return tmp(extension);
+        return tmp(operand);
+    }
+
     bool tryAppendBranchOnInt32Overflow()
     {
-        if (!m_procedure.positionIndependent())
+        if (!m_procedure.policy().selection.extendsInstructionSelection)
             return false;
         Value* comparison = m_value->child(0);
         if (comparison->opcode() != Equal && comparison->opcode() != NotEqual)
@@ -739,45 +594,48 @@ private:
             Value* exact = comparison->child(1 - i);
             if (extended->opcode() != SExt32 || extended->child(0)->opcode() != Trunc || extended->child(0)->child(0) != exact)
                 continue;
-            if ((exact->opcode() != Add && exact->opcode() != Sub) || exact->type() != Int64)
+            if ((exact->opcode() != Add && exact->opcode() != Sub && exact->opcode() != Mul) || exact->type() != Int64)
                 continue;
             Value* low = extended->child(0);
             Value* left = exact->child(0);
             Value* right = exact->child(1);
-            bool rightIsConstant = right->hasInt64() && right->asInt64() == static_cast<int32_t>(right->asInt64()) && Arg::isValidImmForm(right->asInt64());
+            bool rightIsConstant = right->hasInt64() && right->asInt64() == static_cast<int32_t>(right->asInt64()) && isSelectedAsImmediate(exact, right);
             if (left->opcode() != SExt32 || (right->opcode() != SExt32 && !rightIsConstant))
                 continue;
             if (extended->owner != m_block || low->owner != m_block || exact->owner != m_block)
                 continue;
             if (!canBeInternal(extended) || m_useCounts.numUses(exact) != 2 || m_valueToTmp[exact] || m_locked.contains(exact) || m_locked.contains(low) || m_locked.contains(extended))
                 continue;
-            bool isWantedInBlock = false;
+            bool hasOtherUserInBlock = false;
             for (Value* value : *m_block) {
                 if (value == extended)
                     continue;
                 for (Value* child : value->children())
-                    isWantedInBlock |= child == low;
+                    hasOtherUserInBlock |= child == low;
             }
-            if (isWantedInBlock)
+            if (hasOtherUserInBlock)
                 continue;
 
+            auto commitLowWord = [&] (Value* extension) {
+                if (canBeInternal(extension))
+                    commitInternal(extension);
+                return tmpForLowWord(extension);
+            };
             Tmp result = tmp(low);
+            Tmp leftWord = commitLowWord(left);
+            Arg rightWord = rightIsConstant ? Arg::imm(right->asInt64()) : Arg(commitLowWord(right));
             Arg overflow = Arg::resCond(MacroAssembler::Overflow);
-            Air::Opcode opcode = exact->opcode() == Add ? Air::BranchAdd32 : Air::BranchSub32;
+            Air::Opcode opcode = exact->opcode() == Add ? Air::BranchAdd32 : exact->opcode() == Sub ? Air::BranchSub32 : Air::BranchMul32;
             if (!rightIsConstant && isValidForm(opcode, Arg::ResCond, Arg::Tmp, Arg::Tmp, Arg::Tmp))
-                append(opcode, overflow, tmp(left->child(0)), tmp(right->child(0)), result);
+                append(opcode, overflow, leftWord, rightWord, result);
             else {
-                append(Air::Move32, tmp(left->child(0)), result);
-                append(opcode, overflow, rightIsConstant ? Arg::imm(right->asInt64()) : Arg(tmp(right->child(0))), result);
+                append(Air::Move32, leftWord, result);
+                append(opcode, overflow, rightWord, result);
             }
             commitInternal(comparison);
             commitInternal(extended);
             commitInternal(low);
             commitInternal(exact);
-            if (canBeInternal(left))
-                commitInternal(left);
-            if (!rightIsConstant && right != left && canBeInternal(right))
-                commitInternal(right);
             if (comparison->opcode() == Equal) {
                 auto& successors = m_blockToBlock[m_block]->successors();
                 std::swap(successors[0], successors[1]);
@@ -786,7 +644,6 @@ private:
         }
         return false;
     }
-#endif
 
     bool crossesInterference(Value* value)
     {
@@ -827,9 +684,9 @@ private:
         // Maybe, the ideal approach is to introduce a decorator (Index@EXT) to the Air operand 
         // to provide an extension opportunity for the specific form under the Air opcode.
         if (isMergeableValue(index, ZExt32))
-            return Arg::index(base, tmp(index->child(0)), scale, offset, MacroAssembler::Extend::ZExt32);
+            return Arg::index(base, tmpForLowWord(index), scale, offset, MacroAssembler::Extend::ZExt32);
         if (isMergeableValue(index, SExt32))
-            return Arg::index(base, tmp(index->child(0)), scale, offset, MacroAssembler::Extend::SExt32);
+            return Arg::index(base, tmpForLowWord(index), scale, offset, MacroAssembler::Extend::SExt32);
 #endif
         return Arg::index(base, tmp(index), scale, offset);
     }
@@ -988,6 +845,20 @@ private:
         return trappingInst(value->traps(), std::forward<Args>(args)...);
     }
     
+    Arg addressOfPinnedConstant(Value* value)
+    {
+        if (!m_procedure.policy().addressing.findPinnedConstant)
+            return Arg();
+        auto* load = value->as<MemoryValue>();
+        if (!load || load->opcode() != Load || load->readsMutability() != Mutability::Immutable || load->controlDependent() || load->traps() || load->hasFence())
+            return Arg();
+        Tmp base = m_valueToTmp[load->lastChild()];
+        if (!base.isReg() || !m_code.isPinned(base.reg()))
+            return Arg();
+        Arg address = Arg::addr(base, load->offset());
+        return address.isValidForm(Air::Move, load->accessWidth()) ? address : Arg();
+    }
+
     ArgPromise loadPromiseAnyOpcode(Value* loadValue, AddrRequestMode mode = AddrRequestMode::NoRestriction)
     {
         RELEASE_ASSERT(loadValue->as<MemoryValue>());
@@ -1000,11 +871,17 @@ private:
         // fences. So, any load motion we introduce here would not be observable.
         if (!isX86() && loadValue->as<MemoryValue>()->hasFence())
             return Arg();
+        bool attributesTrap = loadValue->traps() && m_procedure.policy().selection.attributesTrapsToAccesses;
+        bool patchKeepsCheckAsOrigin = m_value->opcode() == Check;
+        if (attributesTrap && patchKeepsCheckAsOrigin)
+            return Arg();
         Arg loadAddr = addr(loadValue, mode);
         RELEASE_ASSERT(loadAddr);
         ArgPromise result(loadAddr, loadValue);
         if (loadValue->traps())
             result.setTraps(true);
+        if (attributesTrap)
+            result.setTrapOrigin(loadValue);
         return result;
     }
 
@@ -1261,7 +1138,6 @@ private:
         
         // We recognize when a child is a Phi that has this value as one of its children. We're very
         // conservative about this; for example we don't even consider transitive Phi children.
-#if USE(BUN_JSC_ADDITIONS)
         auto isPhiWithThis = [&] (Value* value) {
             if (value->opcode() != Phi)
                 return false;
@@ -1271,10 +1147,6 @@ private:
         };
         bool leftIsPhiWithThis = isPhiWithThis(left);
         bool rightIsPhiWithThis = isPhiWithThis(right);
-#else
-        bool leftIsPhiWithThis = m_phiChildren[left].transitivelyUses(m_value);
-        bool rightIsPhiWithThis = m_phiChildren[right].transitivelyUses(m_value);
-#endif
 
         if (leftIsPhiWithThis != rightIsPhiWithThis)
             return rightIsPhiWithThis;
@@ -1602,7 +1474,7 @@ private:
             }
             break;
         case Width128:
-            RELEASE_ASSERT(Options::useWasmSIMD());
+            RELEASE_ASSERT(m_procedure.policy().upstream.allowsSIMD);
             RELEASE_ASSERT(bank == FP);
             return MoveVector;
         }
@@ -2004,19 +1876,19 @@ private:
         m_insts.last().append(inst);
     }
     
+    void appendPatch(StackmapValue* stackmap, Vector<Arg, 8>&& args)
+    {
+        Inst inst(Air::Patch, stackmap, WTF::move(args));
+        inst.fillForms();
+        stackmap->freezeConstraints();
+        m_insts.last().append(WTF::move(inst));
+    }
+
     void finishAppendingInstructions(Air::BasicBlock* target)
     {
         // Now append the instructions. m_insts contains them in reverse order, so we process
         // it in reverse.
         Air::BasicBlock::InstList& list = target->insts();
-#if USE(BUN_JSC_ADDITIONS)
-        ++m_numberOfFlushes;
-        for (auto& definition : m_definitionsBeingAppended) {
-            unsigned begin = list.size() + m_insts.insts.size() - definition.end;
-            m_definitions.append({ definition.value, target, begin, begin + definition.end - definition.begin });
-        }
-        m_definitionsBeingAppended.shrink(0);
-#endif
         list.reserveCapacity(std::max<size_t>(list.size() + m_insts.insts.size(), 16));
         unsigned end = m_insts.insts.size();
         for (unsigned i = m_insts.starts.size(); i--;) {
@@ -2572,6 +2444,14 @@ private:
             }
         };
 
+        bool isShared = value != m_value && !(canCommitInternal && canBeInternal(value));
+        if (isShared && value->opcode() == BitAnd && !m_locked.contains(value->child(0))) {
+            if (Arg mask = addressOfPinnedConstant(value->child(1))) {
+                if (Inst result = tryTest(width, tmpPromise(value->child(0)), mask))
+                    return result;
+            }
+        }
+
         if (FusionResult fusionResult = prepareToFuse(value)) {
             if (Inst result = attemptFused()) {
                 commitFusion(value, fusionResult);
@@ -2622,13 +2502,9 @@ private:
         return test(width, resCond, leftPromise, rightPromise);
     }
 
-#if CPU(ARM64)
     // ARM64 conditional compare (ccmp) optimization.
     // Converts chains of comparisons like (a == b && c == d) into ccmp instruction sequences.
     // This reduces branches and can improve performance by avoiding branch mispredictions.
-
-    static constexpr unsigned maxCompareChainSize = 4;
-#endif
 
     class CompareChainNode {
         WTF_MAKE_TZONE_ALLOCATED(CompareChainNode);
@@ -3137,6 +3013,9 @@ private:
         if (!canBeInternal(condition))
             return false;
 
+        if (!isSelectedAsCompareChain(m_procedure, condition, [&] (Value* value) { return canBeInternal(value); }))
+            return false;
+
         dataLogLnIf(B3LowerToAirInternal::verbose, "Attempting ccmp optimization for branch");
 
         SegmentedVector<CompareChainNode> nodes;
@@ -3148,7 +3027,7 @@ private:
             return false;
         }
 
-        if (logicalNodes.size() > maxCompareChainSize) {
+        if (logicalNodes.size() > Limits::maxCompareChainSize) {
             dataLogLnIf(B3LowerToAirInternal::verbose, "  Failed: logicalNodes.size() exceeds max after increment ", logicalNodes.size());
             return false;
         }
@@ -3225,7 +3104,7 @@ private:
                     return Inst();
                 case Width16:
 #if CPU(X86_64)
-                    if (isValidForm(Branch16, Arg::RelCond, left.kind(), right.kind())) {
+                    if (m_procedure.policy().selection.extendsInstructionSelection && isValidForm(Branch16, Arg::RelCond, left.kind(), right.kind())) {
                         return left.inst(right.inst(
                             Branch16, m_value, relCond,
                             left.consume(*this), right.consume(*this)));
@@ -3435,8 +3314,8 @@ private:
 
             if (isValidForm(opcode, condition.kind(), left.kind(), right.kind(), Arg::Tmp, Arg::Tmp)) {
                 Tmp result = tmp(m_value);
-                Tmp source = tmp(m_value->child(1));
-                append(relaxedMoveForType(m_value->type()), tmp(m_value->child(2)), result);
+                Tmp source = tmp(thenValue);
+                append(relaxedMoveForType(m_value->type()), tmp(elseValue), result);
                 return left.inst(right.inst(
                     opcode, m_value, condition,
                     left.consume(*this), right.consume(*this), source, result));
@@ -3492,14 +3371,14 @@ private:
                 Air::Opcode opcode = config.moveConditionallyDoubleWithZero;
                 if (isValidForm(opcode, doubleCond.kind(), left.kind(), Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
                     Tmp result = tmp(m_value);
-                    Tmp thenCase = tmp(m_value->child(1));
-                    Tmp elseCase = tmp(m_value->child(2));
+                    Tmp thenCase = tmp(thenValue);
+                    Tmp elseCase = tmp(elseValue);
                     return left.inst(opcode, m_value, doubleCond, left.consume(*this), thenCase, elseCase, result);
                 }
                 if (isValidForm(opcode, doubleCond.kind(), left.kind(), Arg::Tmp, Arg::Tmp)) {
                     Tmp result = tmp(m_value);
-                    Tmp source = tmp(m_value->child(1));
-                    append(relaxedMoveForType(m_value->type()), tmp(m_value->child(2)), result);
+                    Tmp source = tmp(thenValue);
+                    append(relaxedMoveForType(m_value->type()), tmp(elseValue), result);
                     return left.inst(opcode, m_value, doubleCond, left.consume(*this), source, result);
                 }
                 return Inst();
@@ -3508,14 +3387,14 @@ private:
                 Air::Opcode opcode = config.moveConditionallyFloatWithZero;
                 if (isValidForm(opcode, doubleCond.kind(), left.kind(), Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
                     Tmp result = tmp(m_value);
-                    Tmp thenCase = tmp(m_value->child(1));
-                    Tmp elseCase = tmp(m_value->child(2));
+                    Tmp thenCase = tmp(thenValue);
+                    Tmp elseCase = tmp(elseValue);
                     return left.inst(opcode, m_value, doubleCond, left.consume(*this), thenCase, elseCase, result);
                 }
                 if (isValidForm(opcode, doubleCond.kind(), left.kind(), Arg::Tmp, Arg::Tmp)) {
                     Tmp result = tmp(m_value);
-                    Tmp source = tmp(m_value->child(1));
-                    append(relaxedMoveForType(m_value->type()), tmp(m_value->child(2)), result);
+                    Tmp source = tmp(thenValue);
+                    append(relaxedMoveForType(m_value->type()), tmp(elseValue), result);
                     return left.inst(opcode, m_value, doubleCond, left.consume(*this), source, result);
                 }
                 return Inst();
@@ -3523,10 +3402,9 @@ private:
             inverted);
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     bool tryAppendSelectOfIncrementedValue()
     {
-        if (!isARM64() || !m_procedure.positionIndependent() || !m_value->type().isInt())
+        if (!isARM64() || !m_procedure.policy().selection.extendsInstructionSelection || !m_value->type().isInt())
             return false;
         Value* condition = m_value->child(0);
         if (condition->numChildren() && condition->child(0)->type().isFloat())
@@ -3553,7 +3431,6 @@ private:
         }
         return false;
     }
-#endif
     
     bool tryAppendLea()
     {
@@ -3824,7 +3701,7 @@ private:
             return;
         }
 
-        if (isARM64_LSE()) {
+        if (m_procedure.policy().supportsAtomicMemoryOperations()) {
             if (isBranch) {
                 switch (width) {
                 case Width8:
@@ -4115,7 +3992,7 @@ private:
             //     address = Add(base, offset)    --->   Move %base %address
             //     memory = Load(base, 0)                MoveWithIncrement (%address, postfix(offset)) %memory
             auto tryAppendIncrementAddress = [&]() -> bool {
-                if (memory->hasFence() || isLoadedSignExtended(memory))
+                if (memory->hasFence())
                     return false;
                 Air::Opcode opcode = tryOpcodeForType(MoveWithIncrement32, MoveWithIncrement64, memory->type());
                 if (!isValidForm(opcode, Arg::PreIndex, Arg::Tmp) || !m_index)
@@ -4156,10 +4033,6 @@ private:
             if (tryAppendIncrementAddress())
                 return;
 
-#if USE(BUN_JSC_ADDITIONS)
-            if (isLoadedSignExtended(m_value))
-                kind = SignExtend32To64;
-#endif
             append(trappingInst(m_value, kind, m_value, addr(m_value), tmp(m_value)));
             return;
         }
@@ -4243,7 +4116,7 @@ private:
 
                     Air::Opcode newAirOpcode = tryNewAirOpcode();
                     if (isValidForm(newAirOpcode, Arg::Tmp, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
-                        append(newAirOpcode, tmp(multiplyLeft->child(0)), tmp(multiplyRight->child(0)), tmp(right), tmp(m_value));
+                        append(newAirOpcode, tmpForLowWord(multiplyLeft), tmpForLowWord(multiplyRight), tmp(right), tmp(m_value));
                         commitInternal(left);
                         return true;
                     }
@@ -4331,7 +4204,7 @@ private:
 
                 Air::Opcode newAirOpcode = tryNewAirOpcode();
                 if (isValidForm(newAirOpcode, Arg::Tmp, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
-                    append(newAirOpcode, tmp(multiplyLeft->child(0)), tmp(multiplyRight->child(0)), tmp(left), tmp(m_value));
+                    append(newAirOpcode, tmpForLowWord(multiplyLeft), tmpForLowWord(multiplyRight), tmp(left), tmp(m_value));
                     commitInternal(right);
                     return true;
                 }
@@ -4382,7 +4255,7 @@ private:
 
                 Air::Opcode newAirOpcode = tryNewAirOpcode();
                 if (isValidForm(newAirOpcode, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
-                    append(newAirOpcode, tmp(multiplyLeft->child(0)), tmp(multiplyRight->child(0)), tmp(m_value));
+                    append(newAirOpcode, tmpForLowWord(multiplyLeft), tmpForLowWord(multiplyRight), tmp(m_value));
                     commitInternal(m_value->child(0));
                     return true;
                 }
@@ -4422,7 +4295,7 @@ private:
 
                 Air::Opcode opcode = tryAirOpcode();
                 if (isValidForm(opcode, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
-                    append(opcode, tmp(left->child(0)), tmp(right->child(0)), tmp(m_value));
+                    append(opcode, tmpForLowWord(left), tmpForLowWord(right), tmp(m_value));
                     return true;
                 }
                 return false;
@@ -4579,12 +4452,10 @@ private:
             }
 
             if (right->isInt64(0xffffffff) || right->isInt32(0xffffffff)) {
-#if USE(BUN_JSC_ADDITIONS)
                 if (ArgPromise address = loadPromise(left); address.peek() && !address.peek().isValidForm(Move32, Width32)) {
                     append(Move32, tmp(left), tmp(m_value));
                     return;
                 }
-#endif
                 appendUnOp<Move32, Move32>(left);
                 return;
             }
@@ -5194,6 +5065,16 @@ private:
             return;
         }
 
+        case PopCount: {
+            Air::Opcode opcode = opcodeForType(CountPopulation32, CountPopulation64, m_value->type());
+            if (isValidForm(opcode, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
+                append(opcode, tmp(m_value->child(0)), tmp(m_value), m_code.newTmp(FP));
+                return;
+            }
+            appendUnOp<CountPopulation32, CountPopulation64>(m_value->child(0));
+            return;
+        }
+
         case Abs: {
             RELEASE_ASSERT_WITH_MESSAGE(!isX86(), "Abs is not supported natively on x86. It must be replaced before generation.");
             appendUnOp<Air::Oops, Air::Oops, AbsDouble, AbsFloat>(m_value->child(0));
@@ -5787,7 +5668,7 @@ private:
             // Pattern: VectorOr(VectorShl(x, constK), VectorShr(x, constK))
             // or VectorOr(VectorAdd(x, x), VectorShr(x, constK)) after strength reduction.
             // When x = VectorXor(a, b), emit XAR(a, b, rotateRight).
-            if (isARM64_SHA3()) {
+            if (m_procedure.policy().supportsSHA3()) {
                 Value* left = m_value->child(0);
                 Value* right = m_value->child(1);
 
@@ -5883,7 +5764,7 @@ private:
 #if CPU(ARM64)
             // VectorXor(VectorXor(a, b), c) → EOR3(a, b, c)
             // VectorXor(a, VectorXor(b, c)) → EOR3(b, c, a)
-            if (isARM64_SHA3()) {
+            if (m_procedure.policy().supportsSHA3()) {
                 for (unsigned childIdx = 0; childIdx < 2; ++childIdx) {
                     Value* inner = m_value->child(childIdx);
                     Value* other = m_value->child(1 - childIdx);
@@ -6192,64 +6073,11 @@ private:
         }
 
         case ZExt32: {
-#if USE(BUN_JSC_ADDITIONS)
-            if (m_procedure.positionIndependent()) {
-                Value* child = m_value->child(0);
-                bool isAlreadyZeroExtended = false;
-                switch (child->opcode()) {
-                case Load:
-                case Load8Z:
-                case Load8S:
-                case Load16Z:
-                case Load16S:
-                    isAlreadyZeroExtended = child->type() == Int32 && m_useCounts.numUses(child) > 1;
-                    break;
-                case Add:
-                case Sub:
-                case Mul:
-                case Neg:
-                case BitAnd:
-                case BitOr:
-                case BitXor:
-                case Clz:
-                case Equal:
-                case NotEqual:
-                case LessThan:
-                case GreaterThan:
-                case LessEqual:
-                case GreaterEqual:
-                case Above:
-                case Below:
-                case AboveEqual:
-                case BelowEqual:
-                    isAlreadyZeroExtended = child->type() == Int32;
-                    break;
-                case Shl:
-                case ZShr:
-                case RotR:
-                case RotL:
-                    isAlreadyZeroExtended = child->type() == Int32 && child->child(1)->hasInt32() && (child->child(1)->asInt32() & 31);
-                    break;
-                default:
-                    break;
-                }
-                if (isAlreadyZeroExtended) {
-                    append(Move, tmp(child), tmp(m_value));
-                    return;
-                }
-            }
-#endif
             appendUnOp<Move32, Air::Oops>(m_value->child(0));
             return;
         }
 
         case SExt32: {
-#if USE(BUN_JSC_ADDITIONS)
-            if (isLoadedSignExtended(m_value->child(0))) {
-                append(Move, tmp(m_value->child(0)), tmp(m_value));
-                return;
-            }
-#endif
             appendUnOp<SignExtend32To64, Air::Oops>(m_value->child(0));
             return;
         }
@@ -6265,10 +6093,8 @@ private:
         }
 
         case ArgumentReg: {
-#if USE(BUN_JSC_ADDITIONS)
             if (m_valueToTmp[m_value].isReg())
                 return;
-#endif
             m_prologue.append(Inst(
                 moveForType(m_value->type()), m_value,
                 Tmp(m_value->as<ArgumentRegValue>()->argumentReg()),
@@ -6410,10 +6236,8 @@ private:
                 return;
             }
 
-#if USE(BUN_JSC_ADDITIONS)
             if (tryAppendSelectOfIncrementedValue())
                 return;
-#endif
 
             MoveConditionallyConfig config;
             if (m_value->type().isInt()) {
@@ -6635,10 +6459,6 @@ private:
                 case ValueRep::SomeLateRegister:
                     args.append(tmp);
                     return;
-                case ValueRep::SomeRegisterWithClobber:
-                    moveToTmp(relaxedMoveForType(type), immOrTmpOrZeroReg(patchpointValue->child(0)), tmp);
-                    args.append(tmp);
-                    return;
                 case ValueRep::Register: {
                     Tmp reg = Tmp(rep.reg());
                     args.append(reg);
@@ -6674,7 +6494,7 @@ private:
             for (unsigned i = patchpointValue->numFPScratchRegisters; i--;)
                 args.append(m_code.newTmp(FP));
 
-            m_insts.last().append(Inst(Patch, patchpointValue, WTF::move(args)));
+            appendPatch(patchpointValue, WTF::move(args));
             m_insts.last().appendVector(WTF::move(after));
             return;
         }
@@ -6683,12 +6503,7 @@ private:
             Value* tupleValue = m_value->child(0);
             unsigned index = m_value->as<ExtractValue>()->index();
 
-#if USE(BUN_JSC_ADDITIONS)
-            const auto& tmps = m_tupleValueToTmps.find(tupleValue)->value;
-            m_extractedComponents.add(tupleValue, 0).iterator->value |= static_cast<uint64_t>(1) << std::min(index, 63u);
-#else
             const auto& tmps = tmpsForTuple(tupleValue);
-#endif
             append(relaxedMoveForType(m_value->type()), tmps[index], tmp(m_value));
             return;
         }
@@ -6718,7 +6533,7 @@ private:
 
                 fillStackmap(args, checkValue, 2);
 
-                m_insts.last().append(Inst(Patch, checkValue, WTF::move(args)));
+                appendPatch(checkValue, WTF::move(args));
                 return;
             }
 
@@ -6807,7 +6622,7 @@ private:
 
             fillStackmap(args, checkValue, 2);
 
-            m_insts.last().append(Inst(Patch, checkValue, WTF::move(args)));
+            appendPatch(checkValue, WTF::move(args));
             return;
         }
 
@@ -6825,7 +6640,7 @@ private:
 
             fillStackmap(args, checkValue, 1);
 
-            m_insts.last().append(Inst(Patch, checkValue, WTF::move(args)));
+            appendPatch(checkValue, WTF::move(args));
             return;
         }
 
@@ -6918,10 +6733,8 @@ private:
 
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
-#if USE(BUN_JSC_ADDITIONS)
                 if (tryAppendBranchOnInt32Overflow())
                     return;
-#endif
 #if CPU(ARM64)
                 if (tryEmitConditionalCompareChain(m_value))
                     return;
@@ -7152,7 +6965,7 @@ private:
             if (appendVoidAtomic(OPCODE_FOR_WIDTH(AtomicAnd, atomic->accessWidth())))
                 return;
 
-            if (isARM64_LSE()) {
+            if (m_procedure.policy().supportsAtomicMemoryOperations()) {
                 Arg address = addr(atomic);
                 Air::Opcode opcode = OPCODE_FOR_WIDTH(AtomicXchgClear, atomic->accessWidth());
                 if (isValidForm(opcode, Arg::Tmp, address.kind(), Arg::Tmp)) {
@@ -7228,40 +7041,24 @@ private:
     
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
-#if USE(BUN_JSC_ADDITIONS)
-    IndexMap<Value*, TmpRequest> m_tmpRequests;
-    Value* m_tentativeRequester { nullptr };
-    bool m_didRequestOwnTmp { false };
-    unsigned m_numberOfFlushes { 0 };
-    Vector<TentativeRequest> m_tentativeRequests;
-    Vector<UnrequestedTmpDefinition> m_definitionsBeingAppended;
-    Vector<UnrequestedTmpDefinition> m_definitions;
-    UncheckedKeyHashMap<Value*, uint64_t> m_extractedComponents;
-    UncheckedKeyHashMap<Value*, uint8_t> m_sharedLoadExtensions;
-    bool isLoadedSignExtended(Value* value) const { return m_sharedLoadExtensions.get(value) == 1; }
-#endif
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;
 
     UseCounts m_useCounts;
-#if USE(BUN_JSC_ADDITIONS)
     std::optional<PhiChildren> m_phiChildren;
-#else
-    PhiChildren m_phiChildren;
-#endif
     BlockWorklist m_fastWorklist;
     Dominators& m_dominators;
 
-    struct InstsInGroups {
+    struct InstGroups {
         void beginGroup() { starts.append(insts.size()); }
         Vector<Inst>& last() LIFETIME_BOUND { return insts; }
 
         Vector<Inst> insts;
         Vector<unsigned> starts;
     };
-    InstsInGroups m_insts;
+    InstGroups m_insts;
     Vector<Inst> m_prologue;
     
     B3::BasicBlock* m_block;
@@ -7291,6 +7088,7 @@ void lowerToAir(Procedure& procedure)
     PhaseScope phaseScope(procedure, "lowerToAir"_s);
     LowerToAir lowerToAir(procedure);
     lowerToAir.run();
+    Air::fixSpillsAfterTerminals(procedure.code());
 }
 
 } } // namespace JSC::B3

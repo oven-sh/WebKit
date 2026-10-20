@@ -1,0 +1,46 @@
+# A variable has an absent state only if a read may come before every store of a variable with a dead zone, and a word that starts other than zero is filled at program entry
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place
+# RUN(PLAN): plan-slots variables
+
+module m0 path="a.ts" displayPath="a.ts" body=f0
+entry module=m0
+variable g0 name="readInDeadZone" module=m0 declared={type=number} initialization=Uninitialized
+variable g1 name="startsUndefined" module=m0 declared={type=undefined|number} initialization=Undefined
+variable g2 name="storedFirst" module=m0 declared={type=number} initialization=Uninitialized
+variable g3 name="namedByNothing" module=m0 declared={type=number} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    PutModuleVariable v2 variable=g2
+    v4 = CallDirect function=f1
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="readInDeadZone"
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = CheckInitialized v3 name="storedFirst"
+    v5 = Add v1, v4
+    v6 = Add v5, v2
+    Return v6
+}
+
+# PLAN: g0 Statics Plain OptionalDouble
+# PLAN-NEXT: g1 Statics Plain OptionalDouble
+# PLAN-NEXT: g2 Statics Plain Double
+# PLAN-NEXT: g3 None
+
+# CHECK: g0 offset={{*}} representation=OptionalDouble encoding=Plain region=FilledAtProgramEntry initial=0x7ffc000000000000
+# CHECK-NEXT: g1 offset={{*}} representation=OptionalDouble encoding=Plain region=FilledAtProgramEntry initial=0x7ffa000000000000
+# CHECK-NEXT: g2 offset=16 representation=Double encoding=Plain region=FilledAtInstanceCreation
+# CHECK-NOT: initial=
+# CHECK-NOT: g3
+# CHECK: statics size=32 filledAtEntry=16 roots=1

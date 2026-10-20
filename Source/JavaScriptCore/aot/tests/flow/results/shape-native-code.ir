@@ -1,0 +1,39 @@
+# An object that reaches native code keeps its shape, and so does an object held in a field of it
+# RUN: flow
+# CHECK: class C0 layout=L0 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: keys=NeverEnumerated
+# CHECK-NOT: cause=
+# CHECK: class C1 layout=L1 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape]
+# CHECK-NOT: keys=NeverEnumerated
+# CHECK-NOT: cause=
+# CHECK: class C2 layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] keys=NeverEnumerated
+# CHECK: layout L0 flow={
+# CHECK-NOT: cause=
+# CHECK: field L0.0 "value" type=true written=anything flags=[IsRequired] flow={location={writers=AllKnown
+# CHECK-NOT: reads=
+# CHECK: layout L1 flow={
+# CHECK-NOT: cause=
+# CHECK: field L1.0 "inner" type=L0 written=anything flags=[IsRequired] flow={location={writers=AllKnown
+# CHECK-NOT: reads=
+# CHECK: layout L2 flow={
+# CHECK: field L2.0 "value" type=true {{*}}reads=NeverRead
+# CHECK: variable g0 type=L1 written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Inner" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Outer" fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Local" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v2
+    Return
+}

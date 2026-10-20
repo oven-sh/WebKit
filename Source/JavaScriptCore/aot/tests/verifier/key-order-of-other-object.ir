@@ -1,0 +1,84 @@
+# JSONObjectFinish takes an object that the function allocated with its layout, and a key order recorded for this layout from JSONObjectBegin on
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: KeyOrderOfOtherObject 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+function f0 name="goodOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = JSONObjectBegin layout=L0
+    v3 = JSONObjectKey v2 layout=L0 field=0
+    v4 = Undefined
+    v5 = JSONObjectFinish v3, v1, v4 layout=L0
+    Return
+}
+function f1 name="goodThroughUpcast" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Upcast v1 castType=object
+    v3 = JSONObjectBegin layout=L0
+    v4 = Undefined
+    v5 = JSONObjectFinish v3, v2, v4 layout=L0
+    Return
+}
+function f2 name="goodOrderThroughParameter" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number, v1: boolean):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = JSONObjectBegin layout=L0
+    Branch v1 -> taken b1(), notTaken b2(v3)
+  b1():
+    v4 = JSONObjectKey v3 layout=L0 field=0
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = Undefined
+    v7 = JSONObjectFinish v5, v2, v6 layout=L0
+    Return
+}
+function f3 name="badObjectIsParameter" parameters=[{type=L0}] results=[{type=undefined}] {
+  b0(v0: L0):
+    v1 = JSONObjectBegin layout=L0
+    v2 = Undefined
+    v3 = JSONObjectFinish v1, v0, v2 layout=L0
+    Return
+}
+function f4 name="badObjectOfOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = JSONObjectBegin layout=L0
+    v3 = Undefined
+    v4 = JSONObjectFinish v2, v1, v3 layout=L0
+    Return
+}
+function f5 name="badOrderBegunForOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = JSONObjectBegin layout=L1
+    v3 = Undefined
+    v4 = JSONObjectFinish v2, v1, v3 layout=L0
+    Return
+}
+function f6 name="badKeyOfOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = JSONObjectBegin layout=L0
+    v3 = JSONObjectKey v2 layout=L1 field=0
+    v4 = Undefined
+    v5 = JSONObjectFinish v3, v1, v4 layout=L0
+    Return
+}
+function f7 name="badOtherLayoutOnOnePath" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number, v1: boolean):
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = JSONObjectBegin layout=L0
+    Branch v1 -> taken b1(), notTaken b2(v3)
+  b1():
+    v4 = JSONObjectBegin layout=L1
+    Jump -> next b2(v4)
+  b2(v5):
+    v6 = Undefined
+    v7 = JSONObjectFinish v5, v2, v6 layout=L0
+    Return
+}

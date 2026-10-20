@@ -1,0 +1,102 @@
+# On the wire NewClass takes the closure of its layout's constructor, the pieces of an object or class take its head, and a Results value is returned and has no other use
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 8
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Instance constructor=f14
+layout L1 kind=Instance constructor=f15
+layout L2 fields=[{key="x" declared={type=number}}]
+function f0 name="badConstructorIsParameter" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = NewClass v0 layout=L0
+    Return
+}
+function f1 name="badConstructorOfOtherClass" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f15
+    v1 = NewClass v0 layout=L0
+    Return
+}
+function f2 name="goodConstructor" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = NewClass v0 layout=L0
+    Return
+}
+function f3 name="goodConstructorThroughUpcast" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = Upcast v0 castType=function
+    v2 = NewClass v1 layout=L0
+    Return
+}
+function f4 name="badResultsAlsoRead" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+  b0(v0: number, v1: string):
+    v2 = Results v0, v1
+    v3 = ResultAt v2 index=0
+    Return v2
+}
+function f5 name="badResultsNotReturned" parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: number):
+    v1 = Results v0
+    Return
+}
+function f6 name="goodResultsReturned" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
+  b0(v0: number, v1: string):
+    v2 = Results v0, v1
+    Return v2
+}
+function f7 name="badFinishedObjectIsParameter" parameters=[{type=object}] results=[{type=undefined}] {
+  b0(v0: object):
+    v1 = FinishObject v0
+    Return
+}
+function f8 name="goodFinishedObject" results=[{type=undefined}] {
+  b0():
+    v0 = NewObject layout=L2
+    v1 = Upcast v0 castType=object
+    v2 = FinishObject v1
+    Return
+}
+function f9 name="badFinishedClassOfOtherLayout" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L1
+    Return
+}
+function f10 name="badMethodOnClosure" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = NewClosure function=f16
+    DefineMethod v0, v1 layout=L0 key="m"
+    Return
+}
+function f11 name="badPrototypeOfParameter" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = GetClassPrototype v0 layout=L0
+    Return
+}
+function f12 name="goodClassBody" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = NewClass v0 layout=L0
+    v2 = GetClassPrototype v1 layout=L0
+    v3 = NewClosure function=f16
+    DefineMethod v1, v3 layout=L0 key="m"
+    v5 = FinishClass v1 layout=L0
+    Return
+}
+function f13 name="goodClassBodyThroughUpcast" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f14
+    v1 = NewClass v0 layout=L0
+    v2 = Upcast v1 castType=function
+    v3 = FinishClass v2 layout=L0
+    Return
+}
+function f14 name="constructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f15 name="otherConstructor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f16 name="method" kind=Method flags=[HasThis] thisType={type=object} results=[{type=undefined}]

@@ -39,7 +39,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC  {
 
-class CallFrame;
 class JSWebAssemblyInstance;
 
 template<typename> struct BaseInstruction;

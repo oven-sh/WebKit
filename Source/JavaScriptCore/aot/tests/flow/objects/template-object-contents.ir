@@ -1,0 +1,20 @@
+# A template object is an opaque array: its element slot holds strings and the undefined of an invalid escape, its raw strings are in the undeclared part, and a read by name is unknown
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {opaque(Array)@f0:v0}
+# CHECK: Variable(g1) = {{*}}unknown
+# CHECK: DeclaredPart(opaque(Array)@f0:v0, 0) = {undefined|string}
+# CHECK-NEXT: UndeclaredPart(opaque(Array)@f0:v0) = {unknown}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" declared={type=anything} initialization=Uninitialized
+variable g1 name="raw" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    PutModuleVariable v0 variable=g0
+    v2 = NewTemplateObject templateStrings=[{cooked="b" raw="b"}]
+    v3 = PropGet v2 key="raw"
+    PutModuleVariable v3 variable=g1
+    Return
+}

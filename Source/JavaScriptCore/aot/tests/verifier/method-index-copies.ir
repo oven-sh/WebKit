@@ -1,0 +1,18 @@
+# After the wire form a pass may copy a method definition, so an index may repeat
+# FORM: Prepared
+# RUN: verify
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance constructor=f1
+function f0 name="copies" results=[{type=undefined}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    DefineMethod v1, v2 layout=L0 index=1 key="m"
+    v5 = FinishClass v1 layout=L0
+    Return
+}
+function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]

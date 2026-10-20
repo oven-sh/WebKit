@@ -1,0 +1,50 @@
+# An access to an array literal under a range of indexes reaches the positions inside the range, and the rest only when the range passes the literal
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {L0#[[state]]|f1}
+# CHECK-NEXT: Variable(g1) = {undefined|L0#[[state]]|f1}
+# CHECK-NEXT: Variable(g2) = {{*}}undefined{{*}}|L0#[[state]]|f1
+# CHECK: Position(Array@f0:v3, 0) = {L0#[[state]]}
+# CHECK-NEXT: Position(Array@f0:v3, 1) = {f1}
+# CHECK: DeclaredPart(Array@f0:v4, 0) = {true}
+# CHECK-NEXT: Position(Array@f0:v4, 0) = {L0#[[state]]}
+# CHECK-NEXT: Position(Array@f0:v4, 1) = {true|f1}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="insideTheLiteral" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="pastTheLiteral" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="unknownNumber" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewArray v1, v2 contents=anything
+    v4 = NewArray v1, v2 contents=anything
+    v5 = NewArray v1, v2 contents=anything
+    v6 = Builtin builtin=MathRandom
+    v7 = Call v6
+    v8 = ToBoolean v7
+    v9 = Integer integer=0
+    v10 = Integer integer=5
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v9, v9, v0)
+  b2():
+    Jump -> next b3(v0, v10, v10)
+  b3(v11, v12, v13):
+    v14 = ElemGet v3, v11
+    PutModuleVariable v14 variable=g0
+    v16 = ElemGet v3, v12
+    PutModuleVariable v16 variable=g1
+    v18 = ElemGet v5, v7
+    PutModuleVariable v18 variable=g2
+    v20 = Boolean boolean=true
+    ElemSet v4, v13, v20
+    Return
+}
+function f1 name="setter" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

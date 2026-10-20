@@ -1,0 +1,28 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "B3Origin.h"
+#include "B3Policy.h"
+#include "JSExportMacros.h"
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
+
+namespace JSC { namespace AOT {
+
+struct FrameAddressViolation {
+    B3::Origin address;
+    B3::Origin suspension;
+};
+
+JS_EXPORT_PRIVATE B3::ClientPhase validateFrameAddresses(Vector<FrameAddressViolation>&, BitVector&& originsOfSuspensions);
+JS_EXPORT_PRIVATE B3::ClientPhase materializeSlotBasesLate();
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

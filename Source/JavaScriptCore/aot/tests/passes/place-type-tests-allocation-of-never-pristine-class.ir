@@ -1,0 +1,41 @@
+# The pristine test can pass, and an allocation can stand for it, only where start-up marks the Structure of the class, so that a change of an instance clears the mark.
+# `new Object()` has no such Structure: the read behind the call that may change the object goes by name, with no test. An array iterator has one: the read is answered behind the test
+# FORM: AsRead
+# RUN: pipeline CheckPlacement
+# OPTIONS: disable=flow-results
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="plainObject" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object
+    v2 = Construct v1, -
+    v3 = Call v0, -, v2
+    v4 = PropGet v2 key="toString"
+    Return v4
+}
+# CHECK-NOT: IsShapeEpochCurrent
+# CHECK-NOT: IsPristine
+# CHECK: = PropGet {{*}}key="toString"
+
+function f2 name="arrayIterator" parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array<number>):
+    v2 = Builtin builtin=ArrayPrototypeValues
+    v3 = Call v2, v1
+    v4 = Call v0, -, v3
+    v5 = PropGet v3 key="next"
+    Return v5
+}
+# CHECK-NOT: builtinClass=Object
+# CHECK: = IsPristine {{*}}builtinClass=ArrayIterator aspects=[Names]
+# CHECK: = Builtin builtin=ArrayIteratorPrototypeNext

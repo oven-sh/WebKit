@@ -1,0 +1,46 @@
+# Only what went through an assertion is let through. An untyped value is tested where it enters a written position, also after a test has taken some kinds away from it, and an int32 promise admits nothing
+# FORM: AsRead
+# RUN: pass AdmitAssertedObjects TypeValues
+# STATISTIC: PositionsAdmittingObjects = 0
+# STATISTIC: RequestsAdmittingObjects = 0
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Variable
+typesite w2 module=m0 position=30 kind=Assertion
+variable g0 name="double" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f0 flags=[IsImmutable]
+variable g1 name="count" module=m0 declared={type=undefined|null|i32 predicted=i32 site=w1 flags=[IsInt32Promise]} initialization=Undefined
+function f0 name="double" parameters=[{type=undefined|null|number predicted=number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="double" {{*}}parameters=[{type=undefined|null|number predicted=number site=w0}]
+function f1 name="passesUntyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="double"
+    Return v2
+}
+function f2 name="passesNarrowedUntyped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v2 calleeName="double"
+    v5 = ClaimDeclared v2 declared={type=undefined|null|number predicted=number site=w1}
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2 name="passesNarrowedUntyped"
+# CHECK: : number = Claim v2 castType=undefined|null|number site=w1
+function f3 name="assertsPrimitive" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=4
+    v1 = ClaimDeclared v0 declared={type=undefined|null|number predicted=number site=w2}
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v1 calleeName="double"
+    Return v3
+}

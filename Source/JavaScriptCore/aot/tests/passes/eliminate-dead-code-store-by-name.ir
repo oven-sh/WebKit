@@ -1,0 +1,54 @@
+# A store by name that nothing proves to be a slot store may run unknown code, so it stays and keeps its object
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stable" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="receiverIsNotProven" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="x" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f0 name="receiverIsNotProven"
+# CHECK: v1: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PropSet v1, v0 key="x"
+# CHECK-NEXT: Return v0
+
+function f1 name="receiversAreNotComplete" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v1, v0 key="x" mode=Strict receivers=[L0, ..]
+    Return v0
+}
+# CHECK-LABEL: function f1 name="receiversAreNotComplete"
+# CHECK: v1: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PropSet v1, v0 key="x"
+# CHECK-NEXT: Return v0
+
+function f2 name="computedKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    ElemSet v2, v1, v0 mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f2 name="computedKey"
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: ElemSet v2, v1, v0
+# CHECK-NEXT: Return v0
+
+function f3 name="storedValueStays" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Add v0, v0
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v2, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: function f3 name="storedValueStays"
+# CHECK: v1: number = Add v0, v0
+# CHECK-NEXT: v2: object{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PropSet v2, v1 key="x"
+# CHECK-NEXT: Return v0

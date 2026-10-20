@@ -184,7 +184,8 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
     // Entries hold the callee's CodeBlock and entry point untraced, which is only sound on the stack:
     // conservative scanning keeps them alive, and code is detached only outside a VM entry scope. A cache
     // that outlives a drain needs clear() and reconcileWeakReferencesAtGCEnd, as VM's own cache does.
-    auto drainWithCallCache = [&](MicrotaskCallCache* microtaskCallCache) ALWAYS_INLINE_LAMBDA -> std::pair<JSGlobalObject*, bool> {
+    MicrotaskCallCache microtaskCallCache { MicrotaskCallCache::Owner::JobLoop };
+
     while (!m_queue.isEmpty()) {
         auto& front = m_queue.front();
 
@@ -203,7 +204,7 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
 
             auto task = m_queue.dequeue();
             auto arguments = task.arguments();
-            if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), microtaskCallCache)) [[unlikely]] {
+            if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), &microtaskCallCache)) [[unlikely]] {
                 clear();
                 return { nullptr, true };
             }
@@ -249,16 +250,6 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
     }
 
     return { nullptr, true };
-    };
-#if ENABLE(AOT)
-    if (vm.useImmutableIntrinsics)
-        return drainWithCallCache(&vm.syncResumeCallCache());
-#endif
-    auto drainWithNewCallCache = [&]() __attribute__((noinline)) -> std::pair<JSGlobalObject*, bool> {
-        MicrotaskCallCache microtaskCallCache;
-        return drainWithCallCache(&microtaskCallCache);
-    };
-    return drainWithNewCallCache();
 }
 
 std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainWithoutUseCallOnEachMicrotask(JSGlobalObject* currentGlobalObject, VM& vm, TopExceptionScope& catchScope)

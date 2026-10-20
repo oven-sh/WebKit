@@ -29,11 +29,14 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBlockWorklist.h"
+#include "AirCFG.h"
 #include "AirCode.h"
+#include "AirLimits.h"
 #include "AirPhaseScope.h"
 #include <algorithm>
 #include <cmath>
 #include <wtf/BubbleSort.h>
+#include <wtf/CycleForest.h>
 #include <wtf/Deque.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -159,20 +162,184 @@ private:
         auto isLessFrequent = [] (BasicBlock* left, BasicBlock* right) {
             return left->frequency() < right->frequency();
         };
-#if USE(BUN_JSC_ADDITIONS)
-        constexpr size_t maxSizeForBubbleSort = 16;
         auto hasNoFrequency = [] (BasicBlock* block) {
             return std::isnan(block->frequency());
         };
-        if (m_successors.size() > maxSizeForBubbleSort && std::none_of(m_successors.begin(), m_successors.end(), hasNoFrequency)) {
+        if (m_successors.size() > AirLimits::maxSuccessorsToBubbleSort && std::none_of(m_successors.begin(), m_successors.end(), hasNoFrequency)) {
             std::stable_sort(m_successors.begin(), m_successors.end(), isLessFrequent);
             return;
         }
-#endif
         bubbleSort(m_successors.mutableSpan(), isLessFrequent);
     }
 
     Vector<BasicBlock*, 2> m_successors;
+};
+
+class RareBlockPlacer {
+public:
+    RareBlockPlacer(Code& code, IndexSet<BasicBlock*>& done, Vector<BasicBlock*>& blocksInOrder, SortedSuccessors& slowSuccessors)
+        : m_code(code)
+        , m_done(done)
+        , m_blocksInOrder(blocksInOrder)
+        , m_slowSuccessors(slowSuccessors)
+        , m_placesInGaps(code.policy().layout.placesRareBlocksInGaps)
+        , m_placesAfterGuards(m_placesInGaps && code.policy().layout.placesRareBlocksAfterGuards && code.numEntrypoints() == 1 && code.entrypoint(0).block() == code[0])
+    {
+        if (m_placesAfterGuards)
+            findBlocksInCycles();
+    }
+
+    bool isEnabled() const { return m_placesInGaps; }
+    bool isPlacedInGap(BasicBlock* block) const { return m_placedInGaps.contains(block); }
+
+    void didPlace(BasicBlock* block)
+    {
+        if (!m_placesInGaps)
+            return;
+
+        m_placedBytes += estimatedBytes(block);
+        if (!isGuard(block))
+            return;
+
+        BasicBlock* rare = rareSuccessorOf(block);
+        if (m_placesAfterGuards && !m_blocksInCycles.contains(block)) {
+            bool branchLeadsToRareBlock = block->successor(0).isRare();
+            bool canJumpOverRareBlock = block->last().kind.opcode != Patch && (!branchLeadsToRareBlock || canInvertBranch(block->last()));
+            if (canJumpOverRareBlock && !m_done.contains(rare) && isSmall(rare) && hasOnlyRarePredecessors(rare)) {
+                append(rare);
+                for (BasicBlock* successor : rare->successorBlocks())
+                    m_slowSuccessors.append(successor);
+                return;
+            }
+        }
+        m_waitingForGap.append({ rare, m_placedBytes });
+    }
+
+    void didEndChain(BasicBlock* last)
+    {
+        if (!m_placesInGaps)
+            return;
+
+        for (unsigned i = m_waitingForGap.size(); i--;) {
+            auto [rare, bytesPlacedAtEndOfGuard] = m_waitingForGap[i];
+            if (m_done.contains(rare))
+                continue;
+            bool hasUnplacedSuccessor = false;
+            for (BasicBlock* successor : last->successorBlocks())
+                hasUnplacedSuccessor |= successor != rare && !m_done.contains(successor);
+            if (hasUnplacedSuccessor || !isSmall(rare) || m_placedBytes - bytesPlacedAtEndOfGuard + estimatedBytes(rare) > AirLimits::maxBytesFromGuardToRareBlock || !hasOnlyRarePredecessors(rare))
+                continue;
+            append(rare);
+        }
+        m_waitingForGap.shrink(0);
+    }
+
+    void fillGapsBeforeGuards()
+    {
+        if (!m_placesInGaps || !isX86())
+            return;
+
+        Vector<std::pair<unsigned, BasicBlock*>, 8> insertions;
+        std::optional<unsigned> lastGapIndex;
+        unsigned bytesSinceLastGap = 0;
+        for (unsigned i = 0; i < m_blocksInOrder.size(); ++i) {
+            BasicBlock* block = m_blocksInOrder[i];
+            bytesSinceLastGap += estimatedBytes(block);
+            if (lastGapIndex && isGuard(block)) {
+                BasicBlock* rare = rareSuccessorOf(block);
+                if (!m_done.contains(rare) && isSmall(rare) && bytesSinceLastGap + estimatedBytes(rare) <= AirLimits::maxBytesFromGuardToRareBlock && hasOnlyRarePredecessors(rare)) {
+                    m_done.add(rare);
+                    m_placedInGaps.add(rare);
+                    insertions.append({ *lastGapIndex, rare });
+                    bytesSinceLastGap += estimatedBytes(rare);
+                }
+            }
+            bool fallsThrough = false;
+            for (BasicBlock* successor : block->successorBlocks())
+                fallsThrough |= i + 1 < m_blocksInOrder.size() && successor == m_blocksInOrder[i + 1];
+            if (!fallsThrough) {
+                lastGapIndex = i;
+                bytesSinceLastGap = 0;
+            }
+        }
+        if (insertions.isEmpty())
+            return;
+
+        Vector<BasicBlock*> withInsertions;
+        withInsertions.reserveInitialCapacity(m_blocksInOrder.size() + insertions.size());
+        unsigned next = 0;
+        for (unsigned i = 0; i < m_blocksInOrder.size(); ++i) {
+            withInsertions.append(m_blocksInOrder[i]);
+            for (; next < insertions.size() && insertions[next].first == i; ++next)
+                withInsertions.append(insertions[next].second);
+        }
+        m_blocksInOrder = WTF::move(withInsertions);
+    }
+
+private:
+    struct WaitingBlock {
+        BasicBlock* rare;
+        unsigned bytesPlacedAtEndOfGuard;
+    };
+
+    static unsigned estimatedBytes(BasicBlock* block) { return block->size() * AirLimits::estimatedBytesPerInst; }
+
+    static bool isGuard(BasicBlock* block)
+    {
+        return block->numSuccessors() == 2 && block->successor(0).isRare() != block->successor(1).isRare();
+    }
+
+    static BasicBlock* rareSuccessorOf(BasicBlock* guard)
+    {
+        return guard->successor(guard->successor(0).isRare() ? 0 : 1).block();
+    }
+
+    static bool isSmall(BasicBlock* rare) { return estimatedBytes(rare) <= AirLimits::maxBytesOfRareBlockNearGuard; }
+
+    bool hasOnlyRarePredecessors(BasicBlock* block) const
+    {
+        for (BasicBlock* predecessor : block->predecessors()) {
+            if (m_placedInGaps.contains(predecessor))
+                continue;
+            if (!m_done.contains(predecessor))
+                return false;
+            for (FrequentedBlock& successor : predecessor->successors()) {
+                if (successor.block() == block && !successor.isRare())
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    void append(BasicBlock* rare)
+    {
+        m_done.add(rare);
+        m_placedInGaps.add(rare);
+        m_blocksInOrder.append(rare);
+        m_placedBytes += estimatedBytes(rare);
+    }
+
+    void findBlocksInCycles()
+    {
+        WTF::CycleForest<CFG> cycles(m_code.cfg(), [](std::span<BasicBlock* const> members, const auto&, const auto&) {
+            return members[0];
+        });
+        for (BasicBlock* block : m_code) {
+            if (cycles.isInCycle(block))
+                m_blocksInCycles.add(block);
+        }
+    }
+
+    Code& m_code;
+    IndexSet<BasicBlock*>& m_done;
+    Vector<BasicBlock*>& m_blocksInOrder;
+    SortedSuccessors& m_slowSuccessors;
+    const bool m_placesInGaps;
+    const bool m_placesAfterGuards;
+    IndexSet<BasicBlock*> m_placedInGaps;
+    IndexSet<BasicBlock*> m_blocksInCycles;
+    Vector<WaitingBlock, 8> m_waitingForGap;
+    unsigned m_placedBytes { 0 };
 };
 
 } // anonymous namespace
@@ -214,7 +381,7 @@ static bool detectTriangleStructure(BasicBlock* blockA, ChainWorklist& worklist,
         return false;
 
     auto attemptToDetect = [&](BasicBlock* blockB, BasicBlock* blockC) {
-        if (hasFrequencies && frequencyOfEdgeToSharedSuccessor(blockA, blockC, blockB) > blockC->frequency() * 1.01)
+        if (hasFrequencies && frequencyOfEdgeToSharedSuccessor(blockA, blockC, blockB) > blockC->frequency() * AirLimits::minRatioOfLikelierEdge)
             return false;
         if ((blockC->numSuccessors() >= 1 && blockC->successor(0).block() == blockB)
             || (blockC->numSuccessors() >= 2 && blockC->successor(1).block() == blockB)) {
@@ -338,6 +505,44 @@ static bool detectExclusiveSuccessor(BasicBlock* blockA, ChainWorklist& worklist
     return false;
 }
 
+static bool hasOneLikelyPredecessor(BasicBlock* block)
+{
+    unsigned numberOfLikelyPredecessors = 0;
+    for (BasicBlock* predecessor : block->predecessors()) {
+        bool isLikely = predecessor->frequency() * AirLimits::maxRatioOfBlockToLikelyPredecessor >= block->frequency();
+        for (FrequentedBlock& successor : predecessor->successors())
+            isLikely &= successor.block() != block || !successor.isRare();
+        numberOfLikelyPredecessors += isLikely;
+    }
+    return numberOfLikelyPredecessors == 1;
+}
+
+static bool appendSuccessorsByEdgeFrequency(BasicBlock* block, ChainWorklist& worklist, IndexSet<BasicBlock*>& done)
+{
+    if (block->numSuccessors() != 2)
+        return false;
+    if (block->successor(0).isRare())
+        return false;
+    if (block->successor(1).isRare())
+        return false;
+
+    BasicBlock* first = block->successor(0).block();
+    BasicBlock* second = block->successor(1).block();
+    if (first == second || done.contains(first) || done.contains(second))
+        return false;
+
+    bool firstIsExclusive = hasOneLikelyPredecessor(first);
+    if (firstIsExclusive == hasOneLikelyPredecessor(second))
+        return false;
+
+    BasicBlock* exclusive = firstIsExclusive ? first : second;
+    BasicBlock* shared = firstIsExclusive ? second : first;
+    bool sharedEdgeIsLikelier = frequencyOfEdgeToSharedSuccessor(block, exclusive, shared) > exclusive->frequency() * AirLimits::minRatioOfLikelierEdge;
+    worklist.append(sharedEdgeIsLikelier ? exclusive : shared);
+    worklist.append(sharedEdgeIsLikelier ? shared : exclusive);
+    return true;
+}
+
 Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
 {
     Vector<BasicBlock*> blocksInOrder;
@@ -346,82 +551,7 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     SortedSuccessors sortedSuccessors;
     ChainWorklist chainWorklist;
     IndexSet<BasicBlock*> done;
-#if USE(BUN_JSC_ADDITIONS)
-    constexpr unsigned gapRange = 24;
-    const bool placesInGaps = code.placesRareBlocksInGaps();
-    IndexSet<BasicBlock*> placedInGaps;
-    Vector<std::pair<BasicBlock*, unsigned>, 8> waitingForGap;
-    unsigned placedInstCount = 0;
-    auto isGuard = [](BasicBlock* asked) {
-        return asked->numSuccessors() == 2 && asked->successor(0).isRare() != asked->successor(1).isRare();
-    };
-    IndexSet<BasicBlock*> blocksInLoops;
-    if (placesInGaps && code.placesRareBlocksBehindGuards()) {
-        IndexSet<BasicBlock*> seen;
-        IndexSet<BasicBlock*> isOnPath;
-        Vector<std::pair<BasicBlock*, unsigned>, 16> path;
-        Vector<BasicBlock*, 16> worklist;
-        for (unsigned i = 0; i < code.numEntrypoints(); ++i) {
-            BasicBlock* root = code.entrypoint(i).block();
-            if (!seen.add(root))
-                continue;
-            isOnPath.add(root);
-            path.append({ root, 0 });
-            while (!path.isEmpty()) {
-                BasicBlock* from = path.last().first;
-                if (path.last().second == from->numSuccessors()) {
-                    isOnPath.remove(from);
-                    path.removeLast();
-                    continue;
-                }
-                BasicBlock* to = from->successorBlock(path.last().second++);
-                if (!isOnPath.contains(to)) {
-                    if (seen.add(to)) {
-                        isOnPath.add(to);
-                        path.append({ to, 0 });
-                    }
-                    continue;
-                }
-                IndexSet<BasicBlock*> members;
-                members.add(to);
-                blocksInLoops.add(to);
-                if (members.add(from))
-                    worklist.append(from);
-                while (!worklist.isEmpty()) {
-                    BasicBlock* member = worklist.takeLast();
-                    blocksInLoops.add(member);
-                    for (BasicBlock* predecessor : member->predecessors()) {
-                        if (members.add(predecessor))
-                            worklist.append(predecessor);
-                    }
-                }
-            }
-        }
-    }
-    auto hasOneLikelyPredecessor = [](BasicBlock* asked) {
-        unsigned numberOfLikelyPredecessors = 0;
-        for (BasicBlock* predecessor : asked->predecessors()) {
-            bool isLikely = predecessor->frequency() * 64 >= asked->frequency();
-            for (FrequentedBlock& successor : predecessor->successors())
-                isLikely &= successor.block() != asked || !successor.isRare();
-            numberOfLikelyPredecessors += isLikely;
-        }
-        return numberOfLikelyPredecessors == 1;
-    };
-    auto hasOnlyRarePredecessors = [&](BasicBlock* asked) {
-        for (BasicBlock* predecessor : asked->predecessors()) {
-            if (placedInGaps.contains(predecessor))
-                continue;
-            if (!done.contains(predecessor))
-                return false;
-            for (FrequentedBlock& successor : predecessor->successors()) {
-                if (successor.block() == asked && !successor.isRare())
-                    return false;
-            }
-        }
-        return true;
-    };
-#endif
+    RareBlockPlacer placer(code, done, blocksInOrder, sortedSlowSuccessors);
 
     // We expect entrypoint lowering to have already happened.
     RELEASE_ASSERT(code.numEntrypoints());
@@ -447,48 +577,15 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         done.add(block);
         blocksInOrder.append(block);
 
-#if USE(BUN_JSC_ADDITIONS)
-        placedInstCount += block->size();
-        if (placesInGaps && isGuard(block))
-            waitingForGap.append({ block->successor(block->successor(0).isRare() ? 0 : 1).block(), placedInstCount });
-        if (placesInGaps && code.placesRareBlocksBehindGuards() && isGuard(block) && !blocksInLoops.contains(block)) {
-            bool branchLeadsToRareBlock = block->successor(0).isRare();
-            BasicBlock* rare = block->successor(branchLeadsToRareBlock ? 0 : 1).block();
-            bool canJumpOverRareBlock = block->last().kind.opcode != Patch && (!branchLeadsToRareBlock || block->last().args()[0].isInvertible());
-            if (canJumpOverRareBlock && !done.contains(rare) && rare->size() <= 16 && hasOnlyRarePredecessors(rare)) {
-                waitingForGap.removeLast();
-                done.add(rare);
-                placedInGaps.add(rare);
-                blocksInOrder.append(rare);
-                placedInstCount += rare->size();
-                for (BasicBlock* successor : rare->successorBlocks())
-                    sortedSlowSuccessors.append(successor);
-            }
-        }
-#endif
+        placer.didPlace(block);
         size_t size = chainWorklist.size();
 
-#if USE(BUN_JSC_ADDITIONS)
-        bool hasFrequencies = code.ordersBlocksByEdgeFrequency();
-#else
-        bool hasFrequencies = false;
-#endif
+        bool hasFrequencies = code.policy().layout.ordersBlocksByEdgeFrequency;
         if (!detectTriangleStructure(block, chainWorklist, done, hasFrequencies)
             && !detectDiamondStructure(block, chainWorklist, done, hasFrequencies)
             && !detectExclusiveSuccessor(block, chainWorklist, done)) {
 
-#if USE(BUN_JSC_ADDITIONS)
-            BasicBlock* first = block->numSuccessors() == 2 ? block->successor(0).block() : nullptr;
-            BasicBlock* second = block->numSuccessors() == 2 ? block->successor(1).block() : nullptr;
-            if (code.ordersBlocksByEdgeFrequency() && first && first != second && !block->successor(0).isRare() && !block->successor(1).isRare() && !done.contains(first) && !done.contains(second)
-                && hasOneLikelyPredecessor(first) != hasOneLikelyPredecessor(second)) {
-                BasicBlock* exclusive = hasOneLikelyPredecessor(first) ? first : second;
-                BasicBlock* shared = exclusive == first ? second : first;
-                bool sharedEdgeIsLikelier = frequencyOfEdgeToSharedSuccessor(block, exclusive, shared) > exclusive->frequency() * 1.01;
-                chainWorklist.append(sharedEdgeIsLikelier ? exclusive : shared);
-                chainWorklist.append(sharedEdgeIsLikelier ? shared : exclusive);
-            } else
-#endif
+            if (!(hasFrequencies && appendSuccessorsByEdgeFrequency(block, chainWorklist, done)))
             for (FrequentedBlock& successor : block->successors()) {
                 if (!done.contains(successor.block()))
                     appendSuccessor(successor);
@@ -497,85 +594,28 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
         sortedSuccessors.process(chainWorklist);
 
         // Detect if we added a successor. If not decide for a good candidate.
-#if USE(BUN_JSC_ADDITIONS)
         if (size == chainWorklist.size()) {
-            for (unsigned i = waitingForGap.size(); i--;) {
-                auto [rare, endOfGuard] = waitingForGap[i];
-                if (done.contains(rare))
-                    continue;
-                bool hasUnplacedSuccessor = false;
-                for (BasicBlock* successor : block->successorBlocks())
-                    hasUnplacedSuccessor |= successor != rare && !done.contains(successor);
-                if (hasUnplacedSuccessor || rare->size() > 16 || placedInstCount - endOfGuard + rare->size() > gapRange || !hasOnlyRarePredecessors(rare))
-                    continue;
-                done.add(rare);
-                placedInGaps.add(rare);
-                blocksInOrder.append(rare);
-                placedInstCount += rare->size();
-            }
-            waitingForGap.shrink(0);
+            placer.didEndChain(block);
             chainWorklist.markStartNewChain();
         }
-#else
-        if (size == chainWorklist.size())
-            chainWorklist.markStartNewChain();
-#endif
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (placesInGaps && isX86()) {
-        Vector<std::pair<unsigned, BasicBlock*>, 8> insertions;
-        std::optional<unsigned> lastGapIndex;
-        unsigned instsSinceLastGap = 0;
-        for (unsigned i = 0; i < blocksInOrder.size(); ++i) {
-            BasicBlock* block = blocksInOrder[i];
-            instsSinceLastGap += block->size();
-            if (lastGapIndex && isGuard(block)) {
-                BasicBlock* rare = block->successor(block->successor(0).isRare() ? 0 : 1).block();
-                if (!done.contains(rare) && rare->size() <= 16 && instsSinceLastGap + rare->size() <= gapRange && hasOnlyRarePredecessors(rare)) {
-                    done.add(rare);
-                    placedInGaps.add(rare);
-                    insertions.append({ *lastGapIndex, rare });
-                    instsSinceLastGap += rare->size();
-                }
-            }
-            bool fallsThrough = false;
-            for (BasicBlock* successor : block->successorBlocks())
-                fallsThrough |= i + 1 < blocksInOrder.size() && successor == blocksInOrder[i + 1];
-            if (!fallsThrough) {
-                lastGapIndex = i;
-                instsSinceLastGap = 0;
-            }
-        }
-        if (!insertions.isEmpty()) {
-            Vector<BasicBlock*> withInsertions;
-            withInsertions.reserveInitialCapacity(blocksInOrder.size() + insertions.size());
-            unsigned next = 0;
-            for (unsigned i = 0; i < blocksInOrder.size(); ++i) {
-                withInsertions.append(blocksInOrder[i]);
-                for (; next < insertions.size() && insertions[next].first == i; ++next)
-                    withInsertions.append(insertions[next].second);
-            }
-            blocksInOrder = WTF::move(withInsertions);
-        }
-    }
-    if (code.recordsRareCodeStart()) [[unlikely]]
+    placer.fillGapsBeforeGuards();
+    if (code.policy().layout.recordsRareCodeStart) [[unlikely]]
         code.setNumberOfBlocksInChains(blocksInOrder.size());
-#endif
     BlockWorklist slowWorklist;
     sortedSlowSuccessors.process(slowWorklist);
 
     while (BasicBlock* block = slowWorklist.pop()) {
         // We might have already processed this block.
-#if USE(BUN_JSC_ADDITIONS)
-        if (done.contains(block) && !placedInGaps.contains(block))
+        if (done.contains(block) && !placer.isPlacedInGap(block))
             continue;
 
         if (!done.contains(block)) {
             done.add(block);
             blocksInOrder.append(block);
         }
-        while (code.placesRareBlocksInGaps()) {
+        while (placer.isEnabled()) {
             BasicBlock* next = nullptr;
             for (BasicBlock* successor : block->successorBlocks()) {
                 if (!done.contains(successor) && (!next || successor->frequency() > next->frequency()))
@@ -590,14 +630,6 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             done.add(block);
             blocksInOrder.append(block);
         }
-#else
-        if (done.contains(block))
-            continue;
-
-        done.add(block);
-
-        blocksInOrder.append(block);
-#endif
         for (BasicBlock* successor : block->successorBlocks())
             sortedSlowSuccessors.append(successor);
         sortedSlowSuccessors.process(slowWorklist);
@@ -609,83 +641,92 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     return blocksInOrder;
 }
 
+bool canInvertBranch(const Inst& branch)
+{
+    // It's somewhat tempting to just say that if the block has two successors and the first arg is
+    // invertible, then we can do the optimization. But that's wagging the dog. The fact that an
+    // instruction happens to have an argument that is invertible doesn't mean it's a branch, even though
+    // it is true that currently only branches have invertible arguments. It's also tempting to say that
+    // the /branch flag in AirOpcode.opcodes tells us that something is a branch - except that there,
+    // /branch also means Jump. The approach taken here means that if you add new branch instructions and
+    // forget about this phase, then at worst your new instructions won't opt into the inversion
+    // optimization.  You'll probably realize that as soon as you look at the disassembly, and it
+    // certainly won't cause any correctness issues.
+
+    switch (branch.kind.opcode) {
+    case BranchOnFlags:
+    case Branch8:
+#if CPU(X86_64)
+    case Branch16:
+#endif
+    case Branch32:
+    case Branch64:
+    case BranchTest8:
+    case BranchTest32:
+    case BranchTest64:
+    case BranchTestBit32:
+    case BranchTestBit64:
+    case BranchFloat:
+    case BranchDouble:
+    case BranchFloatWithZero:
+    case BranchDoubleWithZero:
+    case BranchAdd32:
+    case BranchAdd64:
+    case BranchMul32:
+    case BranchMul64:
+    case BranchSub32:
+    case BranchSub64:
+    case BranchNeg32:
+    case BranchNeg64:
+    case BranchAtomicStrongCAS8:
+    case BranchAtomicStrongCAS16:
+    case BranchAtomicStrongCAS32:
+    case BranchAtomicStrongCAS64:
+        return branch.args()[0].isInvertible();
+
+    default:
+        return false;
+    }
+}
+
+void invertBranch(BasicBlock* block)
+{
+    Inst& branch = block->last();
+    std::swap(block->successor(0), block->successor(1));
+    branch.args()[0] = branch.args()[0].inverted();
+}
+
 void optimizeBlockOrder(Code& code)
 {
     PhaseScope phaseScope(code, "optimizeBlockOrder"_s);
 
     Vector<BasicBlock*> blocksInOrder = blocksInOptimizedOrder(code);
-    
-    // Place blocks into Code's block list according to the ordering in blocksInOrder. We do this by leaking
-    // all of the blocks and then readopting them.
-    for (auto& entry : code.blockList())
-        entry.release();
 
-    code.blockList().shrink(0);
-
-    for (unsigned i = 0; i < blocksInOrder.size(); ++i) {
-        BasicBlock* block = blocksInOrder[i];
-        block->setIndex(i);
-        code.blockList().append(std::unique_ptr<BasicBlock>(block));
-    }
+    code.adoptBlockOrder(blocksInOrder);
 
     // Finally, flip any branches that we recognize. It's most optimal if the taken successor does not point
     // at the next block.
     for (BasicBlock* block : code) {
-        Inst& branch = block->last();
-
-        // It's somewhat tempting to just say that if the block has two successors and the first arg is
-        // invertible, then we can do the optimization. But that's wagging the dog. The fact that an
-        // instruction happens to have an argument that is invertible doesn't mean it's a branch, even though
-        // it is true that currently only branches have invertible arguments. It's also tempting to say that
-        // the /branch flag in AirOpcode.opcodes tells us that something is a branch - except that there,
-        // /branch also means Jump. The approach taken here means that if you add new branch instructions and
-        // forget about this phase, then at worst your new instructions won't opt into the inversion
-        // optimization.  You'll probably realize that as soon as you look at the disassembly, and it
-        // certainly won't cause any correctness issues.
-        
-        switch (branch.kind.opcode) {
-        case BranchOnFlags:
-        case Branch8:
-#if CPU(X86_64)
-        case Branch16:
-#endif
-        case Branch32:
-        case Branch64:
-        case BranchTest8:
-        case BranchTest32:
-        case BranchTest64:
-#if USE(BUN_JSC_ADDITIONS)
-        case BranchTestBit32:
-        case BranchTestBit64:
-#endif
-        case BranchFloat:
-        case BranchDouble:
-#if USE(BUN_JSC_ADDITIONS)
-        case BranchFloatWithZero:
-        case BranchDoubleWithZero:
-#endif
-        case BranchAdd32:
-        case BranchAdd64:
-        case BranchMul32:
-        case BranchMul64:
-        case BranchSub32:
-        case BranchSub64:
-        case BranchNeg32:
-        case BranchNeg64:
-        case BranchAtomicStrongCAS8:
-        case BranchAtomicStrongCAS16:
-        case BranchAtomicStrongCAS32:
-        case BranchAtomicStrongCAS64:
-            if (code.findNextBlock(block) == block->successorBlock(0) && branch.args()[0].isInvertible()) {
-                std::swap(block->successor(0), block->successor(1));
-                branch.args()[0] = branch.args()[0].inverted();
-            }
-            break;
-
-        default:
-            break;
-        }
+        if (canInvertBranch(block->last()) && code.findNextBlock(block) == block->successorBlock(0))
+            invertBranch(block);
     }
+}
+
+void moveBlocksWithoutSuccessorsToEnd(Code& code)
+{
+    PhaseScope phaseScope(code, "moveBlocksWithoutSuccessorsToEnd"_s);
+
+    Vector<BasicBlock*> order;
+    order.reserveInitialCapacity(code.size());
+    for (BasicBlock* block : code) {
+        if (block->numSuccessors() || block == code[0])
+            order.append(block);
+    }
+    for (BasicBlock* block : code) {
+        if (!block->numSuccessors() && block != code[0])
+            order.append(block);
+    }
+    code.adoptBlockOrder(order);
 }
 
 } } } // namespace JSC::B3::Air

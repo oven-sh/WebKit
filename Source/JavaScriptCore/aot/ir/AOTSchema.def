@@ -1,0 +1,158 @@
+constant Magic = 0x52495442
+constant MaxTrackedInteger = 4611686018427387903
+
+enum IRForm { | engine AsRead Prepared Selected Placed }
+enum ResultRule { | engine None Constant Natural Allocation Declared Unknown Cast Results }
+enum EffectRule { | engine Declared Operator Access Call Builtin Inline }
+enum RetainedIn { | engine UnknownMemory Result Operand }
+enum Branches { | engine No May Only }
+enum Access { | engine None Read Store Define Has }
+enum Interpretation { | engine None Allocation Cast Read Store Test List Guards }
+enum BoundTo { | engine Nothing Frame Function Site }
+enum ProgramEvent { | engine None EvaluatesText LoadsModule }
+enum AccessClass { | engine None Slot ByName DirectCall IndirectCall }
+enum FunctionReferenceKind { Call Closure Constructor Dispatch }
+enum ModuleReferenceKind { Target Referrer }
+enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
+
+enum ProofLifetime { | engine Forever Stretch }
+enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
+    | engine None(Forever, false) TestedType(Forever, false) Truthiness(Forever, false) Equality(Forever, false) IntegerBound(Forever, false)
+    ExactFunction(Forever, false) CaseValue(Forever, false)
+    Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
+    Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
+    PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true) EpochCurrent(Stretch, false)
+    UnmodifiedGenerator(Stretch, false) EnumeratorCurrent(Stretch, false) PlainData(Stretch, false)
+    SourceOpen(Stretch, false) TextMatches(Stretch, false) RequireEdgeReady(Stretch, false)
+}
+
+enum OperandKind (wants: Representation) {
+    Any(JSValue) Boolean(Boolean) Integer(Int64) Number(Double) String(Cell) PropertyKey(JSValue) Object(Cell) Callable(Cell) Array(Cell) Layout(Cell)
+    Declared(Unchosen) Environment(Cell) EvalOperand(JSValue) Results(Void)
+    | engine Guard(Void) Convertible(Unchosen)
+}
+
+enum PayloadKind (isId: Bool, words: UInt32) {
+    String(true, 1) PropertyKey(true, 1) Function(true, 1) Layout(true, 1) Field(false, 1) Variable(true, 1) Module(true, 1) ModuleFailure(true, 1)
+    Type(true, 1) TypeSite(true, 1) EvalScope(true, 1) Data(true, 1) ExpectedResult(true, 1) Builtin(true, 1) Enum(false, 1) Flags(false, 1)
+    Bool(false, 1) UInt32(false, 1) Int64(false, 2) Double(false, 2) External(false, 1) Record(false, 0) Variant(false, 0) List(false, 0)
+    | engine LayoutSet(true, 1) CalleeSet(true, 1) AccessSite(true, 1) AllocationSite(true, 1) AllocationClass(true, 1) FieldAccess(true, 1) Allocation(true, 1)
+    RegExpRecord(true, 1) SiteCache(true, 1) GuardBit(true, 1) Request(false, 1) StaticsOffset(false, 1) OrderWord(false, 1) Origin(false, 2)
+    Opcode(false, 1)
+}
+
+flags OperandUse {
+    Inspects Retains Returns Calls CallsPerElement CallsRepeatedly ReadsContents WritesContents RetainsContents MovesElements StoresByKey DeletesByKey
+    AssignsFrom DefinesName TakesDescriptor ChangesIntegrity ChangesPrototype BecomesPrototype PassesToUserCode AppliesTransitively AppliesToContents
+}
+flags Protocol { OwnKeys OwnValues ToPrimitive Thenable Iterate Species ToJSON HasInstance PrototypeChain Named CallsNamed }
+
+uses Converted = inspects+runs(ToPrimitive)
+uses Listed = inspects+readsContents+retainsContents
+uses Iterated = inspects+retainsContents+runs(Iterate)
+uses Copied = inspects+retainsContents+runs(OwnKeys+OwnValues)
+
+enum ElementBase { | engine Unknown Array Arguments Object }
+
+heap ModuleVariables[Variable] observable ordered holdsValues oneValuePerLocation
+heap EnvironmentFields[Layout, Field] observable ordered holdsValues perObject oneValuePerLocation
+heap ObjectFields[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
+heap ShapeWords[LayoutSet] observable ordered perObject
+heap OrderWords observable ordered perObject
+heap ShapeEpoch ordered
+heap MemberGuards[Layout] ordered
+heap PrototypeLinks observable ordered holdsValues perObject
+heap NamedProperties[PropertyKey] observable ordered holdsValues perObject oneValuePerLocation
+heap Elements[ElementBase] observable ordered holdsValues perObject
+heap ArrayStorage observable ordered perObject
+heap TypedArrayStorage observable ordered
+heap TypedArrayElements observable ordered
+heap CollectionStorage ordered perObject
+heap CollectionEntries observable ordered holdsValues perObject
+heap InternalFields observable ordered holdsValues perObject
+heap RegExpState observable ordered
+heap PromiseState observable ordered holdsValues perObject
+heap StringStorage ordered
+heap StringBuilderContents ordered perObject
+heap ParserState ordered
+heap ExternalState observable ordered
+heap AllocatorState
+heap RuntimeState ordered
+heap ValidationState
+
+effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
+effects Allocates = reads(AllocatorState) writes(AllocatorState) collects
+effects UsesRuntime = reads(RuntimeState) writes(RuntimeState)
+effects ResolvesRopes = reads(StringStorage) writes(StringStorage, RuntimeState) throws collects
+effects CreatesString = reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+effects GrowsArray = reads(ArrayStorage, Elements[Array], AllocatorState) writes(ArrayStorage, Elements[Array], AllocatorState, RuntimeState) throws collects
+effects AppendsToBuilder = reads(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
+effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, StringStorage)
+
+opaque IteratorState Enumerator Exception ClassToken
+opaque StringBuilder engine
+opaque Cursor KeyOrder engine directCallsOnly
+opaque Guard FlatString CodeAddress engine functionLocal
+opaque BuilderCursor engine functionLocal interior
+
+external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
+external BuiltinClass : id = BuiltinClassID, crate::builtins::id::BuiltinClass { Array Arguments Map Set Promise RegExp Generator AsyncGenerator } ; namedInText
+external BuiltinName : id = BuiltinName, crate::builtins::id::BuiltinName { prototype }
+external RuntimeModule : id = RuntimeModuleID, crate::builtins::id::RuntimeModule ; namedInText
+external RuntimeFunction : id = RuntimeFunctionID, crate::builtins::id::RuntimeFunction
+external CheckedJSType : enum = CheckedJSType, crate::builtins::id::CheckedJSType
+external LinkTimeConstant : enum = LinkTimeConstantID, crate::builtins::id::LinkTimeConstant
+external Feature : enum = RemovableFeature, crate::builtins::id::Feature
+external BuiltinOverload : id, engine = BuiltinOverloadID
+external BuiltinLayout : id, engine = BuiltinLayoutID { IteratorResult }
+external BuiltinSlot : id, engine = BuiltinSlotID
+external TypedArrayType : enum, engine = JSC::TypedArrayType ; below "static_cast<uint32_t>(JSC::TypeDataView) + 1"
+external IterationKind : enum, engine = JSC::IterationKind ; below "static_cast<uint32_t>(JSC::IterationKind::Entries) + 1"
+
+column access : Access
+column receiver : Operand
+column stored : Operand
+column interpreted : Interpretation
+column boundTo : BoundTo
+column proves : Proof
+column relies : Proofs
+column guarded : Operand
+column branches : Branches
+column base : Operand
+column newTarget : Operand
+column runtime : RuntimeOperation
+column raises : ProgramEvent
+column accessClass : AccessClass
+column siteCaches : UInt32
+column replaces : Operations
+column exactlyOneOf : Parameters
+column requires : FunctionFlags
+column removedBy : PassID
+column isIntrinsic : Bool
+column allocatesInline : Bool
+column allocatesAfterLastSafepoint : Bool
+column runsOwnerBarrier : Bool
+column remembersOwner : Bool
+
+include "schema/types.def"
+include "schema/program-records.def"
+include "schema/flow-records.def"
+include "schema/function-records.def"
+include "schema/natural-types.def"
+include "schema/operations.def"
+include "schema/language-operations.def"
+include "schema/intrinsic-operations.def"
+include "schema/prepared-operations.def"
+include "schema/typed-data-operations.def"
+include "schema/selected-operations.def"
+include "schema/placed-operations.def"
+include "schema/inline-builtins.def"
+include "schema/runtime-records.def"
+include "schema/runtime-operations.def"
+include "schema/runtime-property-operations.def"
+include "schema/runtime-builtin-operations.def"
+include "schema/limits.def" abi
+include "schema/passes.def" abi
+include "schema/statistics.def" abi
+include "schema/diagnostics.def" abi
+include "schema/compile-call.def" abi

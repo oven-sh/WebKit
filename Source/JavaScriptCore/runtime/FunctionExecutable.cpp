@@ -50,10 +50,6 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
     ASSERT(source.length());
 }
 
-extern "C" {
-JS_EXPORT_PRIVATE void* g_aotSlimClosureEntrypoint { nullptr };
-}
-
 void FunctionExecutable::destroy(JSCell* cell)
 {
     static_cast<FunctionExecutable*>(cell)->FunctionExecutable::~FunctionExecutable();
@@ -207,59 +203,6 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
     if (isBuiltinFunction())
 #endif
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
-
-#if USE(BUN_JSC_ADDITIONS)
-    if ((isClass() ? classSource().provider() : source().provider())->hasNoSourceText()) [[unlikely]] {
-        if (isClass())
-            return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
-        ASCIILiteral before = "function "_s;
-        bool isNamed = true;
-        switch (parseMode()) {
-        case SourceParseMode::ArrowFunctionMode:
-            before = ""_s;
-            isNamed = false;
-            break;
-        case SourceParseMode::AsyncArrowFunctionMode:
-        case SourceParseMode::AsyncArrowFunctionBodyMode:
-            before = "async "_s;
-            isNamed = false;
-            break;
-        case SourceParseMode::GeneratorWrapperFunctionMode:
-        case SourceParseMode::GeneratorBodyMode:
-            before = "function* "_s;
-            break;
-        case SourceParseMode::AsyncFunctionMode:
-        case SourceParseMode::AsyncFunctionBodyMode:
-            before = "async function "_s;
-            break;
-        case SourceParseMode::AsyncGeneratorWrapperFunctionMode:
-        case SourceParseMode::AsyncGeneratorBodyMode:
-            before = "async function* "_s;
-            break;
-        case SourceParseMode::MethodMode:
-            before = ""_s;
-            break;
-        case SourceParseMode::GeneratorWrapperMethodMode:
-            before = "*"_s;
-            break;
-        case SourceParseMode::AsyncMethodMode:
-            before = "async "_s;
-            break;
-        case SourceParseMode::AsyncGeneratorWrapperMethodMode:
-            before = "async *"_s;
-            break;
-        case SourceParseMode::GetterMode:
-            before = "get "_s;
-            break;
-        case SourceParseMode::SetterMode:
-            before = "set "_s;
-            break;
-        default:
-            break;
-        }
-        return cacheIfNoException(jsMakeNontrivialString(globalObject, before, isNamed ? ecmaName().string() : String(), isNamed ? "() { [native code] }"_s : "() => { [native code] }"_s));
-    }
-#endif
 
     if (isClass())
         return cache(jsString(vm, classSource().view()));

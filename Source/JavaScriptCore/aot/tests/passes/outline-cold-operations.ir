@@ -1,0 +1,937 @@
+# Equal cold sites share one function
+# FORM: Selected
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 10
+# STATISTIC: ColdSitesOutlined = 73
+# LOSS: MaxOutlinedOperands f23
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}]
+runtimefunction id=0 function=f38
+
+function f0 name="usedRoot" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="bad"
+    v4 = PropGet v1 key="logger"
+    v5 = CallMethod v4, v3, v2 key="report"
+    Return v5
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: = PropGet
+# CHECK: anything = CallDirect v1, v2 function=[[usedRoot]]
+
+function f1 name="unusedRoot" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="miss"
+    v4 = PropGet v1 key="counter"
+    v5 = CallMethod v4, v3, v3, v2 key="add"
+    Return v2
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: = PropGet
+# CHECK: undefined = CallDirect v1, v2 function=[[unusedRoot]]
+
+function f2 name="oneValue" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = CallMethod v1, v3, v3, v3, v3, v2 key="fail"
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK: anything = CallDirect v1, v2 function=[[oneValue]]
+
+function f3 name="coldPaths" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = String string="bad"
+    v6 = PropGet v3 key="logger"
+    v7 = CallMethod v6, v5, v4 key="report"
+    Return v7
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = String string="miss"
+    v9 = PropGet v3 key="counter"
+    v10 = CallMethod v9, v8, v8, v4 key="add"
+    Return v4
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v3, v11, v11, v11, v11, v4 key="fail"
+    Return v12
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f3
+# CHECK: anything = CallDirect v3, v4 function=[[usedRoot]]
+# CHECK: undefined = CallDirect v3, v4 function=[[unusedRoot]]
+# CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
+
+function f4 name="coldPaths2" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = String string="bad"
+    v6 = PropGet v3 key="logger"
+    v7 = CallMethod v6, v5, v4 key="report"
+    Return v7
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = String string="miss"
+    v9 = PropGet v3 key="counter"
+    v10 = CallMethod v9, v8, v8, v4 key="add"
+    Return v4
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v3, v11, v11, v11, v11, v4 key="fail"
+    Return v12
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: anything = CallDirect v3, v4 function=[[usedRoot]]
+# CHECK: undefined = CallDirect v3, v4 function=[[unusedRoot]]
+# CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
+
+function f5 name="coldPaths3" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = String string="bad"
+    v6 = PropGet v3 key="logger"
+    v7 = CallMethod v6, v5, v4 key="report"
+    Return v7
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = String string="miss"
+    v9 = PropGet v3 key="counter"
+    v10 = CallMethod v9, v8, v8, v4 key="add"
+    Return v4
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v3, v11, v11, v11, v11, v4 key="fail"
+    Return v12
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f5
+# CHECK: anything = CallDirect v3, v4 function=[[usedRoot]]
+# CHECK: undefined = CallDirect v3, v4 function=[[unusedRoot]]
+# CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
+
+function f6 name="coldPaths4" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = String string="bad"
+    v6 = PropGet v3 key="logger"
+    v7 = CallMethod v6, v5, v4 key="report"
+    Return v7
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = String string="miss"
+    v9 = PropGet v3 key="counter"
+    v10 = CallMethod v9, v8, v8, v4 key="add"
+    Return v4
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v3, v11, v11, v11, v11, v4 key="fail"
+    Return v12
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f6
+# CHECK: anything = CallDirect v3, v4 function=[[usedRoot]]
+# CHECK: undefined = CallDirect v3, v4 function=[[unusedRoot]]
+# CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
+
+function f7 name="coldPaths5" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = String string="bad"
+    v6 = PropGet v3 key="logger"
+    v7 = CallMethod v6, v5, v4 key="report"
+    Return v7
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v8 = String string="miss"
+    v9 = PropGet v3 key="counter"
+    v10 = CallMethod v9, v8, v8, v4 key="add"
+    Return v4
+  b4():
+    Branch v2 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v3, v11, v11, v11, v11, v4 key="fail"
+    Return v12
+  b6():
+    Return v4
+}
+# CHECK-LABEL: function f7
+# CHECK: anything = CallDirect v3, v4 function=[[usedRoot]]
+# CHECK: undefined = CallDirect v3, v4 function=[[unusedRoot]]
+# CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
+
+function f8 name="rootUnderHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b4()
+  b1() frequency=Rare handler=b3():
+    v3 = String string="fatal"
+    v4 = PropGet v1 key="target"
+    v5 = CallMethod v4, v3, v3, v3, v3, v2 key="fail"
+    Jump -> next b2()
+  b2():
+    Return v5
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    Return v6
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f8
+# CHECK: b1() frequency=Rare handler=b3():
+# CHECK: [[target]]: anything = PropGet v1 key="target"
+# CHECK-NEXT: = CallDirect [[target]], v2 function=[[oneValue]]
+# CHECK-NEXT: Jump -> next b2()
+
+function f9 name="unrepeatedLongRun" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = PropGet v1 key="holder"
+    v5 = CallMethod v4, v3, v3, v3, v3, v2 key="fail"
+    Return v5
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f9
+# CHECK: [[holder]]: anything = PropGet v1 key="holder"
+# CHECK-NEXT: = CallDirect [[holder]], v2 function=[[oneValue]]
+
+function f10 name="guardedCall" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f10
+# CHECK-NOT: TypeTest
+# CHECK: [[result10]]: anything = CallDirect v1, v2 function=[[region]]
+# CHECK-NEXT: Jump -> next [[join10]]([[result10]])
+# CHECK-NOT: = Call v1
+
+function f11 name="guardedCall2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f11
+# CHECK-NOT: TypeTest
+# CHECK: [[result11]]: anything = CallDirect v1, v2 function=[[region]]
+# CHECK-NEXT: Jump -> next [[join11]]([[result11]])
+# CHECK-NOT: = Call v1
+
+function f12 name="guardedCall3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f12
+# CHECK-NOT: TypeTest
+# CHECK: [[result12]]: anything = CallDirect v1, v2 function=[[region]]
+# CHECK-NEXT: Jump -> next [[join12]]([[result12]])
+# CHECK-NOT: = Call v1
+
+function f13 name="guardedCall4" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f13
+# CHECK-NOT: TypeTest
+# CHECK: [[result13]]: anything = CallDirect v1, v2 function=[[region]]
+# CHECK-NEXT: Jump -> next [[join13]]([[result13]])
+# CHECK-NOT: = Call v1
+
+function f14 name="guardedCall5" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f14
+# CHECK-NOT: TypeTest
+# CHECK: [[result14]]: anything = CallDirect v1, v2 function=[[region]]
+# CHECK-NEXT: Jump -> next [[join14]]([[result14]])
+# CHECK-NOT: = Call v1
+
+function f15 name="smallOperation" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = PropGet v1 key="rare"
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f15
+# CHECK: = PropGet v1 key="rare"
+
+function f16 name="smallOperation2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = PropGet v1 key="rare"
+    Return v3
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f16
+# CHECK: = PropGet v1 key="rare"
+
+function f17 name="warmBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="fatal"
+    v3 = CallMethod v0, v2, v2, v2, v2, v1 key="fail"
+    Return v3
+}
+# CHECK-LABEL: function f17
+# CHECK: = CallMethod
+
+function f18 name="coldBlockInCycle" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = CallMethod v1, v5, v5, v5, v5, v2 key="fail"
+    Jump -> next b1(v6)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f18
+# CHECK: = CallMethod
+
+function f19 name="differentPayload" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = CallMethod v1, v3, v3, v3, v3, v2 key="fail" calleeName="other"
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f19
+# CHECK: = CallMethod
+
+function f20 name="twoExitArguments" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4, v2)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5, v5)
+  b4(v6, v7):
+    v8 = Call v6, -, v7
+    Return v8
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f20
+# CHECK: = TypeTest
+# CHECK: = CallDirect v1, v2 function=[[plainCall]]
+# CHECK: = CallDirect v6, v7 function=[[plainCall]]
+
+function f21 name="twoExitArguments2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4, v2)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5, v5)
+  b4(v6, v7):
+    v8 = Call v6, -, v7
+    Return v8
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f21
+# CHECK: = TypeTest
+
+function f22 name="twoExitArguments3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    Jump -> next b4(v4, v2)
+  b3() frequency=Rare:
+    v5 = Call v1, -, v2
+    Jump -> next b4(v5, v5)
+  b4(v6, v7):
+    v8 = Call v6, -, v7
+    Return v8
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f22
+# CHECK: = TypeTest
+
+function f23 name="sevenLiveIns" parameters=[{type=boolean}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v8 = CallMethod v1, v2, v3, v4, v5, v6, v7 key="wide"
+    Return v8
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f23
+# CHECK: = CallMethod
+
+function f24 name="provenLayoutLiveIn" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    v3 = TypeTest v1 testedType=L0
+    Branch v3 -> taken b1(| 0), notTaken b8()
+  b1(v4):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
+  b2() frequency=Rare:
+    v5 = String string="fatal"
+    v6 = CallMethod v4, v5, v5, v5, v5, v2 key="fail"
+    Return v6
+  b3() frequency=Rare:
+    v7 = String string="fatal"
+    v8 = CallMethod v4, v7, v7, v7, v7, v2 key="fail"
+    Return v8
+  b4() frequency=Rare:
+    v9 = String string="fatal"
+    v10 = CallMethod v4, v9, v9, v9, v9, v2 key="fail"
+    Return v10
+  b5() frequency=Rare:
+    v11 = String string="fatal"
+    v12 = CallMethod v4, v11, v11, v11, v11, v2 key="fail"
+    Return v12
+  b6() frequency=Rare:
+    v13 = String string="fatal"
+    v14 = CallMethod v4, v13, v13, v13, v13, v2 key="fail"
+    Return v14
+  b7() frequency=Rare:
+    v15 = String string="fatal"
+    v16 = CallMethod v4, v15, v15, v15, v15, v2 key="fail"
+    Return v16
+  b8():
+    Return v2
+}
+# CHECK-LABEL: function f24
+# CHECK-NOT: = CallMethod
+# CHECK-COUNT-6: anything = CallDirect v4, v2 function=[[provenReceiver]]
+# CHECK-NOT: = CallMethod
+
+function f25 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = String string="fatal"
+    v4 = CallMethod v1, v3, v2 key="unique"
+    Return v4
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f25
+# CHECK: = CallMethod
+
+function f26 name="target" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+# CHECK-LABEL: function f26
+
+function f27 name="unrepeatedRegion" parameters=[{type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: boolean, v2: anything, v3: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    Branch v1 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = PropGet v2 key="detail"
+    Jump -> next b4(v4)
+  b3() frequency=Rare:
+    v5 = PropGet v3 key="detail"
+    Jump -> next b4(v5)
+  b4(v6):
+    Return v6
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f27
+# CHECK-NOT: = PropGet
+# CHECK: Branch v1 -> taken
+# CHECK: anything = CallDirect v2 function=[[detail]]
+# CHECK: anything = CallDirect v3 function=[[detail]]
+# CHECK-NOT: = PropGet
+
+function f28 name="detailReads" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), otherwise b11()
+  b1() frequency=Rare:
+    v3 = PropGet v1 key="detail"
+    Return v3
+  b2() frequency=Rare:
+    v4 = PropGet v1 key="detail"
+    Return v4
+  b3() frequency=Rare:
+    v5 = PropGet v1 key="detail"
+    Return v5
+  b4() frequency=Rare:
+    v6 = PropGet v1 key="detail"
+    Return v6
+  b5() frequency=Rare:
+    v7 = PropGet v1 key="detail"
+    Return v7
+  b6() frequency=Rare:
+    v8 = PropGet v1 key="detail"
+    Return v8
+  b7() frequency=Rare:
+    v9 = PropGet v1 key="detail"
+    Return v9
+  b8() frequency=Rare:
+    v10 = PropGet v1 key="detail"
+    Return v10
+  b9() frequency=Rare:
+    v11 = PropGet v1 key="detail"
+    Return v11
+  b10() frequency=Rare:
+    v12 = PropGet v1 key="detail"
+    Return v12
+  b11():
+    Return v2
+}
+# CHECK-LABEL: function f28
+# CHECK-NOT: = PropGet
+# CHECK-COUNT-10: anything = CallDirect v1 function=[[detail]]
+# CHECK-NOT: = PropGet
+
+function f29 name="scopeLookups" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="settings" [isFreeName]
+    Return v3
+  b2() frequency=Rare:
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="settings" [isFreeName]
+    Return v5
+  b3() frequency=Rare:
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="settings" [isFreeName]
+    Return v7
+  b4() frequency=Rare:
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="settings" [isFreeName]
+    Return v9
+  b5() frequency=Rare:
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="settings" [isFreeName]
+    Return v11
+  b6() frequency=Rare:
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="settings" [isFreeName]
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f29
+# CHECK-NOT: = PropGet
+# CHECK-COUNT-6: anything = CallDirect function=[[settings]]
+# CHECK-NOT: = PropGet
+
+function f30 name="inlinedLookup" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f26 module=m0}] {
+  b0(v0: boolean, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="settings" [isFreeName] @0:1
+    Return v3
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f30
+# CHECK-NOT: = PropGet
+# CHECK: anything = CallDirect function=[[settings]]
+
+function f31 name="differentFlags" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="config" [isFreeName]
+    Return v3
+  b2() frequency=Rare:
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="config" [isFreeName]
+    Return v5
+  b3() frequency=Rare:
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="config" [isFreeName]
+    Return v7
+  b4() frequency=Rare:
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="config" [isFreeName, isForTypeOf]
+    Return v9
+  b5() frequency=Rare:
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="config" [isFreeName, isForTypeOf]
+    Return v11
+  b6() frequency=Rare:
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="config" [isFreeName, isForTypeOf]
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f31
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-3: = PropGet {{*}}key="config" [isFreeName]
+# CHECK-COUNT-3: = PropGet {{*}}key="config" [isFreeName, isForTypeOf]
+# CHECK-NOT: CallDirect
+
+function f32 name="setsLength" parameters=[{type=number}, {type=Array<anything, proven>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: Array<anything, proven>, v2: anything):
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+  b1() frequency=Rare:
+    v3 = ToNumber v2
+    v4 = CallBuiltin v1, v3 overload=ArrayPrototypeLength/1
+    Return v2
+  b2() frequency=Rare:
+    v5 = ToNumber v2
+    v6 = CallBuiltin v1, v5 overload=ArrayPrototypeLength/1
+    Return v2
+  b3() frequency=Rare:
+    v7 = ToNumber v2
+    v8 = CallBuiltin v1, v7 overload=ArrayPrototypeLength/1
+    Return v2
+  b4() frequency=Rare:
+    v9 = ToNumber v2
+    v10 = CallBuiltin v1, v9 overload=ArrayPrototypeLength/1
+    Return v2
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f32
+# CHECK-NOT: CallBuiltin
+# CHECK-COUNT-4: undefined = CallDirect v2, v1 function=[[setLength]]
+# CHECK-NOT: CallBuiltin
+
+function f33 name="sloppyFunctionSetsLength" flags=[IsSloppy] parameters=[{type=number}, {type=Array<anything, proven>}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: Array<anything, proven>, v2: anything):
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
+  b1() frequency=Rare:
+    v3 = ToNumber v2
+    v4 = CallBuiltin v1, v3 overload=ArrayPrototypeLength/1
+    Return v2
+  b2() frequency=Rare:
+    v5 = ToNumber v2
+    v6 = CallBuiltin v1, v5 overload=ArrayPrototypeLength/1
+    Return v2
+  b3() frequency=Rare:
+    v7 = ToNumber v2
+    v8 = CallBuiltin v1, v7 overload=ArrayPrototypeLength/1
+    Return v2
+  b4():
+    Return v2
+}
+# CHECK-LABEL: function f33
+# CHECK-NOT: CallBuiltin
+# CHECK-COUNT-3: undefined = CallDirect v2, v1 function=[[setLength]]
+# CHECK-NOT: CallBuiltin
+
+function f34 name="differentExitConstants" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    v5 = Undefined
+    Jump -> next b4(v4, v5)
+  b3() frequency=Rare:
+    v6 = Call v1, -, v2, v2
+    v7 = Null
+    Jump -> next b4(v6, v7)
+  b4(v8, v9):
+    v10 = Call v8, -, v9
+    Return v10
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f34
+# CHECK: = TypeTest
+
+function f35 name="differentExitConstants2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    v5 = Undefined
+    Jump -> next b4(v4, v5)
+  b3() frequency=Rare:
+    v6 = Call v1, -, v2, v2
+    v7 = Null
+    Jump -> next b4(v6, v7)
+  b4(v8, v9):
+    v10 = Call v8, -, v9
+    Return v10
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f35
+# CHECK: = TypeTest
+
+function f36 name="differentExitConstants3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything, v2: anything):
+    Branch v0 -> taken b1(), notTaken b5()
+  b1() frequency=Rare:
+    v3 = TypeTest v1 testedType=f26
+    Branch v3 -> taken b2(), notTaken b3()
+  b2() frequency=Rare:
+    v4 = CallDirect v2 function=f26
+    v5 = Undefined
+    Jump -> next b4(v4, v5)
+  b3() frequency=Rare:
+    v6 = Call v1, -, v2, v2
+    v7 = Null
+    Jump -> next b4(v6, v7)
+  b4(v8, v9):
+    v10 = Call v8, -, v9
+    Return v10
+  b5():
+    Return v2
+}
+# CHECK-LABEL: function f36
+# CHECK: = TypeTest
+
+function f37 name="createsError" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), otherwise b11()
+  b1() frequency=Rare:
+    v2 = String string="bad"
+    v3 = CallBuiltin -, v2 overload=TypeError/0 builtinCallForm=Whole
+    Return v3
+  b2() frequency=Rare:
+    v4 = String string="bad"
+    v5 = CallBuiltin -, v4 overload=TypeError/0 builtinCallForm=Whole
+    Return v5
+  b3() frequency=Rare:
+    v6 = String string="bad"
+    v7 = CallBuiltin -, v6 overload=TypeError/0 builtinCallForm=Whole
+    Return v7
+  b4() frequency=Rare:
+    v8 = String string="bad"
+    v9 = CallBuiltin -, v8 overload=TypeError/0 builtinCallForm=Whole
+    Return v9
+  b5() frequency=Rare:
+    v10 = String string="bad"
+    v11 = CallBuiltin -, v10 overload=TypeError/0 builtinCallForm=Whole
+    Return v11
+  b6() frequency=Rare:
+    v12 = String string="bad"
+    v13 = CallBuiltin -, v12 overload=TypeError/0 builtinCallForm=Whole
+    Return v13
+  b7() frequency=Rare:
+    v14 = String string="bad"
+    v15 = CallBuiltin -, v14 overload=TypeError/0 builtinCallForm=Whole
+    Return v15
+  b8() frequency=Rare:
+    v16 = String string="bad"
+    v17 = CallBuiltin -, v16 overload=TypeError/0 builtinCallForm=Whole
+    Return v17
+  b9() frequency=Rare:
+    v18 = String string="bad"
+    v19 = CallBuiltin -, v18 overload=TypeError/0 builtinCallForm=Whole
+    Return v19
+  b10() frequency=Rare:
+    v20 = String string="bad"
+    v21 = CallBuiltin -, v20 overload=TypeError/0 builtinCallForm=Whole
+    Return v21
+  b11():
+    Return v1
+}
+# CHECK-LABEL: function f37
+# CHECK-NOT: CallBuiltin
+# CHECK-COUNT-10: TypeError = CallDirect function=[[newError]]
+# CHECK-NOT: CallBuiltin
+
+function f38 name="hiddenLibraryFunctionCreatesError" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=0 parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+  b1() frequency=Rare:
+    v2 = String string="bad"
+    v3 = CallBuiltin -, v2 overload=TypeError/0 builtinCallForm=Whole
+    Return v3
+  b2() frequency=Rare:
+    v4 = String string="bad"
+    v5 = CallBuiltin -, v4 overload=TypeError/0 builtinCallForm=Whole
+    Return v5
+  b3() frequency=Rare:
+    v6 = String string="bad"
+    v7 = CallBuiltin -, v6 overload=TypeError/0 builtinCallForm=Whole
+    Return v7
+  b4() frequency=Rare:
+    v8 = String string="bad"
+    v9 = CallBuiltin -, v8 overload=TypeError/0 builtinCallForm=Whole
+    Return v9
+  b5() frequency=Rare:
+    v10 = String string="bad"
+    v11 = CallBuiltin -, v10 overload=TypeError/0 builtinCallForm=Whole
+    Return v11
+  b6() frequency=Rare:
+    v12 = String string="bad"
+    v13 = CallBuiltin -, v12 overload=TypeError/0 builtinCallForm=Whole
+    Return v13
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f38
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = CallBuiltin
+# CHECK-NOT: CallDirect
+
+function f39 name="inlinedHiddenLibraryFunction" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f38 module=m0}] {
+  b0(v0: boolean, v1: anything):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v2 = String string="bad"
+    v3 = CallBuiltin -, v2 overload=TypeError/0 builtinCallForm=Whole @0:1
+    Return v3
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f39
+# CHECK-NOT: CallDirect
+# CHECK: = CallBuiltin
+# CHECK: function [[usedRoot]] {{*}}role=OutlinedBody{{*}}parameters=[{type=anything}, {type=anything}] results=[{type=anything}]
+# CHECK: String string="bad"
+# CHECK: = PropGet v0 key="logger"
+# CHECK: = CallMethod
+# CHECK: function [[unusedRoot]] {{*}}role=OutlinedBody{{*}}results=[{type=undefined}]
+# CHECK-NOT: Return v
+# CHECK: function [[oneValue]] {{*}}role=OutlinedBody
+# CHECK: function [[region]] {{*}}role=OutlinedBody
+# CHECK: = TypeTest
+# CHECK: = Call v0, -, v1
+# CHECK: function [[plainCall]] {{*}}role=OutlinedBody
+# CHECK: = Call v0, -, v1
+# CHECK: function [[provenReceiver]] {{*}}role=OutlinedBody{{*}}parameters=[{type=L0}, {type=anything}] results=[{type=anything}]
+# CHECK: function [[detail]] {{*}}role=OutlinedBody{{*}}parameters=[{type=anything}] results=[{type=anything}]
+# CHECK: = PropGet v0 key="detail"
+# CHECK: function [[settings]] {{*}}role=OutlinedBody thisType={type=anything} results=[{type=anything}]
+# CHECK: = PropGet {{*}}key="settings" [isFreeName]
+# CHECK: function [[setLength]] {{*}}role=OutlinedBody{{*}}results=[{type=undefined}]
+# CHECK: overload=ArrayPrototypeLength/1
+# CHECK: function [[newError]] {{*}}role=OutlinedBody thisType={type=anything} results=[{type=TypeError}]
+# CHECK: overload=TypeError/0
+# CHECK-NOT: role=OutlinedBody

@@ -102,14 +102,7 @@ class WatchpointSet;
     macro(StructureTransitionPropertyInlineCacheClearing, StructureTransitionPropertyInlineCacheClearingWatchpoint) \
     macro(PropertyInlineCacheClearing, PropertyInlineCacheClearingWatchpoint)
 
-#if ENABLE(AOT)
-#define JSC_WATCHPOINT_TYPES(macro) \
-    JSC_WATCHPOINT_TYPES_WITHOUT_DFG(macro) \
-    macro(AdaptiveStructure, DFG::AdaptiveStructureWatchpoint) \
-    macro(AOTSlot, AOT::SlotWatchpoint) \
-    macro(AOTAssumption, AOT::AssumptionWatchpoint) \
-    macro(AOTTransition, AOT::TransitionWatchpoint)
-#elif ENABLE(DFG_JIT)
+#if ENABLE(DFG_JIT)
 #define JSC_WATCHPOINT_TYPES(macro) \
     JSC_WATCHPOINT_TYPES_WITHOUT_DFG(macro) \
     macro(AdaptiveStructure, DFG::AdaptiveStructureWatchpoint)

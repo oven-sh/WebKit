@@ -25,6 +25,11 @@
 
 #include "config.h"
 
+#include "AOTCompiledStructure.h"
+#include "AOTInstance.h"
+#include "AOTInterpreterSlowPaths.h"
+#include "AOTPrimitives.h"
+#include "AOTRuntimeType.h"
 #include "ArithProfile.h"
 #include "ArrayProfile.h"
 #include "BytecodeIndices.h"
@@ -59,6 +64,7 @@
 #include "JumpTable.h"
 #include "LLIntData.h"
 #include "LLIntOfflineAsmConfig.h"
+#include "LocalAllocator.h"
 #include "MarkedSpace.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "NativeExecutable.h"
@@ -71,6 +77,7 @@
 #include "ShadowChicken.h"
 #include "Structure.h"
 #include "StructureChain.h"
+#include "Symbol.h"
 #include "TypeProfiler.h"
 #include "TypeProfilerLog.h"
 #include "VM.h"
@@ -96,6 +103,8 @@ class LLIntOffsetsExtractor {
     using JSInternalFieldObjectImpl = JSC::JSInternalFieldObjectImpl<>;
     using ArgumentValueProfileFixedVector = WTF::FixedVector<ArgumentValueProfile>;
     using BinaryArithProfileFixedVector = FixedVector<BinaryArithProfile>;
+    using IdentifierFixedVector = FixedVector<Identifier>;
+    using PutByIdFlagsFits = Fits<PutByIdFlags, OpcodeSize::Narrow>;
     using UnaryArithProfileFixedVector = FixedVector<UnaryArithProfile>;
     using UnlinkedSimpleJumpTableFixedVector = FixedVector<UnlinkedSimpleJumpTable>;
     using UnlinkedStringJumpTableFixedVector = FixedVector<UnlinkedStringJumpTable>;

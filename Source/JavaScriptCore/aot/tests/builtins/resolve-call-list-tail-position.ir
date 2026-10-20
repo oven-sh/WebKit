@@ -1,0 +1,99 @@
+# A list call that has to stay a tail call passes the one pristine array it spreads and builds no list. It never becomes a call of a built-in, which is no tail call
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins
+# STATISTIC: ReturnCallsDemoted = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenArray" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>):
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f0 name="provenArray"
+# CHECK-NOT: NewArray
+# CHECK-NOT: AppendSpread
+# CHECK: v4: anything = CallList v0, -, v1
+# CHECK-NEXT: ReturnCall v4
+
+function f1 name="arrayWithoutProof" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array):
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f1 name="arrayWithoutProof"
+# CHECK: [[isPristine1]]: boolean = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[isPristine1]] -> taken [[inPlace1]](| 0), notTaken [[generic1]]()
+# CHECK: [[forwarded1]]: anything = CallList v0, -, v1
+# CHECK-NEXT: ReturnCall [[forwarded1]]
+# CHECK: [[generic1]]() frequency=Unlikely:
+# CHECK-NEXT: [[list1]]: Array = NewArray contents=anything
+# CHECK-NEXT: AppendSpread [[list1]], v1
+# CHECK-NEXT: [[copied1]]: anything = CallList v0, -, [[list1]]
+# CHECK-NEXT: ReturnCall [[copied1]]
+
+function f2 name="builtinWithListForm" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>):
+    v1 = Builtin builtin=MathMax
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f2 name="builtinWithListForm"
+# CHECK-NOT: CallBuiltin
+# CHECK-NOT: AppendSpread
+# CHECK: v4: anything = CallList v1, -, v0
+# CHECK-NEXT: ReturnCall v4
+
+function f3 name="builtinWithListFormAndWholeList" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>):
+    v1 = Builtin builtin=MathMax
+    v2 = CallList v1, -, v0
+    ReturnCall v2
+}
+# CHECK-LABEL: function f3 name="builtinWithListFormAndWholeList"
+# CHECK-NOT: CallBuiltin
+# CHECK: v2: anything = CallList v1, -, v0
+# CHECK-NEXT: ReturnCall v2
+
+function f4 name="elementBesideSpread" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>):
+    v2 = NewArray v0 contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f4 name="elementBesideSpread"
+# CHECK: v2: Array = NewArray v0 contents=anything
+# CHECK-NEXT: AppendSpread v2, v1
+# CHECK-NEXT: v4: anything = CallList v0, -, v2
+# CHECK-NEXT: ReturnCall v4
+
+function f5 name="unknownIterable" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewArray contents=anything
+    AppendSpread v2, v1
+    v4 = CallList v0, -, v2
+    ReturnCall v4
+}
+# CHECK-LABEL: function f5 name="unknownIterable"
+# CHECK: v2: Array = NewArray contents=anything
+# CHECK-NEXT: AppendSpread v2, v1
+# CHECK-NEXT: v4: anything = CallList v0, -, v2
+# CHECK-NEXT: ReturnCall v4
+
+function f6 name="builtinWhereTailCallIsNotRequired" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+  b0(v0: Array<number, pristine[Storage, Names]>):
+    v1 = Builtin builtin=MathMax
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    v4 = CallList v1, -, v2
+    Return v4
+}
+# CHECK-LABEL: function f6 name="builtinWhereTailCallIsNotRequired"
+# CHECK: v4: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List

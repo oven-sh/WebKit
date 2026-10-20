@@ -24,10 +24,6 @@
 #include "config.h"
 #include "ArrayConstructor.h"
 
-#if ENABLE(AOT)
-#include "AOTTypedCompactTable.h"
-#endif
-
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
 #include "BuiltinNames.h"
@@ -42,7 +38,6 @@
 #include "MapIteratorPrototypeInlines.h"
 #include "ProxyObject.h"
 #include "SetIteratorPrototypeInlines.h"
-#include "StringObject.h"
 #include <wtf/text/MakeString.h>
 
 #include "VMInlines.h"
@@ -379,16 +374,6 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if ENABLE(AOT)
-    if (set->hasCompactTable()) [[unlikely]] {
-        JSArray* result = constructEmptyArray(globalObject, nullptr);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, result, set);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (isAppended)
-            return result;
-    }
-#endif
     unsigned length = set->size();
 
     if (!length)
@@ -398,7 +383,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
 
-    auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    JSCell* storage = storageCell;
 
     // First pass: determine indexing type
     IndexingType indexingType = IsArray;
@@ -409,7 +394,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        auto* currentStorage = uncheckedDowncast<JSSet::Storage>(storageCell);
+        JSCell* currentStorage = storageCell;
         entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
         JSValue entryKey = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -432,6 +417,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
         nullptr, AllocationFailureMode::ReturnNull);
     if (!memory) [[unlikely]]
         return nullptr;
+    DeferGC deferGC(vm);
     auto* resultButterfly = Butterfly::fromBase(memory, 0, 0);
     resultButterfly->setVectorLength(vectorLength);
     resultButterfly->setPublicLength(length);
@@ -440,7 +426,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
     storageCell = set->storageOrSentinel(vm);
     if (storageCell == vm.orderedHashTableSentinel()) [[unlikely]]
         return nullptr;
-    storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    storage = storageCell;
 
     entry = 0;
     size_t i = 0;
@@ -451,7 +437,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
             if (storageCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSSet::Storage>(storageCell);
+            JSCell* currentStorage = storageCell;
             entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
             JSValue value = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -466,7 +452,7 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
             if (storageCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSSet::Storage>(storageCell);
+            JSCell* currentStorage = storageCell;
             entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
             JSValue value = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -497,17 +483,13 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
-#if ENABLE(AOT)
-        if (mapIterator->isAtCompactTable()) [[unlikely]]
-            return nullptr;
-#endif
         storageCell = map->storageOrSentinel(vm);
         if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     }
 
     JSMap::Helper::Entry startEntry = mapIterator->entry();
-    auto* storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+    JSCell* storage = storageCell;
 
     IndexingType indexingType = IsArray;
     JSMap::Helper::Entry entry = startEntry;
@@ -518,7 +500,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         if (nextCell == vm.orderedHashTableSentinel())
             break;
 
-        auto* currentStorage = uncheckedDowncast<JSMap::Storage>(nextCell);
+        JSCell* currentStorage = nextCell;
         entry = JSMap::Helper::iterationEntry(*currentStorage) + 1;
 
         JSValue entryValue;
@@ -550,6 +532,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
         nullptr, AllocationFailureMode::ReturnNull);
     if (!memory) [[unlikely]]
         return nullptr;
+    DeferGC deferGC(vm);
     auto* resultButterfly = Butterfly::fromBase(memory, 0, 0);
     resultButterfly->setVectorLength(vectorLength);
     resultButterfly->setPublicLength(length);
@@ -557,7 +540,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     storageCell = mapIterator->tryGetStorage();
     if (!storageCell)
         storageCell = map->storageOrSentinel(vm);
-    storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+    storage = storageCell;
     entry = startEntry;
     size_t i = 0;
 
@@ -567,7 +550,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
             if (nextCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSMap::Storage>(nextCell);
+            JSCell* currentStorage = nextCell;
             entry = JSMap::Helper::iterationEntry(*currentStorage) + 1;
 
             JSValue value;
@@ -587,7 +570,7 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
             if (nextCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSMap::Storage>(nextCell);
+            JSCell* currentStorage = nextCell;
             entry = JSMap::Helper::iterationEntry(*currentStorage) + 1;
 
             JSValue value;
@@ -625,25 +608,13 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
-#if ENABLE(AOT)
-        if (setIterator->isAtCompactTable()) [[unlikely]]
-            return nullptr;
-        if (set->hasCompactTable()) [[unlikely]] {
-            JSArray* result = constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, result, setIterator);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (isAppended)
-                return result;
-        }
-#endif
         storageCell = set->storageOrSentinel(vm);
         if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     }
 
     JSSet::Helper::Entry startEntry = setIterator->entry();
-    auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    JSCell* storage = storageCell;
 
     IndexingType indexingType = IsArray;
     JSSet::Helper::Entry entry = startEntry;
@@ -654,7 +625,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         if (nextCell == vm.orderedHashTableSentinel())
             break;
 
-        auto* currentStorage = uncheckedDowncast<JSSet::Storage>(nextCell);
+        JSCell* currentStorage = nextCell;
         entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
         JSValue entryValue = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -681,6 +652,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
         nullptr, AllocationFailureMode::ReturnNull);
     if (!memory) [[unlikely]]
         return nullptr;
+    DeferGC deferGC(vm);
     auto* resultButterfly = Butterfly::fromBase(memory, 0, 0);
     resultButterfly->setVectorLength(vectorLength);
     resultButterfly->setPublicLength(length);
@@ -688,7 +660,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     storageCell = setIterator->tryGetStorage();
     if (!storageCell)
         storageCell = set->storageOrSentinel(vm);
-    storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    storage = storageCell;
     entry = startEntry;
     size_t i = 0;
 
@@ -698,7 +670,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
             if (nextCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSSet::Storage>(nextCell);
+            JSCell* currentStorage = nextCell;
             entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
             JSValue value = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -713,7 +685,7 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
             if (nextCell == vm.orderedHashTableSentinel())
                 break;
 
-            auto* currentStorage = uncheckedDowncast<JSSet::Storage>(nextCell);
+            JSCell* currentStorage = nextCell;
             entry = JSSet::Helper::iterationEntry(*currentStorage) + 1;
             JSValue value = JSSet::Helper::getIterationEntryKey(*currentStorage);
 
@@ -801,22 +773,6 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorPrivateFromFastWithoutMapFn, (JSGlobalO
             RETURN_IF_EXCEPTION(scope, { });
         }
     }
-#if ENABLE(AOT)
-    if (!result && vm.useImmutableIntrinsics && items && items.isCell()) {
-        JSValue iterable = items;
-        if (auto* wrapper = dynamicDowncast<StringObject>(items); wrapper && wrapper->structure() == globalObject->stringObjectStructure())
-            iterable = wrapper->internalValue();
-        JSType type = iterable.asCell()->type();
-        if (type == StringType || type == JSMapType || type == JSMapIteratorType || type == JSSetIteratorType) {
-            JSArray* made = constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, { });
-            bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, made, iterable);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (isAppended)
-                result = made;
-        }
-    }
-#endif
     if (result)
         return JSValue::encode(result);
     return JSValue::encode(jsUndefined());

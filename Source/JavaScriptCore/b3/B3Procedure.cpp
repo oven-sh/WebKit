@@ -33,9 +33,15 @@
 #include "B3BackwardsCFG.h"
 #include "B3BackwardsDominators.h"
 #include "B3BasicBlockUtils.h"
+#include "B3BlockRarity.h"
 #include "B3CFG.h"
+#include "B3Common.h"
+#include "B3CompilationScratch.h"
+#include "B3ConstPtrValue.h"
 #include "B3DataSection.h"
 #include "B3Dominators.h"
+#include "B3EstimateFrequencies.h"
+#include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
 #include "B3OriginDump.h"
 #include "B3ProcedureInlines.h"
@@ -51,67 +57,62 @@ namespace JSC { namespace B3 {
 
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Procedure);
 
-#if USE(BUN_JSC_ADDITIONS)
-Arena::ThreadChunk::~ThreadChunk()
-{
-    if (chunk)
-        fastFree(chunk);
-}
-
-Arena::ThreadChunk& Arena::threadChunk()
-{
-    static thread_local ThreadChunk threadLocal;
-    return threadLocal;
-}
-
-Arena::~Arena()
-{
-    for (Chunk* chunk = m_chunks; chunk;) {
-        Chunk* next = chunk->next;
-        if (!next && m_keepsFirstChunkForThread && chunk->size == firstChunkSize && !threadChunk().chunk)
-            threadChunk().chunk = chunk;
-        else
-            fastFree(chunk);
-        chunk = next;
-    }
-}
-
-void* Arena::allocateSlow(size_t size, size_t alignment)
-{
-    size_t needed = sizeof(Chunk) + alignment + size;
-    Chunk* chunk = nullptr;
-    if (!m_chunks && m_keepsFirstChunkForThread && needed <= firstChunkSize)
-        chunk = std::exchange(threadChunk().chunk, nullptr);
-    if (!chunk) {
-        size_t chunkSize = std::max(m_chunks ? std::min(m_chunks->size * 2, maxChunkSize) : firstChunkSize, needed);
-        chunk = static_cast<Chunk*>(fastMalloc(chunkSize));
-        chunk->size = chunkSize;
-    }
-    chunk->next = m_chunks;
-    m_chunks = chunk;
-    m_head = reinterpret_cast<uintptr_t>(chunk + 1);
-    m_end = reinterpret_cast<uintptr_t>(chunk) + chunk->size;
-    return allocate(size, alignment);
-}
-#endif
-
 Procedure::Procedure(bool usesSIMD)
-    : m_cfg(new CFG(*this))
+    : Procedure(Policy::fromProcessOptions(), nullptr, usesSIMD)
+{
+}
+
+Procedure::Procedure(const Policy& policy, CompilationScratch* scratch, bool usesSIMD)
+    : m_arena(scratch)
+    , m_cfg(new CFG(*this))
     , m_lastPhaseName("initial")
     , m_byproducts(makeUnique<OpaqueByproducts>())
-#if !USE(BUN_JSC_ADDITIONS)
-    , m_heaps(makeUniqueRef<AbstractHeapRepository>())
-#endif
+    , m_policy(policy)
+    , m_scratch(scratch)
 {
+    m_policy.applyDisabledSwitches();
+    for (Opcode opcode : { Nop, Identity, Jump, Oops, Phi })
+        m_opcodesEverAdded.set(opcode);
+    const AddressingPolicy& addressing = m_policy.addressing;
+    RELEASE_ASSERT(!addressing.isPositionIndependent || (addressing.dataSectionSpace != runtimeFunctionSpace && addressing.jumpTableSpace != runtimeFunctionSpace && addressing.dataSectionSpace != addressing.jumpTableSpace));
     if (usesSIMD)
         setUsesSIMD();
     // Initialize all our fields before constructing Air::Code since
     // it looks into our fields.
     m_code = std::unique_ptr<Air::Code>(new Air::Code(*this));
     m_code->setNumEntrypoints(m_numEntrypoints);
+    setOptLevel(m_policy.upstream.optLevel);
+    m_policy.air.registers.pinned.forEach([&](Reg reg) {
+        pinRegister(reg);
+    });
 }
 
-Procedure::~Procedure() = default;
+Procedure::~Procedure()
+{
+    if (m_scratch && m_heaps)
+        m_scratch->giveBackHeaps(WTF::move(m_heaps));
+}
+
+void Procedure::createHeaps()
+{
+    m_heaps = m_scratch ? m_scratch->takeHeaps() : makeUnique<AbstractHeapRepository>();
+    m_heaps->attachProcedure(*this);
+}
+
+void Procedure::fail(FailureKind kind, Origin origin)
+{
+    if (!m_report.failure)
+        m_report.failure = Failure { kind, origin };
+}
+
+void Procedure::addRemark(const Remark& remark, uint32_t count)
+{
+    ASSERT((remark.reason == GaveUpReason::LimitReached) == remark.limit.has_value());
+    if (std::optional<Counter> counter = counterOf(remark.kind))
+        m_report.counters[static_cast<size_t>(*counter)] += count;
+    if (m_policy.collectsRemarks)
+        m_report.remarks.append(remark);
+}
 
 void Procedure::printOrigin(PrintStream& out, Origin origin) const
 {
@@ -123,12 +124,12 @@ void Procedure::printOrigin(PrintStream& out, Origin origin) const
 
 BasicBlock* Procedure::addBlock(double frequency)
 {
-#if USE(BUN_JSC_ADDITIONS)
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+    m_blockRarity = nullptr;
+    m_areFrequenciesCurrent = false;
     std::unique_ptr<BasicBlock> block(new (arenaOrNull()) BasicBlock(m_blocks.size(), frequency));
     block->m_isInArena = !!arenaOrNull();
-#else
-    std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
-#endif
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;
@@ -164,15 +165,13 @@ const Vector<Type>& Procedure::tupleForType(Type tuple) const
 
 Value* Procedure::clone(Value* value)
 {
-#if USE(BUN_JSC_ADDITIONS)
     SparseCollection<Value>::Pointer clone(value->cloneImpl(arenaOrNull()));
     m_opcodesEverAdded.set(value->opcode());
-#else
-    std::unique_ptr<Value> clone(value->cloneImpl());
-#endif
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
-    return m_values.add(WTF::move(clone));
+    Value* result = m_values.add(WTF::move(clone));
+    m_knownProperties.copy(value, result);
+    return result;
 }
 
 Value* Procedure::addIntConstant(Origin origin, Type type, int64_t value)
@@ -267,10 +266,8 @@ void Procedure::resetValueOwners()
 
 void Procedure::resetReachability()
 {
-#if USE(BUN_JSC_ADDITIONS)
     m_blocksInPreOrder.shrink(0);
     m_blocksInPostOrder.shrink(0);
-#endif
     recomputePredecessors(m_blocks);
     
     // The common case is that this does not find any dead blocks.
@@ -284,12 +281,6 @@ void Procedure::resetReachability()
     if (!foundDead)
         return;
     
-#if USE(BUN_JSC_ADDITIONS)
-    if (m_dominators && m_keepsDominatorsThroughReset) {
-        m_dominators->skipOver([](BasicBlock* block) {
-            return isBlockDead(block);
-        });
-    }
     IndexSet<Value*> deadPhis;
     for (auto& block : m_blocks) {
         if (!isBlockDead(block.get()))
@@ -307,16 +298,6 @@ void Procedure::resetReachability()
             }
         }
     }
-#else
-    resetValueOwners();
-
-    for (Value* value : values()) {
-        if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
-            if (isBlockDead(upsilon->phi()->owner))
-                upsilon->replaceWithNop();
-        }
-    }
-#endif
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
@@ -327,28 +308,75 @@ void Procedure::resetReachability()
     }
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-void Procedure::resetReachabilityAfterContractions()
-{
-    m_keepsDominatorsThroughReset = true;
-    resetReachability();
-    m_keepsDominatorsThroughReset = false;
-    std::unique_ptr<Dominators> dominators = WTF::move(m_dominators);
-    invalidateCFG();
-    m_dominators = WTF::move(dominators);
-}
-#endif
-
 void Procedure::invalidateCFG()
 {
-#if USE(BUN_JSC_ADDITIONS)
     m_blocksInPreOrder.shrink(0);
     m_blocksInPostOrder.shrink(0);
-#endif
     m_dominators = nullptr;
     m_naturalLoops = nullptr;
     m_backwardsCFG = nullptr;
     m_backwardsDominators = nullptr;
+    m_blockRarity = nullptr;
+    m_areFrequenciesCurrent = false;
+}
+
+static void dumpKnownProperties(const Procedure& proc, PrintStream& out)
+{
+    bool didPrintHeading = false;
+    auto printHeadingOnce = [&] {
+        if (!std::exchange(didPrintHeading, true))
+            out.print(tierName, "Known properties:\n");
+    };
+    for (Value* value : proc.values()) {
+        std::optional<IntRange> range = proc.knownRange(value);
+        uint32_t dereferenceableBytes = proc.knownDereferenceableBytes(value);
+        if (!range && !dereferenceableBytes)
+            continue;
+        printHeadingOnce();
+        out.print(tierName, "    ", *value, ":");
+        if (range)
+            out.print(" range = ", *range);
+        if (dereferenceableBytes)
+            out.print(" dereferenceableBytes = ", dereferenceableBytes);
+        out.print("\n");
+    }
+    proc.knownInductions().forEach([&](const InductionRecord& record) {
+        printHeadingOnce();
+        out.print(tierName, "    ", *record.phi, ": induction, next = ", *record.next, ", step = ", record.step);
+        if (record.test)
+            out.print(", test = ", *record.test);
+        if (record.doesNotWrap)
+            out.print(", doesNotWrap");
+        if (record.relationHoldsOnEntry)
+            out.print(", relationHoldsOnEntry");
+        out.print("\n");
+    });
+}
+
+static void dumpReport(const Procedure& proc, PrintStream& out)
+{
+    auto printOrigin = [&](Origin origin) {
+        if (origin)
+            out.print(" at ", OriginDump(&proc, origin));
+        out.print("\n");
+    };
+
+    const CompilationReport& report = proc.report();
+    if (report.failure) {
+        out.print(tierName, "Failure: ", report.failure->kind);
+        printOrigin(report.failure->origin);
+    }
+    if (report.remarks.isEmpty())
+        return;
+    out.print(tierName, "Remarks:\n");
+    for (const Remark& remark : report.remarks) {
+        out.print(tierName, "    ", remark.kind);
+        if (remark.reason != GaveUpReason::None)
+            out.print(", ", remark.reason);
+        if (remark.limit)
+            out.print(", ", *remark.limit);
+        printOrigin(remark.origin);
+    }
 }
 
 void Procedure::dump(PrintStream& out) const
@@ -382,11 +410,14 @@ void Procedure::dump(PrintStream& out) const
         for (Air::StackSlot* slot : stackSlots())
             out.print(tierName, "    ", pointerDump(slot), ": ", deepDump(slot), "\n");
     }
+    if (auto policyDump = toUTF8CString(m_policy); policyDump.length())
+        out.print(tierName, "Policy: ", policyDump, "\n");
+    dumpKnownProperties(*this, out);
+    dumpReport(*this, out);
     if (m_byproducts->count())
         out.print(*m_byproducts);
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 template<GraphOrder order>
 static void appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
 {
@@ -418,17 +449,33 @@ static void appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
         }
     }
 }
-#endif
+
+void Procedure::didReorderSuccessors()
+{
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+}
+
+const Vector<BasicBlock*>& Procedure::cachedBlocksInPreOrder()
+{
+    if (m_blocksInPreOrder.isEmpty())
+        appendBlocksInOrder<GraphOrder::PreOrder>(*this, m_blocksInPreOrder);
+    else if (shouldValidateIRAtEachPhase(*this))
+        RELEASE_ASSERT(m_blocksInPreOrder == blocksInPreOrder());
+    return m_blocksInPreOrder;
+}
+
+const Vector<BasicBlock*>& Procedure::cachedBlocksInPostOrder()
+{
+    if (m_blocksInPostOrder.isEmpty())
+        appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
+    else if (shouldValidateIRAtEachPhase(*this))
+        RELEASE_ASSERT(m_blocksInPostOrder == blocksInPostOrder());
+    return m_blocksInPostOrder;
+}
 
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (positionIndependent()) {
-        if (m_blocksInPreOrder.isEmpty())
-            appendBlocksInOrder<GraphOrder::PreOrder>(*this, m_blocksInPreOrder);
-        return m_blocksInPreOrder;
-    }
-#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PreOrder, result);
@@ -437,13 +484,6 @@ Vector<BasicBlock*> Procedure::blocksInPreOrder()
 
 Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (positionIndependent()) {
-        if (m_blocksInPostOrder.isEmpty())
-            appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
-        return m_blocksInPostOrder;
-    }
-#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PostOrder, result);
@@ -462,18 +502,75 @@ void Procedure::deleteAllVariables()
 
 void Procedure::deleteValue(Value* value)
 {
+    m_knownProperties.remove(value);
+    m_knownInductions.willDelete(value, m_values);
     m_values.remove(value);
+}
+
+void Procedure::setKnownRange(Value* value, IntRange range)
+{
+    ASSERT(value->type().isInt());
+    ASSERT(range.isSubsetOf(IntRange::top(value->type())));
+    if (m_policy.knownProperties.trustsKnownRanges)
+        m_knownProperties.setRange(value, range);
+}
+
+void Procedure::setKnownDereferenceableBytes(Value* value, uint32_t bytes)
+{
+    ASSERT(value->type() == pointerType());
+    if (m_policy.knownProperties.trustsKnownDereferenceableBytes)
+        m_knownProperties.setDereferenceableBytes(value, bytes);
+}
+
+bool Procedure::isKnownDereferenceable(const MemoryValue* memory) const
+{
+    return isKnownDereferenceable(memory->lastChild(), memory->offset(), memory->accessByteSize());
+}
+
+bool Procedure::isKnownDereferenceable(const Value* address, int64_t offset, size_t byteSize) const
+{
+    if (m_knownProperties.isEmpty())
+        return false;
+    uint32_t bytes = m_knownProperties.dereferenceableBytes(address->foldIdentity());
+    return offset >= 0 && offset + static_cast<int64_t>(byteSize) <= static_cast<int64_t>(bytes);
+}
+
+Effects Procedure::effectsOf(const Value* value) const
+{
+    Effects effects = value->effects();
+    if (!effects.controlDependent)
+        return effects;
+    const MemoryValue* memory = value->as<MemoryValue>();
+    if (memory && memory->isLoad() && !memory->traps() && isKnownDereferenceable(memory))
+        effects.controlDependent = false;
+    return effects;
+}
+
+void Procedure::setKnownInduction(const InductionRecord& record)
+{
+    ASSERT(record.phi->opcode() == Phi && record.phi->type().isInt());
+    ASSERT(record.next && record.next->type() == record.phi->type());
+    ASSERT(record.step);
+    if (m_policy.knownProperties.trustsKnownInductions)
+        m_knownInductions.add(record);
+}
+
+void Procedure::setKnownInduction(const DemotedInduction& demoted)
+{
+    ASSERT(demoted.variable->type().isInt());
+    ASSERT(demoted.header && demoted.next && demoted.next->type() == demoted.variable->type());
+    ASSERT(demoted.step);
+    if (m_policy.knownProperties.trustsKnownInductions)
+        m_knownInductions.addDemoted(demoted);
 }
 
 void Procedure::deleteOrphans()
 {
-#if USE(BUN_JSC_ADDITIONS)
     size_t numberOfValuesInBlocks = 0;
     for (BasicBlock* block : *this)
         numberOfValuesInBlocks += block->size();
     if (numberOfValuesInBlocks == m_values.numberOfEntries())
         return;
-#endif
     IndexSet<Value*> valuesInBlocks;
     for (BasicBlock* block : *this)
         valuesInBlocks.addAll(*block);
@@ -523,6 +620,22 @@ BackwardsDominators& Procedure::backwardsDominators()
     return *m_backwardsDominators;
 }
 
+BlockRarity& Procedure::blockRarity()
+{
+    if (!m_blockRarity)
+        m_blockRarity = makeUnique<BlockRarity>(*this);
+    return *m_blockRarity;
+}
+
+void Procedure::updateFrequencies()
+{
+    if (m_areFrequenciesCurrent || !m_policy.optimization.estimatesFrequencies)
+        return;
+    estimateFrequencies(*this);
+    m_blockRarity = nullptr;
+    m_areFrequenciesCurrent = true;
+}
+
 void Procedure::addFastConstant(const ValueKey& constant)
 {
     RELEASE_ASSERT(constant.isConstant());
@@ -543,7 +656,35 @@ void* Procedure::addDataSection(size_t size)
     std::unique_ptr<DataSection> dataSection = makeUnique<DataSection>(size);
     void* result = dataSection->data();
     m_byproducts->add(WTF::move(dataSection));
+    if (m_policy.addressing.isPositionIndependent)
+        m_dataSections.append(DataSectionRecord { result, size });
     return result;
+}
+
+Value* Procedure::addDataSectionAddress(Origin origin, const void* dataSection)
+{
+    if (!m_policy.addressing.isPositionIndependent)
+        return add<ConstPtrValue>(origin, dataSection);
+    size_t index = m_dataSections.findIf([&](const DataSectionRecord& record) {
+        return record.data == dataSection;
+    });
+    RELEASE_ASSERT(index != notFound);
+    return add<RelocatableValue>(origin, RelocationSymbol { m_policy.addressing.dataSectionSpace, static_cast<uint32_t>(index) });
+}
+
+unsigned Procedure::addJumpTable(unsigned numberOfEntries)
+{
+    RELEASE_ASSERT(m_policy.addressing.isPositionIndependent);
+    auto record = makeUnique<JumpTableRecord>();
+    record->targetOffsets.fill(0, numberOfEntries);
+    m_jumpTables.append(WTF::move(record));
+    return m_jumpTables.size() - 1;
+}
+
+Value* Procedure::addJumpTableAddress(Origin origin, unsigned jumpTable)
+{
+    RELEASE_ASSERT(jumpTable < m_jumpTables.size());
+    return add<RelocatableValue>(origin, RelocationSymbol { m_policy.addressing.jumpTableSpace, jumpTable });
 }
 
 unsigned Procedure::callArgAreaSizeInBytes() const
@@ -579,12 +720,8 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
 
 Value* Procedure::addValueImpl(Value* value)
 {
-#if USE(BUN_JSC_ADDITIONS)
     m_opcodesEverAdded.set(value->opcode());
     return m_values.add(SparseCollection<Value>::Pointer(value));
-#else
-    return m_values.add(std::unique_ptr<Value>(value));
-#endif
 }
 
 void Procedure::setBlockOrderImpl(Vector<BasicBlock*>& blocks)
@@ -628,6 +765,10 @@ void Procedure::setNumEntrypoints(unsigned numEntrypoints)
 
 void Procedure::freeUnneededB3ValuesAfterLowering()
 {
+    m_blocksInPreOrder.clear();
+    m_blocksInPostOrder.clear();
+    m_knownInductions.clear();
+    m_blockRarity = nullptr;
     // We cannot clear m_stackSlots() or m_tuples here, as they are unfortunately modified and read respectively by Air.
     m_variables.clearAll();
     m_blocks.clear();
@@ -640,11 +781,10 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
 
     if (m_code->shouldPreserveB3Origins())
         return;
-#if USE(BUN_JSC_ADDITIONS)
-    if (positionIndependent())
+    if (m_policy.allocation.keepsValuesAfterLowering)
         return;
-#endif
 
+    m_knownProperties.clear();
     BitVector valuesToPreserve;
     valuesToPreserve.ensureSize(m_values.size());
     for (Value* value : m_values) {

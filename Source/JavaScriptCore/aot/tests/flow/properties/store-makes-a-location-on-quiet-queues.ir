@@ -1,0 +1,39 @@
+# Object.defineProperty(prototype, "k", { set }); guarded = literal over prototype; guarded.k = 1; plain = literal over another prototype; plain.k = 1
+# A store makes a location on its receiver because no setter is defined above it. Whether the definition or the store is looked at first depends on the order of the solve, so the store takes that step only
+# while nothing is queued: the receiver below the setter gets no property of that name in any order. A receiver without a setter above it does.
+# RUN: flow
+# CHECK: class {{*}} layout=L1 impossibleMutations=[{{*}}AddProperty
+# CHECK: class {{*}} layout=L3 {{*}}addedKeysAreComplete=true
+# CHECK: field L3.0 "k" type=1 flags=[IsAppendedByFlow]
+# RUN(GUARDED): flow
+# GUARDED-NOT: field L1.0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="PrototypeWithSetter"
+layout L1 name="Guarded"
+layout L2 name="PlainPrototype"
+layout L3 name="Plain"
+layout L4 name="Descriptor" fields=[{key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L4 fields=[0]
+    v3 = FinishObject v2
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Builtin builtin=Object
+    v6 = String string="k"
+    v7 = Call v4, v5, v0, v6, v3
+    v8 = NewObject v0 layout=L1 fields=[]
+    v9 = Integer integer=1
+    PropSet v8, v9 key="k" mode=Sloppy
+    v11 = NewObject layout=L2 fields=[]
+    v12 = NewObject v11 layout=L3 fields=[]
+    PropSet v12, v9 key="k" mode=Sloppy
+    Return
+}
+function f1 name="set" kind=Plain parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

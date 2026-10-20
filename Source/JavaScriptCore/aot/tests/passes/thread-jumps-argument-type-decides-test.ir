@@ -1,0 +1,114 @@
+# The type of what an edge passes may decide the type test of a parameter that the parameter's own type leaves open: the edge goes straight to the side it decides, past a prediction in front of the test too. A cast in front of the test, and a prediction that is used behind it, keep the edge
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="predictionInFrontOfTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Predict v3 predicted=string
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    v7 = GetStringLength v6
+    Return v7
+  b5(v8):
+    Return v8
+}
+# CHECK-LABEL: function f0 name="predictionInFrontOfTest"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b4(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+
+function f1 name="predictionIsUsedBehindTheTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Predict v3 predicted=string
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    v7 = GetStringLength v6
+    v8 = Add v7, v4
+    Return v8
+  b5(v9):
+    Return v9
+}
+# CHECK-LABEL: function f1 name="predictionIsUsedBehindTheTest"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+
+function f2 name="castInFrontOfTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = AssumeType v3 castType=undefined|string|object
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    v7 = GetStringLength v6
+    Return v7
+  b5(v8):
+    Return v8
+}
+# CHECK-LABEL: function f2 name="castInFrontOfTest"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+
+function f3 name="bothSidesDecided" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: string, v1: number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v5):
+    v6 = GetStringLength v5
+    Return v6
+  b5(v7):
+    Return v7
+}
+# CHECK-LABEL: function f3 name="bothSidesDecided"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b4(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b5(v1)
+
+function f4 name="typeDecidesNothing" parameters=[{type=number|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number|string, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v5):
+    v6 = GetStringLength v5
+    Return v6
+  b5(v7):
+    Return v7
+}
+# CHECK-LABEL: function f4 name="typeDecidesNothing"
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)

@@ -1,0 +1,36 @@
+# A writer whose own narrowing is off stores into a narrowed variable through an assumed type, a writer whose narrowing is on stores its parameter
+# RUN: flow-apply
+# OPTIONS: disable=flow:NarrowedTypes disable-in=1:1
+# STATISTIC: FlowRemovedClaims = 0
+# STATISTIC: FlowRemainingClaims = 0
+# CHECK: variable g0 name="point" module=m0 declared={type=L0 written=anything}
+# CHECK-LABEL: function f1 name="narrowingOff"
+# CHECK: b0(v0: anything ~ L0):
+# CHECK-NEXT: [[cast]]: L0 = AssumeType v0 castType=L0
+# CHECK-NEXT: PutModuleVariable [[cast]] variable=g0
+# CHECK-LABEL: function f2 name="narrowingOn"
+# CHECK: b0(v0: L0):
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="point" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    Return
+}
+function f1 name="narrowingOff" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="narrowingOn" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    Return
+}

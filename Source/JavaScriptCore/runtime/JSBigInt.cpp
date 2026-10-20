@@ -48,6 +48,9 @@
 #include "JSBigInt.h"
 #include "JSCJSValueBigInt.h"
 
+#if ENABLE(AOT)
+#include "AOTCellFormat.h"
+#endif
 #include "BigIntObject.h"
 #include "JSCJSValueInlines.h"
 #include "JSObjectInlines.h"
@@ -7831,7 +7834,11 @@ static ALWAYS_INLINE unsigned LEGACY_NODELETE computeHash(JSBigInt::Digit* digit
     WTF::add(hasher, sign);
     for (unsigned index = 0; index < length; ++index)
         WTF::add(hasher, digits[index]);
-    return hasher.hash() & 0x7f7fffff;
+#if ENABLE(AOT)
+    return hasher.hash() & AOT::bigIntHashMask;
+#else
+    return hasher.hash();
+#endif
 }
 
 std::optional<unsigned> JSBigInt::concurrentHash()

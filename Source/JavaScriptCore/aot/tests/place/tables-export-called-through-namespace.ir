@@ -1,0 +1,51 @@
+# An export that is only ever called still has a row where its namespace object is read by name: beside another receiver the site reads the name at run time. An export that nothing reads has none
+#   import * as ns from "./called.js"; function use(o) { return o.match(1) }  use(ns); use({ match: x => x })
+# RUN(FLOW): flow
+# RUN(ROWS): tables modules
+# FLOW: module m1 namespaceUse=NamedReadsOnly
+# FLOW: variable g0 {{*}}reads=OnlyCalled
+# ROWS-NOT: name="unused"
+# ROWS: export 0 name="match" kind=Variable
+# ROWS-NOT: name="unused"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="called.js" displayPath="called.js" body=f1 exports=[{name="match" variable=g0}, {name="unused" variable=g1}]
+entry module=m0
+layout L0 name="Own" fields=[{key="match" declared={type=anything}}]
+variable g0 name="match" module=m1 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g1 name="unused" module=m1 declared={type=function} initialization=Function function=f5 flags=[IsImmutable]
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m1
+    v1 = NewClosure function=f2
+    v2 = Call v1, -, v0
+    v3 = NewClosure function=f4
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="called" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="use" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="match"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey="match"
+    Return v3
+}
+function f3 name="match" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="own" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="unused" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

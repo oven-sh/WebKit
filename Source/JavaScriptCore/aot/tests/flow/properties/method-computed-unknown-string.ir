@@ -1,0 +1,79 @@
+# A method under a string nobody knows makes the string names found at or above its holder predicted and ends no lookup, while the holder's symbol names and the receivers of the parent class stay proven
+# RUN: flow-walk f0
+# RUN(PARENT): flow-walk f0
+# CHECK: f0@i{{*}} v23 Get {"n"}
+# CHECK: L1#{{*}}: Value Predicted f2.prototype "n"
+# CHECK: f0@i{{*}} v24 Get {"m"}
+# CHECK: L1#{{*}}: Value Predicted f2.prototype *
+# CHECK-NEXT: L1#{{*}}: Value Predicted f1.prototype "m"
+# CHECK: f0@i{{*}} v25 Get {"m"}
+# CHECK: L0#{{*}}: Value Proven f1.prototype "m"
+# CHECK: f0@i{{*}} v26 Get {@@iterator}
+# CHECK: L1#{{*}}: Value Proven f2.prototype @@iterator
+# PARENT-NOT: L0#{{*}}: Value Predicted
+# PARENT-NOT: L1#{{*}}: Value Proven {{*}} "
+# PARENT-NOT: Unknown {{*}} f
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1
+layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f2 computedKeyCount=1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f2
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 key="n"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="name" [isFreeName]
+    v12 = ToString v11
+    v13 = ToPropertyKey v12
+    v14 = NewClosure function=f5
+    DefineMethod v7, v14, v13 layout=L1 index=1
+    v16 = NewClosure function=f6
+    DefineMethod v7, v16 layout=L1 index=2 key=@@iterator
+    v18 = FinishClass v7 layout=L1
+    v19 = Construct v18
+    v20 = Construct v4
+    v21 = Builtin builtin=Symbol
+    v22 = PropGet v21 key="iterator"
+    v23 = PropGet v19 key="n"
+    v24 = PropGet v19 key="m"
+    v25 = PropGet v20 key="m"
+    v26 = ElemGet v19, v22
+    Return
+}
+function f1 name="Parent" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Child" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="n" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="computed" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="[Symbol.iterator]" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

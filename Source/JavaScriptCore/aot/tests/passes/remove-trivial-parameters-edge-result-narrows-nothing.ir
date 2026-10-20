@@ -1,0 +1,110 @@
+# A parameter that an edge fills with a tested value of unchanged type is that value, and the edge loses the proof
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 6
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="typeTestOfNumber" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Unreachable
+}
+# CHECK-LABEL: function f0 name="typeTestOfNumber"
+# CHECK: Branch v1 -> taken b1(), notTaken b2(
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return v0
+
+function f1 name="truthinessOfString" parameters=[{type=string}] results=[{type=string}] {
+  b0(v0: string):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+}
+# CHECK-LABEL: function f1 name="truthinessOfString"
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v0
+
+function f2 name="comparisonOfNumbers" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(| 0, 1), notTaken b2(| 0, 1)
+  b1(v3, v4):
+    v5 = Add v3, v4
+    Return v5
+  b2(v6, v7):
+    v8 = Sub v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f2 name="comparisonOfNumbers"
+# CHECK: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = Add v0, v1
+# CHECK: b2():
+# CHECK-NEXT: = Sub v0, v1
+
+function f3 name="oneOfTwoProofsNarrows" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=5
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0, 1), notTaken b2()
+  b1(v3, v4):
+    v5 = Add v3, v4
+    Return v5
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f3 name="oneOfTwoProofsNarrows"
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: 5):
+# CHECK-NEXT: = Add v3, v1
+
+function f4 name="proofAndArgumentMeet" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {
+  b0(v0: string, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ToBoolean v0
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    Return v3
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="proofAndArgumentMeet"
+# CHECK: Branch v2 -> taken b3(), notTaken b4()
+# CHECK: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v0
+
+function f5 name="otherEdgeWidensBackToSubject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    Return v3
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f5 name="otherEdgeWidensBackToSubject"
+# CHECK: Branch v2 -> taken b3(), notTaken b4()
+# CHECK: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v0

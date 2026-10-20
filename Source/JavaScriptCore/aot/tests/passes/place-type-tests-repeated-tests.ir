@@ -1,0 +1,149 @@
+# A value that a pass split by its type is tested at each use. Where the value does not change in a loop one test stands on the entry of the loop, and where two tests of one value follow each other closely or in a cycle one test stands in front of both: the old tests get the narrowed value and fold. A test that would only get an equal test in front of it stays as it is
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow EliminateDeadCode CompactBlocks
+# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow EliminateDeadCode CompactBlocks PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="sink" declared={type=anything} initialization=Undefined
+
+function f0 name="invariantInLoop" parameters=[{type=number|string}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: number|string, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = TypeTest v0 testedType=string
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    v5 = GetStringLength v4
+    Jump -> next b4(v5)
+  b3(v6):
+    v7 = ToInt32 v6
+    Jump -> next b4(v7)
+  b4(v8):
+    PutModuleVariable v8 variable=g0
+    v10 = TypeTest v0 testedType=string
+    Branch v10 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v11):
+    v12 = GetStringLength v11
+    Jump -> next b7(v12)
+  b6(v13):
+    v14 = ToInt32 v13
+    Jump -> next b7(v14)
+  b7(v15):
+    PutModuleVariable v15 variable=g0
+    Branch v1 -> taken b1(), notTaken b8()
+  b8():
+    Return
+}
+# CHECK-LABEL: function f0 name="invariantInLoop"
+# CHECK: b0(v0: number|string, v1: boolean):
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: LoopHint
+# SIMPLE-LABEL: function f0 name="invariantInLoop"
+# SIMPLE: = TypeTest v0 testedType=string
+# SIMPLE-NOT: TypeTest
+# SIMPLE: LoopHint
+# SIMPLE-NOT: TypeTest
+# SIMPLE: LoopHint
+# SIMPLE-NOT: TypeTest
+# SIMPLE-LABEL: function f1 name="changesInLoopAndTestedOnce"
+
+function f1 name="changesInLoopAndTestedOnce" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = TypeTest v2 testedType=string
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetStringLength v4
+    Jump -> next b4(v5)
+  b3():
+    v6 = Integer integer=1
+    Jump -> next b4(v6)
+  b4(v7):
+    PutModuleVariable v7 variable=g0
+    Branch v0 -> taken b1(), notTaken b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1 name="changesInLoopAndTestedOnce"
+# CHECK: v3: boolean = TypeTest v2 testedType=string
+# CHECK-NOT: TypeTest
+
+function f2 name="testedOnceOutsideLoops" parameters=[{type=number|string}] results=[{type=i32}] {
+  b0(v0: number|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = GetStringLength v2
+    Return v3
+  b2(v4):
+    v5 = ToInt32 v4
+    Return v5
+}
+# CHECK-LABEL: function f2 name="testedOnceOutsideLoops"
+# CHECK-NEXT: b0(v0: number|string):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK-LABEL: function f3 name="twoTestsCloseTogether"
+
+function f3 name="twoTestsCloseTogether" parameters=[{type=number|string}] results=[{type=i32}] {
+  b0(v0: number|string):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    v3 = GetStringLength v2
+    Jump -> next b3(v3)
+  b2(v4):
+    v5 = ToInt32 v4
+    Jump -> next b3(v5)
+  b3(v6: i32):
+    v7 = TypeTest v0 testedType=string
+    Branch v7 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v8):
+    v9 = GetStringLength v8
+    v10 = BitXor v9, v6
+    Return v10
+  b5(v11):
+    v12 = ToInt32 v11
+    v13 = BitOr v12, v6
+    Return v13
+}
+# SIMPLE-LABEL: function f3 name="twoTestsCloseTogether"
+# SIMPLE: = TypeTest v0 testedType=string
+# SIMPLE-NOT: TypeTest
+# SIMPLE-LABEL: function f4 name="twoTestsOfTwoValues"
+
+function f4 name="twoTestsOfTwoValues" parameters=[{type=number|string}, {type=number|string}] results=[{type=i32}] {
+  b0(v0: number|string, v1: number|string):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = GetStringLength v3
+    Jump -> next b3(v4)
+  b2(v5):
+    v6 = ToInt32 v5
+    Jump -> next b3(v6)
+  b3(v7: i32):
+    v8 = TypeTest v1 testedType=string
+    Branch v8 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v9):
+    v10 = GetStringLength v9
+    v11 = BitXor v10, v7
+    Return v11
+  b5(v12):
+    v13 = ToInt32 v12
+    v14 = BitOr v13, v7
+    Return v14
+}
+# CHECK-LABEL: function f4 name="twoTestsOfTwoValues"
+# CHECK: v2: boolean = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest v0
+# CHECK: v8: boolean = TypeTest v1 testedType=string
+# CHECK-NOT: TypeTest
+
+# TWICE: outcome: Changed
+# TWICE: outcome: Unchanged

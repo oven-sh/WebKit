@@ -1,0 +1,65 @@
+# A store or a delete through an unknown receiver reaches the field of that name in every object that reached native code, and nothing else: not its other fields, and no object that stayed in the program
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v22 Get {"n"}
+# CHECK-NEXT: L0#[[escaped]]: Value own Predicted L0#[[escaped]] "n"
+# CHECK: f0@i{{*}} v23 Get {"n"}
+# CHECK-NEXT: L0#[[kept]]: Absent Proven
+# CHECK-NEXT: f0@i{{*}} v24 Get {"typed"}
+# CHECK-NEXT: L0#[[escaped]]: Value own Proven L0#[[escaped]] "typed"
+# CHECK-NEXT: L0#[[escaped]]: Value own Predicted L0#[[escaped]] "typed"
+# CHECK-NEXT: f0@i{{*}} v25 Get {"typed"}
+# CHECK-NEXT: L0#[[kept]]: Value own Proven L0#[[kept]] "typed"
+# CHECK-NEXT: f0@i{{*}} v26 Get {"deleted"}
+# RUN(NODES): flow-solve nodes
+# NODES: DeclaredPart(L0#[[escaped]], 0) = {1|"stored"}
+# NODES-NEXT: DeclaredPart(L0#[[escaped]], 1) = {2}
+# NODES-NEXT: DeclaredPart(L0#[[escaped]], 2) = {3}
+# NODES: DeclaredPart(L0#[[kept]], 0) = {1}
+# NODES-NEXT: DeclaredPart(L0#[[kept]], 1) = {2}
+# NODES-NEXT: DeclaredPart(L0#[[kept]], 2) = {3}
+# NODES-NEXT: DeclaredPart(L0#[[kept]], 3) = {4}
+# NODES: Local(i{{*}}, f0, v22) = {undefined|"other"}
+# NODES-NEXT: Local(i{{*}}, f0, v23) = {undefined}
+# NODES-NEXT: Local(i{{*}}, f0, v24) = {3|"stored"}
+# NODES-NEXT: Local(i{{*}}, f0, v25) = {3}
+# NODES-NEXT: Local(i{{*}}, f0, v26) = {undefined|4}
+# NODES-NEXT: Local(i{{*}}, f0, v27) = {4}
+# RUN(OBJECTS): flow-solve objects
+# OBJECTS: L0#{{*}} mutations=[ReachNativeCode] uses
+# OBJECTS-NEXT: L0#{{*}} mutations=[] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="j" declared={type=anything} flags=[IsRequired]}, {key="typed" declared={type=number} flags=[IsRequired]}, {key="deleted" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=3
+    v3 = Integer integer=4
+    v4 = NewObject -, v0, v1, v2, v3 layout=L0 fields=[0, 1, 2, 3]
+    v5 = FinishObject v4
+    v6 = NewObject -, v0, v1, v2, v3 layout=L0 fields=[0, 1, 2, 3]
+    v7 = FinishObject v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v5
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="x" [isFreeName]
+    v13 = String string="stored"
+    PropSet v12, v13 key="k" mode=Strict
+    v15 = String string="other"
+    PropSet v12, v15 key="n" mode=Strict
+    PropSet v12, v13 key="typed" mode=Strict
+    v18 = PropDelete v12 key="deleted" mode=Strict
+    v19 = PropGet v5 key="k"
+    v20 = PropGet v5 key="j"
+    v21 = PropGet v7 key="k"
+    v22 = PropGet v5 key="n"
+    v23 = PropGet v7 key="n"
+    v24 = PropGet v5 key="typed"
+    v25 = PropGet v7 key="typed"
+    v26 = PropGet v5 key="deleted"
+    v27 = PropGet v7 key="deleted"
+    Return
+}

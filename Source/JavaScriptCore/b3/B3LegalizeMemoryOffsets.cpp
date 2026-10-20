@@ -82,10 +82,8 @@ public:
 
 void legalizeMemoryOffsets(Procedure& proc)
 {
-#if USE(BUN_JSC_ADDITIONS)
     if (isX86())
         return;
-#endif
     PhaseScope phaseScope(proc, "legalizeMemoryOffsets"_s);
     LegalizeMemoryOffsets legalizeMemoryOffsets(proc);
     legalizeMemoryOffsets.run();

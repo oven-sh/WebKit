@@ -159,8 +159,8 @@ JSArray* allPropertyKeys(JSGlobalObject*, JSObject*, PropertyNameMode, DontEnumP
 bool toPropertyDescriptor(JSGlobalObject*, JSValue, PropertyDescriptor&);
 void objectAssignGeneric(JSGlobalObject*, VM&, JSObject* target, JSObject* source);
 JSValue objectValues(VM&, JSGlobalObject*, JSValue);
+JSValue objectEntries(VM&, JSGlobalObject*, JSValue);
 
 JSC_DECLARE_HOST_FUNCTION(objectConstructorIs);
-JSC_DECLARE_HOST_FUNCTION(objectConstructorSetPrototypeOf);
 
 } // namespace JSC

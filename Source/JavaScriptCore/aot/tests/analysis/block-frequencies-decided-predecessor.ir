@@ -1,0 +1,102 @@
+# A predecessor that jumps with the constant that selects the rare side of a branch is rare itself
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="constantsDecide" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2():
+    v2 = Boolean boolean=false
+    Jump -> next b3(v2)
+  b3(v3):
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    Unreachable
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Normal count: 0.999023
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NEXT: b4 frequency: Rare count: 0.000977
+# CHECK-NEXT: b5 frequency: Normal count: 0.999023
+# CHECK-NOT: frequency
+function f1 name="negatedCondition" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2():
+    v2 = Boolean boolean=false
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = LogicalNot v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Unreachable
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.999023
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NEXT: b4 frequency: Rare count: 0.000977
+# CHECK-NEXT: b5 frequency: Normal count: 0.999023
+# CHECK-NOT: frequency
+function f2 name="computedValueDecidesNothing" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = LogicalNot v1
+    Jump -> next b3(v2)
+  b2():
+    v3 = Boolean boolean=false
+    Jump -> next b3(v3)
+  b3(v4):
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Unreachable
+  b5():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NEXT: b4 frequency: Rare count: 0.000977
+# CHECK-NEXT: b5 frequency: Normal count: 0.999023
+# CHECK-NOT: frequency
+function f3 name="bothSidesNormal" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Boolean boolean=true
+    Jump -> next b3(v1)
+  b2():
+    v2 = Boolean boolean=false
+    Jump -> next b3(v2)
+  b3(v3):
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    Return
+  b5():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NEXT: b4 frequency: Normal count: 0.500000
+# CHECK-NEXT: b5 frequency: Normal count: 0.500000
+# CHECK-NOT: frequency

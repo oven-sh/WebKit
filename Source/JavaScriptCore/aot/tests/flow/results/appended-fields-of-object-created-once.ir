@@ -1,0 +1,49 @@
+# What is stored on an object that is created once gets no field in a layout whose other objects are created again and again: with `Child.prototype = new Parent()` the methods of Child
+# would take room in every Parent. A key that is stored on the objects created in the loop becomes a field, and so does a key of the only object of a layout
+# RUN: flow
+# CHECK: field L0.1 "visits" {{*}} flags=[IsAppendedByFlow]
+# CHECK-NOT: field L0.2
+# CHECK: field L1.0 "label" {{*}} flags=[IsAppendedByFlow]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1 fields=[{key="name" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Single" constructor=f2 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewClosure function=f1
+    v2 = Construct v1
+    v3 = NewClosure function=f3
+    PropSet v2, v3 key="run" mode=Strict
+    v5 = NewClosure function=f2
+    v6 = Construct v5
+    PropSet v6, v0 key="label" mode=Strict
+    Jump -> next b1(v0)
+  b1(v8: anything):
+    LoopHint
+    v10 = Construct v1
+    PropSet v10, v0 key="visits" mode=Strict
+    v12 = PropGet v10 key="run"
+    v13 = PropGet v2 key="run"
+    v14 = PropGet v6 key="label"
+    v15 = ToBoolean v12
+    Branch v15 -> taken b1(v10), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="Parent" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = String string="nobody"
+    PropSet v0, v1 key="name" mode=Strict
+    Return
+}
+function f2 name="Single" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f3 name="run" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}

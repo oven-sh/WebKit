@@ -1,0 +1,72 @@
+# Constructor functions constructed with the values of a new.target node each take the object allocated for each new.target, whichever of the two arrives first. One that is its own new.target takes its own object alone
+# RUN: flow-solve objects nodes
+# RUN(PROTOTYPES): flow-solve nodes
+# RUN(LATE): flow-solve nodes
+# CHECK: f1 mutations={{*}} events=[Allocated, OtherNewTarget]
+# CHECK-NEXT: f2 mutations={{*}} events=[Allocated, OtherNewTarget]
+# CHECK-NEXT: f3 mutations={{*}} events=[Allocated, OtherNewTarget]
+# CHECK-NEXT: f4 mutations={{*}} events=[Allocated]
+# CHECK: Variable(g1) = {L0#[[first]]|L1#[[second]]}
+# CHECK-NEXT: Variable(g2) = {L0#[[firstOfLate]]|L1#[[secondOfLate]]}
+# CHECK-NEXT: Variable(g3) = {L3#[[alone]]}
+# CHECK: f1, parameter 0) = {L0#[[first]]|L1#[[second]]}
+# CHECK: f2, parameter 0) = {L0#[[first]]|L1#[[second]]}
+# CHECK: f4, parameter 0) = {L3#[[alone]]}
+# CHECK: f3, parameter 0) = {L0#[[firstOfLate]]|L1#[[secondOfLate]]}
+# PROTOTYPES: Variable(g1) = {L0#[[first]]|L1#[[second]]}
+# PROTOTYPES: PrototypeLink(L0#[[first]]) = {f1.prototype}
+# PROTOTYPES: PrototypeLink(L1#[[second]]) = {f2.prototype}
+# LATE: Variable(g2) = {L0#[[first]]|L1#[[second]]}
+# LATE: PrototypeLink(L0#[[first]]) = {f1.prototype}
+# LATE: PrototypeLink(L1#[[second]]) = {f2.prototype}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="First" constructor=f1
+layout L1 kind=Instance name="Second" constructor=f2
+layout L2 kind=Instance name="Late" constructor=f3
+layout L3 kind=Instance name="Alone" constructor=f4
+variable g0 name="constructors" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="fromLateNewTargets" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="fromLateConstructor" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="fromOwnNewTarget" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v4, -, v7
+    v9 = Construct v7, v8
+    PutModuleVariable v9 variable=g1
+    v11 = Call v4, -, v2
+    v12 = Construct v11, v7
+    PutModuleVariable v12 variable=g2
+    v14 = Construct v3, v3
+    PutModuleVariable v14 variable=g3
+    Return
+}
+function f1 name="First" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Second" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Late" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="Alone" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

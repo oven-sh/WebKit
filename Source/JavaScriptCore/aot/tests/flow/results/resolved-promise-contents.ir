@@ -1,0 +1,54 @@
+# A promise the program creates holds what it is resolved with, unless that is a thenable
+# RUN: flow
+# RUN(ALL): flow
+# RUN(APPLY): flow-apply
+# CHECK: indirect f1 {{*}} -> f2 Protocol Later
+# CHECK: variable g0 type=L0 written=anything
+# CHECK: variable g1 type=anything {{*}}cause=UnknownObject
+# ALL-NOT: variable g0 {{*}}Promise
+# ALL-NOT: variable g1 {{*}}written=
+# APPLY: v1: anything = Await v0
+# APPLY-NEXT: [[row]]: L0 = AssumeType v1 castType=L0
+# APPLY-NEXT: PutModuleVariable [[row]] variable=g0
+# APPLY: v4: anything = Await v3
+# APPLY-NOT: = AssumeType v4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Row" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Later" fields=[{key="then" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="row" declared={type=anything} initialization=Uninitialized
+variable g1 name="unwrapped" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f3
+    v1 = Await v0
+    PutModuleVariable v1 variable=g0
+    v3 = CallDirect function=f4
+    v4 = Await v3
+    PutModuleVariable v4 variable=g1
+    Return
+}
+function f2 name="then" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Boolean boolean=false
+    v3 = Call v0, -, v2
+    Return
+}
+function f3 name="makeRow" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f4 name="makeLater" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Return v1
+}

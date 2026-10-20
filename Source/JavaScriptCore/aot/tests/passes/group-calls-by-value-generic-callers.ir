@@ -1,0 +1,67 @@
+# Nothing enters a member through the generic convention when every call that reaches its closures is a call of the group
+# FORM: AsRead
+# RUN: pipeline GroupCallsByValue
+# OPTIONS: check=VerifyEachPass only-passes=GroupCallsByValue,ChooseCallingConventions
+# CHECK: group g0 members=[f1, f2, f3, f4, f5, f6] sites=[{{*}}] this=[omitted]
+# CHECK-NEXT: generic callers none: f1 f5 f6
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = CallDirect v0 function=f7
+    v7 = CallDirect v1 function=f7
+    v8 = CallDirect v2 function=f7
+    v9 = CallDirect v3 function=f7
+    v10 = CallDirect v4 function=f7
+    v11 = CallDirect v5 function=f7
+    v12 = Double number=2.5
+    v13 = NewArray v12 contents=anything holes=[]
+    v14 = CallList v1, -, v13
+    v15 = Builtin builtin=Uint8Array
+    v16 = Integer integer=1
+    v17 = Construct v15, -, v16
+    v18 = PropGet v17 key="forEach"
+    v19 = Call v18, v17, v2
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+    v22 = Call v21, -, v3
+    Return
+}
+function f1 name="calledByGroupOnly" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="calledWithList" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="calledByBuiltin" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="reachesUnknownCode" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="fifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="sixth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f7 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1
+    Return v2
+}

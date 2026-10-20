@@ -1,0 +1,62 @@
+# A use of a predicted built-in in a rare block gets no test, and heat decides nothing: the same use in an ordinary block of a cold function is tested
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="rareBlock" parameters=[{type=anything predicted=Array}, {type=anything predicted=builtin(EncodeURIComponent)}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: anything ~ builtin(EncodeURIComponent), v2: string, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v4 = PropGet v0 key="constructor"
+    v5 = Call v1, -, v2
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+  b2():
+    Return v2
+}
+# PLAN: function f0
+# PLAN-NEXT: function f1
+# CHECK-LABEL: function f0 name="rareBlock"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: v4: anything = PropGet v0 key="constructor"
+# CHECK-NEXT: v5: anything = Call v1, -, v2
+# CHECK-NOT: TypeTest
+# CHECK-NOT: IsPristine
+
+function f1 name="ordinaryBlock" parameters=[{type=anything predicted=Array}, {type=anything predicted=builtin(EncodeURIComponent)}, {type=string}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: anything ~ builtin(EncodeURIComponent), v2: string, v3: boolean):
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="constructor"
+    v5 = Call v1, -, v2
+    v6 = NewArray v4, v5 contents=anything
+    Return v6
+  b2():
+    Return v2
+}
+# PLAN-NEXT: test TypeTest v0 testedType=Array before v4; test IsPristine v0 builtinClass=Array aspects=[Names] before v4;
+# CHECK-LABEL: function f1 name="ordinaryBlock"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: = TypeTest v1 testedType=builtin(EncodeURIComponent)
+
+function f2 name="unlikelyBlock" parameters=[{type=anything predicted=Array}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = PropGet v0 key="constructor"
+    Return v2
+  b2():
+    Return v1
+}
+# PLAN: function f2
+# PLAN-NEXT: test TypeTest v0 testedType=Array before v2; test IsPristine v0 builtinClass=Array aspects=[Names] before v2; uses v2;
+# CHECK-LABEL: function f2 name="unlikelyBlock"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: builtin(Array) = Builtin builtin=Array
+# CHECK: frequency=Rare:
+# CHECK-NEXT: anything = PropGet v0 key="constructor"

@@ -1,0 +1,54 @@
+# A call with an expected result allocates an object of each layout the result names, with parts of the declared types, apart from the objects the program allocates
+# RUN: flow-sites solved
+# RUN(NODES): flow-solve nodes
+# RUN(OBJECTS): flow-solve objects
+# CHECK-NOT: layout=L2 class=
+# CHECK: function=f0 value=v7 kind=Layout origin=Operation layout=L1 class=
+# CHECK: function=f0 value=v10 kind=Layout origin=Operation layout=L0 class=
+# CHECK: function=f0 value=v4 kind=Layout origin=TypedResult layout=L0 class=
+# CHECK: function=f0 value=v4 kind=Layout origin=TypedResult layout=L1 ordinal=1 class=
+# CHECK-NOT: layout=L2 class=
+# CHECK-NOT: layout=L2 sites=
+# NODES: Variable(g0) = {undefined|null|{{*}}L0#[[row]]}
+# NODES-NEXT: Variable(g1) = {L0#[[made]]}
+# NODES: DeclaredPart(L0#[[made]], 0) = {1}
+# NODES: DeclaredPart(L0#[[row]], 0) = {number}
+# NODES-NEXT: DeclaredPart(L0#[[row]], 1) = {Object@f0:v4|Array@f0:v4|L1#[[owner]]}
+# NODES-NEXT: DeclaredPart(L0#[[row]], 2) = {undefined|string}
+# NODES-NEXT: DeclaredPart(L1#[[owner]], 0) = {string}
+# NODES-NOT: Properties(L0#[[made]])
+# NODES: IndexedProperties(L0#[[row]]) = {undefined|null|boolean|number|string|symbol|bigint|Object@f0:v4|Array@f0:v4}
+# NODES-NOT: Properties(L0#[[made]])
+# NODES: StringProperties(L0#[[row]]) = {undefined|null|boolean|number|string|symbol|bigint|Object@f0:v4|Array@f0:v4}
+# NODES-NOT: Properties(L0#[[made]])
+# OBJECTS: L1#{{*}} mutations=[] uses=[] events=[Allocated]
+# OBJECTS-NEXT: L0#{{*}} mutations=[] uses=[] events=[Allocated]
+# OBJECTS: L0#{{*}} mutations=[AddProperty] uses=[ReachesTypedParse] events=[Allocated, StoredByUnknownKey]
+# OBJECTS-NEXT: L1#{{*}} mutations=[AddProperty] uses=[ReachesTypedParse] events=[Allocated, StoredByUnknownKey]
+# OBJECTS-NOT: ReachesTypedParse
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+expectedresult x0 type=undefined|null|L0 layouts=[L0, L1]
+layout L0 name="Row" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="owner" declared={type=L1} flags=[IsRequired]}, {key="note" declared={type=undefined|string}}]
+layout L1 name="Owner" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
+layout L2 name="Unused" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="parsed" declared={type=anything} initialization=Uninitialized
+variable g1 name="made" declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="JSON" [isFreeName]
+    v2 = PropGet v1 key="parse"
+    v3 = String string="{}"
+    v4 = Call v2, v1, v3 expectedResult=x0
+    PutModuleVariable v4 variable=g0
+    v6 = String string="n"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Integer integer=1
+    v10 = NewObject -, v9, v8 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    PutModuleVariable v11 variable=g1
+    Return
+}

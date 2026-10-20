@@ -1,0 +1,19 @@
+# A lookup by name through the unknown object finds the members of the built-in objects that have reached native code, but no member whose call starts unseen code: `x.dlopen(..)` names nothing, also once process has escaped.
+# It is no event, and the run time refuses the call
+# RUN: flow-links unseen
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="input" [isFreeName]
+    v5 = PropGet v4 key="dlopen"
+    v6 = Call v5, v4, v4 calleeKey="dlopen"
+    Return
+}

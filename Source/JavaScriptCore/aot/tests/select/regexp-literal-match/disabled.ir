@@ -1,0 +1,13 @@
+# With the rule disabled a match against a literal stays the inline built-in
+# FORM: Prepared
+# OPTIONS: disable=rule:RegExpLiteralMatch
+# STATISTIC: RegExpLiteralMatchGroups = 0
+# RUN: pass Select
+# CHECK-NOT: RegExpMatchLiteral
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="test" parameters=[{type=RegExp<"a+b"[], pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
+  b0(v0: RegExp<"a+b"[], pristine[Storage, Names, AsCreated]>, v1: string):
+    v2 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
+    Return v2
+}

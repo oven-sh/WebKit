@@ -29,7 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirCode.h"
-#include "AirFormTable.h"
+#include "AirFormTraits.h"
 #include "AirInstInlines.h"
 #include "AirPhaseScope.h"
 #include "AirTmpInlines.h"
@@ -38,31 +38,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 { namespace Air {
 
-static constexpr std::array<bool, 256> computeLivenessPreservingForms()
-{
-    std::array<bool, 256> result { };
-    for (unsigned form = 0; form < 256; ++form) {
-        switch (static_cast<Arg::Role>((form >> formRoleShift) & formRoleMask)) {
-        case Arg::Def:
-        case Arg::ZDef:
-        case Arg::UseDef:
-        case Arg::UseZDef:
-        case Arg::EarlyDef:
-        case Arg::EarlyZDef:
-            result[form] = true;
-            break;
-        default:
-            break;
-        }
-    }
-    return result;
-}
-
 bool eliminateDeadCode(Code& code)
 {
     PhaseScope phaseScope(code, "eliminateDeadCode"_s);
-
-    static constexpr std::array<bool, 256> livenessPreservingForms = computeLivenessPreservingForms();
 
     const unsigned gpIndicesEnd = Tmp::absoluteIndexEnd(code, GP);
     Vector<uint64_t, 64> liveTmpStore(FillWith { }, (gpIndicesEnd + Tmp::absoluteIndexEnd(code, FP) + 63) / 64, static_cast<uint64_t>(0));
@@ -99,7 +77,7 @@ bool eliminateDeadCode(Code& code)
         if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
             Arg* args = inst.args().data();
             for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
-                if (livenessPreservingForms[forms[argIndex]] && isArgLive(args[argIndex]))
+                if ((Greedy::formTraits[forms[argIndex]] & Greedy::Mentions::anyDef) && decodeFormRole(forms[argIndex]) != Arg::Scratch && isArgLive(args[argIndex]))
                     return true;
             }
             return false;

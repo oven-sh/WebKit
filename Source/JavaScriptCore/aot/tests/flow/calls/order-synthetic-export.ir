@@ -1,0 +1,42 @@
+# The loader stores a synthetic export once, when the CommonJS module has completed: an ordered importer reads it after that store, a reader in a cycle with the module may come first
+# RUN: flow-order modules locations failed
+# CHECK: m0: component [[library]] after {}
+# CHECK-NEXT: m1: component [[main]] after {[[library]]}
+# CHECK-NEXT: m2: component [[cycle]] cycle after
+# CHECK-NEXT: m3: component [[cycle]] cycle after
+# CHECK-NEXT: g0: StoredBeforeEveryRead AtMostOnce
+# CHECK-NEXT: g1: Unknown AtMostOnce
+# CHECK-NEXT: read-before-initialization g1
+# CHECK-NOT: read-before-initialization
+
+module m0 path="library.cjs" displayPath="library.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 syntheticExports=[{name="a" variable=g0}]
+module m1 path="main.js" displayPath="main.js" body=f1 requests=[{target=m0}]
+module m2 path="cyclic.cjs" displayPath="cyclic.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2 syntheticExports=[{name="a" variable=g1}]
+module m3 path="in-cycle.js" displayPath="in-cycle.js" body=f3 requests=[{target=m2}]
+entry module=m1
+entry module=m3
+variable g0 name="a" module=m0 declared={type=anything}
+variable g1 name="a" module=m2 declared={type=anything}
+function f0 name="library" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = Integer integer=1
+    PropSet v1, v6 key="a" mode=Strict
+    Return
+}
+function f1 name="main" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return
+}
+function f2 name="cyclic" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = RequireModule module=m3 referrer=m2 specifier="./in-cycle.js"
+    v7 = Integer integer=1
+    PropSet v1, v7 key="a" mode=Strict
+    Return
+}
+function f3 name="inCycle" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    Return
+}

@@ -1,0 +1,138 @@
+# Object.prototype.__defineGetter__ has itself reached native code, so a call of it through the unknown object is native code's call, with what was handed to unknown callees: it redefines the property on each of those objects
+# RUN: flow
+# CHECK: class C{{*}} layout=L4 {{*}}cause=
+# CHECK-NOT: field L4.0 "k" {{*}}IsNeverRedefined
+
+layout L0 module=m0 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L1 module=m0 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L2 module=m0 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L3 module=m0 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L4 module=m0 fields=[{key="k" declared={type=anything predicted=number} flags=[IsRequired]}]
+variable g0 name="absent" module=m0 declared={type=anything|absent predicted=boolean} flags=[IsImmutable]
+variable g1 name="unknown" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g2 name="all" module=m0 declared={type=anything|absent predicted=Array<L0>} flags=[IsImmutable]
+variable g3 name="index" module=m0 declared={type=anything|absent predicted=number} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Predict v3 predicted=builtin(GlobalThis)
+    v5 = PropGet v4 key="nothing"
+    v6 = TypeTest v5 testedType=undefined
+    v7 = Predict v6 predicted=boolean
+    PutModuleVariable v7 variable=g0
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="globalThis" [isFreeName]
+    v11 = Predict v10 predicted=builtin(GlobalThis)
+    v12 = PropGet v11 key="something"
+    PutModuleVariable v12 variable=g1
+    v14 = Data data=d0
+    v15 = Predict v14 predicted=L0
+    v16 = Data data=d1
+    v17 = Predict v16 predicted=L1
+    v18 = Data data=d2
+    v19 = Predict v18 predicted=L2
+    v20 = Data data=d3
+    v21 = Predict v20 predicted=L3
+    v22 = Data data=d4
+    v23 = Predict v22 predicted=L4
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="globalThis" [isFreeName]
+    v26 = Predict v25 predicted=builtin(GlobalThis)
+    v27 = PropGet v26 key="sink"
+    v28 = TypeTest v27 testedType=undefined|null
+    Branch v28 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v29):
+    Jump -> next b3()
+  b3():
+    v30 = Undefined
+    Jump -> next b5(v30)
+  b4(v31):
+    v32 = Builtin builtin=GlobalThis
+    v33 = PropGet v32 key="Object" [isFreeName]
+    v34 = Predict v33 predicted=builtin(Object)
+    v35 = PropGet v34 key="prototype"
+    v36 = Predict v35 predicted=builtin(ObjectPrototype)
+    v37 = PropGet v36 key="__defineGetter__"
+    v38 = Predict v37 predicted=builtin(ObjectPrototype__defineGetter__)
+    v39 = Call v31, v26, v15, v17, v19, v21, v23, v38 calleeKey="sink" calleeName="sink"
+    Jump -> next b5(v39)
+  b5(v40):
+    v41 = NewArray v15, v17, v19, v21, v23 contents=anything
+    v42 = Predict v41 predicted=Array<L0>
+    PutModuleVariable v42 variable=g2
+    v44 = ToBoolean v7
+    Branch v44 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v45):
+    Jump -> next b7()
+  b7():
+    v46 = Integer integer=4
+    Jump -> next b10(v46)
+  b8(v47):
+    Jump -> next b9()
+  b9():
+    v48 = Integer
+    Jump -> next b10(v48)
+  b10(v49):
+    v50 = Predict v49 predicted=number
+    PutModuleVariable v50 variable=g3
+    v52 = Predict v1 predicted=function
+    v53 = Call v52 calleeName="pick"
+    v54 = PropGet v53 key="__defineGetter__"
+    v55 = String string="k"
+    v56 = NewClosure function=f2
+    v57 = Call v54, v53, v55, v56 calleeKey="__defineGetter__" calleeName="__defineGetter__"
+    v58 = Builtin builtin=GlobalThis
+    v59 = PropGet v58 key="print" [isFreeName]
+    v60 = PropGet v23 key="k"
+    v61 = Predict v60 predicted=number
+    v62 = Call v59, -, v61 calleeName="print"
+    v63 = Undefined
+    Return v63
+}
+function f1 name="pick" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="absent"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = GetModuleVariable variable=g2
+    v5 = CheckInitialized v4 name="all"
+    v6 = GetModuleVariable variable=g3
+    v7 = CheckInitialized v6 name="index"
+    v8 = ElemGet v5, v7
+    v9 = Predict v8 predicted=L0
+    Jump -> next b6(v9)
+  b4(v10):
+    Jump -> next b5()
+  b5():
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="unknown"
+    Jump -> next b6(v12)
+  b6(v13):
+    Return v13
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything predicted=string}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = String string="getter"
+    v1 = ClaimDeclared v0 declared={type=anything predicted=string}
+    Return v1
+}
+data d0 root=Object{layout=L0 members=[{key="k" value=Number{value=1}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="k" value=Number{value=2}}]} module=m0
+data d2 root=Object{layout=L2 members=[{key="k" value=Number{value=3}}]} module=m0
+data d3 root=Object{layout=L3 members=[{key="k" value=Number{value=4}}]} module=m0
+data d4 root=Object{layout=L4 members=[{key="k" value=Number{value=5}}]} module=m0
+entry module=m0

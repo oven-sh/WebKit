@@ -48,11 +48,7 @@ class StackmapValue;
 // work if you do that.
 class StackmapGenerationParams {
 public:
-#if USE(BUN_JSC_ADDITIONS)
     using Reps = Vector<ValueRep, 8>;
-#else
-    using Reps = Vector<ValueRep>;
-#endif
 
     // This is the stackmap value that we're generating.
     StackmapValue* value() const { return m_value; }
@@ -121,13 +117,6 @@ public:
         context().addLatePath(origin(), functor);
     }
 
-    template<typename Functor>
-    void addNearbyLatePath(CCallHelpers& jit, const Functor& functor) const
-    {
-        context().nearbyLatePaths.append({ static_cast<unsigned>(context().latePaths.size()), static_cast<uint32_t>(jit.m_assembler.buffer().codeSize()) });
-        addLatePath(functor);
-    }
-
 private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
@@ -137,13 +126,8 @@ private:
 
     StackmapValue* m_value;
     Reps m_reps;
-#if USE(BUN_JSC_ADDITIONS)
     Vector<GPRReg, 4> m_gpScratch;
     Vector<FPRReg, 4> m_fpScratch;
-#else
-    Vector<GPRReg> m_gpScratch;
-    Vector<FPRReg> m_fpScratch;
-#endif
     Air::GenerationContext& m_context;
 };
 

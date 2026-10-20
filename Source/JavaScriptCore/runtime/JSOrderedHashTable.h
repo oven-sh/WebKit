@@ -41,17 +41,18 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSOrderedHashTable* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_storage);
+    }
+
     JSOrderedHashTable(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
     }
 
     static ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_storage); }
-#if ENABLE(AOT)
-    static ptrdiff_t offsetOfCompactTable() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_compactTable); }
-    bool hasCompactTable() const { return !m_storage && m_compactTable; }
-    static constexpr ptrdiff_t offsetOfAliveInCompactTable = 12;
-#endif
 
     void finishCreation(VM& vm) { Base::finishCreation(vm); }
     void finishCreation(JSGlobalObject* globalObject, VM& vm, HashTable* base)
@@ -59,22 +60,30 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Base::finishCreation(vm);
 
+        if (base->m_storage) {
 #if ENABLE(AOT)
-        if (!base->m_storage && base->m_compactTable) [[unlikely]] {
-            copyCompactTableOf(vm, base);
-            return;
-        }
+            if (base->hasCompactStorage()) [[unlikely]] {
+                JSCell* storage = AOT::CompactStorage::copy(globalObject, base->m_storage.get());
+                RETURN_IF_EXCEPTION(scope, void());
+                m_storage.set(vm, this, storage);
+                return;
+            }
 #endif
-        if (base->hasStorage()) {
             Storage* storage = Helper::copy(globalObject, base->storageRef());
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
         }
     }
 
+    ALWAYS_INLINE bool hasCompactStorage() const
+    {
+        JSCell* storage = m_storage.get();
+        return storage && Helper::isCompact(*storage);
+    }
+
     ALWAYS_INLINE JSValue* getKeySlot(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
-        if (hasStorage())
+        if (m_storage)
             return Helper::find(globalObject, storageRef(), key, hash).entryKeySlot;
         return nullptr;
     }
@@ -82,13 +91,13 @@ public:
     ALWAYS_INLINE bool has(JSGlobalObject* globalObject, JSValue key)
     {
         if (m_storage) {
+#if ENABLE(AOT)
+            if (hasCompactStorage()) [[unlikely]]
+                return !!AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+#endif
             auto result = Helper::find(globalObject, storageRef(), key);
             return result.entryKeyIndex != Helper::InvalidTableIndex;
         }
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]]
-            return !!findInCompactTable(globalObject, key);
-#endif
         return false;
     }
 
@@ -97,16 +106,10 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]] {
-            bool isAdded = tryAddToCompactTable(globalObject, key, value);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (isAdded)
-                return;
-        }
-#endif
-        materializeIfNeeded(globalObject);
+        bool isAdded = materializeAndTryAddToCompactStorage(globalObject, key, value);
         RETURN_IF_EXCEPTION(scope, void());
+        if (isAdded)
+            return;
 
         RELEASE_AND_RETURN(scope, Helper::add(globalObject, this, storageRef(), key, value));
     }
@@ -115,60 +118,56 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]] {
-            bool isAdded = tryAddToCompactTable(globalObject, key, value);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (isAdded)
-                return;
-        }
-#endif
-        materializeIfNeeded(globalObject);
+        bool isAdded = materializeAndTryAddToCompactStorage(globalObject, key, value);
         RETURN_IF_EXCEPTION(scope, void());
+        if (isAdded)
+            return;
 
         RELEASE_AND_RETURN(scope, Helper::addNormalized(globalObject, this, storageRef(), key, value, hash));
     }
 
     ALWAYS_INLINE bool remove(JSGlobalObject* globalObject, JSValue key)
     {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]]
+            return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
+#endif
         if (m_storage)
             return Helper::remove(globalObject, this, storageRef(), key);
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]]
-            return removeFromCompactTable(globalObject, key);
-#endif
         return false;
     }
     ALWAYS_INLINE bool removeNormalized(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]]
+            return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
+#endif
         if (m_storage)
             return Helper::removeNormalized(globalObject, this, storageRef(), key, hash);
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]]
-            return removeFromCompactTable(globalObject, key);
-#endif
         return false;
     }
 
     ALWAYS_INLINE uint32_t size()
     {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]]
+            return AOT::CompactStorage::aliveEntryCount(m_storage.get());
+#endif
         if (m_storage)
             return Helper::aliveEntryCount(storageRef());
-#if ENABLE(AOT)
-        if (JSCell* table = m_compactTable.get()) [[unlikely]]
-            return *std::bit_cast<const uint32_t*>(std::bit_cast<uintptr_t>(table) + offsetOfAliveInCompactTable);
-#endif
         return 0;
     }
 
     ALWAYS_INLINE void clear(JSGlobalObject* globalObject)
     {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]] {
+            AOT::CompactStorage::clear(globalObject, this, m_storage.get());
+            return;
+        }
+#endif
         if (m_storage)
             Helper::clear(globalObject, this, storageRef());
-#if ENABLE(AOT)
-        else if (m_compactTable) [[unlikely]]
-            clearCompactTable();
-#endif
     }
 
     ALWAYS_INLINE void materializeIfNeeded(JSGlobalObject* globalObject)
@@ -176,12 +175,45 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (hasStorage())
+        if (m_storage)
             return;
 
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode()) {
+            JSCell* storage = AOT::CompactStorage::tryCreate(globalObject, Traits::hasValueData);
+            RETURN_IF_EXCEPTION(scope, void());
+            m_storage.set(vm, this, storage);
+            return;
+        }
+#endif
         Storage* storage = Helper::tryCreate(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         m_storage.set(vm, this, storage);
+    }
+
+    ALWAYS_INLINE bool materializeAndTryAddToCompactStorage(JSGlobalObject* globalObject, JSValue key, JSValue value)
+    {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        materializeIfNeeded(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]] {
+            bool isAdded = AOT::CompactStorage::tryAdd(globalObject, this, m_storage.get(), key, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isAdded)
+                return true;
+            DeferTerminationForAWhile noTermination(vm);
+            Storage* storage = AOT::CompactStorage::convertToOrdinaryStorage(globalObject, m_storage.get());
+            RETURN_IF_EXCEPTION(scope, false);
+            m_storage.set(vm, this, storage);
+        }
+#else
+        UNUSED_PARAM(key);
+        UNUSED_PARAM(value);
+#endif
+        return false;
     }
 
     ALWAYS_INLINE JSCell* tryGetStorage(JSGlobalObject* globalObject)
@@ -192,47 +224,23 @@ public:
 
     ALWAYS_INLINE JSCell* storage()
     {
-        hasStorage();
         return m_storage.get();
     }
 
     ALWAYS_INLINE JSCell* storageOrSentinel(VM& vm)
     {
-        if (hasStorage())
+        if (m_storage)
             return m_storage.get();
         return vm.orderedHashTableSentinel();
     }
 
     ALWAYS_INLINE Storage& storageRef()
     {
-        ASSERT(m_storage);
-        return *m_storage.get();
+        ASSERT(m_storage && !hasCompactStorage());
+        return *uncheckedDowncast<Storage>(m_storage.get());
     }
 
-    ALWAYS_INLINE bool hasStorage()
-    {
-        if (m_storage) [[likely]]
-            return true;
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]] {
-            convertCompactTable();
-            return true;
-        }
-#endif
-        return false;
-    }
-
-    WriteBarrier<Storage> m_storage;
-#if ENABLE(AOT)
-    WriteBarrier<JSCell> m_compactTable;
-
-    JS_EXPORT_PRIVATE void convertCompactTable();
-    JS_EXPORT_PRIVATE void copyCompactTableOf(VM&, JSOrderedHashTable*);
-    JS_EXPORT_PRIVATE void clearCompactTable();
-    JS_EXPORT_PRIVATE JSValue findInCompactTable(JSGlobalObject*, JSValue key);
-    JS_EXPORT_PRIVATE bool removeFromCompactTable(JSGlobalObject*, JSValue key);
-    JS_EXPORT_PRIVATE bool tryAddToCompactTable(JSGlobalObject*, JSValue key, JSValue);
-#endif
+    WriteBarrier<JSCell> m_storage;
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {
@@ -251,6 +259,12 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (m_storage) {
+#if ENABLE(AOT)
+            if (hasCompactStorage()) [[unlikely]]
+                RELEASE_AND_RETURN(scope, AOT::CompactStorage::find(globalObject, m_storage.get(), key));
+#else
+            UNUSED_PARAM(key);
+#endif
             Storage& storage = storageRef();
             auto result = findKeyFunctor(storage);
             RETURN_IF_EXCEPTION(scope, { });
@@ -259,12 +273,6 @@ public:
                 return { };
             return Helper::get(storage, result.entryKeyIndex + 1);
         }
-#if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]]
-            RELEASE_AND_RETURN(scope, findInCompactTable(globalObject, key));
-#else
-        UNUSED_PARAM(key);
-#endif
         return { };
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key)
@@ -293,19 +301,12 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        materializeIfNeeded(globalObject);
+        JSValue value = getImpl(globalObject, key, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
+            return Helper::find(globalObject, storage, key);
+        });
         RETURN_IF_EXCEPTION(scope, { });
 
-        Storage& storage = storageRef();
-
-        JSValue value;
-
-        auto result = Helper::find(globalObject, storage, key);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        if (Helper::isValidTableIndex(result.entryKeyIndex))
-            value = Helper::get(storage, result.entryKeyIndex + 1);
-        else {
+        if (!value) {
             value = getValueFunctor();
             RETURN_IF_EXCEPTION(scope, { });
 

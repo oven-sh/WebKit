@@ -1,0 +1,37 @@
+# With the pass off the conversion of a joined value to a boolean stays in the merge block
+# FORM: Prepared
+# OPTIONS: disable=pass:HoistTestsIntoPredecessors
+# RUN: pass HoistTestsIntoPredecessors
+# STATISTIC: HoistTestsIntoPredecessorsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="truthinessOfJoinedValue" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean, v1: undefined|number, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0 name="truthinessOfJoinedValue"
+# CHECK-NEXT: b0(v0: boolean, v1: undefined|number, v2: boolean):
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3(v3: undefined|boolean|number):
+# CHECK-NEXT: v4: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Return v1

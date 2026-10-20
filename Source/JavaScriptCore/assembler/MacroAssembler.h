@@ -518,18 +518,16 @@ public:
 
     void oops()
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (m_oopsEmitsBreakpointOnly) {
+        switch (policy().oops) {
+        case OopsForm::AbortWithReason:
+            abortWithReason(B3Oops);
+            return;
+        case OopsForm::Breakpoint:
             breakpoint();
             return;
         }
-#endif
-        abortWithReason(B3Oops);
+        RELEASE_ASSERT_NOT_REACHED();
     }
-#if USE(BUN_JSC_ADDITIONS)
-    void setOopsEmitsBreakpointOnly() { m_oopsEmitsBreakpointOnly = true; }
-    bool m_oopsEmitsBreakpointOnly { false };
-#endif
 
     // B3 has additional pseudo-opcodes for returning, when it wants to signal that the return
     // consumes some register in some way.
@@ -1605,7 +1603,7 @@ public:
     
     struct RotatedImmPtr {
         RotatedImmPtr(uintptr_t v1, uint8_t v2)
-            : value(v1)
+            : value(reinterpret_cast<const void*>(v1))
             , rotation(v2)
         {
         }

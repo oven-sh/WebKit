@@ -1,0 +1,36 @@
+# A feature line with a condition on an operand is refuted at a site whose operand is a literal outside the listed names; a site with a listed name or with a string nobody knows uses the feature and is its witness
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: builtin-use CompressionStream [Read, Constructed] f0:v5
+# CHECK: builtin-use DecompressionStream [Read, Constructed] f0:v10
+# CHECK: builtin-use IntlSupportedValuesOf [Read, Called] f0:v2
+# CHECK: feature 15 IntlSupportedValuesOf f0:v2
+# CHECK: feature 183 CompressionStream f0:v9
+# CHECK: feature 203 DecompressionStream f0:v15
+# CHECK: feature 245 CompressionStream f0:v5
+# CHECK: feature 246 DecompressionStream f0:v10
+# ALL-NOT: feature 9 IntlSupportedValuesOf
+# ALL-NOT: feature 184 CompressionStream
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Intl" [isFreeName]
+    v2 = PropGet v1 key="supportedValuesOf"
+    v3 = String string="currency"
+    v4 = Call v2, v1, v3
+    v5 = PropGet v0 key="CompressionStream" [isFreeName]
+    v6 = String string="gzip"
+    v7 = Construct v5, -, v6
+    v8 = String string="brotli"
+    v9 = Construct v5, -, v8
+    v10 = PropGet v0 key="DecompressionStream" [isFreeName]
+    v11 = Construct v10, -, v6
+    v12 = Builtin builtin=MathRandom
+    v13 = Call v12
+    v14 = ToString v13
+    v15 = Construct v10, -, v14
+    Return
+}

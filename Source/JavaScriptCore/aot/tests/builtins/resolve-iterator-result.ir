@@ -1,0 +1,25 @@
+# The required pass ResolveBuiltins allocates the record of an iteration step with NewObject, the operation from which placement plans the cells of a layout, and hands on what flow stamped on the intrinsic
+# FORM: Prepared optimizing
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unproven" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+  b0(v0: anything, v1: boolean):
+    v2 = CreateIteratorResult v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="unproven"
+# CHECK-NOT: CreateIteratorResult
+# CHECK: v2: object ~ L(IteratorResult) = NewObject -, v0, v1 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Return v2
+
+function f1 name="proven" parameters=[{type=anything}, {type=boolean}] results=[{type=object}] {
+  b0(v0: anything, v1: boolean):
+    v2 = CreateIteratorResult v0, v1 allocationSite=3 [keepsShape]
+    Return v2
+}
+# CHECK-LABEL: function f1 name="proven"
+# CHECK-NOT: CreateIteratorResult
+# CHECK: v2: L(IteratorResult) = NewObject -, v0, v1 layout=L(IteratorResult) fields=[0, 1] allocationSite=3 [keepsShape]
+# CHECK-NEXT: Return v2

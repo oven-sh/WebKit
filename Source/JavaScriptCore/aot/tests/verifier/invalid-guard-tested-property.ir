@@ -1,0 +1,155 @@
+# the test behind a guard asked for what the operation relies on: the same storage kind, the pristine aspect that is read, the same module
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 9
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="other.js" displayPath="other.js"
+module m2 path="third.js" displayPath="third.js"
+function f0 name="badOtherStorageKind" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = HasArrayStorage v0 arrayStorage=Double
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Proven
+    Return v7
+  b3():
+    Return
+}
+function f1 name="goodSameStorageKind" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v0, v1, v6 arrayStorage=Int32 level=Proven
+    Return v7
+  b3():
+    Return
+}
+function f2 name="badOtherPristineAspect" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Names]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f3 name="goodPristineAspect" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f4 name="badOtherModule" results=[{type=anything}] {
+  b0():
+    v0 = IsRequireEdgeReady module=m1 referrer=m0
+    Branch v0 -> taken b1(| 0), notTaken b2()
+  b1(v1):
+    v2 = GetRequiredValue v1 module=m2
+    Return v2
+  b2():
+    Return
+}
+function f5 name="goodSameModule" results=[{type=anything}] {
+  b0():
+    v0 = IsRequireEdgeReady module=m1 referrer=m0
+    Branch v0 -> taken b1(| 0), notTaken b2()
+  b1(v1):
+    v2 = GetRequiredValue v1 module=m1
+    Return v2
+  b2():
+    Return
+}
+function f6 name="badOtherClass" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32):
+    v2 = IsPristine v0 builtinClass=Map aspects=[Storage, Names]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f7 name="badStorageKindTheAllocationDoesNotName" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = NewArray v0 contents=anything
+    v3 = GetArrayElement v2, v1, v2 arrayStorage=Double level=Proven
+    Return v3
+}
+function f8 name="goodAllocationAsGuardOfAnyStorageKind" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = NewArray v0 contents=anything
+    v3 = GetArrayElement v2, v1, v2 level=Proven
+    Return v3
+}
+function f9 name="badOneOfTwoRequiredAspects" parameters=[{type=Array}, {type=Array}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array):
+    v2 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    AppendElements v0, v1, v3
+    Return
+  b2():
+    Return
+}
+function f10 name="goodTypeProvesTheOtherAspect" parameters=[{type=Array}, {type=Array<anything, pristine[Names]>}] results=[{type=undefined}] {
+  b0(v0: Array, v1: Array<anything, pristine[Names]>):
+    v2 = IsPristine v1 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    AppendElements v0, v1, v3
+    Return
+  b2():
+    Return
+}
+function f11 name="badStorageKindOnOneWay" parameters=[{type=Array}, {type=i32}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: Array, v1: i32, v2: boolean):
+    v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v3 -> taken b1(| 0), notTaken b5()
+  b1(v4):
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v5 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b3():
+    v6 = HasArrayStorage v0 arrayStorage=Double
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    v8 = AllGuards v4, v7
+    v9 = GetArrayElement v0, v1, v8 arrayStorage=Int32 level=Proven
+    Return v9
+  b5():
+    Return
+}
+function f12 name="goodStorageKindTheLiteralIsAllocatedWith" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = NewArray v0 contents=anything
+    v3 = GetArrayElement v2, v1, v2 arrayStorage=Contiguous level=Proven
+    Return v3
+}
+function f13 name="badStorageKindThatTheElementsMayNotFit" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = NewArray v0 contents=i32
+    v3 = GetArrayElement v2, v1, v2 arrayStorage=Int32 level=Proven
+    Return v3
+}
+function f14 name="badStorageKindOfEmptyLiteral" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = NewArray contents=anything
+    v2 = GetArrayElement v1, v0, v1 arrayStorage=Contiguous level=Proven
+    Return v2
+}

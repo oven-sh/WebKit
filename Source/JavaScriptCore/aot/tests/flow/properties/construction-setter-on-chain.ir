@@ -1,0 +1,110 @@
+# A store by name on this that finds a setter of the class runs it: its early reads and its leak are the constructor's, and neither the name nor what the setter stores is proven stored
+# RUN(ASSIGNED): flow-construction
+# RUN(ASSIGNEDFIELDS): flow-solve nodes
+# RUN(LEAKY): flow-construction
+# RUN(LEAKYFIELDS): flow-solve nodes
+# RUN(DEFINED): flow-construction
+# RUN(DEFINEDFIELDS): flow-solve nodes
+# RUN(ASSIGNEDLINKS): flow-links calls
+# RUN(LEAKYLINKS): flow-links calls
+# RUN(DEFINEDLINKS): flow-links calls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Assigned" constructor=f1 fields=[{key="stored" declared={type=anything} flags=[IsRequired]}, {key="early" declared={type=anything} flags=[IsRequired]}, {key="after" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Leaky" constructor=f3 fields=[{key="before" declared={type=anything} flags=[IsRequired]}, {key="after" declared={type=anything} flags=[IsRequired]}]
+layout L2 kind=Instance name="Defined" constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="after" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 methodKind=Setter key="x"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewClosure function=f3
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 methodKind=Setter key="x"
+    v10 = FinishClass v7 layout=L1
+    v11 = Construct v10
+    v12 = NewClosure function=f5
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f6
+    DefineMethod v13, v14 layout=L2 methodKind=Setter key="x"
+    v16 = FinishClass v13 layout=L2
+    v17 = Construct v16
+    Return
+}
+function f1 name="Assigned" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = Integer integer=2
+    PropSet v2, v5 key="after"
+    v7 = Integer integer=3
+    PropSet v2, v7 key="early"
+    Return v2
+}
+function f2 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="early"
+    PropSet v0, v1 key="stored"
+    Return
+}
+# ASSIGNEDLINKS: f1 v4 -> i{{*}} f2 Accessor Once
+# ASSIGNED: construction f1@i{{*}} root v2: DoesNotLeak before-leak "after" at-exit "early" "after" read-early "early"
+# ASSIGNED-NOT: construction f1@i{{*}}: Unknown
+# ASSIGNED: layout L0: DoesNotLeak {{*}} set [2] orders
+# ASSIGNEDFIELDS: DeclaredPart(L0#{{*}}, 0) = {undefined|1}
+# ASSIGNEDFIELDS: DeclaredPart(L0#{{*}}, 1) = {undefined|3}
+# ASSIGNEDFIELDS: DeclaredPart(L0#{{*}}, 2) = {2}
+function f3 name="Leaky" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="before"
+    PropSet v2, v3 key="x"
+    v6 = Integer integer=2
+    PropSet v2, v6 key="after"
+    Return v2
+}
+function f4 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0
+    Return
+}
+# LEAKYLINKS: f3 v5 -> i{{*}} f4 Accessor Once
+# LEAKY: construction f3@i{{*}} root v2: Unknown at f4:v4 before-leak "before" at-exit "after" "before" read-early
+# LEAKY-NOT: construction f3@i{{*}}: DoesNotLeak
+# LEAKY: layout L1: Unknown
+# LEAKYFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# LEAKYFIELDS: DeclaredPart(L1#{{*}}, 1) = {undefined|2}
+function f5 name="Defined" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Integer integer=1
+    PropDefine v2, v3 key="x"
+    v5 = Integer integer=2
+    PropSet v2, v5 key="after"
+    Return v2
+}
+function f6 name="x" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0
+    Return
+}
+# DEFINEDLINKS-NOT: f5 v4 ->
+# DEFINED: construction f5@i{{*}} root v2: DoesNotLeak before-leak "after" "x" at-exit "after" "x" read-early initial-order "x" "after" stores OnlyInitialOrder
+# DEFINED-NOT: construction f5@i{{*}}: Unknown
+# DEFINED: layout L2: DoesNotLeak OnlyAtConstruction set [0, 1] orders [0, 1]
+# DEFINEDFIELDS: DeclaredPart(L2#{{*}}, 0) = {1}
+# DEFINEDFIELDS: DeclaredPart(L2#{{*}}, 1) = {2}

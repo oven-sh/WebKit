@@ -1,0 +1,43 @@
+# The prototype of a literal is set by storing the Structure that the same change led to before, with the operation on the rare side; compact code only calls the operation
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inCompactCode" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything, v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    SetLiteralPrototype v0, v1
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: f0: size=
+# CHECK: operation operationAOTSetLiteralPrototype x1
+# CHECK-NOT: stub WriteBarrier
+# S: f0 b1 Compact
+function f1 name="inBalancedCode" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything):
+    SetLiteralPrototype v0, v1
+    Return
+}
+# CHECK-LABEL: f1: size=
+# CHECK: operation operationAOTSetLiteralPrototype x1
+# CHECK: stub WriteBarrier x1
+# S: f1 b0 Balanced
+function f2 name="inFastCode" parameters=[{type=object}, {type=null}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: object, v1: null, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    SetLiteralPrototype v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: f2: size=
+# CHECK: operation operationAOTSetLiteralPrototype x1
+# CHECK: stub WriteBarrier x1
+# S: f2 b1 Fast

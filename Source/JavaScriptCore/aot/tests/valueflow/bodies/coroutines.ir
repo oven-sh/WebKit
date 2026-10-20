@@ -1,0 +1,24 @@
+# A direct call of an async function or a generator answers the object of the coroutine. What the body throws does not come back to the caller.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=3 sites=0 edges=0 edgesOnceReached=1 seeds=2 statements=1
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: reached: edge n0 -> f1.parameter0
+# CHECK-NEXT: reached: seed n1 <- coroutine f1
+# CHECK-NEXT: reached: seed n2 <- unknown
+# CHECK-NEXT: reached: enters f1
+# CHECK-NEXT: PropGet v2 (coroutine f1) throws n2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    v2 = PropGet v1 key="then"
+    Return v1
+}
+function f1 name="asynchronous" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Throw v0
+}

@@ -1,0 +1,52 @@
+# A constructor function has class results like a class: a function assigned to its prototype object is a member, and its prototype property is fixed until the program stores another object there
+# RUN: flow
+# CHECK: layout L0 flow={{*}} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="get" function=f2{{*}}}] namedMembers=[{key="get" function=f2
+# CHECK: layout L1 flow={{*}} classFlow={evaluations=AtMostOnce
+# CHECK-NOT: prototypeProperty=
+# CHECK: layout L2 flow=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="P" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Q" constructor=f3 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L2 name="PrototypeOfQ" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="get" mode=Strict
+    v4 = Construct v0
+    v5 = PropGet v4 key="get"
+    v6 = Call v5, v4
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    PropSet v7, v9 key="prototype" mode=Strict
+    v11 = Construct v7
+    v12 = PropGet v11 key="get"
+    v13 = Call v12, v11
+    Return
+}
+function f1 name="P" flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f2 name="get" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="Q" flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
+function f4 name="get" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    Return v1
+}

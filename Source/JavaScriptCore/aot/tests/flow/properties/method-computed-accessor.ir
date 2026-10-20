@@ -1,0 +1,89 @@
+# A getter under a string or a symbol nobody knows has no node: its holder and its function reach unknown JavaScript, and the static side of the class and a class with a named getter do not
+# RUN: flow-solve sinks
+# RUN(KEPT): flow-solve sinks
+# RUN(WALK): flow-walk f0
+# CHECK: unknownJavaScript {
+# CHECK: , f4
+# CHECK: , f5
+# CHECK: , f1.prototype
+# CHECK: , f2.prototype
+# KEPT-LABEL: unknownJavaScript {
+# KEPT-NOT: , f2,
+# KEPT-NOT: , f6
+# KEPT-NOT: , f3
+# KEPT-NOT: , f7
+# WALK: f0@i{{*}} v24 Get {"create"}
+# WALK-NEXT: f2: Value own Proven f2 "create"
+# WALK-NEXT: f0@i{{*}} v26 Get {"size"}
+# WALK-NEXT: L2#{{*}}: Getter Proven f3.prototype "size"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="StringKey" constructor=f1 computedKeyCount=1
+layout L1 kind=Instance name="SymbolKey" constructor=f2 computedKeyCount=1
+layout L2 kind=Instance name="NamedKey" constructor=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = ToString v1
+    v3 = ToPropertyKey v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L0
+    v6 = NewClosure function=f4
+    DefineMethod v5, v6, v3 layout=L0 methodKind=Getter
+    v8 = FinishClass v5 layout=L0
+    v9 = Builtin builtin=SymbolFor
+    v10 = Call v9, -, v2
+    v11 = ToPropertyKey v10
+    v12 = NewClosure function=f2
+    v13 = NewClass v12 layout=L1
+    v14 = NewClosure function=f5
+    DefineMethod v13, v14, v11 layout=L1 methodKind=Getter
+    v16 = NewClosure function=f6
+    DefineMethod v13, v16 layout=L1 side=Static index=1 key="create"
+    v18 = FinishClass v13 layout=L1
+    v19 = NewClosure function=f3
+    v20 = NewClass v19 layout=L2
+    v21 = NewClosure function=f7
+    DefineMethod v20, v21 layout=L2 methodKind=Getter key="size"
+    v23 = FinishClass v20 layout=L2
+    v24 = PropGet v18 key="create"
+    v25 = Construct v23
+    v26 = PropGet v25 key="size"
+    Return
+}
+function f1 name="StringKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="SymbolKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f3 name="NamedKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f4 name="underString" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f5 name="underSymbol" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f6 name="create" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

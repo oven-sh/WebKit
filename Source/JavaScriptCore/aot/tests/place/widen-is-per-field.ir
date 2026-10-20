@@ -1,0 +1,40 @@
+# Whether a slot is widened into free bytes is decided for its own field: a field of the same name in a layout with a full cell does not hold it back
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow disable=flow:NarrowedTypes
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Node" fields=[{key="id" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="HasRoom" fields=[{key="peer" declared={type=null|L0} flags=[IsRequired]}]
+layout L2 name="Full" fields=[{key="peer" declared={type=null|L0} flags=[IsRequired]}, {key="low" declared={type=i32} flags=[IsRequired]}, {key="middle" declared={type=i32} flags=[IsRequired]}, {key="high" declared={type=i32} flags=[IsRequired]}]
+layout L3 name="NumbersHaveRoom" fields=[{key="count" declared={type=number predicted=i32} flags=[IsRequired]}, {key="total" declared={type=number predicted=i32} flags=[IsRequired]}]
+layout L4 name="NumbersFull" fields=[{key="total" declared={type=number predicted=i32} flags=[IsRequired]}, {key="count" declared={type=number predicted=i32} flags=[IsRequired]}, {key="rest" declared={type=i32} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Null
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3, v0, v0, v0 layout=L2 fields=[0, 1, 2, 3]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v0, v0, v0 layout=L4 fields=[0, 1, 2]
+    v11 = FinishObject v10
+    Return
+}
+# CHECK: L1 CompiledObject size=32
+# CHECK-NEXT: "peer" JSValue @16
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: "peer" OptionalCell32 @16
+# The Extension word, "count" and "total" end at 28, so "total" grows where it stands.
+# CHECK: L3 CompiledObject size=32
+# CHECK-NEXT: "count" Int32OrDouble @20
+# CHECK-NEXT: "total" Double @24
+# CHECK: L4 CompiledObject size=32
+# CHECK-NEXT: "total" Int32OrDouble @20
+# CHECK-NEXT: "count" Int32OrDouble @24

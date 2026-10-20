@@ -1,0 +1,20 @@
+# The key of an element access is an alias that a branch has narrowed to the array indexes. The test of the key is a test of the value behind the alias, which may be -1: the access keeps what the branch proved, and needs no test of the names
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keyThatIsNotMinusOne" parameters=[{type=Array<number>}, {type=undefined|int[-1, 4294967294] predicted=int[-1, 4294967294]}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: undefined|int[-1, 4294967294]):
+    v2 = Integer integer=-1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v2
+  b2(v4):
+    v5 = ElemGet v0, v4
+    Return v5
+}
+# CHECK-LABEL: function f0 name="keyThatIsNotMinusOne"
+# CHECK: = IsPristine v0 {{*}}aspects=[Storage]
+# CHECK: [[index0]]: int[0, 4294967294] = AssumeType {{*}} castType=int[0, 4294967294]
+# CHECK: = GetArrayElement v0, [[index0]],

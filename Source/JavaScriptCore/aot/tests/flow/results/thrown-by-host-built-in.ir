@@ -1,0 +1,76 @@
+# The engine throws instances of Error. A built-in of the host also throws objects of its own classes, a DOMException or a ResolveMessage, which are no instances of the class Error: what it throws is unknown
+#   function byHost() { try { return structuredClone(() => 1) } catch (error) { return error } }
+#   function byEngine() { try { return JSON.parse("{") } catch (error) { return error } }
+# RUN: flow-apply
+# CHECK-LABEL: function f1 name="byHost"
+# CHECK: callees=[builtin(StructuredClone)]
+# CHECK: [[caughtFromHost]]: anything = CatchValue
+# CHECK-NOT: AssumeType [[caughtFromHost]]
+# CHECK-LABEL: function f2 name="byEngine"
+# CHECK: callees=[builtin(JSONParse)]
+# CHECK: [[caughtFromEngine]]: anything = CatchValue
+# CHECK-NEXT: Error = AssumeType [[caughtFromEngine]] castType=Error
+
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f2 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = Builtin builtin=GlobalThis @183
+    v5 = PropGet v4 key="print" [isFreeName] @183
+    v6 = Predict v1 predicted=function @189
+    v7 = Call v6 calleeName="byHost" @189
+    v8 = Predict v3 predicted=function @199
+    v9 = Call v8 calleeName="byEngine" @199
+    v10 = Call v5, -, v7, v9 calleeName="print" @183
+    v11 = Undefined @183
+    Return v11 @183
+}
+function f1 name="byHost" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    Jump -> next b2() @20
+  b2() handler=b3():
+    v0 = Builtin builtin=GlobalThis @33
+    v1 = PropGet v0 key="structuredClone" [isFreeName] @33
+    v2 = Predict v1 predicted=builtin(StructuredClone) @33
+    v3 = NewClosure function=f3 @49
+    v4 = Call v2, -, v3 calleeName="structuredClone" @33
+    Return v4 @33
+  b3() role=CatchHandler:
+    v5 = CatchValue @75
+    Return v5 @84
+}
+function f2 name="byEngine" module=m0 position=95 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @95
+  b1():
+    Jump -> next b2() @117
+  b2() handler=b3():
+    v0 = Builtin builtin=GlobalThis @130
+    v1 = PropGet v0 key="JSON" [isFreeName] @130
+    v2 = Predict v1 predicted=builtin(JSON) @130
+    v3 = PropGet v2 key="parse" @130
+    v4 = Predict v3 predicted=function @130
+    v5 = Predict v4 predicted=builtin(JSONParse) @130
+    v6 = String string="{" @141
+    v7 = Call v5, v2, v6 calleeKey="parse" calleeName="parse" @135
+    Return v7 @130
+  b3() role=CatchHandler:
+    v8 = CatchValue @163
+    Return v8 @172
+}
+function f3 module=m0 position=49 kind=Arrow thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @49
+  b1():
+    v0 = Integer integer=1 @55
+    v1 = ClaimDeclared v0 declared={type=anything predicted=number} @55
+    Return v1 @55
+}
+entry module=m0

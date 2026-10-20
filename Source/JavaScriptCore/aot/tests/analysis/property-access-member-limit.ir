@@ -1,0 +1,18 @@
+# A receiver with more members than the limit has no plan, so the access stays by name, and its neighbor within the limit keeps its slot
+# FORM: Prepared
+# OPTIONS: limit=MaxAccessPlanMembers:2
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0]}
+layout L1 name="Second" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1]}
+layout L2 name="Third" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L2]}
+
+function f0 name="reads" parameters=[{type=L0|L1|L2}, {type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2, v1: L0|L1):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v1 key="x"
+    Return v3
+}
+# CHECK: F0 v2 PropGet [[key]]: form=ByName level=Unknown receivers=[] cause=LimitReached limit=MaxAccessPlanMembers
+# CHECK-NEXT: F0 v3 PropGet [[key]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L1] member=(Field level=Proven)

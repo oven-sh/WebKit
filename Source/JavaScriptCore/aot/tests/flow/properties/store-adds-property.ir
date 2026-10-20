@@ -1,0 +1,29 @@
+# A store under a name the layout does not declare creates one property node and may add a property. A store to a declared field is a store after creation and adds nothing
+# RUN: flow-solve nodes
+# CHECK: DeclaredPart(L0#[[grows]], 0) = {1}
+# CHECK-NEXT: DeclaredPart(L0#[[keeps]], 0) = {1|"late"}
+# CHECK-NOT: Property(L0#
+# CHECK: Property(L0#[[grows]], "extra") = {"late"}
+# CHECK-NOT: Property(L0#
+# RUN(OBJECTS): flow-solve objects
+# OBJECTS: L0#{{*}} mutations=[AddProperty] uses
+# OBJECTS-NEXT: L0#{{*}} mutations=[StoreAfterCreation] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Integer integer=1
+    v1 = String string="late"
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v3, v1 key="extra" mode=Strict
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    PropSet v6, v1 key="x" mode=Strict
+    Return
+  b1() role=CatchHandler:
+    v8 = CatchValue
+    Return
+}

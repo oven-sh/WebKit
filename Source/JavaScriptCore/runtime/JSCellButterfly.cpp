@@ -45,13 +45,7 @@ void JSCellButterfly::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     ASSERT_GC_OBJECT_INHERITS(cell, info());
     Base::visitChildren(cell, visitor);
-    if (!hasContiguous(cell->indexingType())) {
-        ASSERT(hasDouble(cell->indexingType()) || hasInt32(cell->indexingType()));
-        return;
-    }
-
-    Butterfly* butterfly = uncheckedDowncast<JSCellButterfly>(cell)->toButterfly();
-    visitor.appendValuesHidden(butterfly->contiguous().data(), butterfly->publicLength());
+    visitFields(uncheckedDowncast<JSCellButterfly>(cell), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSCellButterfly);
@@ -258,7 +252,7 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     if (!set->storage())
         return result;
 
-    auto& storage = set->storageRef();
+    JSCell& storage = *set->storage();
     unsigned index = 0;
     for (Helper::Entry entry = 0;; ++entry) {
         auto transitionResult = Helper::transitAndNext(vm, storage, entry);

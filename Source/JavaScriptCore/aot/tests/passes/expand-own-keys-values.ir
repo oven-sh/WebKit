@@ -1,0 +1,195 @@
+# Object.values of an object with known key orders reads the slots of each order under its tests, and the call stays on the rare path
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 10
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}]}
+layout L1 name="Closed" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}] impossibleMutations=[RedefineProperty, AddProperty, StoreOfOtherType]}
+layout L2 name="OnlyGainsNothing" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}] impossibleMutations=[AddProperty]}
+layout L3 name="Mixed" fields=[{key="a" declared={type=number}}, {key=@@iterator declared={type=anything}}, {key=#"p"@L3 declared={type=number} flags=[IsPrivate]}, {key="b" declared={type=string}}] flow={constructorOrders=[{fields=[0, 1, 2, 3]}]}
+layout L4 name="WithMethod" fields=[{key="n" declared={type=number}}, {key="run" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f11}}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="predicted" parameters=[{type=object predicted=L0}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="predicted"
+# CHECK: b0(v0: object ~ L0):
+# CHECK-NEXT: [[shapeA]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[shapeA]] -> taken [[orderBlockA]](| 0), notTaken
+# CHECK: [[done0]](v1: Array):
+# CHECK-NEXT: Return v1
+# CHECK: [[original0]]() frequency=Rare:
+# CHECK-NEXT: [[call0]]: Array = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NEXT: Jump -> next [[done0]]([[call0]])
+# CHECK: [[shapeB]]: boolean = ShapeTest v0 layouts=[L0]
+# CHECK-NEXT: Branch [[shapeB]] -> taken [[orderBlockB]](| 0), notTaken
+# CHECK: [[orderBlockA]]([[shapeGuardA]]: guard):
+# CHECK-NEXT: [[orderA]]: boolean = HasKeyOrder v0, [[shapeGuardA]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Branch [[orderA]] -> taken [[extraBlockA]](| 0), notTaken
+# CHECK: [[extraBlockA]]([[orderGuardA]]: guard):
+# CHECK-NEXT: [[extraA]]: boolean = HasNoExtraProperties v0, [[shapeGuardA]]
+# CHECK-NEXT: Branch [[extraA]] -> taken [[readsA]](| 0), notTaken
+# CHECK: [[readsA]]([[extraGuardA]]: guard):
+# CHECK-NEXT: [[allA]]: guard = AllGuards [[shapeGuardA]], [[orderGuardA]], [[extraGuardA]]
+# CHECK-NEXT: [[xA]]: number = GetSlot v0, [[allA]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[yA]]: string = GetSlot v0, [[allA]] key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[arrayA]]: Array = NewArray [[xA]], [[yA]] contents=anything
+# CHECK-NEXT: Jump -> next [[done0]]([[arrayA]])
+# CHECK: [[orderBlockB]]([[shapeGuardB]]: guard):
+# CHECK-NEXT: [[orderB]]: boolean = HasKeyOrder v0, [[shapeGuardB]] layout=L0 fields=[1, 0]
+# CHECK: = HasNoExtraProperties v0, [[shapeGuardB]]
+# CHECK: [[allB]]: guard = AllGuards [[shapeGuardB]],
+# CHECK-NEXT: [[yB]]: string = GetSlot v0, [[allB]] key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[xB]]: number = GetSlot v0, [[allB]] key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[arrayB]]: Array = NewArray [[yB]], [[xB]] contents=anything
+# CHECK-NEXT: Jump -> next [[done0]]([[arrayB]])
+# CHECK-NOT: ShapeTest
+
+function f1 name="proven" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="proven"
+# CHECK-NOT: ShapeTest
+# CHECK: [[order1]]: boolean = HasKeyOrder v0 layout=L0 fields=[0, 1]
+# CHECK-NOT: ShapeTest
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NOT: ShapeTest
+# CHECK: = HasKeyOrder v0 layout=L0 fields=[1, 0]
+# CHECK-NOT: ShapeTest
+# CHECK: ([[orderGuard1]]: guard):
+# CHECK-NEXT: = HasNoExtraProperties v0
+# CHECK: ([[extraGuard1]]: guard):
+# CHECK-NEXT: [[all1]]: guard = AllGuards [[orderGuard1]], [[extraGuard1]]
+# CHECK-NEXT: = GetSlot v0, [[all1]] key="x" receivers=[L0] level=Predicted
+# CHECK-NOT: ShapeTest
+
+function f2 name="cannotHaveExtraProperties" parameters=[{type=object predicted=L1}] results=[{type=anything}] {
+  b0(v0: object ~ L1):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f2 name="cannotHaveExtraProperties"
+# CHECK-NOT: HasNoExtraProperties
+# CHECK: ([[shapeGuard2]]: guard):
+# CHECK-NEXT: = HasKeyOrder v0, [[shapeGuard2]] layout=L1 fields=[0]
+# CHECK-NOT: HasNoExtraProperties
+# CHECK: ([[orderGuard2]]: guard):
+# CHECK-NEXT: [[all2]]: guard = AllGuards [[shapeGuard2]], [[orderGuard2]]
+# CHECK-NEXT: = GetSlot v0, [[all2]] key="x" receivers=[L1] level=Predicted
+# CHECK-NOT: HasNoExtraProperties
+
+function f3 name="fieldMayMoveToExtraProperties" parameters=[{type=object predicted=L2}] results=[{type=anything}] {
+  b0(v0: object ~ L2):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="fieldMayMoveToExtraProperties"
+# CHECK: = HasKeyOrder v0, [[shapeGuard3]] layout=L2 fields=[0]
+# CHECK: = HasNoExtraProperties v0, [[shapeGuard3]]
+
+function f4 name="symbolAndPrivateFields" parameters=[{type=object predicted=L3}] results=[{type=anything}] {
+  b0(v0: object ~ L3):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="symbolAndPrivateFields"
+# CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3]
+# CHECK-NOT: GetSlot
+# CHECK: [[all4]]: guard = AllGuards
+# CHECK-NEXT: [[a4]]: number = GetSlot v0, [[all4]] key="a" receivers=[L3] level=Predicted
+# CHECK-NEXT: [[b4]]: string = GetSlot v0, [[all4]] key="b" receivers=[L3] level=Predicted
+# CHECK-NEXT: = NewArray [[a4]], [[b4]] contents=anything
+# CHECK-NOT: GetSlot
+
+function f5 name="deferredClosure" parameters=[{type=object predicted=L4}] results=[{type=anything}] {
+  b0(v0: object ~ L4):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f5 name="deferredClosure"
+# CHECK: [[all5]]: guard = AllGuards
+# CHECK-NEXT: [[n5]]: number = GetSlot v0, [[all5]] key="n" receivers=[L4] level=Predicted
+# CHECK-NEXT: [[run5]]:{{*}}= GetDeferredClosureSlot v0, [[all5]] key="run" receivers=[L4] level=Predicted
+# CHECK-NEXT: = NewArray [[n5]], [[run5]] contents=anything
+
+function f6 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v1, v0 layout=L0 fields=[1, 0]
+    v3 = CallBuiltin -, v2 overload=ObjectValues/0
+    Return v3
+}
+# CHECK-LABEL: function f6 name="unchangedAllocation"
+# CHECK: b0(v0: number, v1: string):
+# CHECK-NEXT: v2:{{*}}= NewObject -, v1, v0 layout=L0 fields=[1, 0]
+# CHECK-NEXT: [[y6]]: string = GetSlot v2, v2 key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[x6]]: number = GetSlot v2, v2 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[array6]]: Array = NewArray [[y6]], [[x6]] contents=anything
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: HasNoExtraProperties
+# CHECK-NOT: CallBuiltin
+
+function f7 name="unchangedAllocationThroughCast" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Upcast v2 castType=undefined|object
+    v4 = CallBuiltin -, v3 overload=ObjectValues/0
+    Return v4
+}
+# CHECK-LABEL: function f7 name="unchangedAllocationThroughCast"
+# CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK: [[x7]]: number = GetSlot v2, v2 key="x" receivers=[L0] level=Predicted
+# CHECK-NEXT: [[y7]]: string = GetSlot v2, v2 key="y" receivers=[L0] level=Predicted
+# CHECK-NEXT: = NewArray [[x7]], [[y7]] contents=anything
+# CHECK-NOT: ShapeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CallBuiltin
+
+function f8 name="allocationStoredToBeforeTheWalk" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: number, v1: string):
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PropSet v2, v0 key="z"
+    v4 = CallBuiltin -, v2 overload=ObjectValues/0
+    Return v4
+}
+# CHECK-LABEL: function f8 name="allocationStoredToBeforeTheWalk"
+# CHECK: PropSet v2, v0 key="z"
+# CHECK: = ShapeTest v2 layouts=[L0]
+# CHECK: = CallBuiltin -, v2 overload=ObjectValues/0
+# CHECK: = HasKeyOrder v2,
+# CHECK: = HasNoExtraProperties v2,
+
+function f9 name="allocationPassedToCallBeforeTheWalk" parameters=[{type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: string, v2: anything):
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v4 = Call v2, -, v3
+    v5 = CallBuiltin -, v3 overload=ObjectValues/0
+    Return v5
+}
+# CHECK-LABEL: function f9 name="allocationPassedToCallBeforeTheWalk"
+# CHECK: = Call v2, -, v3
+# CHECK: = ShapeTest v3 layouts=[L0]
+# CHECK: = CallBuiltin -, v3 overload=ObjectValues/0
+# CHECK: = HasKeyOrder v3,
+
+function f10 name="nothingKnown" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = CallBuiltin -, v0 overload=ObjectValues/0
+    Return v1
+}
+# CHECK-LABEL: function f10 name="nothingKnown"
+# CHECK: b0(v0: object):
+# CHECK-NEXT: v1: Array = CallBuiltin -, v0 overload=ObjectValues/0
+# CHECK-NEXT: Return v1
+
+function f11 name="run" results=[{type=undefined}] {
+  b0():
+    Return
+}

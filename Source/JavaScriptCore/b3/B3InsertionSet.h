@@ -74,20 +74,14 @@ public:
     
     Value* insertClone(size_t index, Value*);
 
-#if USE(BUN_JSC_ADDITIONS)
     void execute(BasicBlock* block)
     {
         if (!m_insertions.isEmpty())
             executeInsertions(block);
     }
-#else
-    void execute(BasicBlock*);
-#endif
 
 private:
-#if USE(BUN_JSC_ADDITIONS)
     void executeInsertions(BasicBlock*);
-#endif
 
     Procedure& m_procedure;
     Vector<Insertion, 8> m_insertions;

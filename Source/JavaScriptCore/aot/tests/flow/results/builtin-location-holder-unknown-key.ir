@@ -1,0 +1,29 @@
+# A store under a key nobody knows is a write of every member of its holder that is constant unless written. It costs no member that is always locked, and no member of another holder
+# RUN: flow
+# STATISTIC: FlowWrittenBuiltinLocations = 2
+# CHECK: builtin-location GlobalThis."Date" Constant
+# CHECK: builtin-location GlobalThis."Intl" Constant
+# CHECK: builtin-location Date."now" Unknown written at f0:v5
+# CHECK: builtin-location Date."parse" Unknown written at f0:v5
+# CHECK: builtin-location Date."UTC" Constant
+# CHECK: builtin-location Intl."getCanonicalLocales" Constant
+# RUN(LOCKED): flow
+# LOCKED-NOT: Constant written at
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = ToPropertyKey v2
+    v4 = Integer integer=1
+    ElemSet v1, v3, v4 mode=Strict
+    v6 = PropGet v1 key="now"
+    v7 = PropGet v1 key="parse"
+    v8 = PropGet v1 key="UTC"
+    v9 = PropGet v0 key="Intl" [isFreeName]
+    v10 = PropGet v9 key="getCanonicalLocales"
+    Return
+}

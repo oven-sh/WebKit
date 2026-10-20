@@ -1,0 +1,62 @@
+# An operator that converts an object to a primitive calls the valueOf and toString the object has and reads them as values, because the run time looks them up by name, and strict equality, which converts nothing, calls neither
+# RUN: flow-links calls
+# RUN(STRING): flow-links calls
+# RUN(ADD): flow-links calls
+# RUN(EQUAL): flow-links calls
+# RUN(TEXT): flow-links calls
+# RUN(STRICT): flow-links calls
+# RUN(LOCATIONS): flow-solve locations
+# RUN(CALLEE): flow-solve locations
+# RUN(FIELDS): pipeline RemoveUnreadFields
+# CHECK-COUNT-3: -> [[valueOf]] f1 Protocol Once
+# CHECK-NOT: f1 Protocol
+# STRING-COUNT-3: -> [[toString]] f2 Protocol Once
+# STRING-NOT: f2 Protocol
+# ADD-COUNT-2: f0 v7 -> {{*}} Protocol Once
+# EQUAL-COUNT-2: f0 v8 -> {{*}} Protocol Once
+# TEXT-COUNT-2: f0 v9 -> {{*}} Protocol Once
+# STRICT-NOT: f0 v10 ->
+# LOCATIONS: DeclaredPart(L0#[[object]], 0) events=[{{*}}ReadAsValue
+# LOCATIONS-NEXT: DeclaredPart(L0#[[object]], 1) events=[{{*}}ReadAsValue
+# LOCATIONS-NEXT: DeclaredPart(L0#[[object]], 2) events=[{{*}}ReadAsCallee
+# CALLEE-NOT: , 0) events=[{{*}}ReadAsCallee
+# CALLEE-NOT: , 1) events=[{{*}}ReadAsCallee
+# CALLEE-NOT: , 2) events=[{{*}}ReadAsValue
+# FIELDS: = NewObject -, [[first]], [[second]]{{*}} layout=L0 fields=[0, 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Convertible" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = Integer integer=1
+    v7 = Add v4, v6
+    v8 = Eq v4, v6
+    v9 = ToString v4
+    v10 = StrictEq v4, v6
+    v11 = PropGet v4 key="run"
+    v12 = Call v11, v4 calleeKey="run"
+    v13 = PropGet v5 key="print" [isFreeName]
+    v14 = Call v13, -, v7, v8, v9, v10
+    Return
+}
+function f1 name="valueOf" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
+function f2 name="toString" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="two"
+    Return v1
+}
+function f3 name="run" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

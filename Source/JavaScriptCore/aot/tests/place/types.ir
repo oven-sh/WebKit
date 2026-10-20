@@ -1,0 +1,85 @@
+# A run-time type record copies the plan of a complete test of its type: a layout is tested as an object and named for messages, and a closure by the generic entrypoint of its function
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables types
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="declared" variable=g8}]
+entry module=m0
+layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="both" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="one" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="byte" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="word" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="closure" module=m0 declared={type=anything} initialization=Undefined
+variable g5 name="bytes" module=m0 declared={type=anything} initialization=Undefined
+variable g6 name="callback" module=m0 declared={type=anything} initialization=Undefined
+variable g7 name="unknown" module=m0 declared={type=anything} initialization=Undefined
+variable g8 name="declared" module=m0 declared={type=function} initialization=Function function=f2
+variable g9 name="neverStored" module=m0 declared={type=number|absent}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewObject -, v2 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v6 variable=g0
+    PutModuleVariable v4 variable=g1
+    v10 = Integer integer=0
+    v11 = Integer integer=255
+    PutModuleVariable v10 variable=g2
+    PutModuleVariable v11 variable=g2
+    v14 = String string="a"
+    v15 = String string="b"
+    PutModuleVariable v14 variable=g3
+    PutModuleVariable v15 variable=g3
+    v18 = NewClosure function=f1
+    PutModuleVariable v18 variable=g4
+    v20 = NewArray v10, v11 contents=anything
+    PutModuleVariable v20 variable=g5
+    PutModuleVariable v1 variable=g7
+    v23 = TypeTest v1 testedType=function
+    Branch v23 -> taken b1(| 0), notTaken b2()
+  b1(v24):
+    PutModuleVariable v24 variable=g6
+    Jump -> next b2()
+  b2():
+    v26 = GetModuleVariable variable=g0
+    v27 = GetModuleVariable variable=g1
+    v28 = GetModuleVariable variable=g2
+    v29 = GetModuleVariable variable=g3
+    v30 = GetModuleVariable variable=g4
+    v31 = GetModuleVariable variable=g5
+    v32 = GetModuleVariable variable=g6
+    v33 = GetModuleVariable variable=g7
+    v34 = GetModuleVariable variable=g9
+    v35 = CheckInitialized v34 name="neverStored"
+    Return
+}
+function f1 name="callee" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="declared" results=[{type=anything}] {
+  b0():
+    Return
+}
+# CHECK: type number {{*}}primitives=0x70 tests=[] literals=[]
+# CHECK: type function {{*}}primitives=0x0 tests=[IsCallable()]
+# CHECK: type anything {{*}}primitives=0x3ff tests=[IsObject()]
+# No value passes the test of a variable that nothing stores.
+# CHECK: type absent {{*}}primitives=0x0 tests=[] literals=[]
+# CHECK-NOT: IsClosureOf(f1)
+# CHECK: type f1 {{*}}primitives=0x0 tests=[IsClosureOf(f{{*}})]
+# CHECK: type L0 {{*}}primitives=0x0 tests=[IsObject()] {{*}}set=[[one]]
+# CHECK: type int[0, 255] offset=[[byte]] primitives=0x10 tests=[] literals=[] minimum=0 maximum=255
+# CHECK: type L0|L1 {{*}}primitives=0x0 tests=[IsObject()] {{*}}set=[[both]]
+# The primitives say "one of the listed strings", not "any string".
+# CHECK: type "a"|"b" {{*}}primitives=0x800 tests=[] literals=["a" "b"]
+# CHECK: type Array<int[0, 255]{{*}}> {{*}}tests=[CellTypeIs({{*}})] {{*}}contents=[[byte]]
+# CHECK: set [[one]] name="A" test=1+1
+# CHECK: set [[both]] name="" test=1+2

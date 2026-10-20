@@ -1,0 +1,64 @@
+# A closure that is the receiver of bind is retained by the bound function, an object on the heap that the frame does not own, and keeps its known callers
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: function f5 callers=AllKnown
+# CHECK: class {{*}} closureFunction=f5 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript,
+# CHECK: class {{*}} layout=L2 {{*}}locality=FrameLocal
+# CHECK: class {{*}} closureFunction=f6 {{*}}locality=FrameLocal
+# NOWHERE-NOT: layout=L0 {{*}}locality=FrameLocal
+# NOWHERE-NOT: closureFunction=f4 {{*}}locality=FrameLocal
+# NOWHERE-NOT: layout=L1 {{*}}locality=FrameLocal
+# NOWHERE-NOT: closureFunction=f5 {{*}}locality=FrameLocal
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="n" declared={type=anything}}]
+layout L1 kind=Environment fields=[{key="n" declared={type=anything}}]
+layout L2 kind=Environment fields=[{key="n" declared={type=anything}}]
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+function f1 name="boundAndKept" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f4
+    v2 = PropGet v1 key="bind"
+    v3 = Undefined
+    v4 = Call v2, v1, v3
+    PutModuleVariable v4 variable=g0
+    Return
+}
+function f2 name="boundAndCalled" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L1 fields=[]
+    v1 = NewClosure v0 function=f5
+    v2 = PropGet v1 key="bind"
+    v3 = Undefined
+    v4 = Call v2, v1, v3
+    v5 = Call v4
+    Return
+}
+function f3 name="control" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L2 fields=[]
+    v1 = NewClosure v0 function=f6
+    v2 = Call v1
+    Return
+}
+function f4 name="inner" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    Return
+}
+function f5 name="inner" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    Return
+}
+function f6 name="inner" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    Return
+}

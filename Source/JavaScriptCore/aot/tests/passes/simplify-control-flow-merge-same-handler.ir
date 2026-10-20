@@ -1,0 +1,145 @@
+# A block merges into its only predecessor when both name the same handler block with the same arguments
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 4
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="noArguments" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Call v0, -, v1
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f0 name="noArguments"
+# CHECK: b0(v0: function) handler=b2():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK: b2() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+
+function f1 name="sameArguments" parameters=[{type=function}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: string) handler=b2(v1, v2):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v1, v2):
+    v4 = Call v0, -, v3
+    Return v4
+  b2(v5, v6) role=CatchHandler:
+    v7 = CatchValue
+    v8 = Call v0, -, v5, v6, v7
+    Return v8
+}
+# CHECK-LABEL: function f1 name="sameArguments"
+# CHECK: b0(v0: function, v1: number, v2: string) handler=b2(v1, v2):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Call v0, -, v3
+# CHECK-NEXT: Return v4
+
+function f2 name="chainOfThree" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number) handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v1):
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2() handler=b3(v1):
+    v4 = Call v0, -, v3
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f2 name="chainOfThree"
+# CHECK: b0(v0: function, v1: number) handler=b3(v1):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Call v0, -, v2
+# CHECK-NEXT: = Call v0, -, v3
+# CHECK-NEXT: Return v4
+
+function f3 name="parameterTakesItsArgument" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b2():
+    v1 = Call v0
+    Jump -> next b1(v1)
+  b1(v2) handler=b2():
+    v3 = Call v0, -, v2
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f3 name="parameterTakesItsArgument"
+# CHECK: b0(v0: function) handler=b2():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NEXT: Return v3
+
+function f4 name="otherHandlerBlock" parameters=[{type=function}] results=[{type=anything}] {
+  b0(v0: function) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v0, -, v1
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f4 name="otherHandlerBlock"
+# CHECK: b0(v0: function) handler=b2():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b3():
+
+function f5 name="otherArgument" parameters=[{type=function}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: function, v1: number, v2: number) handler=b2(v1):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b2(v2):
+    v4 = Call v0, -, v3
+    Return v4
+  b2(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f5 name="otherArgument"
+# CHECK: b0(v0: function, v1: number, v2: number) handler=b2(v1):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2(v2):
+
+function f6 name="twoPredecessors" parameters=[{type=function}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: function, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b4():
+    v2 = Call v0
+    Jump -> next b3()
+  b2() handler=b4():
+    v3 = Call v0, -, v0
+    Jump -> next b3()
+  b3() handler=b4():
+    v4 = Call v0, -, v1
+    Return v4
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f6 name="twoPredecessors"
+# CHECK: b1() handler=b4():
+# CHECK: Jump -> next b3()
+# CHECK: b2() handler=b4():
+# CHECK: Jump -> next b3()
+# CHECK: b3() handler=b4():

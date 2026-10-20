@@ -1,0 +1,76 @@
+# class Tracked { static get [Symbol.species]() { return this } }  changed = load(); changed.constructor = Tracked; await changed; await loadOther()
+# A promise whose `constructor` is not Promise is settled through Promise.prototype.then, which reads the species of that constructor and constructs it. A promise that kept its constructor runs neither.
+# The built-in `then` is stepped over and recorded as run.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f3
+# CHECK-NOT: unreached f4
+# CHECK: unreached f7
+# CHECK: unreached f8
+# RUN(USED): valueflow-solve used
+# USED: run PromisePrototypeThen
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Tracked" constructor=f3
+layout L1 kind=Instance name="Unused" constructor=f7
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+function f1 name="awaitsChangedPromise" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 side=Static methodKind=Getter key=@@species
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f5
+    v6 = Call v5
+    PropSet v6, v4 key="constructor"
+    v8 = Await v6
+    Return v8
+}
+function f2 name="awaitsPlainPromise" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    v1 = NewClass v0 layout=L1
+    v2 = NewClosure function=f8
+    DefineMethod v1, v2 layout=L1 side=Static methodKind=Getter key=@@species
+    v4 = FinishClass v1 layout=L1
+    v5 = NewClosure function=f6
+    v6 = Call v5
+    v7 = Await v6
+    Return v7
+}
+function f3 name="Tracked" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f4 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="loadOther" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}
+function f7 name="Unused" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    Return v3
+}
+function f8 name="speciesOfUnused" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

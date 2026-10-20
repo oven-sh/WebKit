@@ -1,0 +1,42 @@
+# function take() { arguments[0](); arguments.length }  take(one);  function other() { arguments[0]() }  other(two)
+# An arguments object holds what its own function was passed.
+# RUN: valueflow-solve calls
+# CHECK: f3 v6 -> f1
+# CHECK: f4 v6 -> f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f1
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v4
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="take" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = Call v5, v3
+    Return
+}
+function f4 name="other" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Integer integer=0
+    v5 = ElemGet v3, v4
+    v6 = Call v5, v3
+    Return
+}

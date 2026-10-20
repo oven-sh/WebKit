@@ -53,12 +53,15 @@ namespace JSC {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryHandle);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferMemoryManager);
 
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+static constexpr unsigned maxFastMemoryCountWithImageCode = 4096;
+#endif
+
 static unsigned maxFastMemoryCount()
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    constexpr unsigned fastMemoryCountForImageCode = 4096;
     if (Wasm::CodeInImage::isInProcess())
-        return std::max(Options::maxNumWasmFastMemories(), fastMemoryCountForImageCode);
+        return std::max(Options::maxNumWasmFastMemories(), maxFastMemoryCountWithImageCode);
 #endif
     return Options::maxNumWasmFastMemories();
 }

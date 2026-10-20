@@ -1,0 +1,41 @@
+# Closure tests of a callee that is one of two functions and of a predicted callee pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# STATISTIC: CallsResolved >= 2
+# STATISTIC: CallsGuarded >= 1
+# STATISTIC: TestAndBranchGroups >= 2
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = NewClosure v1 function=f2
+    v3 = NewClosure function=f3
+    v4 = NewClosure function=f4
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v0, v2, v3, v4
+    Return v7
+}
+function f1 name="withoutCaptures" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="withCapture" captures=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    Return v0
+}
+function f3 name="dispatch" parameters=[{type=f1|f2}] results=[{type=anything}] {
+  b0(v0: f1|f2):
+    v1 = Call v0
+    Return v1
+}
+function f4 name="callPredicted" parameters=[{type=function predicted=f1}] results=[{type=anything}] {
+  b0(v0: function ~ f1):
+    v1 = Call v0
+    Return v1
+}

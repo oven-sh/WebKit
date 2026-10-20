@@ -1,0 +1,151 @@
+# A slow path that comes back into a stretch without the proofs of the stretch goes on in the generic copy, so the test in front of the stretch serves the uses behind the join
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# STATISTIC: StretchesNotClonable = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="slowPathRunsUnknownCode" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = Call v2
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = PropGet v0 key="b"
+    v7 = Call v2, -, v5, v6
+    Return v7
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v3; slow path leaves on b2.0; uses v3 v6; cloned 12
+# PLAN-NOT: stretch
+# IR-LABEL: function f0 name="slowPathRunsUnknownCode"
+# IR: = ShapeTest v0 layouts=[L0]
+# IR-NOT: ShapeTest
+# IR: b2() frequency=Unlikely:
+# IR-NEXT: v4: anything = Call v2
+# IR-NEXT: Jump -> next [[copy0]](v4)
+# IR: v6: number = GetSlot v0, {{*}} key="b" receivers=[L0] level=Predicted
+# IR-NEXT: Jump -> next [[behind0]](v5, v6)
+# IR: [[behind0]]([[first0]]: {{*}}, [[second0]]: {{*}}):
+# IR-NEXT: = Call v2, -, [[first0]], [[second0]]
+# IR: [[copy0]]([[handed0]]: {{*}}) frequency=Unlikely:
+# IR-NEXT: [[byName0]]: {{*}} = PropGet v0 key="b"
+# IR-NEXT: Jump -> next [[behind0]]([[handed0]], [[byName0]])
+
+function f1 name="bothPathsAreUsual" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    v4 = Call v2
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = PropGet v0 key="b"
+    v7 = Call v2, -, v5, v6
+    Return v7
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3; cloned 8
+# PLAN-NEXT: stretch 1: test ShapeTest v0 layouts=[L0] before v6; uses v6; cloned 0
+# PLAN-NOT: stretch
+
+function f2 name="slowPathKeepsTheProofs" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = Integer integer=7
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = PropGet v0 key="b"
+    v7 = Call v2, -, v5, v6
+    Return v7
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3 v6; cloned 16
+# PLAN-NOT: stretch
+# IR-LABEL: function f2 name="slowPathKeepsTheProofs"
+# IR: b2() frequency=Unlikely:
+# IR-NEXT: v4: 7 = Integer integer=7
+# IR-NEXT: Jump -> next b3(v4)
+
+function f3 name="nothingIsUsedBehindTheJoin" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = Call v2
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    Return v5
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v3; uses v3; cloned 8
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="nothingIsUsedBehindTheJoin"
+# IR: v4: anything = Call v2
+# IR-NEXT: Jump -> next b3(v4)
+
+function f4 name="twoSlowPaths" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    v3 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2() frequency=Unlikely:
+    v4 = Call v2
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = PropGet v0 key="b"
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b6(v6)
+  b5() frequency=Unlikely:
+    v7 = Call v2, -, v6
+    Jump -> next b6(v7)
+  b6(v8: anything):
+    v9 = PropGet v0 key="a"
+    v10 = Call v2, -, v5, v8, v9
+    Return v10
+}
+# PLAN-LABEL: function f4
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v3; slow path leaves on b2.0; slow path leaves on b5.0; uses v3 v6 v9; cloned 24
+# PLAN-NOT: stretch
+# IR-LABEL: function f4 name="twoSlowPaths"
+# IR: = ShapeTest v0 layouts=[L0]
+# IR-NOT: ShapeTest
+
+function f5 name="slowPathInLoop" parameters=[{type=object predicted=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: boolean, v2: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = PropGet v0 key="a"
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v5 = PropGet v0 key="b"
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b4()
+  b3() frequency=Unlikely:
+    v7 = Call v2
+    Jump -> next b2()
+  b4():
+    Return v4
+}
+# PLAN-LABEL: function f5
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] on b0.0; test TypeTest v5 testedType=number before v6; slow path leaves on b3.0; uses v4 v5 v6; cloned 16
+# PLAN-NOT: renew
+# IR-LABEL: function f5 name="slowPathInLoop"
+# IR-NOT: IsShapeEpochCurrent

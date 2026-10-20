@@ -25,9 +25,13 @@
 #include "JSCInlines.h"
 #include <wtf/text/MakeString.h>
 
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
+
 namespace JSC {
 
-void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName, unsigned attributes)
+void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName)
 {
     JSGlobalObject* globalObject = thisObject.realm();
     JSObject* getter = nullptr;
@@ -43,16 +47,7 @@ void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObje
     }
     GetterSetter* accessor = GetterSetter::create(vm, globalObject, getter, nullptr);
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-    thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributes);
-}
-
-void reifyLockedStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObject)
-{
-    reifyStaticProperty(vm, classInfo, propertyName, value, thisObject, staticPropertyAttributes(vm, thisObject, value));
-    unsigned attributes;
-    PropertyOffset offset = thisObject.getDirectOffset(vm, propertyName, attributes);
-    if (isValidOffset(offset))
-        thisObject.realm()->makeIntrinsicValueImmutable(thisObject, propertyName, thisObject.getDirect(offset), attributes);
+    thisObject.putDirectNonIndexAccessor(vm, propertyName, accessor, attributesForStructure(value.attributes()));
 }
 
 bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertyName propertyName, PropertySlot& slot)
@@ -88,6 +83,11 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
             RELEASE_ASSERT_NOT_REACHED();
         }
+
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && !isAccessor) [[unlikely]]
+            AOT::RuntimeHooks::didCreateStaticProperty(thisObject, propertyName.uid(), thisObject->getDirect(offset));
+#endif
     }
 
     if (isAccessor)
@@ -95,6 +95,12 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
     else
         slot.setValue(thisObject, attributes, thisObject->getDirect(offset), offset);
     return true;
+}
+
+bool setUpReifiedCustomSlot(VM& vm, const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertyName propertyName, PropertySlot& slot)
+{
+    reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
+    return thisObject->getOwnNonIndexPropertySlot(vm, thisObject->structure(), propertyName, slot);
 }
 
 } // namespace JSC

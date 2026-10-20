@@ -1,0 +1,42 @@
+# With the frame locality result switched off no allocation class is frame local, and the operand summaries and the uses of closures are what they are with every switch on
+# OPTIONS: disable=flow:FrameLocalAllocations
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: function f2 parameter 0 uses=[{{*}}Calls
+# CHECK: function f3 {{*}}closureUse=CalledOnly
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, {{*}}] keys=NeverEnumerated addedKeysAreComplete=true
+# CHECK: class {{*}} closureFunction=f3 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, {{*}}] keys=NeverEnumerated addedKeysAreComplete=true
+# CHECK: stored-value L0.0 uses=[
+# NOWHERE-NOT: locality=
+# NOWHERE-NOT: function f2 parameter 0 uses={{*}}Retains
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="n" declared={type=anything}}]
+variable g0 name="helper" module=m0 declared={type=function} initialization=Function function=f2
+variable g1 name="outer" module=m0 declared={type=function} initialization=Function function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    Return
+}
+function f1 name="outer" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f3
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v2
+    Return
+}
+function f2 name="helper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0
+    Return v1
+}
+function f3 name="inner" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

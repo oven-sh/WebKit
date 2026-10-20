@@ -25,10 +25,8 @@
 
 #include "config.h"
 
-#include "AOTCompiler.h"
-#include "AOTFunction.h"
-#include "AOTImage.h"
-#include "CompilerHooks.h"
+#include "AOTBuiltinModules.h"
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "CompilationResult.h"
 #include "Debugger.h"
@@ -46,7 +44,6 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
-#include "AOTProgramData.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -297,17 +294,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForCall);
         RELEASE_ASSERT(!executable->m_codeBlock);
         RELEASE_ASSERT(!function);
-#if ENABLE(AOT)
-        if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
-            if (auto code = AOT::findInImage(executable, scope)) {
-                ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
-                RETURN_IF_EXCEPTION(throwScope, nullptr);
-                if (codeBlock)
-                    codeBlock->installAOTCode(AOT::codeFromImage(code, executable->unlinkedCodeBlock()));
-                return codeBlock;
-            }
-        }
-#endif
         RELEASE_AND_RETURN(throwScope, ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope));
     }
 
@@ -320,21 +306,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
-#if ENABLE(AOT)
-        if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
-            if (auto code = AOT::findInImage(executable, scope)) {
-                ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
-                RETURN_IF_EXCEPTION(throwScope, nullptr);
-                if (codeBlock)
-                    codeBlock->installAOTCode(AOT::codeFromImage(code, unlinkedCodeBlock));
-                return codeBlock;
-            }
-        }
-#endif
-        if (unlinkedCodeBlock->hasNoInstructions()) [[unlikely]] {
-            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time, and the executable was built without its bytecode, so it can't run in this context."_s)));
-            return nullptr;
-        }
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 
@@ -422,7 +393,7 @@ static void setupLLInt(CodeBlock* codeBlock)
 static void setupJIT(VM& vm, CodeBlock* codeBlock)
 {
 #if ENABLE(JIT)
-    CompilationResult result = g_compilerHooks.compileBaselineNow(vm, codeBlock, JITCompilationMustSucceed);
+    CompilationResult result = callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &JIT::compileSync>(vm, codeBlock, JITCompilationMustSucceed);
     RELEASE_ASSERT(result == CompilationResult::CompilationSuccessful);
 #else
     UNUSED_PARAM(vm);
@@ -449,26 +420,25 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
         return;
     }
 #endif
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && AOT::refusesToInterpret(*this)) [[unlikely]] {
+        AOT::throwLibraryFunctionNotCompiled(scope->realm(), *this);
+        return;
+    }
+#endif
 
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);
     RETURN_IF_EXCEPTION(throwScope, void());
 
-    resultCodeBlock = codeBlock;
     ASSERT(codeBlock);
+    resultCodeBlock = codeBlock;
 
-    bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
-    if (Options::validateBytecode() && !installedUnlinkedBaselineCode)
+    if (Options::validateBytecode())
         codeBlock->validate();
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters() && !installedUnlinkedBaselineCode) [[unlikely]] {
-        static constexpr const char* kinds[] = { "ran-global", "ran-eval", "ran-function", "ran-module" };
-        String name = codeBlock->codeType() == FunctionCode ? uncheckedDowncast<FunctionExecutable>(this)->ecmaName().string() : String();
-        AOT::recordSample(codeBlock->globalObject(), kinds[codeBlock->codeType()], !sourceURL().isEmpty() ? StringView { sourceURL() } : name.isEmpty() ? StringView { "(no URL)"_s } : StringView { name }, source().view());
-    }
-#endif
 
+    bool installedUnlinkedBaselineCode = false;
 #if ENABLE(JIT)
-    if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
+    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }

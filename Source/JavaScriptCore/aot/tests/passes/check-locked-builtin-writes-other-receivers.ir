@@ -1,0 +1,30 @@
+# A write at the top of the body of the entry module whose receiver is a locked built-in in some runs and an object of the program in others does not throw in every run: the build warns and goes on. So does Object.defineProperty on such a value
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="choice" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = Builtin builtin=ObjectPrototype
+    v3 = NewObject layout=L0 fields=[]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v3)
+  b3(v4: anything):
+    v5 = Integer integer=1
+    PropSet v4, v5 key="x" mode=Strict @10
+    v7 = NewObject -, v5 layout=L1 fields=[0]
+    v8 = String string="y"
+    v9 = Builtin builtin=ObjectDefineProperty
+    v10 = Builtin builtin=Object
+    v11 = Call v9, v10, v4, v8, v7 @20
+    Return
+}

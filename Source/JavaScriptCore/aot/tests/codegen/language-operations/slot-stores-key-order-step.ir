@@ -1,0 +1,26 @@
+# Where the fields that a store creates come next in an order of the image, the code compares the order word with one constant and stores another, and calls the run time only for another word. A run whose fields come next in no order has no such code
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: generate-code calls
+# RUN(NOSTEP): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Counter" constructor=f0 fields=[{key="a" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="c" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] constructorOrders=[{fields=[0, 1, 2]}] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="next-in-the-order" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="b" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+function f2 name="next-in-no-order" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: L0, v1: number):
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a" level=Proven mayAdd=true}, {key="c" level=Proven mayAdd=true}] receivers=[L0]
+    Return
+}
+# Both call the run time for an object in another state. The two stores are the same, so the comparison and the store of the order word are the difference in size.
+# CHECK: f1: size=[[withStep]] frame
+# CHECK-NEXT: stub DidCreateField.Run x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub DidCreateField.Run x1
+# NOSTEP: f1: size=[[withStep]] frame
+# NOSTEP-NOT: size=[[withStep]] frame

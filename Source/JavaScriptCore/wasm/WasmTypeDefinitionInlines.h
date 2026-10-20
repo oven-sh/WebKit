@@ -30,10 +30,22 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "Options.h"
 #include "WasmFormat.h"
 #include "WasmTypeDefinition.h"
 
 namespace JSC { namespace Wasm {
+
+static constexpr unsigned structPayloadOffsetPastShapeWord = sizeof(uint64_t);
+
+inline unsigned offsetOfFirstStructFieldInPayload()
+{
+#if ENABLE(AOT)
+    if (Options::useAOT()) [[unlikely]]
+        return structPayloadOffsetPastShapeWord;
+#endif
+    return 0;
+}
 
 inline TypeInformation& TypeInformation::singleton()
 {
@@ -63,7 +75,7 @@ Ref<const RTT> TypeInformation::typeDefinitionForStructFromProvider(StructFieldC
 {
     bool hasRefFieldTypes = false;
     bool hasRecursiveReference = false;
-    unsigned currentOffset = 0;
+    unsigned currentOffset = offsetOfFirstStructFieldInPayload();
     unsigned gapPosition = 0;
     unsigned gapSize = 0;
 

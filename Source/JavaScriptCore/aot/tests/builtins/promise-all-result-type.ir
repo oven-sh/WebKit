@@ -1,0 +1,29 @@
+# The promise of Promise.all is predicted to hold an array of what the elements are fulfilled with, not of the elements: a promise counts as what it holds, a number as itself, and an object that may be a thenable predicts nothing
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="promises" parameters=[{type=Array<Promise<number>>}] results=[{type=anything}] {
+  b0(v0: Array<Promise<number>>):
+    v1 = Builtin builtin=Promise
+    v2 = CallBuiltin v1, v0 overload=PromiseAll/0
+    Return v2
+}
+# CHECK-LABEL: function f0 name="promises"
+# CHECK: v2: Promise ~ Promise<Array<number>> = CallBuiltin
+function f1 name="promisesAndStrings" parameters=[{type=Array<string|Promise<number>>}] results=[{type=anything}] {
+  b0(v0: Array<string|Promise<number>>):
+    v1 = Builtin builtin=Promise
+    v2 = CallBuiltin v1, v0 overload=PromiseAll/0
+    Return v2
+}
+# CHECK-LABEL: function f1 name="promisesAndStrings"
+# CHECK: v2: Promise ~ Promise<Array<number|string>> = CallBuiltin
+function f2 name="objects" parameters=[{type=Array<object>}] results=[{type=anything}] {
+  b0(v0: Array<object>):
+    v1 = Builtin builtin=Promise
+    v2 = CallBuiltin v1, v0 overload=PromiseAll/0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="objects"
+# CHECK: v2: Promise ~ Promise<Array> = CallBuiltin

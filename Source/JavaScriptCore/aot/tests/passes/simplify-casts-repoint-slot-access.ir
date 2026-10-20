@@ -1,0 +1,72 @@
+# A slot access keeps its receiver where an access by name would take the cast that dominates it
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
+
+function f0 name="slotRead" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Claim v0 castType=L0
+    v4 = GetSlot v0, v2 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f0 name="slotRead"
+# CHECK: = Claim v0 castType=L0
+# CHECK-NEXT: = GetSlot v0, v2 key="x"
+
+function f1 name="slotReadOrUndefined" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Claim v0 castType=L0
+    v4 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-LABEL: function f1 name="slotReadOrUndefined"
+# CHECK: = Claim v0 castType=L0
+# CHECK-NEXT: = GetSlotOrUndefined v0, v2 key="x"
+
+function f2 name="slotStore" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: object, v1: anything):
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Claim v0 castType=L0
+    PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    v6 = Undefined
+    Return v6
+}
+# CHECK-LABEL: function f2 name="slotStore"
+# CHECK: = Claim v0 castType=L0
+# CHECK-NEXT: PutSlot v0, v3, v1 key="x"
+
+function f3 name="slotTest" parameters=[{type=object}] results=[{type=boolean}] {
+  b0(v0: object):
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Claim v0 castType=L0
+    v4 = IsSlotFilled v0, v2 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    v5 = Boolean boolean=false
+    Return v5
+}
+# CHECK-LABEL: function f3 name="slotTest"
+# CHECK: = Claim v0 castType=L0
+# CHECK-NEXT: = IsSlotFilled v0, v2 key="x"

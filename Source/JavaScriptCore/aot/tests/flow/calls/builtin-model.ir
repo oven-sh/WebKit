@@ -1,0 +1,42 @@
+# An entry with a model is analyzed through the model, entered at the call site: the result is what the model returns, and the transfers of the entry are not applied
+# RUN: flow-links calls builtins
+# RUN(NODES): flow-solve instances nodes sinks
+# CHECK: link {{*}}: [[main]] f0 v7 -> [[model]] f1 Call Once
+# CHECK: builtin [[main]] v7 ObjectEntries/0 Call
+# NODES: [[model]] f1 at f0:v7
+# NODES: , f0, v3) = {L0#[[source]]}
+# NODES: , f0, v7) = {L2#[[modeled]]@[[model]]}
+# NODES: , f1, parameter 0) = {L0#[[source]]}
+# NODES-LABEL: nativeCode {
+# NODES-NOT: L0#
+# NODES-NOT: L1#
+# NODES-NOT: L2#
+# NODES-LABEL: unknownJavaScript {
+# NODES-NOT: L0#
+# NODES-NOT: L1#
+# NODES-NOT: L2#
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Held" fields=[{key="h" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Modeled" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Builtin builtin=Object
+    v6 = PropGet v5 key="entries"
+    v7 = Call v6, v5, v4 calleeKey="entries"
+    Return
+}
+function f1 name="entries" role=Model parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+runtimefunction id=131081 function=f1

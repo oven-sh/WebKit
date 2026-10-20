@@ -1,0 +1,33 @@
+# A literal that lists all its fields is allocated, once and not by a constructor; an instance of a class is allocated by its constructor
+# RUN: flow-solve objects
+# RUN(SITES): flow-sites solved
+# CHECK: L0#{{*}} mutations=[] {{*}} events=[Allocated]
+# CHECK: L1#{{*}} events=[Allocated, AllocatedByConstructor]
+# SITES: site {{*}} function=f0 value=v2 kind=Layout origin=Operation layout=L0
+# SITES: object {{*}} L0#{{*}} kind=Allocation parts=2 positions=0 undeclared=no events=[Allocated]
+# SITES: object {{*}} L1#{{*}} kind=Allocation parts=1 positions=0 undeclared=no events=[Allocated, AllocatedByConstructor]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Box" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="s"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = Construct v6
+    Return
+}
+function f1 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}

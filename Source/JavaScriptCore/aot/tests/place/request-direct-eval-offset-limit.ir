@@ -1,0 +1,27 @@
+# A binding of a direct eval at an offset past what its slot record can say is a diagnostic that names the limit and the site, and the last offset the record can say is none
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place requests
+# DIAGNOSTIC: LimitExceeded 1
+# LOSS: MaxEvalBindingOffset x1 f1 v8
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="x" kind=MappedArgument field=16777215 operand=0}]
+evalscope e1 mode=Sloppy flags=[IsInFunction] bindings=[{name="x" kind=MappedArgument field=16777216 operand=0}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="x"
+    v2 = Call v0, -, v1, v1
+    Return
+}
+function f1 name="sloppy" flags=[IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: int[0, 2147483647], v3: anything, v4: anything, v5: Array):
+    v6 = CreateMappedArguments v1, v2, v5, v3, v4
+    v7 = DirectEval v3, v0, -, v6 evalScope=e0
+    v8 = DirectEval v3, v0, -, v6 evalScope=e1
+    Return v8
+}
+
+# CHECK-NOT: request

@@ -1,0 +1,55 @@
+# Promise.all of an array literal takes the elements also where a cast that tests nothing stands between the literal and the call
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="literalWithAssumedType" parameters=[{type=Promise}, {type=Promise}] results=[{type=Promise}] {
+  b0(v0: Promise, v1: Promise):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = AssumeType v3 castType=Array<Promise, proven, pristine[Storage, Names]>
+    v5 = CallBuiltin v2, v4 overload=PromiseAll/0
+    Return v5
+}
+# CHECK-LABEL: function f0 name="literalWithAssumedType"
+# CHECK-NOT: CallBuiltin
+# CHECK: v5: Promise{{*}} = PromiseAllOfElements v0, v1
+
+function f1 name="assumedTypeThenUpcast" parameters=[{type=Promise}, {type=Promise}] results=[{type=Promise}] {
+  b0(v0: Promise, v1: Promise):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = AssumeType v3 castType=Array<Promise, proven, pristine[Storage, Names]>
+    v5 = Upcast v4 castType=anything
+    v6 = CallBuiltin v2, v5 overload=PromiseAll/0
+    Return v6
+}
+# CHECK-LABEL: function f1 name="assumedTypeThenUpcast"
+# CHECK-NOT: CallBuiltin
+# CHECK: v6: Promise{{*}} = PromiseAllOfElements v0, v1
+
+function f2 name="literalThroughClaim" parameters=[{type=Promise}, {type=Promise}] results=[{type=Promise}] {
+  b0(v0: Promise, v1: Promise):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0, v1 contents=anything
+    v4 = Upcast v3 castType=anything
+    v5 = Claim v4 castType=Array<Promise>
+    v6 = CallBuiltin v2, v5 overload=PromiseAll/0
+    Return v6
+}
+# CHECK-LABEL: function f2 name="literalThroughClaim"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v5 overload=PromiseAll/0
+
+function f3 name="assumedTypeHasSecondUse" parameters=[{type=Promise}, {type=anything}] results=[{type=Promise}] {
+  b0(v0: Promise, v1: anything):
+    v2 = Builtin builtin=Promise
+    v3 = NewArray v0 contents=anything
+    v4 = AssumeType v3 castType=Array<Promise, proven, pristine[Storage, Names]>
+    v5 = Call v1, -, v4
+    v6 = CallBuiltin v2, v4 overload=PromiseAll/0
+    Return v6
+}
+# CHECK-LABEL: function f3 name="assumedTypeHasSecondUse"
+# CHECK-NOT: PromiseAllOfElements
+# CHECK: = CallBuiltin v2, v4 overload=PromiseAll/0

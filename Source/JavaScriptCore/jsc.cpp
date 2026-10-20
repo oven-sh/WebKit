@@ -22,9 +22,9 @@
 
 #include "config.h"
 
-#include "AOTFunction.h"
-#include "AOTProgram.h"
-#include "AOTRuntime.h"
+#if ENABLE(AOT)
+#include "AOTShell.h"
+#endif
 #include "APICast.h"
 #include "ArrayBuffer.h"
 #include "AtomicsObject.h"
@@ -34,7 +34,6 @@
 #include "CloneDeserializerBase.h"
 #include "CloneSerializerBase.h"
 #include "CodeBlock.h"
-#include "CachedTypes.h"
 #include "CodeCache.h"
 #include "CompilerTimingScope.h"
 #include "Completion.h"
@@ -101,9 +100,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#if ENABLE(AOT) && !OS(WINDOWS)
-#include <sys/mman.h>
-#endif
 #include <sys/types.h>
 #include <type_traits>
 #include <wtf/CPUTime.h>
@@ -535,7 +531,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionJSCOptions);
 static JSC_DECLARE_HOST_FUNCTION(functionReoptimizationRetryCount);
@@ -909,7 +904,11 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
-        addFunction(vm, "aotOperationCount"_s, functionAOTOperationCount, 1);
+#if ENABLE(AOT)
+        AOT::Shell::addShellFunctions(vm, this);
+        for (auto name : AOT::Shell::shellFunctionNames())
+            filter.add(Identifier::fromString(vm, name).impl());
+#endif
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -1207,6 +1206,9 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
 #if USE(BUN_JSC_ADDITIONS)
     nullptr, // requireBuiltinModule
     nullptr, // nativeBinding
+#if ENABLE(AOT)
+    &AOT::Shell::moduleHost,
+#endif
 #endif
 };
 
@@ -1656,28 +1658,6 @@ static inline SourceCode jscSource(const String& source, const SourceOrigin& sou
     return SourceCode(ShellSourceProvider::create(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
 }
 
-#if ENABLE(AOT)
-static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& source, bool isModule)
-{
-    VM& vm = globalObject->vm();
-    const AOT::ProgramData* data = AOT::ProgramData::get();
-    if (!data)
-        return WTF::move(source);
-    SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
-    for (uint32_t entryOffset : data->moduleEntryOffsets()) {
-        const AOT::ProgramModule& module = *data->moduleWithEntryOffset(entryOffset);
-        if (key.length() != module.keyLength || key.hash() != module.keyHash || key.flagsBits() != module.keyFlags)
-            continue;
-        if (!isModule && AOT::Instance::ensure(globalObject).topLevelExecutableOf(entryOffset + 1))
-            break;
-        source.provider()->setHasNoSourceText();
-        source.provider()->setAOTModuleID(entryOffset + 1);
-        break;
-    }
-    return WTF::move(source);
-}
-#endif
-
 template<typename Vector>
 static inline SourceCode jscSource(const Vector& utf8, const SourceOrigin& sourceOrigin, const String& filename)
 {
@@ -1786,11 +1766,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     }
 #endif
 
-    SourceCode moduleSource = jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module);
-#if ENABLE(AOT)
-    moduleSource = programSource(globalObject, WTF::move(moduleSource), true);
-#endif
-    auto sourceCode = JSSourceCode::create(vm, WTF::move(moduleSource));
+    auto sourceCode = JSSourceCode::create(vm, jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module));
     scope.release();
     promise->resolve(globalObject, vm, sourceCode);
     return promise;
@@ -1809,13 +1785,6 @@ JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* g
 
     metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), key);
     RETURN_IF_EXCEPTION(scope, nullptr);
-
-#if ENABLE(AOT)
-    JSValue require = globalObject->get(globalObject, Identifier::fromString(vm, "require"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (require.isCallable())
-        metaProperties->putDirect(vm, Identifier::fromString(vm, "require"_s), require);
-#endif
 
     return metaProperties;
 }
@@ -2698,11 +2667,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLoad, (JSGlobalObject* globalObject, CallFrame*
         return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Could not open file."_s)));
 
     NakedPtr<Exception> evaluationException;
-    SourceCode source = jscSource(script, SourceOrigin { path }, path.fileSystemPath());
-#if ENABLE(AOT)
-    source = programSource(globalObject, WTF::move(source), false);
-#endif
-    JSValue result = evaluate(globalObject, source, JSValue(), evaluationException);
+    JSValue result = evaluate(globalObject, jscSource(script, SourceOrigin { path }, path.fileSystemPath()), JSValue(), evaluationException);
     if (evaluationException) {
         if (vm.isTerminationException(evaluationException.get()))
             vm.setExecutionForbidden();
@@ -3016,23 +2981,6 @@ JSC_DEFINE_HOST_FUNCTION(functionOptimizeNextInvocation, (JSGlobalObject* global
 JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-#if ENABLE(AOT)
-    if (!Options::useAOTOperationCounters() || !AOT::ProgramData::get())
-        return JSValue::encode(jsNull());
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsNumber(static_cast<double>(AOT::operationCount(vm, name))));
-#else
-    UNUSED_PARAM(callFrame);
-    UNUSED_PARAM(scope);
-    return JSValue::encode(jsNull());
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -4597,11 +4545,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
             vm.drainMicrotasks();
         } else {
             NakedPtr<Exception> evaluationException;
-            SourceCode source = jscSource(scriptBuffer, sourceOrigin, fileName);
-#if ENABLE(AOT)
-            source = programSource(globalObject, WTF::move(source), false);
-#endif
-            JSValue returnValue = evaluate(globalObject, source, JSValue(), evaluationException);
+            JSValue returnValue = evaluate(globalObject, jscSource(scriptBuffer, sourceOrigin , fileName), JSValue(), evaluationException);
             scope.assertNoException();
             if (evaluationException)
                 returnValue = evaluationException->value();
@@ -5265,7 +5209,6 @@ int jscmain(int argc, char** argv)
 
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
-    JSC::installCompilers();
     mainCommandLine.construct(argc, argv);
 
 #if OS(WINDOWS)
@@ -5277,6 +5220,9 @@ int jscmain(int argc, char** argv)
     {
         Options::AllowUnfinalizedAccessScope scope;
         processConfigFile(Options::configFile(), "jsc"_s);
+#if ENABLE(AOT)
+        AOT::Shell::enableGlobalsOfBuiltinTable();
+#endif
     }
 
     JSC::initialize();
@@ -5289,34 +5235,7 @@ int jscmain(int argc, char** argv)
 #endif
 
 #if ENABLE(AOT)
-#if OS(WINDOWS)
-    if (const char* path = byteCast<char>(Options::aotImagePath())) {
-        AOTFileUse use { "cannot read it", "cannot read it" };
-        HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        LARGE_INTEGER size;
-        if (file != INVALID_HANDLE_VALUE && GetFileSizeEx(file, &size)) {
-            HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
-            void* bytes = mapping ? MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) : nullptr;
-            if (bytes)
-                use = useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(size.QuadPart) }, file, 0);
-        }
-        if (use.programDataRejectionReason || use.imageRejectionReason) {
-            dataLogLn("Cannot use ", path, ": ", use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason);
-            jscExit(EXIT_FAILURE);
-        }
-    }
-#else
-    if (const char* path = byteCast<char>(Options::aotImagePath())) {
-        int fileDescriptor = open(path, O_RDONLY);
-        struct stat status;
-        void* bytes = fileDescriptor >= 0 && !fstat(fileDescriptor, &status) ? mmap(nullptr, status.st_size, PROT_READ, MAP_PRIVATE, fileDescriptor, 0) : MAP_FAILED;
-        AOTFileUse use = bytes != MAP_FAILED ? useAOTFile({ static_cast<const uint8_t*>(bytes), static_cast<size_t>(status.st_size) }, fileDescriptor, 0) : AOTFileUse { "cannot read it", "cannot read it" };
-        if (use.programDataRejectionReason || use.imageRejectionReason) {
-            dataLogLn("Cannot use ", path, ": ", use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason);
-            jscExit(EXIT_FAILURE);
-        }
-    }
-#endif
+    AOT::Shell::mapImageFromOptions();
 #endif
 
     if (!Options::maxHeapSizeAsRAMSizeMultiple())

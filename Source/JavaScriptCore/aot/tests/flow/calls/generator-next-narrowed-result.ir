@@ -1,0 +1,60 @@
+# What next of the library stores into its result object is cast to the type flow narrowed the field to, so a program that steps a generator by hand builds, and a call by hand enters next at the call site only
+# RUN: pipeline ApplyFlowResults
+# RUN(FIELD): flow
+# RUN(INSTANCES): flow-solve instances
+# RUN(BUILD): compile
+# CHECK-LABEL: function f2 name="next"
+# CHECK: [[stepped]]: anything = ResultAt
+# CHECK: [[proven]]: undefined|1|"sent" = AssumeType [[stepped]] castType=undefined|1|"sent"
+# CHECK: = CreateIteratorResult [[proven]],
+# FIELD: field L(IteratorResult).0 "value" type=undefined|1|"sent" 
+# INSTANCES-NOT: f2 Generic
+# INSTANCES: f2 at f0:v3
+# INSTANCES-NOT: f2 Generic
+# BUILD: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=71 function=f2
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = PropGet v1 key="next"
+    v3 = Call v2, v1 calleeKey="next"
+    v4 = PropGet v3 key="value"
+    PutModuleVariable v4 variable=g0
+    v6 = String string="sent"
+    v7 = Call v2, v1, v6 calleeKey="next"
+    v8 = PropGet v7 key="value"
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
+  b0(v0: function):
+    InitialYield
+    v2 = Integer integer=1
+    v3 = Yield v2
+    v4 = ResultAt v3
+    v5 = Yield v4
+    Return
+}
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=71 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2
+    v4 = ResultAt v2 index=1
+    v5 = Integer integer=2
+    v6 = StrictEq v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = ResumeGenerator v0, v1
+    Return v7
+  b2():
+    v8 = Integer integer=1
+    v9 = StrictEq v4, v8
+    v10 = CreateIteratorResult v3, v9
+    Return v10
+}

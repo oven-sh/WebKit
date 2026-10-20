@@ -1,0 +1,108 @@
+# A built-in that only looks at this does not leak it, one that retains it, lists its keys or copies its properties does
+# RUN(COMPARED): flow-construction
+# RUN(COMPAREDFIELDS): flow-solve nodes
+# RUN(PUSHED): flow-construction
+# RUN(PUSHEDFIELDS): flow-solve nodes
+# RUN(LISTED): flow-construction
+# RUN(LISTEDFIELDS): flow-solve nodes
+# RUN(COPIED): flow-construction
+# RUN(COPIEDFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Compared" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Pushed" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="Listed" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="Copied" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Copy"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewArray contents=anything
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    v7 = FinishClass v6 layout=L1
+    v8 = Construct v7, -, v4
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = Construct v11
+    v13 = NewClosure function=f4
+    v14 = NewClass v13 layout=L3
+    v15 = FinishClass v14 layout=L3
+    v16 = Construct v15
+    Return
+}
+function f1 name="Compared" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = Builtin builtin=ObjectIs
+    v6 = Null
+    v7 = Call v5, -, v2, v6
+    v8 = Integer integer=2
+    PropSet v2, v8 key="y"
+    Return v2
+}
+# COMPARED: construction f1@i{{*}} root v2: DoesNotLeak before-leak "x" "y" at-exit "x" "y" read-early initial-order "x" "y" stores OnlyInitialOrder
+# COMPARED-NOT: construction f1@i{{*}}: Unknown
+# COMPARED: layout L0: DoesNotLeak OnlyAtConstruction set [0, 1] orders [0, 1]
+# COMPAREDFIELDS: DeclaredPart(L0#{{*}}, 0) = {1}
+# COMPAREDFIELDS: DeclaredPart(L0#{{*}}, 1) = {2}
+function f2 name="Pushed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Integer integer=1
+    PropSet v3, v4 key="x"
+    v6 = PropGet v1 key="push"
+    v7 = Call v6, v1, v3
+    v8 = Integer integer=2
+    PropSet v3, v8 key="y"
+    Return v3
+}
+# PUSHED: construction f2@i{{*}} root v3: Unknown at f2:v7 before-leak "x" at-exit "x" "y" read-early
+# PUSHED-NOT: construction f2@i{{*}}: DoesNotLeak
+# PUSHED: layout L1: Unknown at f2:v7 Unknown set [0] orders
+# PUSHEDFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# PUSHEDFIELDS: DeclaredPart(L1#{{*}}, 1) = {undefined|2}
+function f3 name="Listed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = Builtin builtin=ObjectKeys
+    v6 = Call v5, -, v2
+    v7 = Integer integer=2
+    PropSet v2, v7 key="y"
+    Return v2
+}
+# LISTED: construction f3@i{{*}} root v2: Unknown at f3:v6 before-leak "x" at-exit "x" "y" read-early
+# LISTED-NOT: construction f3@i{{*}}: DoesNotLeak
+# LISTED: layout L2: Unknown at f3:v6 Unknown set [0] orders
+# LISTEDFIELDS: DeclaredPart(L2#{{*}}, 0) = {1}
+# LISTEDFIELDS: DeclaredPart(L2#{{*}}, 1) = {undefined|2}
+function f4 name="Copied" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = NewObject layout=L4 fields=[]
+    v6 = Builtin builtin=ObjectAssign
+    v7 = Call v6, -, v5, v2
+    v8 = Integer integer=2
+    PropSet v2, v8 key="y"
+    Return v2
+}
+# COPIED: construction f4@i{{*}} root v2: Unknown at f4:v7 before-leak "x" at-exit "x" "y" read-early
+# COPIED-NOT: construction f4@i{{*}}: DoesNotLeak
+# COPIED: layout L3: Unknown at f4:v7 Unknown set [0] orders
+# COPIEDFIELDS: DeclaredPart(L3#{{*}}, 0) = {1}
+# COPIEDFIELDS: DeclaredPart(L3#{{*}}, 1) = {undefined|2}

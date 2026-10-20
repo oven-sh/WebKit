@@ -1,0 +1,282 @@
+# An allocation is the proof of its own shape, filled slots and pristine state, so a use of a fresh object needs no test
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+# RUN(F9): test-placement function=f9 site=v2:v3
+# RUN(F10): test-placement function=f10 site=v2:v3
+# RUN(F11): test-placement function=f11 site=v2:v3,v4,v5
+# RUN(F12): test-placement function=f12 site=v2:v6,v3 site=v5:v6,v3
+# RUN(F13): test-placement function=f13 site=v3:v4
+# RUN(F14): test-placement function=f14 site=v1:v2
+# RUN(F17): test-placement function=f17 site=v3:v4
+# RUN(F18): test-placement function=f18 site=v2:v3
+# RUN(F19): test-placement function=f19 site=v3:v4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Losable" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Other" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
+layout L2 name="Sparse" fields=[{key="a" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 kind=Instance name="Shape" constructor=f15 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="area" kind=Method function=f16 mutability=Fixed}]}
+
+function f0 name="freshObject" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PropSet v1, v0 key="a"
+    v3 = PropGet v1 key="b"
+    Return v3
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: proof allocation v1; uses v2 v3; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f0 name="freshObject"
+# IR: b0(v0: number):
+# IR-NEXT: v1: object ~ L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# IR-NEXT: PutSlot v1, v1, v0 key="a" receivers=[L0] level=Predicted
+# IR-NEXT: v3: number = GetSlot v1, v1 key="b" receivers=[L0] level=Predicted
+# IR-NEXT: Return v3
+# IR-NEXT: }
+
+function f1 name="freshObjectThenCall" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1 function=f8
+    v3 = PropGet v1 key="a"
+    Return v3
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: renew 0 before v3; proof allocation v1; uses v3; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="freshObjectThenCall"
+# IR: v1: object ~ L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# IR-NEXT: [[stale1]]: guard = AllGuards v1
+# IR-NEXT: [[saved1]]: int = GetShapeEpoch
+# IR-NEXT: v2: anything = CallDirect v1 function=f8
+# IR-NEXT: [[current1]]: boolean = IsShapeEpochCurrent [[saved1]], [[stale1]]
+# IR-NEXT: Branch [[current1]] -> taken [[renewed1]](| 0), notTaken [[moved1]]()
+# IR-NEXT: [[rest1]]():
+# IR-NEXT: v3: number = GetSlot v1, [[guard1]] key="a" receivers=[L0] level=Predicted
+# IR-NEXT: Return v3
+# IR-NEXT: [[copy1]]() frequency=Unlikely:
+# IR-NEXT: [[generic1]]:{{*}}= PropGet v1 key="a"
+# IR-NEXT: Return [[generic1]]
+# IR-NEXT: [[renewed1]]([[guard1]]: guard):
+# IR: [[moved1]]() frequency=Unlikely:
+# IR-NEXT: Jump -> next [[copy1]]()
+# IR-NOT: ShapeTest
+
+function f2 name="slotFilledAtCreation" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="a"
+    Return v2
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: proof allocation v1; proof allocation v1; uses v2; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f2 name="slotFilledAtCreation"
+# IR-NOT: IsSlotFilled
+# IR: v2: number = GetSlot v1, {{*}} key="a" receivers=[L2] level=Predicted
+# IR-NEXT: Return v2
+# IR-NEXT: }
+
+function f3 name="slotNotInitialized" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="b"
+    Return v2
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test IsSlotFilled v1 key="b" receivers=[L2] level=Predicted before v2; proof allocation v1; uses v2; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="slotNotInitialized"
+# IR: v1: object ~ L2 = NewObject -, v0 layout=L2 fields=[0]
+# IR-NEXT: [[filled3]]: boolean = IsSlotFilled v1, v1 key="b" receivers=[L2] level=Predicted
+# IR-NEXT: Branch [[filled3]] -> taken [[passed3]](| 0), notTaken
+# IR: frequency=Unlikely:
+# IR-NEXT: = PropGet v1 key="b"
+# IR-NOT: ShapeTest
+
+function f4 name="freshArray" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = NewArray v0 contents=number
+    v3 = ElemGet v2, v1
+    Return v3
+}
+# PLAN-LABEL: function f4
+# PLAN-NEXT: stretch 0: proof allocation v2; uses v3; cloned 0
+# PLAN-NOT: stretch
+# IR-LABEL: function f4 name="freshArray"
+# IR: v2: Array<number> = NewArray v0 contents=number
+# IR-NEXT: v3:{{*}}= GetArrayElement v2, v1, v2
+# IR-NEXT: Return v3
+# IR-NEXT: }
+
+function f5 name="arrayParameter" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# PLAN-LABEL: function f5
+# PLAN-NEXT: stretch 0: test IsPristine v0 builtinClass=Array
+# PLAN-NOT: stretch
+# IR-LABEL: function f5 name="arrayParameter"
+# IR: = IsPristine v0 builtinClass=Array
+
+function f6 name="oneAllocationTwoConditions" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = NewObject v0 layout=L3
+    v2 = PropGet v1 key="area"
+    v3 = Call v2, v1 calleeKey="area"
+    v4 = CallDirect v1 function=f8
+    v5 = PropGet v1 key="area"
+    v6 = Call v5, v1 calleeKey="area"
+    Return v6
+}
+# PLAN-LABEL: function f6
+# PLAN-NEXT: stretch 0: renew 0 1 before v5; proof allocation v1; proof allocation v1; uses v2 v3 v5 v6; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f6 name="oneAllocationTwoConditions"
+# IR: v1: object ~ L3 = NewObject v0 layout=L3
+# IR: [[wrapper6]]: guard = AllGuards v1
+# IR: v3: number = CallDirect v1 function=f16
+# IR-NEXT: v4: anything = CallDirect v1 function=f8
+# IR-NEXT: [[both6]]: guard = AllGuards {{*}}[[wrapper6]]
+# IR-NEXT: = IsShapeEpochCurrent {{*}}, [[both6]]
+# IR-NOT: IsShapeEpochCurrent
+# IR: v6: number = CallDirect v1 function=f16
+# IR-NOT: ShapeTest
+# IR-NOT: BelongsToInstance
+
+function f7 name="mergedAllocations" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: number, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = PropGet v4 key="a"
+    Return v5
+}
+# PLAN-LABEL: function f7
+# PLAN-NEXT: stretch 0: test ShapeTest v4 layouts=[L0] before v5; uses v5; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f7 name="mergedAllocations"
+# IR: b3(v4: object ~ L0):
+# IR-NEXT: [[test7]]: boolean = ShapeTest v4 layouts=[L0]
+# IR-NEXT: Branch [[test7]] -> taken [[passed7]](| 0), notTaken
+# IR: v5: number = GetSlot v4, [[guard7]] key="a" receivers=[L0] level=Predicted
+# IR: [[passed7]]([[guard7]]: guard):
+# IR-LABEL: function f8 name="unknown"
+# PLAN-LABEL: function f8
+
+function f8 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+
+function f9 name="memberOfTestedSet" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = PropGet v1 key="a"
+    v3 = ShapeTest v1 layouts=[L0, L1]
+    Return v2
+}
+# F9: stretch 0: proof allocation v1; uses v2; cloned 0
+# F9-NOT: stretch
+
+function f10 name="otherLayout" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = PropGet v1 key="a"
+    v3 = ShapeTest v1 layouts=[L1]
+    Return v2
+}
+# F10: stretch 0: test ShapeTest v1 layouts=[L1] before v2; uses v2; cloned 0
+# F10-NOT: stretch
+
+function f11 name="stateOfFreshObject" parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v2 = StrictEq v1, v1
+    v3 = HasNoExtraProperties v1, v1
+    v4 = IsNotFrozen v1, v1
+    v5 = BelongsToInstance v1
+    Return v2
+}
+# F11: stretch 0: proof allocation v1; proof allocation v1; proof allocation v1; uses v2; cloned 0
+# F11-NOT: stretch
+
+function f12 name="notFrozenIsNotRenewed" parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v2 = StrictEq v1, v1
+    v3 = IsNotFrozen v1, v1
+    v4 = CallDirect v1 function=f8
+    v5 = StrictEq v1, v1
+    v6 = ShapeTest v1 layouts=[L1]
+    Return v5
+}
+# F12: stretch 0: renew 0 before v5; test IsNotFrozen v1 before v5; proof allocation v1; proof allocation v1; uses v2 v5; cloned 0
+# F12-NOT: stretch
+
+function f13 name="storageOfFreshArray" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: i32):
+    v2 = NewArray v0 contents=number
+    v3 = ElemGet v2, v1
+    v4 = HasArrayStorage v2 arrayStorage=Double
+    Return v3
+}
+# F13: stretch 0: test HasArrayStorage v2 arrayStorage=Double before v3; uses v3; cloned 0
+# F13-NOT: stretch
+
+function f14 name="notAnAllocation" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object):
+    v1 = PropGet v0 key="a"
+    v2 = ShapeTest v0 layouts=[L0]
+    Return v1
+}
+# F14: stretch 0: test ShapeTest v0 layouts=[L0] before v1; uses v1; cloned 0
+# F14-NOT: stretch
+
+function f15 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f16 name="area" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+
+function f17 name="storageOfFreshArrayOfAnything" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = NewArray v0 contents=anything
+    v3 = ElemGet v2, v1
+    v4 = HasArrayStorage v2 arrayStorage=Contiguous
+    Return v3
+}
+# F17: stretch 0: proof allocation v2; uses v3; cloned 0
+# F17-NOT: stretch
+
+function f18 name="storageOfFreshEmptyArray" parameters=[{type=i32}] results=[{type=anything}] {
+  b0(v0: i32):
+    v1 = NewArray contents=anything
+    v2 = ElemGet v1, v0
+    v3 = HasArrayStorage v1 arrayStorage=Contiguous
+    Return v2
+}
+# F18: stretch 0: test HasArrayStorage v1 arrayStorage=Contiguous before v2; uses v2; cloned 0
+# F18-NOT: stretch
+
+function f19 name="storageOfFreshArrayWithHole" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+  b0(v0: i32, v1: i32):
+    v2 = NewArray v0 contents=i32 holes=[1]
+    v3 = ElemGet v2, v1
+    v4 = HasArrayStorage v2 arrayStorage=Contiguous
+    Return v3
+}
+# F19: stretch 0: proof allocation v2; uses v3; cloned 0
+# F19-NOT: stretch

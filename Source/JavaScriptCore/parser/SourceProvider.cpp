@@ -419,5 +419,12 @@ LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
     return { line, static_cast<unsigned>(text.size() - lineStart) };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::optional<uint32_t> BuiltinsSourceProvider::builtinFunctionAt(unsigned offset) const
+{
+    return m_firstID + static_cast<uint32_t>(std::ranges::upper_bound(m_starts, offset) - m_starts.begin()) - 1;
+}
+#endif
+
 } // namespace JSC
 

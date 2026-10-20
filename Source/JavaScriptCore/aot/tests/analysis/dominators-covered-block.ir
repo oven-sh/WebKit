@@ -1,0 +1,150 @@
+# A value of a covered block is available where the terminator of the block dominates: not in the landing block and not after the merge
+# FORM: Prepared
+# RUN: analyses dominators value-dominance handler-edges
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="tryCatch" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = Add v1, v1
+    Jump -> next b1(v3)
+  b1(v4) handler=b4():
+    v5 = Call v0
+    Jump -> next b2()
+  b2():
+    Branch v2 -> taken b3(), notTaken b5()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v6 = CatchValue
+    Jump -> next b5()
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b2 b4 b5]
+# CHECK-NEXT: b2 idom: b1
+# CHECK-NEXT: b2 children: [b3]
+# CHECK-NEXT: b3 idom: b2
+# CHECK-NEXT: b3 children: []
+# CHECK-NEXT: b4 idom: b1
+# CHECK-NEXT: b4 children: []
+# CHECK-NEXT: b5 idom: b1
+# CHECK-NEXT: b5 children: []
+# CHECK-NEXT: value-dominance:
+# CHECK-NEXT: v0 available at head of: [b0 b1 b2 b3 b4 b5]
+# CHECK-NEXT: v1 available at head of: [b0 b1 b2 b3 b4 b5]
+# CHECK-NEXT: v2 available at head of: [b0 b1 b2 b3 b4 b5]
+# CHECK-NEXT: v3 available at head of: [b1 b2 b3 b4 b5]
+# CHECK-NEXT: v4 available at head of: [b1 b2 b3 b4 b5]
+# CHECK-NEXT: v5 available at head of: [b2 b3]
+# CHECK-NEXT: v6 available at head of: []
+# CHECK-NEXT: handler-edges:
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b0 terminator dominates: [b1 b2 b3 b4 b5]
+# CHECK-NEXT: b1 handler: b4()
+# CHECK-NEXT: b1 terminator dominates: [b2 b3]
+# CHECK-NEXT: b2 handler: none
+# CHECK-NEXT: b2 terminator dominates: [b3]
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: b3 terminator dominates: []
+# CHECK-NEXT: b4 handler: none
+# CHECK-NEXT: b4 terminator dominates: []
+# CHECK-NEXT: b5 handler: none
+# CHECK-NEXT: b5 terminator dominates: []
+function f1 name="twoCoveredBlocksInSequence" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1() handler=b4():
+    v1 = Call v0
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v1
+    Jump -> next b3()
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b2 b4]
+# CHECK-NEXT: b2 idom: b1
+# CHECK-NEXT: b2 children: [b3]
+# CHECK-NEXT: b3 idom: b2
+# CHECK-NEXT: b3 children: []
+# CHECK-NEXT: b4 idom: b1
+# CHECK-NEXT: b4 children: []
+# CHECK-NEXT: value-dominance:
+# CHECK-NEXT: v0 available at head of: [b0 b1 b2 b3 b4]
+# CHECK-NEXT: v1 available at head of: [b2 b3]
+# CHECK-NEXT: v2 available at head of: [b3]
+# CHECK-NEXT: v3 available at head of: []
+# CHECK-NEXT: handler-edges:
+# CHECK-NEXT: b0 handler: none
+# CHECK-NEXT: b0 terminator dominates: [b1 b2 b3 b4]
+# CHECK-NEXT: b1 handler: b4()
+# CHECK-NEXT: b1 terminator dominates: [b2 b3]
+# CHECK-NEXT: b2 handler: b4()
+# CHECK-NEXT: b2 terminator dominates: [b3]
+# CHECK-NEXT: b3 handler: none
+# CHECK-NEXT: b3 terminator dominates: []
+# CHECK-NEXT: b4 handler: none
+# CHECK-NEXT: b4 terminator dominates: []
+function f2 name="secondBlockAloneIsCovered" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Call v0
+    Jump -> next b2()
+  b2() handler=b4():
+    v2 = Call v1
+    Jump -> next b3()
+  b3():
+    Return v2
+  b4() role=CatchHandler:
+    v3 = CatchValue
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK: value-dominance:
+# CHECK-NEXT: v0 available at head of: [b0 b1 b2 b3 b4]
+# CHECK-NEXT: v1 available at head of: [b2 b3 b4]
+# CHECK-NEXT: v2 available at head of: [b3]
+# CHECK-NEXT: v3 available at head of: []
+# CHECK-NEXT: handler-edges:
+# CHECK: b1 handler: none
+# CHECK-NEXT: b1 terminator dominates: [b2 b3 b4]
+# CHECK-NEXT: b2 handler: b4()
+# CHECK-NEXT: b2 terminator dominates: [b3]
+function f3 name="branchInPlaceOfTheHandlerEdge" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
+  b0(v0: anything, v1: number, v2: boolean):
+    v3 = Add v1, v1
+    Jump -> next b1(v3)
+  b1(v4):
+    v5 = Call v0
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    Branch v2 -> taken b3(), notTaken b5()
+  b3():
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK: b1 children: [b2 b4 b5]
+# CHECK: value-dominance:
+# CHECK: v4 available at head of: [b1 b2 b3 b4 b5]
+# CHECK-NEXT: v5 available at head of: [b2 b3 b4 b5]
+# CHECK-NEXT: handler-edges:
+# CHECK: b1 handler: none
+# CHECK-NEXT: b1 terminator dominates: [b2 b3 b4 b5]

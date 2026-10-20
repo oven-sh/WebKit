@@ -1,0 +1,63 @@
+# A literal handed to a callee that keeps it in an array for the length of the call is on the heap: a collection during the call follows the array. The same literal handed to a callee that reads it is in the frame
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: ObjectsInFrames = 1
+# CHECK: L1 may be in a frame
+# CHECK-NOT: L0 may be in a frame
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Held" fields=[{key="y" declared={type=anything}}]
+layout L1 name="Read" fields=[{key="y" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="givesToHolder" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v1 [isNeverInlined]
+    Return v3
+}
+# CHECK-LABEL: function f1 name="givesToHolder"
+# CHECK: = NewObject {{*}}layout=L0 fields=[0] allocationSite
+# CHECK: = CallDirect {{*}}function=f3
+
+function f2 name="givesToReader" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure function=f4
+    v3 = Call v2, -, v1 [isNeverInlined]
+    Return v3
+}
+# CHECK-LABEL: function f2 name="givesToReader"
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# CHECK: = CallDirect {{*}}function=f4
+
+function f3 name="holds" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="collect" [isFreeName]
+    v4 = Call v3
+    v5 = Integer
+    v6 = ElemGet v1, v5
+    v7 = PropGet v6 key="y"
+    Return v7
+}
+function f4 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="collect" [isFreeName]
+    v3 = Call v2
+    v4 = PropGet v0 key="y"
+    Return v4
+}

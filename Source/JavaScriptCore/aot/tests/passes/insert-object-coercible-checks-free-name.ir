@@ -1,0 +1,57 @@
+# The read or store of a free name gets no check, the same access without the mark gets one
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass InsertObjectCoercibleChecks
+# STATISTIC: InsertObjectCoercibleChecksChanges = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Scope" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="readsFreeName" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="x" [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0(v0: undefined|L0):
+# CHECK-NEXT: = PropGet v0 key="x" [isFreeName]
+# CHECK-NEXT: Return v1
+
+function f1 name="readsFreeNameForTypeOf" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="x" [isFreeName, isForTypeOf]
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0(v0: undefined|L0):
+# CHECK-NEXT: = PropGet v0 key="x" [isFreeName, isForTypeOf]
+# CHECK-NEXT: Return v1
+
+function f2 name="storesToFreeName" parameters=[{type=undefined|L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|L0, v1: number):
+    PropSet v0, v1 key="x" [isFreeName]
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0(v0: undefined|L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="x" [isFreeName]
+# CHECK-NEXT: Return
+
+function f3 name="readsProperty" parameters=[{type=undefined|L0}] results=[{type=anything}] {
+  b0(v0: undefined|L0):
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f3
+# CHECK: [[check3]]: L0 = RequireObjectCoercible v0 name="x"
+# CHECK-NEXT: = PropGet [[check3]] key="x"
+
+function f4 name="storesToProperty" parameters=[{type=undefined|L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: undefined|L0, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK: [[check4]]: L0 = RequireObjectCoercible v0 nullishAccess=Write name="x"
+# CHECK-NEXT: PropSet [[check4]], v1 key="x"

@@ -1,0 +1,100 @@
+# An object passed as a handler argument flows into the parameter of the landing block, and what happens to the parameter happens to the object
+# FORM: Prepared
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="thrownInLandingBlock" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b2()
+  b2():
+    Return
+  b3(v3) role=CatchHandler:
+    v4 = CatchValue
+    Throw v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Thrown]
+# CHECK-NEXT: o1 first escape: b3.terminator(0)
+# CHECK-NEXT: o1 uses: [Retains]
+# CHECK-NEXT: o1 live instances: AtMostOne
+# CHECK-NEXT: o1 aliases: [v1 v3]
+# CHECK-NEXT: o1 object uses: [b3.terminator(0)]
+# CHECK-NEXT: o1 escaping uses: [b3.terminator(0)]
+# CHECK: v1 points to: [o1]
+# CHECK-NEXT: v1 may be untracked: no
+# CHECK: v3 points to: [o1]
+# CHECK-NEXT: v3 may be untracked: no
+function f1 name="readInLandingBlock" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b3(v1):
+    v2 = Call v0
+    Jump -> next b2()
+  b2():
+    Return
+  b3(v3) role=CatchHandler:
+    v4 = CatchValue
+    v5 = TypeTest v3 testedType=object
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK: o1 definition: v1
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: DoesNotEscape
+# CHECK-NEXT: o1 reasons: []
+# CHECK-NEXT: o1 first escape: none
+# CHECK-NEXT: o1 uses: [Inspects]
+# CHECK-NEXT: o1 live instances: AtMostOne
+# CHECK-NEXT: o1 aliases: [v1 v3]
+# CHECK-NEXT: o1 object uses: [v5(0)]
+# CHECK-NEXT: o1 escaping uses: []
+# CHECK: v3 points to: [o1]
+# CHECK-NEXT: v3 may be untracked: no
+function f2 name="twoCoveredBlocksPassDifferentObjects" parameters=[{type=function}] results=[{type=undefined}] {
+  b0(v0: function):
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    Jump -> next b1()
+  b1() handler=b4(v1):
+    v4 = Call v0
+    Jump -> next b2()
+  b2() handler=b4(v2):
+    v5 = Call v0
+    Jump -> next b3()
+  b3():
+    Return
+  b4(v6) role=CatchHandler:
+    v7 = CatchValue
+    Throw v6
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 4
+# CHECK: o1 definition: v1
+# CHECK: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [Thrown]
+# CHECK: o1 aliases: [v1 v6]
+# CHECK: o2 definition: v2
+# CHECK: o2 state: Escapes
+# CHECK-NEXT: o2 reasons: [Thrown]
+# CHECK: o2 aliases: [v2 v6]
+# CHECK: o3 definition: v3
+# CHECK: o3 state: DoesNotEscape
+# CHECK-NEXT: o3 reasons: []
+# CHECK: o3 aliases: [v3]
+# CHECK: v6 points to: [o1 o2]
+# CHECK-NEXT: v6 may be untracked: no

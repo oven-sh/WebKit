@@ -1,0 +1,234 @@
+# How a class is built is decided per member, in definition order: the class record creates the members of a side up to the first one it cannot create, and compiled code defines the rest
+# RUN: plan-slots classes
+# RUN(EAGER): plan-slots classes
+# RUN(CODE): pipeline Select
+# RUN(RECORDS): tables layouts
+# STATISTIC: ClassMembersCreatedByClassRecord = 10
+# STATISTIC: ClassMembersCreatedAtDefinition = 5
+# STATISTIC: ClassesCreatedLazily = 3
+
+# CHECK: class L1
+# CHECK-NEXT: Prototype "z" ByClassRecord
+# CHECK-NEXT: Prototype "a" ByClassRecord
+# CHECK-NEXT: Prototype computed AtDefinition
+# CHECK-NEXT: Static "s" ByClassRecord
+# CHECK-NEXT: Prototype "b" AtDefinition
+# CHECK-NEXT: class L2 lazy prototypeFirst onMutation
+# CHECK-NEXT: Prototype "z" ByClassRecord
+# CHECK-NEXT: Prototype @@iterator ByClassRecord
+# CHECK-NEXT: Prototype "a" ByClassRecord
+# CHECK-NEXT: class L3 lazy prototypeFirst
+# CHECK-NEXT: Prototype "z" ByClassRecord
+# CHECK-NEXT: Static "name" AtDefinition
+# CHECK-NEXT: Static "s" AtDefinition
+# CHECK-NEXT: class L4 lazy prototypeFirst onMutation
+# CHECK-NEXT: Prototype "z" ByClassRecord
+# CHECK-NEXT: Prototype "a" ByClassRecord
+# CHECK-NEXT: class L5
+# CHECK-NEXT: Prototype "z" ByClassRecord
+# CHECK-NEXT: Prototype "a" AtDefinition
+
+# EAGER-NOT: class L1 lazy
+# EAGER-NOT: class L3 {{*}}onMutation
+# EAGER-NOT: class L5 lazy
+
+# RECORDS: class index=L1
+# RECORDS-NEXT: method name="z" kind=Method flags=[] function=
+# RECORDS-NEXT: method name="a" kind=Method flags=[] function=
+# RECORDS-NEXT: method name=- kind=Method flags=[HasComputedName IsCreatedAtDefinition]
+# RECORDS-NEXT: method name="b" kind=Method flags=[IsCreatedAtDefinition]
+# RECORDS-NEXT: staticMethod name="s" kind=Method flags=[] function=
+# RECORDS: class index=L4 {{*}}createsMembersLazily
+# RECORDS-NEXT: method name="z" kind=Method flags=[] function=
+# RECORDS-NEXT: method name="a" kind=Method flags=[] function=
+# RECORDS-NEXT: class index=L5
+
+# CODE-LABEL: function f0 name="main"
+# CODE: NewClass {{*}}layout=L1
+# CODE-NOT: key="z"
+# CODE-NOT: key="a"
+# CODE-NOT: key="s"
+# CODE: DefineMethod {{*}}layout=L1 index=2
+# CODE-NOT: key="s"
+# CODE: DefineMethod {{*}}layout=L1 index=4 key="b"
+# CODE: NewClass {{*}}layout=L2
+# CODE-NOT: DefineMethod
+# CODE: NewClass {{*}}layout=L3
+# CODE-NOT: key="z"
+# CODE: DefineMethod {{*}}layout=L3 side=Static index=1 key="name"
+# CODE: DefineMethod {{*}}layout=L3 side=Static index=2 key="s"
+# CODE: NewClass {{*}}layout=L4
+# CODE-NOT: DefineMethod
+# CODE-LABEL: function f22 name="makeClass"
+# CODE: NewClass {{*}}layout=L5
+# CODE-NOT: key="z"
+# CODE: DefineMethod {{*}}layout=L5 index=1 key="a"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="KeyNumbers" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="s" declared={type=anything}}, {key="z" declared={type=anything}}]
+layout L1 kind=Instance name="ComputedKeyInTheMiddle" module=m0 constructor=f1
+layout L2 kind=Instance name="SymbolKey" module=m0 constructor=f2
+layout L3 kind=Instance name="StaticName" module=m0 constructor=f3
+layout L4 kind=Instance name="Patched" module=m0 constructor=f4
+layout L5 kind=Instance name="CapturesOtherScope" module=m0 constructor=f5
+layout L6 kind=Environment name="scope" fields=[{key="captured" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = ToPropertyKey v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L1
+    v5 = NewClosure function=f6
+    DefineMethod v4, v5 layout=L1 key="z"
+    v7 = NewClosure function=f7
+    DefineMethod v4, v7 layout=L1 index=1 key="a"
+    v9 = NewClosure function=f8
+    DefineMethod v4, v9, v2 layout=L1 index=2
+    v11 = NewClosure function=f9
+    DefineMethod v4, v11 layout=L1 side=Static index=3 key="s"
+    v13 = NewClosure function=f10
+    DefineMethod v4, v13 layout=L1 index=4 key="b"
+    v15 = FinishClass v4 layout=L1
+    v16 = NewClosure function=f2
+    v17 = NewClass v16 layout=L2
+    v18 = NewClosure function=f11
+    DefineMethod v17, v18 layout=L2 key="z"
+    v20 = NewClosure function=f12
+    DefineMethod v17, v20 layout=L2 index=1 key=@@iterator
+    v22 = NewClosure function=f13
+    DefineMethod v17, v22 layout=L2 index=2 key="a"
+    v24 = FinishClass v17 layout=L2
+    v25 = NewClosure function=f3
+    v26 = NewClass v25 layout=L3
+    v27 = NewClosure function=f14
+    DefineMethod v26, v27 layout=L3 key="z"
+    v29 = NewClosure function=f15
+    DefineMethod v26, v29 layout=L3 side=Static index=1 key="name"
+    v31 = NewClosure function=f16
+    DefineMethod v26, v31 layout=L3 side=Static index=2 key="s"
+    v33 = FinishClass v26 layout=L3
+    v34 = NewClosure function=f4
+    v35 = NewClass v34 layout=L4
+    v36 = NewClosure function=f17
+    DefineMethod v35, v36 layout=L4 key="z"
+    v38 = NewClosure function=f18
+    DefineMethod v35, v38 layout=L4 index=1 key="a"
+    v40 = FinishClass v35 layout=L4
+    v41 = PropGet v40 key="prototype"
+    v42 = NewClosure function=f19
+    PropSet v41, v42 key="z" mode=Strict
+    v44 = NewClosure function=f22
+    v45 = NewArray v15, v24, v33, v40, v44 contents=anything holes=[]
+    v46 = PropGet v0 key="publish" [isFreeName]
+    v47 = Call v46, -, v45
+    Return
+}
+function f1 name="ComputedKeyInTheMiddle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f2 name="SymbolKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f3 name="StaticName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}
+function f4 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}
+function f5 name="CapturesOtherScope" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    Return v2
+}
+function f6 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f7 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f8 name="computed" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f9 name="s" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f10 name="b" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f11 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f12 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f13 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f14 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f15 name="name" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f16 name="s" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f17 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f18 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f19 name="patch" flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f20 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f21 name="a" kind=Method flags=[HasThis] captures=[{type=env L6}] results=[{type=anything}] {
+  b0(v0: env L6, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L6 field=0
+    Return v2
+}
+function f22 name="makeClass" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L6 fields=[0]
+    v2 = NewClosure function=f5
+    v3 = NewClass v2 layout=L5
+    v4 = NewClosure function=f20
+    DefineMethod v3, v4 layout=L5 key="z"
+    v6 = NewClosure v1 function=f21
+    DefineMethod v3, v6 layout=L5 index=1 key="a"
+    v8 = FinishClass v3 layout=L5
+    Return v8
+}

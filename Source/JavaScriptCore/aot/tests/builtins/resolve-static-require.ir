@@ -1,0 +1,116 @@
+# A static require tests whether its edge is ready, reads the value of the required module under that guard, and keeps the call in a rare block
+# FORM: Prepared
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/app/lib.cjs" displayPath="lib.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="/app/esm.mjs" displayPath="esm.mjs" body=f2
+function f0 name="main" kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f1 name="lib" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f2 name="esm" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+
+function f3 name="commonJsTarget" results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+    Return v0
+}
+# CHECK-LABEL: function f3 name="commonJsTarget"
+# CHECK-NEXT: b0():
+# CHECK-NEXT: [[isReady3]]: boolean = IsRequireEdgeReady module=m1 referrer=m0
+# CHECK-NEXT: Branch [[isReady3]] -> taken [[ready3]](| 0), notTaken [[slow3]]()
+# CHECK: (v0: anything):
+# CHECK-NEXT: Return v0
+# CHECK: [[ready3]]([[guard3]]: guard):
+# CHECK-NEXT: [[moduleObject3]]: anything = GetRequiredValue [[guard3]] module=m1
+# CHECK-NEXT: [[exports3]]: anything = PropGet [[moduleObject3]] key="exports"
+# CHECK-NEXT: Jump -> next {{*}}([[exports3]])
+# CHECK: [[slow3]]() frequency=Rare:
+# CHECK-NEXT: [[required3]]: anything = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+# CHECK-NEXT: Jump -> next {{*}}([[required3]])
+
+function f4 name="moduleTarget" results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m0 specifier="./esm.mjs"
+    Return v0
+}
+# CHECK-LABEL: function f4 name="moduleTarget"
+# CHECK: [[isReady4]]: boolean = IsRequireEdgeReady module=m2 referrer=m0
+# CHECK-NEXT: Branch [[isReady4]] -> taken [[ready4]](| 0), notTaken [[slow4]]()
+# CHECK-NOT: PropGet
+# CHECK: [[ready4]]([[guard4]]: guard):
+# CHECK-NEXT: [[namespace4]]: anything = GetRequiredValue [[guard4]] module=m2
+# CHECK-NEXT: Jump -> next {{*}}([[namespace4]])
+# CHECK-NOT: PropGet
+# CHECK: [[slow4]]() frequency=Rare:
+# CHECK-NEXT: anything = RequireModule module=m2 referrer=m0 specifier="./esm.mjs"
+# CHECK-NOT: PropGet
+
+function f5 name="twoSitesInOneBlock" results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+    v1 = RequireModule module=m2 referrer=m0 specifier="./esm.mjs"
+    v2 = NewArray v0, v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f5 name="twoSitesInOneBlock"
+# CHECK-COUNT-2: = IsRequireEdgeReady
+# CHECK-NOT: IsRequireEdgeReady
+
+function f6 name="underHandler" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+    Jump -> next b1()
+  b1():
+    Return v0
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    Return v1
+}
+# CHECK-LABEL: function f6 name="underHandler"
+# CHECK: = IsRequireEdgeReady module=m1 referrer=m0
+# CHECK: frequency=Rare handler=b2():
+# CHECK-NEXT: anything = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+
+function f7 name="rareBlock" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v1 = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+    Return v1
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f7 name="rareBlock"
+# CHECK-NOT: IsRequireEdgeReady
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: v1: anything = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+# CHECK-NEXT: Return v1
+# CHECK-NOT: IsRequireEdgeReady
+
+function f8 name="unlikelyBlock" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v1 = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"
+    Return v1
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f8 name="unlikelyBlock"
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: boolean = IsRequireEdgeReady module=m1 referrer=m0
+# CHECK: ([[guard8]]: guard) frequency=Unlikely:
+# CHECK-NEXT: anything = GetRequiredValue [[guard8]] module=m1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: anything = RequireModule module=m1 referrer=m0 specifier="./lib.cjs"

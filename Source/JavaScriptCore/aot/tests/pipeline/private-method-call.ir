@@ -1,0 +1,72 @@
+# class C { #m() { return 1 } n() { return this.#m() } static s(o) { return o.#m() } }: behind the read of the brand the call of the private method is resolved and inlined. On a proven instance nothing is left of the read; on a value nobody knows the read stays in front of the inlined body, because it is what throws
+# RUN: pipeline Select
+# CHECK-LABEL: function f3 name="n"
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[answer]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[answer]]
+# CHECK-LABEL: function f4 name="s"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: [[token]]: classtoken = GetModuleVariable variable=g0
+# CHECK-NEXT: : classtoken = PrivateGet v0, [[token]] layout=L0
+# CHECK-NEXT: [[result]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[result]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}]
+variable g0 module=m0 declared={type=classtoken} flags=[IsImmutable]
+variable g1 module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClassToken layout=L0
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 key="n"
+    v8 = NewClosure function=f4
+    DefineMethod v3, v8 layout=L0 side=Static index=1 key="s"
+    v10 = FinishClass v3 layout=L0
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="print" [isFreeName]
+    v13 = Construct v10
+    v14 = PropGet v13 key="n"
+    v15 = Call v14, v13 calleeKey="n" [isNeverInlined]
+    v16 = Call v12, -, v15
+    v17 = PropGet v11 key="input" [isFreeName]
+    v18 = PropGet v10 key="s"
+    v19 = Call v18, v10, v17 calleeKey="s" [isNeverInlined]
+    v20 = Call v12, -, v19
+    Return
+}
+function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = GetModuleVariable variable=g0
+    PrivateDefine v2, v3, v3 layout=L0
+    Return v2
+}
+function f2 name="#m" module=m0 kind=Method results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f3 name="n" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, v0 calleeName="#m"
+    Return v4
+}
+function f4 name="s" module=m0 kind=Method parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v3, v0 calleeName="#m"
+    Return v4
+}

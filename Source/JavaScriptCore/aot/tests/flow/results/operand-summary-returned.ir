@@ -1,0 +1,36 @@
+# A returned argument costs the parameter of the callee only Returns, and what each caller does with the result counts for that caller
+# RUN: flow
+# CHECK: function f1 parameter 0 uses=[Returns] 
+# CHECK: function f2 parameter 0 uses=[] 
+# CHECK: function f3 parameter 0 uses=[Retains] 
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f2
+    v3 = CallDirect v0 function=f3
+    Return
+}
+function f1 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="dropped" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    Return
+}
+function f3 name="stored" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f4 name="callback" results=[{type=anything}] {
+  b0():
+    Return
+}

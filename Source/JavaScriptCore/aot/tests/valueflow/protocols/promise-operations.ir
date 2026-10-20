@@ -1,0 +1,46 @@
+# The library's own promises: resolved = NewPromise, ResolvePromise(resolved, one); adopting = NewPromise, ResolvePromise(adopting, resolved); rejected = NewPromise, RejectPromise(rejected, two)
+# A promise holds what it is resolved with, and one that is resolved with a promise holds what that one holds. What a promise is rejected with is thrown by an await and is no value of it.
+# RUN: valueflow-solve calls
+# CHECK: f1 v9 -> f2
+# CHECK: f1 v11 -> f2
+# CHECK: f1 v15 ->{{*}} f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" role=Library flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewPromise
+    ResolvePromise v2, v0
+    v4 = NewPromise
+    ResolvePromise v4, v2
+    v6 = NewPromise
+    RejectPromise v6, v1
+    v8 = Await v2
+    v9 = Call v8
+    v10 = Await v4
+    v11 = Call v10
+    Jump -> next b1()
+  b1() handler=b2():
+    v12 = Await v6
+    v13 = Call v12
+    Return
+  b2() role=CatchHandler:
+    v14 = CatchValue
+    v15 = Call v14
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="two" results=[{type=anything}] {
+  b0():
+    Return
+}

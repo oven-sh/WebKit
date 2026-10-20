@@ -1,0 +1,53 @@
+# A module is required under a name nobody knows only in a function that is entered later: every module of the program is evaluated then, and the load answers what each exports, the modules that ran before among them
+# DIAGNOSTIC: CodeOutsideImageIsRefused 1
+# RUN: flow-links modules unseen
+# RUN(ANSWER): flow-solve nodes
+# CHECK: evaluated m0 m1 m2
+# CHECK: unseen LoadsModuleByName
+# CHECK: unknown-javascript no
+# ANSWER: , f4, v2) = {{*}}ModuleObjectExports@m0|ModuleObjectExports@m1|ModuleObjectExports@m2
+
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="/early.cjs" displayPath="early.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f5
+module m2 path="/other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f6
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = RequireModule module=m1 referrer=m0 specifier="./early.cjs"
+    v7 = NewClosure function=f1
+    v8 = Call v7
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = RequireDynamic v1 referrer=m0
+    Return v2
+}
+function f5 name="early" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f6 name="other" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}

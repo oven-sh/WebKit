@@ -1,0 +1,36 @@
+# An operand that an entry of the table retains in memory nobody can name reaches native code and has no other mutation, and it is no event of the program; an object nothing retains reaches no sink
+# RUN: flow-solve objects sinks
+# CHECK: L0#[[retained]] mutations=[ReachNativeCode] uses=
+# CHECK-NEXT: L1#[[local]] mutations=[] uses=[]
+# CHECK-LABEL: nativeCode {
+# CHECK: L0#[[retained]]
+# CHECK-LABEL: unknownJavaScript {
+# CHECK-NOT: L0#
+# RUN(LOCAL): flow-solve sinks
+# LOCAL-NOT: L1#
+# RUN(LINKS): flow-links builtins unseen
+# LINKS: builtin [[main]] v5 SuppressedError/1 Construct
+# LINKS-NOT: unseen
+# LINKS: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Retained" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Local" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=SuppressedError
+    v4 = Undefined
+    v5 = Construct v3, -, v1, v4
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    Return
+}

@@ -1,0 +1,74 @@
+# function Base(v) { this.tag = v }  class Logged extends Base { set tag(v) { seen = v } }  new Logged(1); new Base(2)
+# function Other(v) { this.tag = v }  class Heir extends Other {}  new Heir(1); new Other(2)
+# An instance of Logged has the slot of Base's field, and the store of the base constructor runs the setter there: the slot stays empty. A field is set at creation only if it is in the objects of every class below.
+# Nothing stops the store on an instance of Heir, so the field of Other stays set at creation.
+# RUN: flow
+# CHECK: layout L0 flow={baseState=None members=[L0, L1]
+# CHECK: field L0.0 "tag" type=2 written=anything flow={location={writers=AllKnown
+# CHECK: field L1.0 "tag" type=2 written=anything flags=[IsInherited] originLayout=L0 originField=0
+# CHECK: field L2.0 "tag" type=int[1, 2] written=anything flow={location={writers=AllKnown {{*}}initialization=SetAtCreation {{*}}occupancy=AlwaysFilled
+# RUN(SETTER): flow
+# SETTER-NOT: field L0.0 {{*}}SetAtCreation
+# SETTER-NOT: field L0.0 {{*}}AlwaysFilled
+# SETTER-NOT: field L0.0 {{*}}AbsentOnPrototypes
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="tag" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Logged" module=m0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Other" module=m0 constructor=f4 fields=[{key="tag" declared={type=anything}}] flags=[IsConstructorFunction]
+layout L3 kind=Instance name="Heir" module=m0 constructor=f5 flags=[HasHeritage]
+variable g0 name="seen" module=m0 declared={type=anything}
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L1 methodKind=Setter key="tag"
+    v6 = FinishClass v3 layout=L1
+    v7 = Integer integer=1
+    v8 = Integer integer=2
+    v9 = Construct v6, -, v7 calleeName="Logged"
+    v10 = Construct v0, -, v8 calleeName="Base"
+    v11 = NewClosure function=f4
+    v12 = ResolveHeritage v11
+    v13 = NewClosure function=f5
+    v14 = NewClass v13, v11, v12 layout=L3
+    v15 = FinishClass v14 layout=L3
+    v16 = Construct v15, -, v7 calleeName="Heir"
+    v17 = Construct v11, -, v8 calleeName="Other"
+    v18 = Undefined
+    Return v18
+}
+function f1 name="Base" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L0} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="tag"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Logged" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    Return v4
+}
+function f3 name="tag" module=m0 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f4 name="Other" module=m0 flags=[HasThis, HasExplicitName] length=1 thisType={type=anything predicted=L2} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="tag"
+    v3 = Undefined
+    Return v3
+}
+function f5 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L3
+    Return v4
+}
+entry module=m0

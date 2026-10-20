@@ -1,0 +1,94 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTBuiltinPristine.h"
+
+#if ENABLE(AOT)
+
+#include "AOTFunctionAnalyses.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+// The aspects that a test answers and a guard keeps. Only a type says that an object stays as created.
+static constexpr PristineAspectSet guardedAspects { PristineAspects::Storage, PristineAspects::Names };
+
+PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinClass)
+{
+    return table.mayHavePristineInstances(builtinClass) ? PristineTest::MayPass : PristineTest::NeverPasses;
+}
+
+static PristineProof proofSinceAllocation(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)
+{
+    ValueID definition = query.analyses->sameObjectThroughCasts(value);
+    const Value& allocation = query.function.at(definition);
+    if (!proofsOfAllocation(query.program, query.function, allocation).contains(Proof::Pristine))
+        return PristineProof::Unknown;
+    if (!query.program.at(allocation.type).findClassPart(builtinClass))
+        return PristineProof::Unknown;
+    if (query.analyses->guards().stateAt(definition, ProofSet { Proof::Pristine }, point) != GuardState::Available)
+        return PristineProof::Unknown;
+    return PristineProof::Proven;
+}
+
+static PristineAspectSet aspectsProvenByGuards(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)
+{
+    if (!query.analyses->hasPristineTest())
+        return { };
+    const GuardAvailability& guards = query.analyses->guards();
+    ValueID subject = query.analyses->identityOf(value);
+    PristineAspectSet proven;
+    for (ValueID guard : guards.guards()) {
+        PristineAspectSet tested;
+        for (const GuardFact& fact : guards.factsOf(guard).facts) {
+            const GuardOrigin* origin = fact.singleOrigin();
+            if (!origin || origin->source != GuardSource::Test || !fact.proves(Proof::Pristine) || fact.subject != subject)
+                continue;
+            const Value& test = query.function.at(origin->test);
+            if (test.opcode == Opcode::IsPristine && test.builtinClass() == builtinClass)
+                tested.add(test.aspects());
+        }
+        if (proven.containsAll(tested))
+            continue;
+        if (guards.stateAt(guard, ProofSet { Proof::Pristine }, subject, point) == GuardState::Available)
+            proven.add(tested);
+    }
+    return proven;
+}
+
+static PristineAspectSet collectProvenAspects(const PristineQuery& query, ValueID value, const PristineRequirement& wanted, ProgramPoint point)
+{
+    PristineAspectSet proven = pristineAspectsProvenBy(query.program.typeOf(query.function, value).withoutNullish(), wanted.builtinClass);
+    for (const Value& test : query.passedTests) {
+        if (test.opcode == Opcode::IsPristine && test.builtinClass() == wanted.builtinClass)
+            proven.add(test.aspects());
+    }
+    if (proven.containsAll(wanted.aspects) || !query.analyses)
+        return proven;
+    if (proofSinceAllocation(query, value, wanted.builtinClass, point) == PristineProof::Proven) {
+        proven.add(guardedAspects);
+        return proven;
+    }
+    proven.add(aspectsProvenByGuards(query, value, wanted.builtinClass, point));
+    return proven;
+}
+
+PristineAspectSet aspectsProvenAt(const PristineQuery& query, ValueID value, BuiltinClassID builtinClass, ProgramPoint point)
+{
+    return collectProvenAspects(query, value, { builtinClass, guardedAspects }, point);
+}
+
+PristineProof pristineProofOf(const PristineQuery& query, ValueID value, const PristineRequirement& requirement, ProgramPoint point)
+{
+    if (!requirement)
+        return PristineProof::Proven;
+    if (collectProvenAspects(query, value, requirement, point).containsAll(requirement.aspects))
+        return PristineProof::Proven;
+    return PristineProof::Unknown;
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

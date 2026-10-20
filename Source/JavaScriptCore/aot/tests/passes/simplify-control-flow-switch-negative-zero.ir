@@ -1,0 +1,156 @@
+# A switch compares like ===: negative zero takes case 0, and case 0 stays for every subject that may be negative zero
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 8
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="knownNegativeZero" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Double number=-0
+    Switch v3 cases=[1, 0] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f0 name="knownNegativeZero"
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v0
+# CHECK: Return v1
+# CHECK-NOT: Return v2
+
+function f1 name="caseZeroPassesNegativeZero" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+  b0(v0: boolean, v1: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Double number=-0
+    Switch v2 cases=[0] -> case b3(| 0), otherwise b4()
+  b2():
+    v3 = Negate v1
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+  b4():
+    Return v1
+}
+# CHECK-LABEL: function f1 name="caseZeroPassesNegativeZero"
+# CHECK: v2: whole = Double number=-0
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NOT: Return v1
+
+function f2 name="negativeZeroWithoutCaseZero" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Double number=-0
+    Switch v3 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="negativeZeroWithoutCaseZero"
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v0
+# CHECK-NOT: Return v1
+# CHECK: Return v2
+
+function f3 name="knownFraction" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = Double number=0.5
+    Switch v3 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="knownFraction"
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v0
+# CHECK-NOT: Return v1
+# CHECK: Return v2
+
+function f4 name="wholeNumberMayBeNegativeZero" parameters=[{type=whole}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: whole, v1: number, v2: number):
+    Switch v0 cases=[0, 1] -> case b1(| 0), case b2(), otherwise b3()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f4 name="wholeNumberMayBeNegativeZero"
+# CHECK: Switch v0 cases=[0] -> case b1(| 0), otherwise b3()
+# CHECK-NEXT: b1(v3: whole):
+# CHECK-NOT: Return v1
+
+function f5 name="doubleMayBeNegativeZero" parameters=[{type=double}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: double, v1: number, v2: number):
+    Switch v0 cases=[1, 0] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f5 name="doubleMayBeNegativeZero"
+# CHECK: Switch v0 cases=[0] -> case b2(), otherwise b3()
+# CHECK-NOT: Return v0
+# CHECK: Return v1
+
+function f6 name="fractionIsNeverZero" parameters=[{type=fractional}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: fractional, v1: number, v2: number):
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f6 name="fractionIsNeverZero"
+# CHECK-NOT: Switch
+# CHECK-NOT: Return v0
+# CHECK-NOT: Return v1
+# CHECK: Return v2
+
+function f7 name="integerRangeWithoutZero" parameters=[{type=int[1, 2]}, {type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: int[1, 2], v1: number, v2: number):
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v1
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f7 name="integerRangeWithoutZero"
+# CHECK: Switch v0 cases=[1] -> case b2(), otherwise b3()
+# CHECK-NOT: Return v0
+# CHECK: Return v1
+
+function f8 name="anyNumber" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f8 name="anyNumber"
+# CHECK: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
+# CHECK-NEXT: b1(v2: 0|whole):
+# CHECK: b2(v3: 1):

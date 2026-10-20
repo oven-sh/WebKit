@@ -1,0 +1,14 @@
+# two modules with a file of their own do not share a path, and no two modules share a body
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+module m0 path="main" displayPath="main" body=f0
+module m1 path="bun:ffi" displayPath="bun:ffi" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi
+module m2 path="bun:ffi" displayPath="goodSecondRuntimeModuleOfPath" kind=Runtime exportRule=RuntimeModule runtimeModule=BunFfi
+module m3 path="external" displayPath="external" kind=External referrer=m0
+module m4 path="external" displayPath="goodSecondExternalModuleOfPath" kind=External referrer=m1
+module m5 path="main" displayPath="badPathOfOtherModule"
+module m6 path="badBodyOfOtherModule" displayPath="badBodyOfOtherModule" body=f0
+entry module=m0
+function f0 name="" kind=Module results=[{type=anything}]

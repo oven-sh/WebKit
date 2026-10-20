@@ -1,0 +1,72 @@
+# Library code reads `promise.$then` under an engine private name. On a built-in object the name finds the member it is the private alias of and the lookup ends there, whatever the program does to the public name. The table lists nothing else of what the host keeps under such names, so any other one is unknown on a built-in object, the name of a member without a private alias included. The same spelling as a public name is absent
+# RUN: flow-walk
+# CHECK: v1 Get {@"resolve"}
+# CHECK-NEXT: Promise: BuiltinMember own Proven Promise @"resolve" PromiseResolve
+# CHECK-NEXT: v4 Get {@"then"}
+# CHECK-NEXT: : BuiltinMember Proven PromisePrototype @"then" PromisePrototypeThen
+# CHECK-NEXT: v7 Get {@"get"}
+# CHECK-NEXT: : BuiltinMember Proven MapPrototype @"get" MapPrototypeGet
+# CHECK-NEXT: v8 Get {@"size"}
+# CHECK-NEXT: : BuiltinGetter Proven MapPrototype @"size" MapPrototypeSize
+# CHECK-NEXT: v10 Get {@"charCodeAt"}
+# CHECK-NEXT: string: BuiltinMember Proven StringPrototype @"charCodeAt" StringPrototypeCharCodeAt
+# CHECK: v13 Get {@"getOwnPropertyNames"}
+# CHECK-NEXT: Object: BuiltinMember own Proven Object @"getOwnPropertyNames" ObjectGetOwnPropertyNames
+# CHECK-NEXT: v14 Get {"getOwnPropertyNames"}
+# CHECK: v16 Get {@"catch"}
+# CHECK-NEXT: : Unknown Predicted PromisePrototype *
+# CHECK: v17 Get {@"hidden"}
+# CHECK-NEXT: : Unknown Predicted PromisePrototype *
+# CHECK: v18 Get {@"all"}
+# CHECK-NEXT: Promise: Unknown own Predicted Promise *
+# CHECK: v19 Get {@"trim"}
+# CHECK-NEXT: string: Unknown Predicted StringPrototype *
+# CHECK: v20 Get {"hidden"}
+# CHECK-NEXT: : Absent Proven
+# RUN(WITHOUTALIAS): flow-walk
+# WITHOUTALIAS-NOT: PromisePrototypeCatch
+# WITHOUTALIAS-NOT: PromiseAll
+# WITHOUTALIAS-NOT: StringPrototypeTrim
+# RUN(NODES): flow-solve nodes
+# NODES: , f0, v1) = {PromiseResolve}
+# NODES: , f0, v4) = {PromisePrototypeThen}
+# NODES: , f0, v7) = {MapPrototypeGet}
+# NODES: , f0, v10) = {StringPrototypeCharCodeAt}
+# NODES: , f0, v13) = {ObjectGetOwnPropertyNames}
+# NODES-NEXT: , f0, v14) = {undefined|ObjectGetOwnPropertyNames}
+# NODES: , f0, v16) = {{*}}unknown}
+# NODES-NEXT: , f0, v17) = {{*}}unknown}
+# NODES-NEXT: , f0, v18) = {{*}}unknown}
+# NODES-NEXT: , f0, v19) = {{*}}unknown}
+# NODES-NEXT: , f0, v20) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=Promise
+    v1 = PropGet v0 key=@"resolve"
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2 calleeKey=@"resolve"
+    v4 = PropGet v3 key=@"then"
+    v5 = Builtin builtin=Map
+    v6 = Construct v5
+    v7 = PropGet v6 key=@"get"
+    v8 = PropGet v6 key=@"size"
+    v9 = String string="s"
+    v10 = PropGet v9 key=@"charCodeAt"
+    v11 = Builtin builtin=Object
+    v12 = PropDelete v11 key="getOwnPropertyNames" mode=Sloppy
+    v13 = PropGet v11 key=@"getOwnPropertyNames"
+    v14 = PropGet v11 key="getOwnPropertyNames"
+    v15 = Call v1, v0, v2 calleeKey=@"resolve"
+    v16 = PropGet v15 key=@"catch"
+    v17 = PropGet v15 key=@"hidden"
+    v18 = PropGet v0 key=@"all"
+    v19 = PropGet v9 key=@"trim"
+    v20 = PropGet v15 key="hidden"
+    Return
+  b1() role=CatchHandler:
+    v21 = CatchValue
+    Return
+}

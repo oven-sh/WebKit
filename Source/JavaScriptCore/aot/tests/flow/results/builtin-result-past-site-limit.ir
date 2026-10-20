@@ -1,0 +1,50 @@
+# Past the limit on the sites of a layout the record that a built-in makes shares the layout's own object with records that compiled code allocates. That class loses its proof, stays among the classes of the layout, and is still predicted. The class from before the limit keeps its proof
+# OPTIONS: limit=MaxSitesPerLayout:1
+# LOSS: MaxSitesPerLayout
+# RUN: flow
+# CHECK: class C1 layout=L(IteratorResult) impossibleMutations=[{{*}}, LoseShape]
+# CHECK-NEXT: class C2 layout=L(IteratorResult) impossibleMutations=[{{*}}, StoreOfOtherType] {{*}}cause=NonLayoutObject witness={function=f0 value=v5
+# CHECK: site A1 function=f1 layout=L(IteratorResult) allocationClass=1
+# CHECK-NEXT: site A2 function=f1 layout=L(IteratorResult) allocationClass=2
+# CHECK: site A{{*}} function=f0 layout=L(IteratorResult) allocationClass=2
+# CHECK: layout L(IteratorResult) flow={baseState=None members=[L(IteratorResult)] allocationClasses=[1, 2] {{*}}cause=NonLayoutObject witness={function=f0 value=v5}
+# CHECK-NEXT: field L(IteratorResult).0 "value" type=anything
+# CHECK-NEXT: field L(IteratorResult).1 "done" type=boolean
+# CHECK: variable g0 type=object predicted=L(IteratorResult) written=anything
+# CHECK-NEXT: variable g1 type=L(IteratorResult) written=anything
+# CHECK-NEXT: variable g2 type=object predicted=L(IteratorResult) written=anything
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+entry module=m0
+runtimefunction id=70 function=f1
+variable g0 name="stepOfMap" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="stepOfArray" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="otherStep" module=m1 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = PropGet v1 key="keys"
+    v3 = Call v2, v1 calleeKey="keys"
+    v4 = PropGet v3 key="next"
+    v5 = Call v4, v3 calleeKey="next"
+    PutModuleVariable v5 variable=g0
+    v7 = Integer integer=1
+    v8 = NewArray v7 contents=anything
+    v9 = PropGet v8 key="values"
+    v10 = Call v9, v8 calleeKey="values"
+    v11 = PropGet v10 key="next"
+    v12 = Call v11, v10 calleeKey="next"
+    PutModuleVariable v12 variable=g1
+    Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = CreateIteratorResult v1, v2
+    v4 = CreateIteratorResult v1, v2
+    PutModuleVariable v4 variable=g2
+    Return v3
+}

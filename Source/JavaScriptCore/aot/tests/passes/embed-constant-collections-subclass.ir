@@ -1,0 +1,135 @@
+# A construction whose new.target is a subclass of Set or Map is not created from a data record
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# RUN(RESOLVED): pass ResolveBuiltins EmbedConstantCollections
+# CHECK-NOT: table
+# CHECK: outcome: Unchanged
+# RESOLVED: table 0 keys: [String("if") String("else")]
+# RESOLVED-NEXT: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Keywords" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Set} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Codes" constructor=f1 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+
+function f0 name="Keywords" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Builtin builtin=Set
+    v3 = String string="if"
+    v4 = String string="else"
+    v5 = NewArray v3, v4 contents=string
+    v6 = SuperConstruct v2, v1, v5 layout=L0
+    Return v6
+}
+# CHECK-LABEL: function f0 name="Keywords"
+# CHECK-NOT: FromData
+# CHECK: [[list0]]:{{*}}= NewArray v3, v4 contents=string
+# CHECK-NEXT: = SuperConstruct v2, v1, [[list0]] layout=L0
+# RESOLVED-LABEL: function f0 name="Keywords"
+# RESOLVED-NOT: FromData
+# RESOLVED: [[resolvedList0]]:{{*}}= NewArray v3, v4 contents=string
+# RESOLVED-NEXT: = SuperConstruct v2, v1, [[resolvedList0]] layout=L0
+
+function f1 name="Codes" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = Builtin builtin=Map
+    v3 = String string="ok"
+    v4 = Integer integer=200
+    v5 = NewArray v3, v4 contents=anything
+    v6 = NewArray v5 contents=Array<anything>
+    v7 = SuperConstruct v2, v1, v6 layout=L1
+    Return v7
+}
+# CHECK-LABEL: function f1 name="Codes"
+# CHECK-NOT: FromData
+# CHECK: [[list1]]:{{*}}= NewArray v5 contents=Array
+# CHECK-NEXT: = SuperConstruct v2, v1, [[list1]] layout=L1
+# RESOLVED-LABEL: function f1 name="Codes"
+# RESOLVED-NOT: FromData
+# RESOLVED: [[resolvedList1]]:{{*}}= NewArray v5 contents=Array
+# RESOLVED-NEXT: = SuperConstruct v2, v1, [[resolvedList1]] layout=L1
+
+function f2 name="constructsSubclass" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = String string="if"
+    v2 = String string="else"
+    v3 = NewArray v1, v2 contents=string
+    v4 = Construct v0, -, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="constructsSubclass"
+# CHECK-NOT: FromData
+# CHECK: [[list2]]:{{*}}= NewArray v1, v2 contents=string
+# CHECK-NEXT: = Construct v0, -, [[list2]]
+# RESOLVED-LABEL: function f2 name="constructsSubclass"
+# RESOLVED-NOT: FromData
+# RESOLVED: [[resolvedList2]]:{{*}}= NewArray v1, v2 contents=string
+# RESOLVED-NEXT: = Construct v0, -, [[resolvedList2]]
+
+function f3 name="subclassAsNewTarget" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = Builtin builtin=Set
+    v2 = String string="if"
+    v3 = String string="else"
+    v4 = NewArray v2, v3 contents=string
+    v5 = Construct v1, v0, v4
+    Return v5
+}
+# CHECK-LABEL: function f3 name="subclassAsNewTarget"
+# CHECK-NOT: FromData
+# CHECK: [[list3]]:{{*}}= NewArray v2, v3 contents=string
+# CHECK-NEXT: = Construct v1, v0, [[list3]]
+# RESOLVED-LABEL: function f3 name="subclassAsNewTarget"
+# RESOLVED-NOT: FromData
+# RESOLVED: [[resolvedList3]]:{{*}}= NewArray v2, v3 contents=string
+# RESOLVED-NEXT: = Construct v1, v0, [[resolvedList3]]
+
+function f4 name="unknownNewTarget" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Map
+    v2 = String string="ok"
+    v3 = Integer integer=200
+    v4 = NewArray v2, v3 contents=anything
+    v5 = NewArray v4 contents=Array<anything>
+    v6 = Construct v1, v0, v5
+    Return v6
+}
+# CHECK-LABEL: function f4 name="unknownNewTarget"
+# CHECK-NOT: FromData
+# CHECK: [[list4]]:{{*}}= NewArray v4 contents=Array
+# CHECK-NEXT: = Construct v1, v0, [[list4]]
+# RESOLVED-LABEL: function f4 name="unknownNewTarget"
+# RESOLVED-NOT: FromData
+# RESOLVED: [[resolvedList4]]:{{*}}= NewArray v4 contents=Array
+# RESOLVED-NEXT: = Construct v1, v0, [[resolvedList4]]
+
+function f5 name="setAsItsOwnNewTarget" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = String string="if"
+    v2 = String string="else"
+    v3 = NewArray v1, v2 contents=string
+    v4 = Construct v0, v0, v3
+    Return v4
+}
+# CHECK-LABEL: function f5 name="setAsItsOwnNewTarget"
+# CHECK-NOT: FromData
+# CHECK: = Construct v0, v0,
+# RESOLVED-LABEL: function f5 name="setAsItsOwnNewTarget"
+# RESOLVED-NOT: NewArray
+# RESOLVED: = NewSetFromData data=d0
+
+function f6 name="noNewTarget" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = String string="if"
+    v2 = String string="else"
+    v3 = NewArray v1, v2 contents=string
+    v4 = Construct v0, -, v3
+    Return v4
+}
+# CHECK-LABEL: function f6 name="noNewTarget"
+# CHECK-NOT: FromData
+# CHECK: = Construct v0, -,
+# RESOLVED-LABEL: function f6 name="noNewTarget"
+# RESOLVED-NOT: NewArray
+# RESOLVED: = NewSetFromData data=d0

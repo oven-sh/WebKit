@@ -1,0 +1,51 @@
+# A namespace object reaches native code, and an export gets a function only in a function that is entered later: native code reads the export through the namespace object and calls the function with unknown arguments
+# RUN: flow-solve sinks nodes
+# CHECK: nativeCode {{*}}namespace m1
+# CHECK: , f6, parameter 0) = {{*}}unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="exporting.js" displayPath="exporting.js" body=f5 exports=[{name="callback" variable=g0}]
+entry module=m0
+variable g0 name="callback" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = ModuleNamespace module=m1
+    v2 = PropGet v0 key="keep" [isFreeName]
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = Call v4
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    Return v1
+}
+function f2 name="two" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    Return v1
+}
+function f3 name="three" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    Return v1
+}
+function f4 name="four" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f5 name="exporting" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="exported" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

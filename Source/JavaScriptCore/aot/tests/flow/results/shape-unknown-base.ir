@@ -1,0 +1,70 @@
+# A class that extends a value nobody knows gets its objects from a constructor nobody sees, so they may lose their shape
+# RUN: flow
+# RUN(PROVEN): flow
+# CHECK: class [[unknownBase]] layout=L1 {{*}}cause=UnknownBase witness={function=f0 value=v4}
+# CHECK: layout L1 flow={
+# CHECK-NOT: allocation=NeverAllocated
+# CHECK-NOT: baseState=
+# CHECK: cause=UnknownBase witness={function=f0 value=v4}
+# CHECK-NOT: LoseShape
+# CHECK: layout L2
+# PROVEN: class [[provenBase]] layout=L2 impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, {{*}}LoseShape]
+# PROVEN: layout L2 flow={baseState=Layout base=L0 members=[L2]
+# PROVEN-NOT: cause=
+# PROVEN: field L2.0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="ExtendsUnknown" constructor=f2 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="ExtendsBase" predictedBase=L0 constructor=f3 fields=[{key="y" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage]
+variable g0 name="ExtendsUnknown" module=m0 declared={type=function} initialization=Uninitialized
+variable g1 name="ExtendsBase" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="makeBase" [isFreeName]
+    v5 = Call v4
+    v6 = NewClosure function=f2
+    v7 = ResolveHeritage v5
+    v8 = NewClass v6, v5, v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    PutModuleVariable v9 variable=g0
+    v11 = NewClosure function=f3
+    v12 = ResolveHeritage v2
+    v13 = NewClass v11, v2, v12 layout=L2
+    v14 = FinishClass v13 layout=L2
+    PutModuleVariable v14 variable=g1
+    v16 = Construct v9
+    v17 = Construct v14
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+function f2 name="ExtendsUnknown" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L1
+    v4 = Integer integer=1
+    PropSet v3, v4 key="y" mode=Strict
+    Return v3
+}
+function f3 name="ExtendsBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = GetSuperBase v1 homeKind=Object
+    v3 = SuperConstruct v2, v0 layout=L2
+    v4 = Integer integer=1
+    PropSet v3, v4 key="y" mode=Strict
+    Return v3
+}

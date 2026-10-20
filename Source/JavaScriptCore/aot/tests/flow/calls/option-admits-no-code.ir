@@ -1,0 +1,11 @@
+# Without an option that admits code a program that does nothing has no event, and no unknown JavaScript can run
+# RUN: flow-links unseen
+# CHECK-NOT: unseen
+# CHECK: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}

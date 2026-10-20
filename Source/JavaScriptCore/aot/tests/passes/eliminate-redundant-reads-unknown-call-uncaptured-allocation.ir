@@ -1,0 +1,133 @@
+# Unknown code cannot write an object of this function that nothing has retained yet
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="published" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={impossibleMutations=[DeleteField, RedefineProperty]}
+
+function f0 name="neverRetained" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v3 = Call v1
+    v4 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f0 name="neverRetained"
+# CHECK: = Call v1
+# CHECK-NEXT: v4: anything = Upcast v0
+
+function f1 name="retainedByLocalObjectBehindTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v3 = Call v1
+    v4 = NewObject -, v2 layout=L0 fields=[0] [keepsShape]
+    v5 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f1 name="retainedByLocalObjectBehindTheCall"
+# CHECK: = NewObject -, v2
+# CHECK-NEXT: v5: anything = Upcast v0
+
+function f2 name="passedToTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v3 = Call v1, -, v2
+    v4 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f2 name="passedToTheCall"
+# CHECK: = Call v1, -, v2
+# CHECK-NEXT: v4: anything = GetSlot v2
+
+function f3 name="retainedInFrontOfTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    PutModuleVariable v2 variable=g0
+    v4 = Call v1
+    v5 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+# CHECK-LABEL: function f3 name="retainedInFrontOfTheCall"
+# CHECK: = Call v1
+# CHECK-NEXT: v5: anything = GetSlot v2
+
+function f4 name="retainedOnOnePath" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v3 variable=g0
+    Jump -> next b2()
+  b2():
+    v5 = Call v1
+    v6 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    Return v6
+}
+# CHECK-LABEL: function f4 name="retainedOnOnePath"
+# CHECK: = Call v1
+# CHECK-NEXT: v6: anything = GetSlot v3
+
+function f5 name="retainedInEarlierIteration" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    v3 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = Call v1
+    v6 = GetSlot v3 key="x" receivers=[L0] level=Proven
+    PutModuleVariable v3 variable=g0
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+}
+# CHECK-LABEL: function f5 name="retainedInEarlierIteration"
+# CHECK: = Call v1
+# CHECK-NEXT: v6: anything = GetSlot v3
+
+function f6 name="objectOfTheCaller" parameters=[{type=L0}, {type=anything}] results=[{type=boolean}] {
+  b0(v0: L0, v1: anything):
+    v2 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v3 = Call v1
+    v4 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    v5 = StrictEq v2, v4
+    Return v5
+}
+# CHECK-LABEL: function f6 name="objectOfTheCaller"
+# CHECK: = Call v1
+# CHECK-NEXT: v4: anything = GetSlot v0
+
+function f7 name="retainedBehindCallWithoutOperands" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    v2 = CallDirect function=f9
+    PutModuleVariable v1 variable=g0
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f7 name="retainedBehindCallWithoutOperands"
+# CHECK: PutModuleVariable v1
+# CHECK-NEXT: v4: anything = Upcast v0
+
+function f8 name="retainedInFrontOfCallWithoutOperands" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L0 fields=[0] [keepsShape]
+    PutModuleVariable v1 variable=g0
+    v3 = CallDirect function=f9
+    v4 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v4
+}
+# CHECK-LABEL: function f8 name="retainedInFrontOfCallWithoutOperands"
+# CHECK: = CallDirect function=f9
+# CHECK-NEXT: v4: anything = GetSlot v1
+
+function f9 name="runsUnknownCode" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hook" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="runsUnknownCode"

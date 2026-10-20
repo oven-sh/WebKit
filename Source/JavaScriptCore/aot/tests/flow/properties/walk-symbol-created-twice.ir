@@ -1,0 +1,179 @@
+# One key stands for each symbol that a call creates, so a method under it does not end a lookup: the object at hand may have another of the symbols, and the call finds what the base class holds under the key. A method under a well-known symbol ends the lookup
+# OPTIONS: check=FlowFixpoint
+# RUN(OWN): flow-links calls
+# OWN: f2 v3 -> i{{*}} f8 Call
+# RUN(INHERITED): flow-links calls
+# INHERITED: f2 v3 -> i{{*}} f6 Call
+# RUN(WELLKNOWN): flow-links calls
+# WELLKNOWN: f3 v2 -> i{{*}} f9 Call
+# RUN(WELLKNOWNALONE): flow-links calls
+# WELLKNOWNALONE-NOT: f3 v2 -> i{{*}} f5 Call
+# RUN(FIXPOINT): flow-solve fixpoint
+# FIXPOINT: nothing changes
+
+layout L0 kind=Instance name="Base" module=m0 position=6 constructor=f4
+layout L1 kind=Instance name="C" module=m0 position=99 predictedBase=L0 constructor=f7 supertypes=[L0] flags=[HasHeritage]
+layout L2 module=m0 position=179 fields=[{key="s" declared={type=anything predicted=symbol} flags=[IsRequired]}, {key="C" declared={type=anything predicted=function} flags=[IsRequired]}]
+variable g0 name="Base" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f2 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f3 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = NewClosure function=f4 @0
+    v7 = NewClass v6 layout=L0 @0
+    PutModuleVariable v7 variable=g1 @0
+    v9 = NewClosure function=f5 @13
+    v10 = Builtin builtin=SymbolIterator @13
+    SetFunctionName v9, v10 @13
+    DefineMethod v7, v9 layout=L0 key=@@iterator @13
+    v13 = FinishClass v7 layout=L0 @0
+    v14 = ClaimDeclared v13 declared={type=anything predicted=function} @0
+    v15 = ClaimDeclared v13 declared={type=anything predicted=function} @0
+    PutModuleVariable v15 variable=g0 @0
+    v17 = Predict v1 predicted=function @205
+    v18 = Call v17 calleeName="mk" @205
+    v19 = Predict v18 predicted=L2 @205
+    v20 = Call v17 calleeName="mk" @220
+    v21 = Predict v20 predicted=L2 @220
+    v22 = PropGet v15 key="prototype" @226
+    v23 = Predict v22 predicted=L0 @226
+    v24 = PropGet v21 key="s" @241
+    v25 = Predict v24 predicted=symbol @241
+    v26 = NewClosure function=f6 @253
+    ElemSet v23, v25, v26 @226
+    v28 = Builtin builtin=GlobalThis @382
+    v29 = PropGet v28 key="print" [isFreeName] @382
+    v30 = Predict v3 predicted=function @388
+    v31 = PropGet v19 key="C" @397
+    v32 = Predict v31 predicted=function @397
+    v33 = Construct v32 calleeName="C" @403
+    v34 = Predict v33 predicted=L1 @393
+    v35 = PropGet v19 key="s" @408
+    v36 = Predict v35 predicted=symbol @408
+    v37 = Call v30, -, v34, v36 calleeName="call" @388
+    v38 = PropGet v19 key="C" @427
+    v39 = Predict v38 predicted=function @427
+    v40 = Construct v39 calleeName="C" @433
+    v41 = Predict v40 predicted=L1 @423
+    v42 = PropGet v21 key="s" @438
+    v43 = Predict v42 predicted=symbol @438
+    v44 = Call v30, -, v41, v43 calleeName="call" @418
+    v45 = PropGet v21 key="C" @458
+    v46 = Predict v45 predicted=function @458
+    v47 = Construct v46 calleeName="C" @465
+    v48 = Predict v47 predicted=L1 @454
+    v49 = PropGet v21 key="s" @470
+    v50 = Predict v49 predicted=symbol @470
+    v51 = Call v30, -, v48, v50 calleeName="call" @449
+    v52 = Predict v5 predicted=function @481
+    v53 = PropGet v19 key="C" @498
+    v54 = Predict v53 predicted=function @498
+    v55 = Construct v54 calleeName="C" @504
+    v56 = Predict v55 predicted=L1 @494
+    v57 = Call v52, -, v56 calleeName="callIterator" @481
+    v58 = Call v29, -, v37, v44, v51, v57 calleeName="print" @382
+    v59 = Undefined @382
+    Return v59 @382
+}
+function f1 name="mk" module=m0 position=54 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=L2}] {
+  b0():
+    Jump -> next b1() @54
+  b1():
+    v0 = Builtin builtin=Symbol @80
+    v1 = String string="s" @87
+    v2 = Call v0, -, v1 calleeName="Symbol" @80
+    v3 = Predict v2 predicted=symbol @80
+    v4 = GetModuleVariable variable=g0 @109
+    v5 = CheckInitialized v4 name="Base" @109
+    v6 = ResolveHeritage v5 @93
+    v7 = NewClosure function=f7 @93
+    v8 = NewClass v7, v5, v6 layout=L1 @93
+    v9 = ToPropertyKey v3 @117
+    v10 = NewClosure function=f8 @116
+    SetFunctionName v10, v9 @116
+    DefineMethod v8, v10, v9 layout=L1 @116
+    v13 = NewClosure function=f9 @136
+    v14 = Builtin builtin=SymbolIterator @136
+    SetFunctionName v13, v14 @136
+    DefineMethod v8, v13 layout=L1 index=1 key=@@iterator @136
+    v17 = FinishClass v8 layout=L1 @93
+    v18 = ClaimDeclared v17 declared={type=anything predicted=function} @93
+    v19 = ClaimDeclared v17 declared={type=anything predicted=function} @93
+    v20 = NewObject -, v3, v19 layout=L2 fields=[0, 1] @179
+    v21 = FinishObject v20 @179
+    v22 = ClaimDeclared v21 declared={type=anything predicted=L2} @179
+    Return v22 @179
+}
+function f2 name="call" module=m0 position=285 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @285
+  b1():
+    v2 = ElemGet v0, v1 @314
+    v3 = Call v2, v0 @316
+    ReturnCall v3 @316
+}
+function f3 name="callIterator" module=m0 position=324 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @324
+  b1():
+    v1 = PropGet v0 key=@@iterator @358
+    v2 = Call v1, v0 calleeKey=@@iterator @367
+    ReturnCall v2 @367
+}
+function f4 name="Base" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @6
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @0
+    v2 = NewObject v1 layout=L0 @0
+    Return v2 @0
+}
+function f5 module=m0 position=13 kind=Method thisType={type=anything} results=[{type=anything predicted=string}] {
+  b0():
+    Jump -> next b1() @13
+  b1():
+    v0 = String string="base" @42
+    v1 = ClaimDeclared v0 declared={type=anything predicted=string} @42
+    Return v1 @42
+}
+function f6 module=m0 position=253 thisType={type=anything} results=[{type=anything predicted=string}] {
+  b0():
+    Jump -> next b1() @253
+  b1():
+    v0 = String string="base" @274
+    v1 = ClaimDeclared v0 declared={type=anything predicted=string} @274
+    Return v1 @274
+}
+function f7 name="C" module=m0 position=99 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @99
+  b1():
+    v3 = GetSuperBase v0 @99
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @99
+    Return v4 @99
+}
+function f8 module=m0 position=116 kind=Method thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @116
+  b1():
+    v0 = Integer integer=1 @131
+    v1 = ClaimDeclared v0 declared={type=anything predicted=number} @131
+    Return v1 @131
+}
+function f9 module=m0 position=136 kind=Method thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @136
+  b1():
+    v0 = Integer integer=2 @165
+    v1 = ClaimDeclared v0 declared={type=anything predicted=number} @165
+    Return v1 @165
+}
+entry module=m0

@@ -1,0 +1,48 @@
+# A call that selects an undeclared overload hands its operands to unknown JavaScript, answers the unknown value and may throw it, without an event for the program
+# RUN: flow-solve sinks nodes
+# CHECK: nativeCode {{*}}L0#[[handed]]
+# CHECK: unknownJavaScript {{*}}L0#[[handed]]
+# RUN(UNDECLARED): flow-solve nodes
+# UNDECLARED: f1, result 0) = {{*}}unknown
+# UNDECLARED-NEXT: f1, thrown) = {{*}}unknown
+# RUN(DECLARED): flow-solve nodes
+# DECLARED: f2, result 0) = {Array@f2:v3{{*}}}
+# DECLARED-NEXT: f2, thrown) = {opaque(Error)@host:-.error}
+# RUN(KEPT): flow-solve sinks
+# KEPT-NOT: L1#
+# RUN(LINKS): flow-links builtins unseen
+# LINKS: builtin {{*}} v3 ArrayFrom/3 Call
+# RUN(KEYS): flow-links builtins unseen
+# KEYS: builtin {{*}} v3 ObjectKeys/0 Call
+# RUN(UNSEEN): flow-links builtins unseen
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handed" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Read" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f2
+    v3 = Call v2
+    Return
+}
+function f1 name="undeclared" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=ArrayFrom
+    v3 = Call v2, -, v1
+    Return v3
+}
+function f2 name="declared" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Call v2, -, v1
+    Return v3
+}

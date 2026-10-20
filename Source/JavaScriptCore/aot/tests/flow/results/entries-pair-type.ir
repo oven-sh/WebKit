@@ -1,0 +1,47 @@
+# The pair of a step over the entries of a map is typed as the array it is, with the join of key and value as its proven contents; a pair that is passed to a native call keeps the class and loses the proof. No type, class or site names the tuple of the built-ins table as a layout
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: layout L(EntriesPair) flow={allocation=NeverAllocated
+# CHECK: variable g0 type=undefined|Array<L0|L1, proven, pristine[Storage, Names, Dense]> predicted=
+# CHECK: variable g1 type=undefined|Array<{{*}}L0|L1, Contiguous{{*}}> written=anything
+# CHECK: variable g2 type=L0 written=anything
+# CHECK: variable g3 type=L1 written=anything
+# NOWHERE-NOT: variable g1 {{*}}proven
+# NOWHERE-NOT: layout=L(EntriesPair)
+# NOWHERE-NOT: type={{*}}L(EntriesPair)
+# NOWHERE-NOT: predicted={{*}}L(EntriesPair)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Key" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Value" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="handedOut" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="firstOfKept" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="secondOfKept" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=Map
+    v4 = Construct v3
+    v5 = PropGet v4 key="set"
+    v6 = Call v5, v4, v1, v2 calleeKey="set"
+    v7 = IteratorOpen v4
+    v8 = IteratorResume v7
+    v9 = ResultAt v8 index=1
+    PutModuleVariable v9 variable=g0
+    v11 = Integer integer=0
+    v12 = ElemGet v9, v11
+    PutModuleVariable v12 variable=g2
+    v14 = ElemGet v9, v0
+    PutModuleVariable v14 variable=g3
+    v16 = IteratorResume v7
+    v17 = ResultAt v16 index=1
+    PutModuleVariable v17 variable=g1
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="sink" [isFreeName]
+    v21 = Call v20, -, v17
+    Return
+}

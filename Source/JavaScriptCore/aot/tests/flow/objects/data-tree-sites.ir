@@ -1,0 +1,30 @@
+# Every array and object node of a constant data tree is a site whose ordinal is the number of the node in preorder, where primitives count and have no site; the members of a node are its initial fields
+# RUN: flow-sites solved
+# RUN(NODES): flow-solve nodes
+# CHECK: site {{*}} function=f0 value=v0 kind=Layout origin=DataNode layout=L0 class=
+# CHECK-NEXT: site {{*}} function=f0 value=v0 kind=Instance origin=DataNode builtinClass=Array positions=2 ordinal=2 class=
+# CHECK-NEXT: site {{*}} function=f0 value=v0 kind=Layout origin=DataNode layout=L1 ordinal=3 class=
+# CHECK-NOT: origin=DataNode
+# CHECK: object {{*}} L0#{{*}} kind=Allocation parts=2 positions=0 undeclared=no events=[Allocated]
+# CHECK-NEXT: object {{*}} Array@f0:v0.2 kind=Instance parts={{*}} positions=2 undeclared=no events=[Allocated]
+# CHECK-NEXT: object {{*}} L1#{{*}} kind=Allocation parts=2 positions=0 undeclared=no events=[Allocated]
+# NODES: Variable(g0) = {L0#[[root]]}
+# NODES: DeclaredPart(L0#[[root]], 0) = {1}
+# NODES-NEXT: DeclaredPart(L0#[[root]], 1) = {Array@f0:v0.2}
+# NODES: Position(Array@f0:v0.2, 0) = {L1#[[inner]]}
+# NODES-NEXT: Position(Array@f0:v0.2, 1) = {null}
+# NODES-NEXT: DeclaredPart(L1#[[inner]], 0) = {"s"}
+# NODES-NEXT: DeclaredPart(L1#[[inner]], 1) = {undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Root" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="list" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Inner" fields=[{key="b" declared={type=anything} flags=[IsRequired]}, {key="leftOut" declared={type=anything}}]
+variable g0 name="tree" module=m0 declared={type=anything} initialization=Uninitialized
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="list" value=Array{contents=anything elements=[Object{layout=L1 members=[{key="b" value=String{value="s"}}]}, Null]}}]}
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    Return
+}

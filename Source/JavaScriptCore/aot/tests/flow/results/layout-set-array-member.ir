@@ -1,0 +1,24 @@
+# A position that a record and an array reach has both parts side by side
+# RUN: flow
+# CHECK: layout L0 flow={{*}}members=[L1]
+# CHECK: variable g0 type=L1|Array<
+# CHECK: variable g1 type=L1 written=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=0 kind=Assertion
+variable g0 name="held" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+variable g1 name="held" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+layout L0 name="Sized"
+layout L1 name="Box" fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewArray v0 contents=anything holes=[]
+    v2 = ClaimDeclared v1 declared={type=undefined|null|L0 site=w0}
+    PutModuleVariable v2 variable=g0
+    v4 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v4 variable=g1
+    Return
+}

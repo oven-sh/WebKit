@@ -1,0 +1,196 @@
+# x instanceof C is a test of the layouts that descend from C when the class object, its prototype property and their chains are as defined
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 8
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L0, L1, L8] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Circle" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Custom" constructor=f2 flow={baseState=None members=[L2] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f10 mutability=Fixed}]}
+layout L3 kind=Instance name="Open" constructor=f3 flow={baseState=None members=[L3] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
+layout L4 kind=Instance name="Repeated" constructor=f4 flow={baseState=None members=[L4] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Other" constructor=f5 flow={baseState=None members=[L5] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Reassigned" constructor=f6 flow={baseState=None members=[L6] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L7 kind=Instance name="Soft" constructor=f7 flow={baseState=None members=[L7] impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L8 kind=Instance name="Relinked" predictedBase=L0 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L8] impossibleMutations=[ChangePrototype, LoseShape]} classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L9 kind=Instance name="Reparented" constructor=f9 flow={baseState=None members=[L9] impossibleMutations=[LoseShape]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Custom" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="Reassigned" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="Soft" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="Relinked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f10 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+function f11 name="closed-union" parameters=[{type=L0|L1|L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L1|L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="closed-union"
+# CHECK-NEXT: b0(v0: L0|L1|L5, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f12 name="subclass-is-tested-for" parameters=[{type=L0|L1|L5}, {type=f1}] results=[{type=anything}] {
+  b0(v0: L0|L1|L5, v1: f1):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f12 name="subclass-is-tested-for"
+# CHECK-NEXT: b0(v0: L0|L1|L5, v1: f1):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f13 name="union-with-primitives" parameters=[{type=undefined|number|L1|L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: undefined|number|L1|L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f13 name="union-with-primitives"
+# CHECK-NEXT: b0(v0: undefined|number|L1|L5, v1: f0):
+# CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f14 name="unrelated-subject" parameters=[{type=L5}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L5, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f14 name="unrelated-subject"
+# CHECK-NEXT: b0(v0: L5, v1: f0):
+# CHECK-NEXT: v2: false = Boolean
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f15 name="unknown-subject" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f15 name="unknown-subject"
+# CHECK-NEXT: b0(v0: anything, v1: f0):
+# CHECK-NEXT: [[isShape]]: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Branch [[isShape]] -> taken [[known]](| 0), notTaken [[generic]](| 0)
+# CHECK: [[known]]([[shape]]: L0|L1):
+# CHECK-NEXT: [[isOwnShape]]: boolean = BelongsToInstance [[shape]]
+# CHECK-NEXT: Branch [[isOwnShape]] -> taken [[ownShape]](), notTaken [[foreignShape]]()
+# CHECK: [[generic]]([[otherValue]]: anything):
+# CHECK-NEXT: : boolean = InstanceOf [[otherValue]], v1
+# CHECK: [[ownShape]]():
+# CHECK-NEXT: : true = Boolean boolean=true
+# CHECK: [[foreignShape]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf v0, v1
+function f16 name="member-may-change-its-prototype" parameters=[{type=L0|L9}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L9, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f16 name="member-may-change-its-prototype"
+# CHECK-NEXT: b0(v0: L0|L9, v1: f0):
+# CHECK-NEXT: [[isExactShape]]: boolean = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isExactShape]] -> taken [[exact]](| 0), notTaken [[reparented]](| 0)
+# CHECK: [[exact]]({{*}}: L0):
+# CHECK-NEXT: : true = Boolean boolean=true
+# CHECK: [[reparented]]([[movedObject]]: L9):
+# CHECK-NEXT: : boolean = InstanceOf [[movedObject]], v1
+function f17 name="descendant-with-a-changeable-link" parameters=[{type=L0|L8}, {type=f0}] results=[{type=anything}] {
+  b0(v0: L0|L8, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f17 name="descendant-with-a-changeable-link"
+# CHECK-NEXT: b0(v0: L0|L8, v1: f0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK: ([[relinked]]: L8):
+# CHECK-NEXT: : boolean = InstanceOf [[relinked]], v1
+function f18 name="shape-may-be-lost" parameters=[{type=anything}, {type=f7}] results=[{type=anything}] {
+  b0(v0: anything, v1: f7):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f18 name="shape-may-be-lost"
+# CHECK-NEXT: b0(v0: anything, v1: f7):
+# CHECK-NEXT: [[isObject]]: boolean = TypeTest v0 testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[objects]](| 0), notTaken [[primitives]](| 0)
+# CHECK: [[objects]]([[object]]: object):
+# CHECK-NEXT: [[hasShape]]: boolean = ShapeTest [[object]] layouts=[L7]
+# CHECK-NEXT: Branch [[hasShape]] -> taken [[soft]](| 0), notTaken [[notSoft]]()
+# CHECK: [[primitives]]({{*}}):
+# CHECK-NEXT: : false = Boolean
+# CHECK: [[soft]]({{*}}: guard):
+# CHECK-NEXT: [[isOwnSoft]]: boolean = BelongsToInstance [[object]]
+# CHECK-NEXT: Branch [[isOwnSoft]] -> taken [[ownSoft]](), notTaken [[foreignSoft]]()
+# CHECK: [[notSoft]]():
+# CHECK-NEXT: : boolean = InstanceOf [[object]], v1
+# CHECK: [[ownSoft]]():
+# CHECK-NEXT: : true = Boolean boolean=true
+# CHECK: [[foreignSoft]]() frequency=Unlikely:
+# CHECK-NEXT: : boolean = InstanceOf [[object]], v1
+function f19 name="static-has-instance-method" parameters=[{type=anything}, {type=f2}] results=[{type=anything}] {
+  b0(v0: anything, v1: f2):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f19 name="static-has-instance-method"
+# CHECK-NEXT: b0(v0: anything, v1: f2):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f20 name="class-object-may-gain-names" parameters=[{type=anything}, {type=f3}] results=[{type=anything}] {
+  b0(v0: anything, v1: f3):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f20 name="class-object-may-gain-names"
+# CHECK-NEXT: b0(v0: anything, v1: f3):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f21 name="class-evaluated-more-than-once" parameters=[{type=anything}, {type=f4}] results=[{type=anything}] {
+  b0(v0: anything, v1: f4):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f21 name="class-evaluated-more-than-once"
+# CHECK-NEXT: b0(v0: anything, v1: f4):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f22 name="prototype-property-may-change" parameters=[{type=anything}, {type=f6}] results=[{type=anything}] {
+  b0(v0: anything, v1: f6):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f22 name="prototype-property-may-change"
+# CHECK-NEXT: b0(v0: anything, v1: f6):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f23 name="built-in-class" parameters=[{type=anything}, {type=builtin(Array)}] results=[{type=anything}] {
+  b0(v0: anything, v1: builtin(Array)):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f23 name="built-in-class"
+# CHECK-NEXT: b0(v0: anything, v1: builtin(Array)):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f24 name="nullable-class-object" parameters=[{type=anything}, {type=undefined|f0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f24 name="nullable-class-object"
+# CHECK-NEXT: b0(v0: anything, v1: undefined|f0):
+# CHECK-NEXT: v2: boolean = InstanceOf v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

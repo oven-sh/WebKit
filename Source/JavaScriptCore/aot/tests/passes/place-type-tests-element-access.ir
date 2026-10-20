@@ -1,0 +1,257 @@
+# An access by key on a receiver predicted to be an array or a typed array gets the tests of its class, of its elements and of its storage kind, and becomes an element operation under them
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# STATISTIC: TypeTestsPlaced = 34
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+function f0 name="predictedInt32Array" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="predictedInt32Array"
+# CHECK: [[isArray0]]:{{*}}= TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[arrayBlock0]](| 0), notTaken
+# CHECK: [[guard0]]: guard = AllGuards [[pristine0]], [[storage0]]
+# CHECK-NEXT: v2: undefined|i32 = GetArrayElement [[array0]], v1, [[guard0]] arrayStorage=Int32 level=Predicted
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: frequency=Unlikely:
+# CHECK-NEXT: [[generic0]]:{{*}}= ElemGet v0, v1
+# CHECK-NEXT: Return [[generic0]]
+# CHECK: [[arrayBlock0]]([[array0]]: Array<i32>):
+# CHECK-NEXT: [[isPristine0]]: boolean = IsPristine [[array0]] builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch [[isPristine0]] -> taken [[pristineBlock0]](| 0), notTaken
+# CHECK: [[pristineBlock0]]([[pristine0]]: guard):
+# CHECK-NEXT: [[hasStorage0]]: boolean = HasArrayStorage [[array0]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[hasStorage0]] -> taken [[storageBlock0]](| 0), notTaken
+# CHECK: [[storageBlock0]]([[storage0]]: guard):
+
+function f1 name="predictedArrayWithoutKind" parameters=[{type=anything predicted=Array<anything>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<anything>, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="predictedArrayWithoutKind"
+# CHECK-NOT: HasArrayStorage
+# CHECK: v2: anything = GetArrayElement [[array1]], v1, [[pristine1]] level=Predicted
+# CHECK-NOT: HasArrayStorage
+# CHECK: ([[array1]]: Array):
+# CHECK-NEXT: = IsPristine [[array1]] builtinClass=Array aspects=[Storage]
+# CHECK-NOT: HasArrayStorage
+# CHECK: ([[pristine1]]: guard):
+# CHECK-NOT: HasArrayStorage
+
+function f2 name="keyPredictedNumber" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=anything predicted=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: anything ~ int[0, 1000]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="keyPredictedNumber"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: = GetArrayElement [[array2]], [[key2]], [[guard2]] arrayStorage=Int32 level=Predicted
+# CHECK: = IsPristine [[array2]] builtinClass=Array
+# CHECK: [[hasStorage2]]: boolean = HasArrayStorage [[array2]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[hasStorage2]] -> taken [[storageBlock2]](| 0), notTaken
+# CHECK: [[storageBlock2]]({{*}}: guard):
+# The range in the prediction is what flow happened to see: the test asks for an int32, as the test of an operator does.
+# CHECK-NEXT: [[isNumber2]]:{{*}}= TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch [[isNumber2]] -> taken [[keyBlock2]](| 0), notTaken
+# CHECK: [[keyBlock2]]([[key2]]: i32{{*}}):
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: = IsPristine
+# CHECK-NOT: = HasArrayStorage
+
+function f3 name="loopOfReads" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000], v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = ElemGet v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f3 name="loopOfReads"
+# CHECK: Jump -> next [[tests3]]()
+# CHECK-NEXT: [[loop3]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[guard3]]: guard = AllGuards [[pristine3]], [[storage3]]
+# CHECK-NEXT: v4: undefined|i32 = GetArrayElement [[array3]], v1, [[guard3]] arrayStorage=Int32 level=Predicted
+# CHECK-NEXT: Branch v2 -> taken [[loop3]](), notTaken
+# CHECK: [[tests3]]():
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK-NOT: = TypeTest
+# CHECK: [[copy3]]() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = ElemGet v0, v1
+# CHECK-NEXT: Branch v2 -> taken [[copy3]](), notTaken
+# CHECK: ([[array3]]: Array<i32>):
+# CHECK-NEXT: = IsPristine [[array3]] builtinClass=Array aspects=[Storage]
+# CHECK-NOT: = IsPristine
+# CHECK: ([[pristine3]]: guard):
+# CHECK-NEXT: = HasArrayStorage [[array3]] arrayStorage=Int32
+# CHECK-NOT: = HasArrayStorage
+# CHECK: ([[storage3]]: guard):
+# CHECK-NEXT: Jump -> next [[loop3]]()
+
+function f4 name="storeInLoop" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000], v2: i32, v3: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    ElemSet v0, v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4 name="storeInLoop"
+# CHECK: Jump -> next [[tests4]]()
+# CHECK-NEXT: [[loop4]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[hasStorage4]]: boolean = HasArrayStorage [[array4]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[hasStorage4]] -> taken [[storageBlock4]](| 0), notTaken
+# CHECK: [[tests4]]():
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: [[guard4]]: guard = AllGuards [[pristine4]], [[storage4]]
+# CHECK-NEXT: PutArrayElement [[array4]], v1, v2, [[guard4]] arrayStorage=Int32 level=Predicted
+# CHECK-NEXT: Branch v3 -> taken [[loop4]](), notTaken
+# CHECK: ElemSet v0, v1, v2
+# CHECK: ([[array4]]: Array<i32>):
+# CHECK-NEXT: = IsPristine [[array4]] builtinClass=Array aspects=[Storage]
+# CHECK: ([[pristine4]]: guard):
+# CHECK-NEXT: Jump -> next [[loop4]]()
+# CHECK: [[storageBlock4]]([[storage4]]: guard):
+
+function f5 name="has" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}] results=[{type=boolean}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000]):
+    v2 = ElemHas v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="has"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: [[guard5]]: guard = AllGuards
+# CHECK-NEXT: v2: boolean = HasArrayElement [[array5]], v1, [[guard5]] arrayStorage=Int32 level=Predicted
+# CHECK: = ElemHas v0, v1
+# CHECK: = IsPristine [[array5]] builtinClass=Array aspects=[Storage]
+# CHECK: = HasArrayStorage [[array5]] arrayStorage=Int32
+
+function f6 name="define" parameters=[{type=object predicted=Array<i32, Int32>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: object ~ Array<i32, Int32>, v1: int[0, 1000], v2: i32):
+    ElemDefine v0, v1, v2
+    Return
+}
+# CHECK-LABEL: function f6 name="define"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: [[guard6]]: guard = AllGuards
+# CHECK-NEXT: PutArrayElement [[array6]], v1, v2, [[guard6]] arrayStorage=Int32 level=Predicted
+# CHECK: ElemDefine v0, v1, v2
+# CHECK: = IsPristine [[array6]] builtinClass=Array aspects=[Storage]
+# CHECK: = HasArrayStorage [[array6]] arrayStorage=Int32
+
+function f7 name="typedArrayPredicted" parameters=[{type=anything predicted=Uint8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ Uint8Array, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f7 name="typedArrayPredicted"
+# CHECK-NOT: IsPristine
+# CHECK: = TypeTest v0 testedType=Uint8Array
+# CHECK-NOT: IsPristine
+# CHECK: v2: undefined|int[0, 255] = GetTypedArrayElement [[view7]], v1 typedArrayType=2 level=Predicted
+# CHECK-NOT: IsPristine
+# CHECK: = ElemGet v0, v1
+# CHECK-NOT: IsPristine
+# CHECK: ([[view7]]: Uint8Array):
+# CHECK-NOT: IsPristine
+
+function f8 name="expandedIteration" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 9007199254740991]}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 9007199254740991]):
+    v2 = ElemGet v0, v1 [keyIsIntegral]
+    Return v2
+}
+# CHECK-LABEL: function f8 name="expandedIteration"
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: v2: undefined|i32 = GetArrayElement [[array8]], v1, [[guard8]] arrayStorage=Int32 level=Predicted [keyIsIntegral]
+# CHECK: = ElemGet v0, v1 [keyIsIntegral]
+# CHECK: = IsPristine [[array8]] builtinClass=Array
+# CHECK: = HasArrayStorage [[array8]] arrayStorage=Int32
+
+function f9 name="fractionalKey" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f9 name="fractionalKey"
+# CHECK-NOT: keyIsIntegral
+# CHECK: v2: undefined|i32 = GetArrayElement [[array9]], v1, [[guard9]] arrayStorage=Int32 level=Predicted
+# CHECK-NOT: keyIsIntegral
+
+function f10 name="keyMayBeNoIndex" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: i32):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f10 name="keyMayBeNoIndex"
+# CHECK: = GetArrayElement [[array10]], v1, [[guard10]] arrayStorage=Int32 level=Predicted
+# CHECK: = IsPristine [[array10]] builtinClass=Array aspects=[Storage, Names]
+
+function f11 name="notAnArray" parameters=[{type=anything predicted=L0}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: int[0, 1000]):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f11 name="notAnArray"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: anything = ElemGet v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+
+function f12 name="rareBlock" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000], v2: boolean):
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = ElemGet v0, v1
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f12 name="rareBlock"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: = ElemGet v0, v1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+
+function f13 name="alreadyResolved" parameters=[{type=Array<i32> predicted=Array<i32, Int32>}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: Array<i32> ~ Array<i32, Int32>, v1: int[0, 1000]):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 level=Predicted
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f13 name="alreadyResolved"
+# CHECK-NEXT: b0(
+# CHECK-NEXT: v2: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: guard):
+# CHECK-NEXT: = GetArrayElement v0, v1, v3 level=Predicted
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+
+function f14 name="sloppyStore" parameters=[{type=anything predicted=Array<i32, Int32>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: anything ~ Array<i32, Int32>, v1: int[0, 1000], v2: i32):
+    ElemSet v0, v1, v2 mode=Sloppy
+    Return
+}
+# CHECK-LABEL: function f14 name="sloppyStore"
+# CHECK: PutArrayElement [[array14]], v1, v2, [[guard14]] arrayStorage=Int32 mode=Sloppy level=Predicted
+# CHECK: ElemSet v0, v1, v2 mode=Sloppy

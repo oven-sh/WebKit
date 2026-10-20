@@ -1,0 +1,19 @@
+# A code address has no base and nothing ends it, but a direct call still cannot take it as an argument
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: StoredTypeMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="passes-address" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ResolveCallTarget v0 argumentCount=0
+    v2 = CallDirect v1 function=f2
+    Return v2
+}
+function f1 name="calls-address" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ResolveCallTarget v0 argumentCount=0
+    v2 = CallResolved v0, v1
+    Return v2
+}
+function f2 name="callee" parameters=[{type=anything}] results=[{type=anything}]

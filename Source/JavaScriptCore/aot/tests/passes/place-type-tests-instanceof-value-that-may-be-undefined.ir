@@ -1,0 +1,18 @@
+# value instanceof C with a value that is proven to be an instance of the class or undefined. undefined is an instance of nothing, and the test of the prototype link takes an object: the value is tested for the layout first
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={prototypeProperty=Fixed}
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="instanceOrUndefined" parameters=[{type=undefined|L0}, {type=f0}] results=[{type=anything}] {
+  b0(v0: undefined|L0, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="instanceOrUndefined"
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: ([[instance1]]: L0
+# CHECK: = HasLayoutPrototype [[instance1]]
+# CHECK-NOT: = HasLayoutPrototype v0

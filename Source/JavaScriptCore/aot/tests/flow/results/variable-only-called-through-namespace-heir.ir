@@ -1,0 +1,35 @@
+# An export that is called through an object that inherits from the namespace object counts as read: the lookup by name needs the export at run time. Called through the namespace object itself it is only called
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: variable g0 {{*}}reads=OnlyCalled
+# CHECK: variable g1 {{*}}writers=AllKnown
+# NOWHERE-NOT: variable g1 {{*}}reads=
+
+module m0 path="library.js" displayPath="library.js" body=f1 exports=[{name="inherited" variable=g1}, {name="own" variable=g0}]
+module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0}]
+entry module=m1
+variable g0 name="own" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="inherited" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="own"
+    v2 = Call v1, v0 calleeKey="own"
+    v3 = Builtin builtin=ObjectCreate
+    v4 = Call v3, -, v0
+    v5 = PropGet v4 key="inherited"
+    v6 = Call v5, v4 calleeKey="inherited"
+    Return
+}
+function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="own" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="inherited" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

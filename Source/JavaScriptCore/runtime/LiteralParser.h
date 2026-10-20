@@ -318,14 +318,12 @@ private:
     class StackGuard;
     JSValue parseRecursivelyEntry(VM&) requires (reviverMode == JSONReviverMode::Disabled);
     JSValue evalRecursivelyEntry(VM&) requires (reviverMode == JSONReviverMode::Disabled);
-    template<ParserMode, bool createsObjectsAtEnd = false> JSValue parseRecursively(VM&, uint8_t* stackLimit) requires (reviverMode == JSONReviverMode::Disabled);
+    template<ParserMode> JSValue parseRecursively(VM&, uint8_t* stackLimit) requires (reviverMode == JSONReviverMode::Disabled);
     JSValue parse(VM&, ParserState, JSONRanges*);
 
     JSValue parsePrimitiveValue(VM&);
 
     JSArray* materializeArray(VM&, unsigned stackBase);
-    void storePendingValues(JSObject*, Structure*, const EncodedJSValue* pendingValues);
-    JSObject* finishObjectWithPendingValues(JSObject*, Structure*, EncodedJSValue* pendingValues);
 
     static ALWAYS_INLINE bool equalIdentifier(UniquedStringImpl*, typename Lexer::LiteralParserTokenPtr);
     static ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
@@ -343,7 +341,6 @@ private:
     UncheckedKeyHashSet<JSObject*> m_visitedUnderscoreProto;
     MarkedArgumentBuffer m_objectStack;
     MarkedArgumentBuffer m_elementStack;
-    JSObject* m_unusedObject { nullptr };
     Vector<ParserState, 16, UnsafeVectorOverflow> m_stateStack;
     Vector<Identifier, 16, UnsafeVectorOverflow> m_identifierStack;
     Vector<JSONRanges::Entry, 8> m_rangesStack;

@@ -1,0 +1,19 @@
+# A conversion between representations that no path of conversions joins fails its function with one diagnostic, and a supported one reports nothing
+# RUN: unsupported-conversions
+# DIAGNOSTIC: UnsupportedConversion
+# CHECK: Box Void to JSValue: failed UnsupportedConversion
+# CHECK-NEXT: Box Cell to Double: failed UnsupportedConversion
+# CHECK-NEXT: Unbox Cell to Double: failed UnsupportedConversion
+# CHECK-NEXT: Decode Cell32 to Double: failed UnsupportedConversion
+# CHECK-NEXT: Compress Double to Cell32: failed UnsupportedConversion
+# CHECK-NEXT: Box Cell to JSValue: generated
+# CHECK-NOT: UnsupportedConversion
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,60 @@
+# Whether a function returns a fresh aggregate is a question about its returns, not about whether it may get another signature
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+# LOSS: MaxInlineHeadBytes x3 f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
+layout L1 kind=Instance name="Point" constructor=f2 fields=[{key="x" declared={type=number}}] flow={baseState=None}
+
+function f0 name="libraryFunction" role=Library parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    Return v1
+}
+# CHECK: f0: barrier=None{{*}} returnsFreshAggregate
+
+function f1 name="getter" kind=Getter flags=[HasThis] thisType={type=number} results=[{type=anything}] {
+  b0(v0: number):
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    Return v1
+}
+# CHECK: f1: barrier=None{{*}} returnsFreshAggregate
+
+function f2 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    PropDefine v3, v1 key="x" receivers=[L1]
+    Return v3
+}
+# CHECK: f2: barrier=None{{*}} returnsFreshAggregate
+
+function f3 name="freshOnOnePath" role=Library parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    Return v3
+}
+# CHECK: f3: barrier=None{{*}} returnsFreshAggregate
+
+function f4 name="returnsParameter" role=Library parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    Return v0
+}
+# CHECK: f4: barrier=None
+# CHECK-NOT: returnsFreshAggregate
+
+function f5 name="returnsStoredObject" role=Library parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: anything):
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] [keepsShape]
+    PropSet v1, v2 key="last" mode=Strict
+    Return v2
+}
+# CHECK: f5: barrier=None
+# CHECK-NOT: returnsFreshAggregate

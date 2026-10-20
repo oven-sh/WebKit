@@ -1,0 +1,23 @@
+# With the pass off every function with one result returns it boxed
+# FORM: Prepared
+# OPTIONS: disable=pass:ChooseCallingConventions
+# RUN: pass ChooseCallingConventions
+# CHECK: f0 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f2 Direct ({{*}}:Double) -> ({{*}}:Double, {{*}}:Double)
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsNumber" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f1 name="alsoReturnsNumber" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    Return v0
+}
+function f2 name="returnsTwo" parameters=[{type=number}] results=[{type=number}, {type=number}] {
+  b0(v0: number):
+    v1 = Results v0, v0
+    Return v1
+}

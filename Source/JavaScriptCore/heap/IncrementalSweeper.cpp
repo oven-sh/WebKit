@@ -29,7 +29,6 @@
 #include "BlockDirectoryInlines.h"
 #include "DeferGCInlines.h"
 #include "HeapInlines.h"
-#include "MarkedBlockCage.h"
 #include "MarkedBlockInlines.h"
 #include <wtf/SystemTracing.h>
 
@@ -90,7 +89,6 @@ void IncrementalSweeper::doSweep(VM& vm, ApproximateTime deadline, SweepTrigger 
     if (trigger == SweepTrigger::OpportunisticTask)
         m_lastOpportunisticTaskDidFinishSweeping = true;
 
-    MarkedBlockCage::decommitFreeBlocks();
     cancelTimer();
 }
 

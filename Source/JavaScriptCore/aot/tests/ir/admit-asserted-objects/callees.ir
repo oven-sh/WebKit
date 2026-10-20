@@ -1,0 +1,163 @@
+# The function an asserted object is passed to is found through what fills the callee: a variable, a method of the layouts expected at the receiver and of the classes below them, a constructor, a static method, a capture, on either side of a branch. A callee that arrives as a parameter is not known: its functions keep their tests, and the call is recorded
+# FORM: AsRead
+# OPTIONS: report=Declines
+# RUN: pass AdmitAssertedObjects
+# STATISTIC: PositionsAdmittingObjects = 8
+# STATISTIC: AssertedObjectsPassedToUnknownCallees = 1
+# CHECK: decline AssertedObjectPassedToUnknownCallee f13 v2
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=PropertyRead
+layout L0 kind=Instance name="Base" constructor=f2 fields=[{key="put" declared={type=undefined|null|function} flags=[IsMethod]}]
+layout L1 kind=Instance name="Derived" predictedBase=L0 constructor=f5 fields=[{key="put" declared={type=undefined|null|function} flags=[IsMethod]}] flags=[HasHeritage]
+variable g0 name="arrow" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="Base" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="Derived" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g3 name="first" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f16 flags=[IsImmutable]
+variable g4 name="second" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f17 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L0 key="put"
+    v6 = NewClosure function=f4
+    DefineMethod v3, v6 layout=L0 side=Static index=1 key="create"
+    v8 = FinishClass v3 layout=L0
+    PutModuleVariable v8 variable=g1
+    v10 = NewClosure function=f5
+    v11 = ResolveHeritage v8
+    v12 = NewClass v10, v8, v11 layout=L1
+    v13 = NewClosure function=f6
+    DefineMethod v12, v13 layout=L1 key="put"
+    v15 = FinishClass v12 layout=L1
+    PutModuleVariable v15 variable=g2
+    Return
+}
+function f1 name="arrow" kind=Arrow parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f1 name="arrow" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=undefined|null|number site=w0}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: undefined|null|number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="Base" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f3 name="put" kind=Method flags=[HasThis] thisType={type=anything predicted=L0} parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|number):
+    Return v1
+}
+# CHECK-LABEL: function f3 name="put" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f4 name="create" kind=Method flags=[HasThis] parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|number):
+    Return v1
+}
+# CHECK-LABEL: function f4 name="create" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=undefined|null|number site=w0}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: undefined|null|number):
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1 layout=L1
+    Return v4
+}
+# CHECK-LABEL: function f5 name="Derived" {{*}}parameters=[{type=undefined|null|number site=w0}]
+function f6 name="put" kind=Method flags=[HasThis] thisType={type=anything predicted=L1} parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: anything, v1: undefined|null|number):
+    Return v1
+}
+# CHECK-LABEL: function f6 name="put" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f7 name="callsArrow" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="arrow"
+    v3 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v4 = Call v2, -, v3 calleeName="arrow"
+    Return v4
+}
+function f8 name="constructs" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Base"
+    v3 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v4 = Construct v2, -, v3 calleeName="Base"
+    Return v4
+}
+function f9 name="callsMethod" parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|object, v1: anything):
+    v2 = PropGet v0 key="put"
+    v3 = ClaimRead v2, v0 source=Field{key="put"} site=w2
+    v4 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v5 = Call v3, v0, v4 calleeKey="put" calleeName="put"
+    Return v5
+}
+function f10 name="callsStaticMethod" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Base"
+    v3 = PropGet v2 key="create"
+    v4 = ClaimDeclared v0 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v5 = Call v3, v2, v4 calleeKey="create" calleeName="create"
+    Return v5
+}
+function f11 name="captured" kind=Arrow parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f11 name="captured" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f12 name="callsCapture" kind=Arrow captures=[{type=function}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v3 = Call v0, -, v2
+    Return v3
+}
+function f13 name="callsParameter" parameters=[{type=undefined|null|function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|function, v1: anything):
+    v2 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v3 = Call v0, -, v2
+    Return v3
+}
+function f14 name="passedByValue" kind=Arrow parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f14 name="passedByValue" {{*}}parameters=[{type=undefined|null|number site=w0}]
+function f15 name="createsClosures" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f11
+    v1 = NewClosure v0 function=f12
+    v2 = NewClosure function=f14
+    v3 = NewClosure function=f13
+    v4 = Call v3, -, v2, v1
+    Return v4
+}
+function f16 name="first" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f16 name="first" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f17 name="second" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+  b0(v0: undefined|null|number):
+    Return v0
+}
+# CHECK-LABEL: function f17 name="second" {{*}}parameters=[{type=undefined|null|number|object site=w0 flags=[AdmitsObjects]}]
+function f18 name="callsEither" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g3
+    Jump -> next b3(v3)
+  b2():
+    v4 = GetModuleVariable variable=g4
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = ClaimDeclared v1 declared={type=undefined|null|number|object written=undefined|null|number predicted=number site=w1}
+    v7 = Call v5, -, v6
+    Return v7
+}

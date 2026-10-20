@@ -1,0 +1,80 @@
+# Native code may call every method of the class of an instance it holds: each has a generic instance the host is linked with, and the method the program calls keeps its proven instance; a class whose instances stay in the program has no generic instance
+# RUN: flow-solve instances
+# CHECK: [[generic]] f2 Generic
+# RUN(PROVEN): flow-solve instances
+# PROVEN: [[proven]] f2 Proven
+# RUN(UNCALLED): flow-solve instances
+# UNCALLED: [[generic]] f3 Generic
+# RUN(STAYING): flow-solve instances
+# STAYING: [[constructor]] f4 Proven
+# STAYING: [[method]] f5 Proven
+# RUN(NEVER): flow-solve instances
+# NEVER-NOT: f3 Proven
+# NEVER-NOT: f4 Generic
+# NEVER-NOT: f5 Generic
+# RUN(LINKS): flow-links calls
+# LINKS: host - -> {{*}} f2 Host Repeatedly
+# RUN(OWNCALL): flow-links calls
+# OWNCALL: f0 v12 -> {{*}} f2 Call Once
+# RUN(HOSTCALL): flow-links calls
+# HOSTCALL: host - -> {{*}} f3 Host Repeatedly
+# RUN(NOHOST): flow-links calls
+# NOHOST-NOT: host - -> {{*}} f4
+# NOHOST-NOT: host - -> {{*}} f5
+# RUN(NODES): flow-solve instances nodes
+# NODES: [[proven]] f2 Proven
+# NODES: Local([[proven]], f2, parameter 0) = {L0#{{*}}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Escaping" constructor=f1
+layout L1 kind=Instance name="Staying" constructor=f4
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="norm"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="scale"
+    v6 = FinishClass v1 layout=L0
+    v7 = Construct v6
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="keep" [isFreeName]
+    v10 = Call v9, -, v7
+    v11 = PropGet v7 key="norm"
+    v12 = Call v11, v7 calleeKey="norm"
+    v13 = NewClosure function=f4
+    v14 = NewClass v13 layout=L1
+    v15 = NewClosure function=f5
+    DefineMethod v14, v15 layout=L1 key="norm"
+    v17 = FinishClass v14 layout=L1
+    v18 = Construct v17
+    v19 = PropGet v18 key="norm"
+    v20 = Call v19, v18 calleeKey="norm"
+    Return
+}
+function f1 name="Escaping" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="scale" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="Staying" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f5 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

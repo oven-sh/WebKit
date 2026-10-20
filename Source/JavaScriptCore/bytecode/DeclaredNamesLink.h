@@ -74,13 +74,6 @@ public:
         return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, WTF::move(parent)));
     }
 
-    static Ref<DeclaredNamesLink> createForGlobalScope()
-    {
-        auto link = create(nullptr, nullptr, false, nullptr);
-        link->m_isGlobalScope = true;
-        return link;
-    }
-
     struct Resolution {
         enum Kind : uint8_t {
             Dynamic, // may resolve differently at run time (globals, eval/with in the way): leave alone
@@ -114,21 +107,6 @@ public:
         return { };
     }
 
-    bool resolvesToGlobalScope(UniquedStringImpl* name) const
-    {
-        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
-            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
-                if (frame->isBarrier || frame->slots.contains(name))
-                    return false;
-            }
-            if ((link->m_names && link->m_names->names.contains(name)) || link->m_isDynamicBarrier)
-                return false;
-            if (link->m_isGlobalScope)
-                return true;
-        }
-        return false;
-    }
-
     Names* names() const { return m_names.get(); }
     Frame* frames() const { return m_frames.get(); }
 
@@ -145,7 +123,6 @@ private:
     RefPtr<Frame> m_frames;
     RefPtr<DeclaredNamesLink> m_parent;
     bool m_isDynamicBarrier;
-    bool m_isGlobalScope { false };
 };
 
 } // namespace JSC

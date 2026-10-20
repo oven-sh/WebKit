@@ -1,0 +1,40 @@
+# A store into a typed array of a value that is predicted to be a number tests the value and stores it without a conversion. A value with no such prediction stays with the access by key, where its conversion can run code
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="predictedNumber" parameters=[{type=Uint8Array}, {type=int[0, 9]}, {type=undefined|null|number predicted=number}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: int[0, 9], v2: undefined|null|number ~ number):
+    ElemSet v0, v1, v2
+    Return
+}
+# CHECK-LABEL: function f0 name="predictedNumber"
+# CHECK: [[isNumber0]]: boolean{{*}} = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch [[isNumber0]] -> taken [[passed0]](| 0), notTaken [[failed0]](| 0)
+# CHECK: PutTypedArrayElement v0, v1, [[number0]] typedArrayType=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: ElemSet v0, v1, [[other0]]
+# CHECK: [[passed0]]([[number0]]: number):
+# CHECK: [[failed0]]([[other0]]: undefined|null) frequency=Unlikely:
+
+function f1 name="keyIsTheStoredValue" parameters=[{type=Uint8Array}, {type=undefined|int[0, 255] predicted=int[0, 255]}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: undefined|int[0, 255] ~ int[0, 255]):
+    ElemSet v0, v1, v1
+    Return
+}
+# CHECK-LABEL: function f1 name="keyIsTheStoredValue"
+# CHECK-COUNT-1: = TypeTest v1 testedType=i32
+# CHECK: PutTypedArrayElement v0, [[byte1]], [[byte1]] typedArrayType=
+# CHECK: ([[byte1]]: int[0, 255]):
+
+function f2 name="noPrediction" parameters=[{type=Uint8Array}, {type=int[0, 9]}, {type=anything}, {type=anything predicted=string}] results=[{type=undefined}] {
+  b0(v0: Uint8Array, v1: int[0, 9], v2: anything, v3: anything ~ string):
+    ElemSet v0, v1, v2
+    ElemSet v0, v1, v3
+    Return
+}
+# CHECK-LABEL: function f2 name="noPrediction"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: PutTypedArrayElement
+# CHECK: ElemSet v0, v1, v2
+# CHECK-NEXT: ElemSet v0, v1, v3

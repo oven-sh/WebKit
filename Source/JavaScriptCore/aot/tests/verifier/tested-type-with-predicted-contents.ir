@@ -1,0 +1,29 @@
+# A test or a claim decides nothing about what is predicted of contents, so its type names none; a proof of the flow analysis and a prediction may
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="badTest" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Array<object ~ L0>
+    Return
+}
+function f1 name="badClaim" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = Claim v0 castType=Array<object ~ L0>
+    Return
+}
+function f2 name="goodTestAndClaim" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=Array<object>
+    v2 = Claim v0 castType=Array<object>
+    Return
+}
+function f3 name="goodProofAndPrediction" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    v1 = AssumeType v0 castType=Array<object ~ L0, proven>
+    v2 = Predict v0 predicted=Array<object ~ L0>
+    Return
+}

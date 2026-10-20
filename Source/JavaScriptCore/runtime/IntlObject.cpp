@@ -29,6 +29,7 @@
 #include "config.h"
 #include "IntlObject.h"
 
+#include "AOTRemovableFeature.h"
 #include "Error.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
@@ -1631,25 +1632,12 @@ bool isWellFormedCurrencyCode(StringView currency)
     return currency.length() == 3 && currency.containsOnly<isASCIIAlpha>();
 }
 
-NEVER_INLINE bool ensureCollationIsAvailable(JSGlobalObject*)
+bool ensureCollationIsAvailable(JSGlobalObject* globalObject)
 {
-    uint32_t isAvailable = 38;
-    asm volatile("" : "+r"(isAvailable));
-    return isAvailable;
-}
-
-NEVER_INLINE bool ensureNumberFormattingIsAvailable(JSGlobalObject*)
-{
-    uint32_t isAvailable = 42;
-    asm volatile("" : "+r"(isAvailable));
-    return isAvailable;
-}
-
-NEVER_INLINE bool ensureDateFormattingIsAvailable(JSGlobalObject*)
-{
-    uint32_t isAvailable = 46;
-    asm volatile("" : "+r"(isAvailable));
-    return isAvailable;
+    if (!isFeatureRemoved(RemovableFeature::IntlCollation)) [[likely]]
+        return true;
+    Bun__throwForRemovedFeature(globalObject, static_cast<uint16_t>(RemovableFeature::IntlCollation));
+    return false;
 }
 
 std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const char* localeID)

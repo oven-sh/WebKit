@@ -1,0 +1,59 @@
+# A receiver that is only predicted to be of a built-in class is tested for the class. No test finds the instances of a class without an instance test, so a member of such a receiver stays a generic read or call, without a test that never passes
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ResolveBuiltins PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="methodOfPredictedDate" parameters=[{type=object predicted=Date}] results=[{type=anything}] {
+  b0(v0: object ~ Date):
+    v1 = PropGet v0 key="getTime"
+    v2 = Call v1, v0 calleeKey="getTime"
+    Return v2
+}
+# CHECK-LABEL: function f0 name="methodOfPredictedDate"
+# CHECK: = CallBuiltin [[date]] overload=DatePrototypeGetTime/0
+# CHECK: = TypeTest v0 testedType=Date
+# CHECK: ([[date]]: Date):
+
+function f1 name="methodOfPredictedIterator" parameters=[{type=object predicted=ArrayIterator}] results=[{type=anything}] {
+  b0(v0: object ~ ArrayIterator):
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0 calleeKey="next"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="methodOfPredictedIterator"
+# CHECK-NEXT: b0(v0: object ~ ArrayIterator):
+# CHECK-NEXT: v1: anything = PropGet v0 key="next"
+# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="next"
+# CHECK-NEXT: Return v2
+
+function f2 name="readOfPredictedError" parameters=[{type=object predicted=TypeError}] results=[{type=anything}] {
+  b0(v0: object ~ TypeError):
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="readOfPredictedError"
+# CHECK-NEXT: b0(v0: object ~ TypeError):
+# CHECK-NEXT: v1: anything = PropGet v0 key="name"
+# CHECK-NEXT: Return v1
+
+function f3 name="ownPropertyOfPredictedArguments" parameters=[{type=anything predicted=Arguments}] results=[{type=anything}] {
+  b0(v0: anything ~ Arguments):
+    v1 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="ownPropertyOfPredictedArguments"
+# CHECK-NOT: TypeTest
+# CHECK: v1: anything = PropGet v0 key="length"
+# CHECK-NOT: TypeTest
+
+function f4 name="methodOfPredictedFunction" parameters=[{type=anything predicted=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ function, v1: anything):
+    v2 = PropGet v0 key="call"
+    v3 = Call v2, v0, v1 calleeKey="call"
+    Return v3
+}
+# CHECK-LABEL: function f4 name="methodOfPredictedFunction"
+# CHECK-NOT: testedType=Function
+# CHECK-NOT: testedType=object
+# CHECK: Return

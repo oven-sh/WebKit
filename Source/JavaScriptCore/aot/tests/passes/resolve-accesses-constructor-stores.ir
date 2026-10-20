@@ -1,0 +1,108 @@
+# A store that may run while the constructor still fills the object records the key it creates. A store in a function that only sees finished objects is a plain store
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Listed" constructor=f6 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="NeverEnumerated" constructor=f7 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="keys" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = NewClosure function=f4
+    DefineMethod v4, v5 layout=L0 key="bump"
+    v7 = FinishClass v4 layout=L0
+    v8 = Construct v7, -, v2
+    v9 = PropGet v8 key="bump"
+    v10 = Call v9, v8, v2 calleeKey="bump"
+    v11 = CallDirect v8, v2 function=f5
+    v12 = CallDirect v8, v2 function=f3
+    v13 = Builtin builtin=ObjectKeys
+    v14 = Call v13, -, v8
+    PutModuleVariable v14 variable=g0
+    v16 = NewClosure function=f6
+    v17 = NewClass v16 layout=L1
+    v18 = FinishClass v17 layout=L1
+    v19 = Construct v18, -, v2
+    v20 = Call v13, -, v19
+    PutModuleVariable v20 variable=g0
+    v22 = NewClosure function=f7
+    v23 = NewClass v22 layout=L2
+    v24 = FinishClass v23 layout=L2
+    v25 = Construct v24, -, v2
+    PutModuleVariable v25 variable=g0
+    Return
+}
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = CallDirect v3, v1 function=f2
+    PropSet v3, v1 key="b"
+    v6 = CallDirect v3, v1 function=f3
+    PropSet v3, v1 key="b"
+    Return v3
+}
+function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropDefine v0, v1 key="a"
+    Return
+}
+function f3 name="helper" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropSet v0, v1 key="c"
+    Return
+}
+function f4 name="bump" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropSet v0, v1 key="a"
+    Return
+}
+function f5 name="later" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ? L0, v1: number):
+    PropSet v0, v1 key="b"
+    PropSet v0, v1 key="c"
+    Return
+}
+function f6 name="Listed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2, v1 layout=L1 fields=[0]
+    PropSet v3, v1 key="x"
+    PropSet v3, v1 key="y"
+    Return v3
+}
+function f7 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    PropSet v3, v1 key="x"
+    Return v3
+}
+# The second store of "b" finds the slot filled. Nothing here proves that, so it tests the slot like the first.
+# CHECK-LABEL: function f1 name="Counter"
+# CHECK: PutSlotOrAdd v3, -, v1 key="b"
+# CHECK: PutSlotOrAdd v3, -, v1 key="b"
+# CHECK-LABEL: function f2 name="initialize"
+# CHECK: PutSlotOrAdd v0, -, v1 key="a"
+# The helper also runs on a finished object. It is one function, so its store tests the slot each time.
+# CHECK-LABEL: function f3 name="helper"
+# CHECK: PutSlotOrAdd v0, -, v1 key="c"
+# CHECK-LABEL: function f4 name="bump"
+# CHECK: PutSlot v0, -, v1 key="a"
+# CHECK-LABEL: function f5 name="later"
+# CHECK: PutSlot v0, -, v1 key="b"
+# CHECK-NEXT: PutSlot v0, -, v1 key="c"
+# CHECK-LABEL: function f6 name="Listed"
+# CHECK: = NewObject v2, v1 layout=L1 fields=[0]
+# CHECK-NEXT: PutSlot v3, -, v1 key="x"
+# CHECK-NEXT: PutSlotOrAdd v3, -, v1 key="y"
+# CHECK-LABEL: function f7 name="NeverEnumerated"
+# CHECK: PutSlot v3, -, v1 key="x"

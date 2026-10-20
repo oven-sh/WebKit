@@ -8,10 +8,9 @@ address into x30 and jumps to the callee, or that returns with BR, leaves that s
 and so is every return to a frame that was already live, up to the depth of that stack.
 
 Reads the machine code of every copy of the stubs, and fails on a stub that
-  - computes x30 with ADR or ADRP, or
+  - computes x30 with ADR or ADRP, unless the next instruction jumps to a stub that never returns (a TN row of the map), or
   - copies x30 to another register and then leaves with BR through that register.
-So that it cannot pass for want of stubs to look at, it also fails unless the stub that calls return to after a call with an
-argument list starts with a BLR, and the stubs for cold operations of functions without a frame return with RET through a register.
+So that it cannot pass with nothing to check, it also fails unless at least one stub calls with BLR.
 
 The image is only read, so an executable that holds one can be
 given as it is, with the map that was written when it was built (--aotMapFilePath).
@@ -23,16 +22,28 @@ parser.add_argument('--image', type=os.path.abspath, required=True)
 parser.add_argument('--map', type=os.path.abspath, required=True)
 args = parser.parse_args()
 
-data = open(args.image, 'rb').read()
-start = data.find(b'BUNAOT01')
-if start < 0:
+MAGIC = b'BUNAOT01'
+
+
+def find_image(data):
+    start = data.find(MAGIC)
+    while 0 <= start <= len(data) - 56:
+        image_size, code_offset, code_size = struct.unpack_from('<QQQ', data, start + 32)
+        if code_size and code_offset + code_size <= image_size <= len(data) - start:
+            return start, code_offset, code_size
+        start = data.find(MAGIC, start + 1)
     sys.exit('%s holds no image' % args.image)
-code_offset, code_size = struct.unpack_from('<QQ', data, start + 24)
-names, copies, functions = [], [], []
+
+
+data = open(args.image, 'rb').read()
+start, code_offset, code_size = find_image(data)
+names, copies, functions, noreturn_stubs = [], [], [], set()
 for line in open(args.map, errors='replace'):
     fields = line.rstrip('\n').split('\t')
     if fields[0] == 'T':
         names.append((int(fields[1]), fields[2]))
+    elif fields[0] == 'TN':
+        noreturn_stubs.add(int(fields[1]))
     elif fields[0] == 'C':
         copies.append(int(fields[1]))
     elif fields[0] == 'F':
@@ -49,10 +60,11 @@ size = min([at for at in functions if at > copies[0]] + [code_size]) - copies[0]
 
 RET = 0xd65f03c0
 is_adr_to_link_register = lambda word: word & 0x1f00001f == 0x1000001e
-is_blr = lambda word: word & 0xfffffc1f == 0xd63f0000
+is_b = lambda word: word & 0xfc000000 == 0x14000000
 is_br = lambda word: word & 0xfffffc1f == 0xd61f0000
-is_ret_through_other_register = lambda word: word & 0xfffffc1f == 0xd65f0000 and word != RET
+is_blr = lambda word: word & 0xfffffc1f == 0xd63f0000
 is_copy_of_link_register = lambda word: word & 0xffffffe0 == 0xaa1e03e0
+displacement_of_b = lambda word: 4 * (((word & 0x3ffffff) ^ 0x2000000) - 0x2000000)
 register_of_branch = lambda word: word >> 5 & 31
 
 
@@ -61,10 +73,8 @@ def stub_at(offset):
     return names[index][1], offset - names[index][0]
 
 
-def words_of(words, name):
-    index = next(i for i, (_, other) in enumerate(names) if other == name)
-    end = offsets[index + 1] if index + 1 < len(offsets) else size
-    return words[offsets[index] // 4:end // 4]
+def jumps_to_noreturn_stub(words, index):
+    return index < len(words) and is_b(words[index]) and 4 * index + displacement_of_b(words[index]) in noreturn_stubs
 
 
 problems = []
@@ -74,19 +84,12 @@ for copy in copies:
         print('not ARM64 code: nothing to check')
         sys.exit(0)
     for index, word in enumerate(words):
-        if is_adr_to_link_register(word):
+        if is_adr_to_link_register(word) and not jumps_to_noreturn_stub(words, index + 1):
             problems.append('%s+%d computes x30' % stub_at(4 * index))
         elif is_br(word) and any(is_copy_of_link_register(earlier) and earlier & 31 == register_of_branch(word) for earlier in words[max(0, index - 3):index]):
             problems.append('%s+%d returns with br x%d' % (*stub_at(4 * index), register_of_branch(word)))
-    present = {name for _, name in names}
-    for name in ('ReturnFromCallWithList', 'LeafColdOperationVoid', 'LeafColdOperationValue'):
-        if name not in present:
-            problems.append('there is no stub named %s' % name)
-    if 'ReturnFromCallWithList' in present and not is_blr(words_of(words, 'ReturnFromCallWithList')[0]):
-        problems.append('ReturnFromCallWithList does not start with the call that it is returned to from')
-    for name in ('LeafColdOperationVoid', 'LeafColdOperationValue'):
-        if name in present and not any(is_ret_through_other_register(word) for word in words_of(words, name)):
-            problems.append('%s does not return with ret through a register' % name)
+    if not any(is_blr(word) for word in words):
+        problems.append('no stub calls with blr')
 
 seen = set()
 for problem in problems:

@@ -1,0 +1,58 @@
+# A group takes its types from what the calls pass: a function type written on the callee changes nothing
+# FORM: Prepared
+# RUN: pass GroupCallsByValue
+# CHECK: group g0 members=[f2, f3, f4, f5, f6] sites=[a0] this=[omitted] arguments=[{{*}}[number], [string], [number]]
+# CHECK-NEXT: group g1 members=[f7, f8, f9, f10, f11] sites=[a1] this=[omitted] arguments=[{{*}}[number], [string], [number]]
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calleeWithoutWrittenType" parameters=[{type=f2|f3|f4|f5|f6}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6, v1: number, v2: string):
+    v3 = Call v0, -, v1, v2, v1 accessSite=0 callees=[f2, f3, f4, f5, f6]
+    Return v3
+}
+function f1 name="calleeWithWrittenType" parameters=[{type=f7|f8|f9|f10|f11 written=function}, {type=number}, {type=string}] results=[{type=anything}] {
+  b0(v0: f7|f8|f9|f10|f11 ? function, v1: number, v2: string):
+    v3 = Call v0, -, v1, v2, v1 accessSite=1 callees=[f7, f8, f9, f10, f11]
+    Return v3
+}
+function f2 name="first" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f3 name="second" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f4 name="third" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f5 name="fourth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f6 name="fifth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f7 name="sixth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f8 name="seventh" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f9 name="eighth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f10 name="ninth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}
+function f11 name="tenth" kind=Arrow parameters=[{type=number}, {type=string}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: string, v2: number):
+    Return v0
+}

@@ -1,0 +1,51 @@
+# A closure stored into the environment that its own activation created lives as long as that environment, and one stored into the environment of an earlier activation outlives its creator
+# RUN: flow
+# RUN(NOWHERE): flow
+# CHECK: class {{*}} layout=L0 {{*}}locality=FrameLocal
+# CHECK: class {{*}} closureFunction=f3 {{*}}locality=FrameLocal
+# NOWHERE-NOT: closureFunction=f4 {{*}}locality=FrameLocal
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment fields=[{key="callback" declared={type=anything}}]
+layout L1 kind=Environment fields=[{key="callback" declared={type=anything}}]
+layout L2 kind=Environment fields=[{key="none" declared={type=env L1}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = NewObject layout=L2 fields=[]
+    v2 = GetEnvironmentField v1 layout=L2 field=0
+    v3 = Boolean boolean=true
+    v4 = CallDirect v2, v3 function=f2
+    Return
+}
+function f1 name="own" results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure v0 function=f3
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = Call v3
+    Return
+}
+function f2 name="again" captures=[{type=env L1}] parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: env L1, v1: boolean):
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject layout=L1 fields=[]
+    v3 = Boolean boolean=false
+    v4 = CallDirect v2, v3 function=f2
+    Return
+  b2():
+    v5 = NewClosure function=f4
+    PutEnvironmentField v0, v5 layout=L1 field=0
+    Return
+}
+function f3 name="inner" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    Return
+}
+function f4 name="left" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

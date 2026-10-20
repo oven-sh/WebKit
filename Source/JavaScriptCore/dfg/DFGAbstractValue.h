@@ -36,7 +36,6 @@
 #include "DFGStructureAbstractValue.h"
 #include "DFGStructureClobberState.h"
 #include "JSCast.h"
-#include "Options.h"
 #include "ResultType.h"
 #include "SpeculatedType.h"
 #include "DumpContext.h"
@@ -99,8 +98,6 @@ struct AbstractValue {
         if (m_type & SpecCell) {
             m_structure.clobber(graph);
             clobberArrayModes();
-            if ((m_type & SpecArray) && Options::useImmutableIntrinsics()) [[unlikely]]
-                m_type |= SpecDerivedArray;
         } else {
             ASSERT(m_structure.isClear());
             ASSERT(!m_arrayModes);

@@ -1,0 +1,53 @@
+# What the program put into the iterable runs, and the build has seen it: the iterator method, the next method and the then method of a thenable are linked at the call of Promise.all, a method that no protocol names is not, and no unseen-code event is raised. What the thenable settles with is its own choice, so the array holds an unknown value
+# RUN: flow-links calls
+# RUN(NOWHERE): flow-links calls
+# RUN(UNSEEN): flow-links unseen
+# RUN(NODES): flow-solve nodes
+# NODES: DeclaredPart(Array@f0:v6{{*}}, 0) = {{*}}unknown
+# CHECK: f0 v6 -> [[open]] f1 Protocol
+# CHECK: f0 v6 -> [[step]] f2 Protocol
+# CHECK: f0 v6 -> [[settle]] f3 Protocol
+# NOWHERE-NOT: -> {{*}} f4
+# UNSEEN-NOT: unseen
+# UNSEEN: unknown-javascript no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Thenable" fields=[{key="then" declared={type=anything} flags=[IsRequired]}, {key="cancel" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Builtin builtin=Promise
+    v4 = PropGet v3 key="all"
+    v5 = Undefined
+    v6 = Call v4, v3, v2 calleeKey="all"
+    Return
+}
+function f1 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    Return v2
+}
+function f2 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewObject -, v1, v2 layout=L3 fields=[0, 1]
+    v4 = Boolean boolean=false
+    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
+    Return v5
+}
+function f3 name="then" kind=Method flags=[HasThis] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return
+}
+function f4 name="cancel" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

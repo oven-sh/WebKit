@@ -1,0 +1,67 @@
+# A function that is declared in a function that runs at most once and is only called has no closure. One that is also read as a value keeps its closure
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables,ComputeEffectSummaries,ResolveCalls,EliminateDeadCode,RemoveUnreadFields check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+# STATISTIC: UnreadVariableStoresRemoved = 1
+# CHECK: variable g1 name="onlyCalled.1"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g2 name="readAsValue.2"{{*}}stores=AtMostOnce
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="wrapper" fields=[{key=@"counter.0" declared={type=anything}}, {key=@"onlyCalled.1" declared={type=anything}}, {key=@"readAsValue.2" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    Return
+}
+
+function f1 name="wrapper" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f2
+    PutEnvironmentField v1, v2 layout=L0 field=1
+    v4 = NewClosure v1 function=f3
+    PutEnvironmentField v1, v4 layout=L0 field=2
+    v6 = NewClosure v1 function=f4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="publish" [isFreeName]
+    v9 = Call v8, -, v6
+    Return
+}
+# CHECK-LABEL: function f1 name="wrapper"
+# CHECK-NOT: function=f2
+# CHECK: [[value]]: f3 = NewClosure function=f3
+# CHECK-NEXT: PutModuleVariable [[value]] variable=g2
+# CHECK-NOT: function=f2
+
+function f2 name="onlyCalled" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PutEnvironmentField v0, v3 layout=L0 field=0
+    Return v3
+}
+
+function f3 name="readAsValue" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+
+function f4 name="published" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = Call v1
+    v3 = GetEnvironmentField v0 layout=L0 field=2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="published"
+# CHECK: b0():
+# CHECK-NEXT: = CallDirect function=f2
+# CHECK-NEXT: [[closure]]: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: Return [[closure]]

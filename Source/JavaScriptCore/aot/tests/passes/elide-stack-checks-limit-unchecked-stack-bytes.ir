@@ -1,0 +1,128 @@
+# With 1024 unchecked bytes at most two functions in a row are entered without a stack check
+# FORM: Selected
+# OPTIONS: limit=UncheckedStackBytes:1024
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksCoveredByCallers = 11
+# STATISTIC: StackChecksDeferredToCallee = 0
+# LOSS: UncheckedStackBytes x4 f3
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f3
+    v2 = CallDirect function=f6
+    v3 = CallDirect function=f11
+    v4 = CallDirect function=f13
+    Return v4
+}
+
+function f1 name="pair0" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f2
+    Return v0
+}
+
+function f2 name="pair1" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f3 name="triple0" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f4
+    Return v0
+}
+
+function f4 name="triple1" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f5
+    Return v0
+}
+
+function f5 name="triple2" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f6 name="five0" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f7
+    Return v0
+}
+
+function f7 name="five1" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f8
+    Return v0
+}
+
+function f8 name="five2" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f9
+    Return v0
+}
+
+function f9 name="five3" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f10
+    Return v0
+}
+
+function f10 name="five4" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f11 name="callsLeafAndPair" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f12
+    v1 = CallDirect function=f1
+    Return v1
+}
+
+function f12 name="leaf" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+
+function f13 name="tail0" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f14
+    ReturnCall v0
+}
+
+function f14 name="tail1" results=[{type=undefined}] {
+  b0():
+    v0 = CallDirect function=f15
+    ReturnCall v0
+}
+
+function f15 name="tail2" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# CHECK: f0 stack check: Required
+# CHECK-NEXT: f1 stack check: CoveredByCallers
+# CHECK-NEXT: f2 stack check: CoveredByCallers
+# CHECK-NEXT: f3 stack check: Required
+# CHECK-NEXT: f4 stack check: CoveredByCallers
+# CHECK-NEXT: f5 stack check: CoveredByCallers
+# CHECK-NEXT: f6 stack check: CoveredByCallers
+# CHECK-NEXT: f7 stack check: CoveredByCallers
+# CHECK-NEXT: f8 stack check: Required
+# CHECK-NEXT: f9 stack check: CoveredByCallers
+# CHECK-NEXT: f10 stack check: CoveredByCallers
+# CHECK-NEXT: f11 stack check: Required
+# CHECK-NEXT: f12 stack check: CoveredByCallers
+# CHECK-NEXT: f13 stack check: Required
+# CHECK-NEXT: f14 stack check: CoveredByCallers
+# CHECK-NEXT: f15 stack check: CoveredByCallers
+# CHECK-NEXT: outcome: Unchanged

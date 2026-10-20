@@ -1,0 +1,272 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTChainDependents.h"
+
+#if ENABLE(AOT)
+
+#include "AOTClassTable.h"
+#include "AOTHeapCacheRegistry.h"
+#include "AOTInstance.h"
+#include "AOTObject.h"
+#include "AOTObjectModel.h"
+#include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCaches.h"
+#include "AOTRuntimeCounters.h"
+#include "AOTRuntimeValidation.h"
+#include "AOTState.h"
+#include "JSCInlines.h"
+#include "StructureRareDataInlines.h"
+#include <bit>
+#include <wtf/TZoneMallocInlines.h>
+
+namespace JSC { namespace AOT {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ChainDependents);
+
+class ChainDependents::StructureStateOwner final : public ChainDependentOwner {
+    WTF_MAKE_TZONE_ALLOCATED_INLINE(StructureStateOwner);
+public:
+    void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final
+    {
+        Structure* structure = std::bit_cast<StructureID>(structureIDBits).decode();
+        structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NotComputed);
+        StructureRareData* rareData = structure->tryRareData();
+        if (!rareData)
+            return;
+        for (unsigned index = 0; index < numberOfCachedSpecialPropertyKeys; ++index)
+            rareData->clearCachedSpecialProperty(static_cast<CachedSpecialPropertyKey>(index));
+    }
+
+    bool hasChainDependent(VM& vm, uint32_t structureIDBits, UniquedStringImpl*) const final
+    {
+        return vm.heap.isMarked(std::bit_cast<StructureID>(structureIDBits).decode());
+    }
+};
+
+ChainDependents::ChainDependents(State& state)
+    : m_state(state)
+    , m_structureState(makeUnique<StructureStateOwner>())
+    , m_structureStateOwner(addOwner(*m_structureState))
+{
+    state.caches->add(CacheKind::WeakByKey, "ChainDependents"_s, *this);
+}
+
+ChainDependents::~ChainDependents() = default;
+
+ChainDependentOwnerID ChainDependents::addOwner(ChainDependentOwner& owner)
+{
+    RELEASE_ASSERT(m_owners.size() < maxNumberOfOwners);
+    m_owners.append(&owner);
+    return ChainDependentOwnerID(static_cast<uint8_t>(m_owners.size() - 1));
+}
+
+void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDependent& dependent)
+{
+    if (chainObjects.empty())
+        return;
+    for (JSObject* object : chainObjects) {
+        ASSERT(object->mayBePrototype());
+        m_dependentsByObject.ensure(object, [] {
+            return DependentSet();
+        }).iterator->value.add(dependent);
+    }
+    m_writtenSinceCollection.recordAll();
+}
+
+void ChainDependents::didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    ASSERT(changed);
+    auto iterator = m_dependentsByObject.find(changed);
+    if (iterator == m_dependentsByObject.end())
+        return;
+
+    VM& vm = *m_state.instance.vm;
+    auto drop = [&](const ChainDependent& dependent) {
+        ownerOf(dependent).dropChainDependent(vm, dependent.subject, dependent.uidOrNull);
+        count(m_state.instance, RuntimeCounterID::ChainDependentsDropped);
+    };
+
+    if (!uidOrNull) {
+        DependentSet dependents = m_dependentsByObject.take(iterator);
+        for (const ChainDependent& dependent : dependents)
+            drop(dependent);
+        return;
+    }
+
+    Vector<ChainDependent, 8> dependents;
+    iterator->value.removeIf([&](const ChainDependent& dependent) {
+        if (dependent.uidOrNull && dependent.uidOrNull != uidOrNull)
+            return false;
+        dependents.append(dependent);
+        return true;
+    });
+    if (iterator->value.isEmpty())
+        m_dependentsByObject.remove(iterator);
+    for (const ChainDependent& dependent : dependents)
+        drop(dependent);
+}
+
+bool ChainDependents::hasDependents(JSObject* object) const
+{
+    return m_dependentsByObject.contains(object);
+}
+
+size_t ChainDependents::numberOfDependents(JSObject* object) const
+{
+    auto iterator = m_dependentsByObject.find(object);
+    return iterator == m_dependentsByObject.end() ? 0 : iterator->value.size();
+}
+
+size_t ChainDependents::removeDeadEntries(VM& vm, CollectionScope scope)
+{
+    // A dependent that its owner evicted is not counted: nothing records an eviction here, and validation reads a count from an unwritten region as a missing record.
+    size_t numberOfDependentsOfDeadObjects = 0;
+    bool dropsEvictedDependents = scope == CollectionScope::Full;
+    m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
+        m_dependentsByObject.removeIf([&](auto& entry) {
+            if (!vm.heap.isMarked(entry.key)) {
+                numberOfDependentsOfDeadObjects += entry.value.size();
+                return true;
+            }
+            if (!dropsEvictedDependents)
+                return false;
+            entry.value.removeIf([&](const ChainDependent& dependent) {
+                return !ownerOf(dependent).hasChainDependent(vm, dependent.subject, dependent.uidOrNull);
+            });
+            return entry.value.isEmpty();
+        });
+    });
+    return numberOfDependentsOfDeadObjects;
+}
+
+static void failIfPrototypeNameIsNotListed(VM& vm, State& state, const LayoutData& classLayout, UniquedStringImpl* name)
+{
+    std::span<const AddedNameData> listed = state.tables.classPrototypeNames();
+    if (!std::ranges::binary_search(listed, AddedNameData { classLayout.index, AddedNameData::listIsComplete }))
+        return;
+    if (name == vm.propertyNames->constructor.impl() || parseIndex(*name) || PropertyName(name).isPrivateName())
+        return;
+    std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
+    if (number && std::ranges::binary_search(listed, AddedNameData { classLayout.index, *number }))
+        return;
+    dataLogLn("AOT: the prototype object of the class with layout ", classLayout.index, " gets the property ", String(name), ", which is not among the names that it ever has");
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, JSValue() });
+}
+
+static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    ClassTable& classes = state.objects->classes;
+    ClassSide side;
+    const LayoutData* layout = classes.classHeldBy(changed, side);
+    if (!layout)
+        return;
+    if (uidOrNull) {
+        if (side == ClassSide::Prototype && !state.tables.classPrototypeNames().empty()) [[unlikely]]
+            failIfPrototypeNameIsNotListed(vm, state, *layout, uidOrNull);
+        classes.didChangeMember(*layout, side, uidOrNull);
+        return;
+    }
+    classes.didChangeEveryMember(*layout, side);
+    classes.didChangePrototypeLink(*layout, side);
+}
+
+void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    for (Instance* instance : vm.aotState().instances) {
+        State* state = instance->state;
+        if (!state)
+            continue;
+        if (state->chainDependents)
+            state->chainDependents->didChange(changed, uidOrNull);
+        if (state->objects)
+            didChangeClassHolder(vm, *state, changed, uidOrNull);
+    }
+}
+
+void didFlattenStructure(VM& vm, Structure* structure)
+{
+    if (!validatesRuntime(vm) || !structure->isUncacheableDictionary())
+        return;
+    VMPropertyCaches& caches = *vm.aotState().propertyCaches;
+    bool isCached = caches.front().hasRow(structure->id());
+    caches.hashedTable().forEachEntry([&](const HashedSlot& entry) {
+        isCached |= entry.slot.structureID == structure->id();
+    });
+    if (isCached)
+        crashOnValidationFailure(vm, { ValidationFailureKind::CacheHitDiffers, { }, { }, structure });
+}
+
+void didChangeGlobalLexicalBindings(JSGlobalObject* realm)
+{
+    didChangeChainObject(realm->vm(), realm, nullptr);
+}
+
+static State* stateOrNull(Structure* structure)
+{
+    JSGlobalObject* realm = structure->realm();
+    Instance* instance = realm ? Instance::of(realm) : nullptr;
+    return instance ? instance->state : nullptr;
+}
+
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
+{
+    return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
+}
+
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, const ChainDependent& dependent)
+{
+    ChainWalk walk = walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, uid);
+    if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+        return false;
+    if (!walk.dependsOnChain())
+        return true;
+
+    // The walk passes lazy class prototypes of globalObject's Instance only, and they report to its ChainDependents only.
+    State* state = stateOrNull(receiverStructure);
+    if (!state || &state->instance != Instance::of(globalObject))
+        return false;
+    state->chainDependents->add(walk.changeableObjects.span(), dependent);
+    return true;
+}
+
+static PropertyWalk::Presence ownPresenceForStructure(Structure* structure, UniquedStringImpl* uid)
+{
+    using Presence = PropertyWalk::Presence;
+    if (structure->isCompiledStructure())
+        return Object::structureGuaranteesAbsence(structure, uid) ? Presence::Absent : Presence::Unknown;
+    if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
+        return Presence::Unknown;
+    if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->hasNonReifiedStaticProperties())
+        return Presence::Unknown;
+    unsigned attributes = 0;
+    std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
+    if (!offset)
+        return Presence::Unknown;
+    return isValidOffset(*offset) ? Presence::Present : Presence::Absent;
+}
+
+PropertyWalk::Presence presenceForStructure(VM&, Structure* structure, UniquedStringImpl* uid)
+{
+    using Presence = PropertyWalk::Presence;
+    Presence ownPresence = ownPresenceForStructure(structure, uid);
+    if (ownPresence != Presence::Absent)
+        return ownPresence;
+    State* state = stateOrNull(structure);
+    if (!state)
+        return Presence::Unknown;
+
+    ChainWalk walk = walkChain({ structure->realm(), structure, nullptr, ChainWalkMode::AllocatesNothing }, uid);
+    if (walk.result == ChainWalkResult::Unknown)
+        return Presence::Unknown;
+    ChainDependents& dependents = *state->chainDependents;
+    dependents.add(walk.changeableObjects.span(), { uid, structure->id().bits(), dependents.structureStateOwner() });
+    return walk.result == ChainWalkResult::Found ? Presence::Present : Presence::Absent;
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

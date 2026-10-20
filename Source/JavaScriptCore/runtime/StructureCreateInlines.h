@@ -36,6 +36,11 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/WriteBarrierInlines.h>
 
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompiledCallee.h>
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
+
 namespace JSC {
 
 inline void JSObject::setStructure(VM& vm, Structure* structure)
@@ -45,25 +50,23 @@ inline void JSObject::setStructure(VM& vm, Structure* structure)
     JSCell::setStructure(vm, structure);
 }
 
-#if ENABLE(AOT)
-void compiledObjectDidBecomePrototype(JSObject*);
-#endif
-
 inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
 #if ENABLE(AOT)
-    if (oldStructure->compiledLayout()) [[unlikely]] {
-        compiledObjectDidBecomePrototype(this);
+    if (oldStructure->isCompiledStructure()) [[unlikely]] {
+        AOT::PropertyWalk::didBecomePrototype(vm, this);
         oldStructure = structure();
     }
 #endif
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
 #if ENABLE(AOT)
-        if (reifyIfSlimClosure(vm))
+        if (type() == SlimClosureType) {
+            AOT::CompiledCallee::reifyProperties(vm, this);
             oldStructure = structure();
+        }
 #endif
-        if (hasFrozenElementsInPlace()) [[unlikely]] {
+        if (oldStructure->hasFrozenElementsInPlace()) [[unlikely]] {
             moveFrozenElementsToSparseMap(vm);
             oldStructure = structure();
         }
@@ -98,7 +101,7 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
         object->didBecomePrototype(vm);
     }
 
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
+    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
     structure->finishCreation(vm);
     ASSERT(structure->type() == StructureType);
     return structure;
@@ -107,7 +110,7 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
 inline Structure* Structure::createStructure(VM& vm)
 {
     ASSERT(!vm.structureStructure);
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, CreatingEarlyCell);
+    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, CreatingEarlyCell);
     structure->finishCreation(vm, CreatingEarlyCell);
     return structure;
 }

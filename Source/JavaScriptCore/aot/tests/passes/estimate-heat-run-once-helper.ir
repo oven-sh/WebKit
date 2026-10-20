@@ -1,0 +1,91 @@
+# A loop behind a call of a helper that runs once is as frequent as the same loop without the call, and a loop on one side of a branch is half as frequent
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+# CHECK: f0 RunsOnce [[percentileOfModule]] 1
+# CHECK-NEXT: f1 RunsOnce [[percentileOfMain]] 1
+# CHECK-NEXT: f2 RunsOnce [[percentileOfHelper]] 1
+# CHECK-NEXT: f3 Hot 93 10
+# CHECK-NEXT: f4 RunsOnce [[percentileOfMainWithoutHelper]] 1
+# CHECK-NEXT: f5 Hot 93 10
+# CHECK-NEXT: f6 RunsOnce [[percentileOfMainWithBranch]] 1
+# CHECK-NEXT: f7 Warm 43 5
+# CHECK: hottest: f3 f5 f4 f1 f7 f6 f0 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="module" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v0 function=f4
+    v3 = CallDirect v0 function=f6
+    Return
+}
+
+function f1 name="mainWithHelper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v1 function=f3
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+
+function f2 name="loadWords" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f3 name="scoreBehindHelper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="mainWithoutHelper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v0 function=f5
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v0
+}
+
+function f5 name="scoreWithoutHelper" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+
+function f6 name="mainWithLoopOnOneSideOfBranch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v3 = CallDirect v0 function=f7
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Return v0
+}
+
+function f7 name="scoreOnOneSideOfBranch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

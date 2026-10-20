@@ -5,74 +5,39 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#if ENABLE(B3_JIT)
 
 #include "B3BasicBlock.h"
+#include "B3NaturalLoops.h"
 #include "B3PatchpointValue.h"
 #include "B3ValueInlines.h"
-#include "GPRInfo.h"
+#include <wtf/IndexSet.h>
 
 namespace JSC { namespace B3 {
 
-static constexpr unsigned minCallClobberedArgumentGPRs = 4;
-static constexpr double maxRatioOfHeaderToLikelyBlock = 16;
-
-inline bool isRare(const FrequentedBlock& successor, BasicBlock* from)
+inline bool isInnermostLoop(const NaturalLoops& loops, const NaturalLoop& loop)
 {
-    return successor.frequency() == FrequencyClass::Rare || successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency();
-}
-
-inline bool isRareForChainPosition(const FrequentedBlock& successor, BasicBlock* from)
-{
-    if (from->last()->opcode() != Switch || successor.frequency() == FrequencyClass::Rare)
-        return isRare(successor, from);
-    unsigned numberOfCases = from->numSuccessors() - 1;
-    double shareInChain = 0;
-    double caseShare = 1;
-    for (unsigned i = 0; i < numberOfCases; ++i) {
-        caseShare /= 2;
-        if (from->successorBlock(i) == successor.block())
-            shareInChain += caseShare;
+    for (unsigned i = loop.size(); i--;) {
+        if (loops.innerMostLoopOf(loop.at(i)) != &loop)
+            return false;
     }
-    if (from->successorBlock(numberOfCases) == successor.block())
-        shareInChain += caseShare;
-    return successor.block()->frequency() * maxRatioOfHeaderToLikelyBlock < from->frequency() * std::min(shareInChain, 1.0 / from->numSuccessors());
+    return true;
 }
 
-inline bool isCall(Value* value)
+inline bool isLoopPoll(const Value* value)
 {
-    if (value->opcode() == CCall)
-        return true;
     auto* patchpoint = value->as<PatchpointValue>();
-    if (!patchpoint)
-        return false;
-    unsigned numberOfClobberedArgumentGPRs = 0;
-    for (unsigned i = 0; i < GPRInfo::numberOfArgumentRegisters; ++i)
-        numberOfClobberedArgumentGPRs += patchpoint->lateClobbered().contains(GPRInfo::toArgumentRegister(i), IgnoreVectors);
-    return numberOfClobberedArgumentGPRs >= minCallClobberedArgumentGPRs;
+    return patchpoint && patchpoint->isLoopPoll;
 }
 
-inline bool canCloneForLoop(Value* value)
+inline bool canCloneForLoop(const Value* value)
 {
     if (value->kind().isCloningForbidden() || value->type().isTuple())
         return false;
-    switch (value->opcode()) {
-    case Patchpoint: {
-        Effects effects = value->effects();
-        return (!effects.terminal || value->type() == Void) && !effects.exitsSideways && !effects.writes && !effects.writesPinned && !effects.fence;
-    }
-    case CCall:
-    case Check:
-    case CheckAdd:
-    case CheckSub:
-    case CheckMul:
-        return false;
-    default:
-        return true;
-    }
+    return value->type() == Void || !value->effects().terminal;
 }
 
-inline bool emitsInstructions(Value* value)
+inline bool emitsInstructions(const Value* value)
 {
     switch (value->opcode()) {
     case Phi:
@@ -90,6 +55,30 @@ inline bool emitsInstructions(Value* value)
     }
 }
 
+inline FrequencyClass likeliestSuccessorClass(const BasicBlock* block)
+{
+    FrequencyClass result = FrequencyClass::Rare;
+    for (const FrequentedBlock& successor : block->successors())
+        result = maxFrequency(result, successor.frequency());
+    return result;
+}
+
+inline bool isLikelySuccessor(FrequencyClass likeliestClassOfBlock, const FrequentedBlock& successor)
+{
+    return !successor.isRare() && !isRarerThan(successor.frequency(), likeliestClassOfBlock);
+}
+
+inline bool isLikelySuccessor(const BasicBlock* block, const FrequentedBlock& successor)
+{
+    if (successor.isLikely())
+        return true;
+    return isLikelySuccessor(likeliestSuccessorClass(block), successor);
+}
+
+JS_EXPORT_PRIVATE BasicBlock* findPreHeader(const NaturalLoops&, const NaturalLoop&);
+JS_EXPORT_PRIVATE IndexSet<BasicBlock*> findLikelyBlocks(const NaturalLoops&, const NaturalLoop&);
+JS_EXPORT_PRIVATE bool hasLikelyBackEdge(const NaturalLoop&, const IndexSet<BasicBlock*>& likelyBlocks);
+
 } } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(B3_JIT)

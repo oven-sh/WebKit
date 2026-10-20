@@ -1,0 +1,50 @@
+# A function that runs at most once is not split: the frame it would save is set up once
+# FORM: AsRead
+# OPTIONS: only-passes=SplitFunctionsAtCalls
+# RUN: pipeline SplitFunctionsAtCalls
+# STATISTIC: SplitFunctionsAtCallsChanges = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="callback" [isFreeName]
+    v3 = CallDirect v1, v2 function=f1
+    v4 = CallDirect v1, v2 function=f2
+    v5 = CallDirect v3, v2 function=f2
+    Return
+}
+function f1 name="calledOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK-LABEL: function f1 name="calledOnce"
+# CHECK-NOT: ReturnCall
+# CHECK: = Call v1, -, v0
+# CHECK-NOT: ReturnCall
+
+function f2 name="calledTwice" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = Call v1, -, v0
+    Return v3
+}
+# CHECK-LABEL: function f2 name="calledTwice"
+# CHECK-NOT: = Call v1
+# CHECK: [[rest]]: anything = CallDirect v0, v1 function=[[continuation]]
+# CHECK-NEXT: ReturnCall [[rest]]
+# CHECK: function [[continuation]] name="calledTwice" module=m0 role=Continuation{{*}}derivation={source=f2{{*}}} creator=Continuation{origin=f2}
+# CHECK: = Call
+# CHECK-NOT: role=Continuation

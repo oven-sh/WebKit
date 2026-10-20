@@ -28,6 +28,7 @@
 namespace JSC {
 
 class CallLinkInfo;
+namespace AOT { struct ReturnAddressTrace; }
 
 class ErrorInstance : public JSNonFinalObject {
 public:

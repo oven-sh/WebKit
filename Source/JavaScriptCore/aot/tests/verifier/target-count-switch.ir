@@ -1,0 +1,22 @@
+# A Switch has one target per case and the target otherwise
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: TargetCountMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2] -> case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f1 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything):
+    Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
+  b1():
+    Return
+  b2():
+    Return
+}

@@ -1,0 +1,30 @@
+# A function that the host's modules reach under a private name of the global object does what its entry says: this one changes nothing it is handed, like the unknown callee beside it,
+# which is native code. An object that is not passed reaches no sink.
+# RUN(SINKS): flow-solve sinks
+# RUN(NEIGHBOR): flow-solve sinks
+# RUN(LINKS): flow-links builtins
+# SINKS: nativeCode {{*}}L1#{{*}}L2#
+# SINKS: unknownJavaScript {}
+# NEIGHBOR-NOT: L0#
+# LINKS: PrivateGlobalsMakeErrorWithCode/0 Call
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Neighbor" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PassedToUnknownCallee" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="PassedWithEntry" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="notListedAnywhere" [isFreeName]
+    v6 = Call v5, -, v2
+    v7 = PropGet v4 key=@"makeErrorWithCode" [isFreeName]
+    v8 = Call v7, -, v0, v3
+    PutModuleVariable v1 variable=g0
+    Return
+}

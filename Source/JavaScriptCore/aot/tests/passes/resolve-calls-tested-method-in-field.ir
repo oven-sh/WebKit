@@ -1,0 +1,61 @@
+# A method that an object literal holds in a field, called on a predicted receiver. That the field is filled may become true again, so a test of the receiver in front of the call says nothing about the read:
+# the function that was read is tested, whatever is predicted of it, and under the tests of the read that test is about a closure just made
+# FORM: Prepared
+# RUN(PLAN): test-placement
+# RUN(IR): pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Codec" fields=[{key="encode" declared={type=f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0}}}, {key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="encode" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+
+function f1 name="somethingElseIsPredictedOfTheMethod" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3 = Predict v2 predicted=builtin(Function)
+    v4 = Call v3, v0, v1 calleeKey="encode"
+    Return v4
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test ShapeTest v0 layouts=[L0] before v2; {{*}}test IsSlotFilled v0 key="encode" receivers=[L0] level=Predicted before v2; uses v2; cloned 0
+# PLAN-NEXT: stretch 1: test IsClosureOf v2 function=f0 before v4; uses v4; cloned 4
+# PLAN-NOT: stretch
+# IR-LABEL: function f1 name="somethingElseIsPredictedOfTheMethod"
+# IR: [[closure1]]: f0 = NewClosure function=f0
+# IR: = IsClosureOf {{*}} function=f0
+# IR: = CallDirect v0, v1 function=f0
+# IR: frequency=Unlikely:
+# IR: = PropGet v0 key="encode"
+# IR: = Call {{*}}, v0, v1 calleeKey="encode"
+
+function f2 name="unknownCodeBetweenReadAndCall" parameters=[{type=object predicted=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3 = Predict v2 predicted=builtin(Function)
+    v4 = Call v1
+    v5 = Call v3, v0, v4 calleeKey="encode"
+    Return v5
+}
+# PLAN-LABEL: function f2
+# PLAN: test IsClosureOf v2 function=f0 before v5; uses v5
+# PLAN-NOT: IsSlotFilled {{*}} before v5
+# IR-LABEL: function f2 name="unknownCodeBetweenReadAndCall"
+# IR: = Call v1
+# IR-NEXT: = IsClosureOf {{*}} function=f0
+# IR: = CallDirect v0, v4 function=f0
+
+function f3 name="receiverIsNotPredicted" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything):
+    v2 = PropGet v0 key="encode"
+    v3 = Predict v2 predicted=builtin(Function)
+    v4 = Call v3, v0, v1 calleeKey="encode"
+    Return v4
+}
+# PLAN-LABEL: function f3
+# PLAN-NOT: stretch
+# IR-LABEL: function f3 name="receiverIsNotPredicted"
+# IR-NOT: IsClosureOf
+# IR-NOT: CallDirect

@@ -1,0 +1,99 @@
+# Helpers that call each other prove nothing: this counts as leaked where the constructor enters the cycle
+# RUN(CYCLE): flow-construction
+# RUN(CYCLEFIELDS): flow-solve nodes
+# RUN(CHAIN): flow-construction
+# RUN(CHAINFIELDS): flow-solve nodes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Cycle" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Chain" constructor=f4 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="a"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 index=1 key="b"
+    v6 = FinishClass v1 layout=L0
+    v7 = Construct v6
+    v8 = NewClosure function=f4
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f5
+    DefineMethod v9, v10 layout=L1 key="a"
+    v12 = NewClosure function=f6
+    DefineMethod v9, v12 layout=L1 index=1 key="b"
+    v14 = FinishClass v9 layout=L1
+    v15 = Construct v14
+    Return
+}
+function f1 name="Cycle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = PropGet v2 key="a"
+    v6 = Call v5, v2
+    v7 = Integer integer=2
+    PropSet v2, v7 key="y"
+    Return v2
+}
+function f2 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    v2 = Call v1, v0
+    Return
+}
+function f3 name="b" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = PropGet v0 key="a"
+    v5 = Call v4, v0
+    Jump -> next b2()
+  b2():
+    v6 = Integer integer=3
+    PropSet v0, v6 key="z"
+    Return
+}
+# CYCLE: construction f1@i{{*}} root v2: Unknown at f{{*}}:v0 before-leak "x" at-exit "x" "y"{{*}} read-early "a"
+# CYCLE-NOT: construction f1@i{{*}}: DoesNotLeak
+# CYCLE: layout L0: Unknown at f{{*}}:v0 Unknown set [0] orders
+# CYCLEFIELDS: DeclaredPart(L0#{{*}}, 0) = {1}
+# CYCLEFIELDS: DeclaredPart(L0#{{*}}, 1) = {undefined|2}
+# CYCLEFIELDS: DeclaredPart(L0#{{*}}, 2) = {undefined|3}
+function f4 name="Chain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x"
+    v5 = PropGet v2 key="a"
+    v6 = Call v5, v2
+    v7 = Integer integer=2
+    PropSet v2, v7 key="y"
+    Return v2
+}
+function f5 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="b"
+    v2 = Call v1, v0
+    Return
+}
+function f6 name="b" kind=Method flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    PropSet v0, v1 key="z"
+    Return
+}
+# CHAIN: construction f4@i{{*}} root v2: DoesNotLeak before-leak "x" "y" "z" at-exit "x" "y" "z" read-early "b" initial-order "x" "z" "y" stores OnlyInitialOrder reads-from-prototype v5
+# CHAIN-NOT: construction f4@i{{*}}: Unknown
+# CHAIN: layout L1: DoesNotLeak OnlyAtConstruction set [0, 1, 2] orders [0, 2, 1]
+# CHAINFIELDS: DeclaredPart(L1#{{*}}, 0) = {1}
+# CHAINFIELDS: DeclaredPart(L1#{{*}}, 1) = {2}
+# CHAINFIELDS: DeclaredPart(L1#{{*}}, 2) = {3}

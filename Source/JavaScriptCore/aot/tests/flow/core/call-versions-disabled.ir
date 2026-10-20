@@ -1,0 +1,29 @@
+# With call versions switched off a function has one shared instance, the generic one, and every caller enters it
+# OPTIONS: disable=flow:CallVersions
+# RUN: flow-solve instances nodes
+# CHECK: host Proven Initialized
+# CHECK-NOT: Proven
+# CHECK: f0 Generic Initialized
+# CHECK-NEXT: f1 Generic Initialized
+# CHECK-NOT: Proven
+# CHECK-NOT: f1 Generic
+# CHECK: Local({{*}}f1, parameter 0) = {L0#[[first]]|L1#[[second]]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v2 function=f1
+    Return
+}
+function f1 name="ignoresItsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=7
+    Return v1
+}

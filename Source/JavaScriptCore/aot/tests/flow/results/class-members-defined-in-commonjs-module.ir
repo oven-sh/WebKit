@@ -1,0 +1,74 @@
+# The body of a CommonJS entry point that no site requires is evaluated once, like the body of an ES module: what one call defines there on the prototype object of a constructor function before every lookup is a fixed member,
+# and a store to an instance runs the setter alone. In a function of the module that two calls enter, neither holds
+# RUN: flow
+# CHECK: layout L0 flow={{*}} namedMembers=[{key="k" kind=Getter function=f4 mutability=Fixed{{*}}{key="k" kind=Setter function=f5 mutability=Fixed
+# CHECK-NOT: field L0.
+# CHECK: layout L1 flow=
+# CHECK-NOT: mutability=Fixed
+# CHECK: field L1.0 "k" {{*}}flags=[IsAppendedByFlow]
+# CHECK: layout L2 
+
+module m0 path="unused.js" displayPath="unused.js" body=f0
+module m1 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m1
+layout L0 kind=Instance name="DefinedInBody" constructor=f2 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="DefinedInFunction" constructor=f3 flags=[IsConstructorFunction]
+layout L2 name="GetAndSet" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="unused" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="main" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = NewClosure function=f2
+    v7 = PropGet v6 key="prototype"
+    v8 = NewClosure function=f4
+    v9 = NewClosure function=f5
+    v10 = NewObject -, v8, v9 layout=L2 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Builtin builtin=Object
+    v13 = Builtin builtin=ObjectDefineProperty
+    v14 = String string="k"
+    v15 = Call v13, v12, v7, v14, v11
+    v16 = Construct v6
+    v17 = Integer integer=1
+    PropSet v16, v17 key="k" mode=Sloppy
+    v19 = PropGet v16 key="k"
+    v20 = NewClosure function=f6
+    v21 = Call v20
+    v22 = Call v20
+    Return
+}
+function f2 name="DefinedInBody" module=m1 flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: object ? L0):
+    Return
+}
+function f3 name="DefinedInFunction" module=m1 flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+  b0(v0: object ? L1):
+    Return
+}
+function f4 name="get" module=m1 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="set" module=m1 flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f6 name="make" module=m1 results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f5
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectDefineProperty
+    v8 = String string="k"
+    v9 = Call v7, v6, v1, v8, v5
+    v10 = Construct v0
+    v11 = Integer integer=1
+    PropSet v10, v11 key="k" mode=Sloppy
+    Return
+}

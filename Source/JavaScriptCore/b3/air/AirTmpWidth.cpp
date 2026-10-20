@@ -52,18 +52,12 @@ void TmpWidth::recompute(Code& code)
 void TmpWidth::fixpointMoves(const Vector<Inst*>& moves)
 {
     bool changed = true;
-#if USE(BUN_JSC_ADDITIONS)
     bool goesDown = false;
-#endif
     while (changed) {
         changed = false;
-#if USE(BUN_JSC_ADDITIONS)
         goesDown = !goesDown;
         for (size_t step = 0; step < moves.size(); ++step) {
             Inst* move = moves[goesDown ? step : moves.size() - 1 - step];
-#else
-        for (Inst* move : moves) {
-#endif
             ASSERT(move->kind.opcode == Move);
             ASSERT(move->args()[0].isTmp());
             ASSERT(move->args()[1].isTmp());

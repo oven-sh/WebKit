@@ -1,0 +1,50 @@
+# A getter defined over a field redefines that field of that object, is found beside the field by a read, and sends nothing to unknown code. A getter under a key the literal does not have yet changes nothing
+# RUN(OVER): flow-solve nodes objects locations
+# RUN(BESIDE): flow-solve nodes objects locations
+# RUN(SINKS): flow-solve sinks
+# RUN(LINKS): flow-links calls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Redefined" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="WithGetter" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewClosure function=f1
+    DefineGetter v1, v2 key="x"
+    v4 = FinishObject v1
+    v5 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v6 = NewClosure function=f2
+    DefineGetter v5, v6 key="z"
+    v8 = FinishObject v5
+    v9 = PropGet v4 key="x"
+    v10 = PropGet v4 key="y"
+    Return
+}
+function f1 name="x" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="computed"
+    Return v1
+}
+function f2 name="z" kind=Getter flags=[HasThis] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    Return v1
+}
+# OVER: , f0, v9) = {1|"computed"}
+# OVER-NEXT: , f0, v10) = {1}
+# OVER: Getter(L0#[[over]], "x") = {f1}
+# OVER: L0#[[over]] mutations=[RedefineProperty] uses=
+# OVER: DeclaredPart(L0#[[over]], 0) events=[{{*}}Redefined
+# OVER-NOT: DeclaredPart(L0#[[over]], 1) events=[{{*}}Redefined
+# BESIDE: Getter(L1#[[beside]], "z") = {f2}
+# BESIDE: L1#[[beside]] mutations=[] uses=
+# BESIDE-NOT: (L1#[[beside]], {{*}}Redefined
+# LINKS: f0 v9 -> i{{*}} f1 Accessor Once
+# LINKS-NOT: f0 v10 ->
+# SINKS-NOT: L0#
+# SINKS-NOT: L1#
+# SINKS-NOT: f1
+# SINKS-NOT: f2

@@ -1,0 +1,49 @@
+# Beside the unknown object, which as a map of descriptors defines anything under every key, a map that has reached native code says nothing more: where there are more of them than an operation has arms, none is read. A map that nobody else holds is read, and so is the only escaped one of a few
+# OPTIONS: limit=MaxDispatchCases:1
+# RUN: flow-solve nodes
+# RUN(ABSENT): flow-solve nodes
+# CHECK: Property(L0#{{*}}, "kept") =
+# CHECK: Property(L4#{{*}}, "first") =
+# ABSENT-NOT: Property(L0#{{*}}, "first")
+# ABSENT-NOT: Property(L0#{{*}}, "second")
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="TargetOfMany"
+layout L1 name="ValueDescriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="FirstMap" fields=[{key="first" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="SecondMap" fields=[{key="second" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="TargetOfFew"
+layout L5 name="KeptMap" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="many" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="few" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    v5 = Integer integer=2
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = NewObject -, v6 layout=L3 fields=[0]
+    v8 = Call v1, -, v4
+    v9 = Call v1, -, v7
+    v10 = Integer integer=3
+    v11 = NewObject -, v10 layout=L1 fields=[0]
+    v12 = NewObject -, v11 layout=L5 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v4 variable=g0
+    PutModuleVariable v7 variable=g0
+    PutModuleVariable v12 variable=g0
+    PutModuleVariable v1 variable=g1
+    PutModuleVariable v4 variable=g1
+    v19 = GetModuleVariable variable=g0
+    v20 = GetModuleVariable variable=g1
+    v21 = NewObject layout=L0 fields=[]
+    v22 = NewObject layout=L4 fields=[]
+    v23 = Builtin builtin=ObjectDefineProperties
+    v24 = Call v23, -, v21, v19
+    v25 = Call v23, -, v22, v20
+    Return
+}

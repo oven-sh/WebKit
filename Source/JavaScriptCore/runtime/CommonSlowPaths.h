@@ -202,7 +202,7 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
 
     if (canPutDirectFast(vm, structure, propertyName, isJSFunction)) [[likely]] {
         bool success = baseObject->putDirect(vm, propertyName, value, 0, slot);
-        ASSERT_UNUSED(success, success || scope.exception());
+        ASSERT_UNUSED(success, success);
     } else {
         slot.disableCaching();
         scope.release();

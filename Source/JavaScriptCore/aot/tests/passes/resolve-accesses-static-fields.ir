@@ -1,0 +1,270 @@
+# A static field is a module variable: an access through the class object reads or stores the variable when nothing else can have touched the property
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 10
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=number} owner=L0 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g1 name="count" module=m0 declared={type=number} owner=L2 flow={initialization=StoredBeforeEveryRead}
+variable g2 name="count" module=m0 declared={type=number} owner=L3 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g3 name="count" module=m0 declared={type=number} owner=L4 flow={writers=AllKnown}
+variable g4 name="count" module=m0 declared={type=number} owner=L5 flags=[IsImmutable] flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g5 name="count" module=m0 declared={type=number} owner=L6 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+variable g6 name="count" module=m0 declared={type=number} owner=L8 flow={writers=AllKnown}
+variable g7 name="count" module=m0 declared={type=number} owner=L10 flow={writers=AllKnown}
+variable g8 name="count" module=m0 declared={type=number} owner=L11 flow={writers=AllKnown initialization=StoredBeforeEveryRead}
+layout L0 kind=Instance name="Counter" constructor=f0 staticFields=[{key="count" variable=g0}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="Escaped" constructor=f2 staticFields=[{key="count" variable=g1}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="InLoop" constructor=f3 staticFields=[{key="count" variable=g2}] flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L4 kind=Instance name="ReadEarly" constructor=f4 staticFields=[{key="count" variable=g3}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L5 kind=Instance name="Constant" constructor=f5 staticFields=[{key="count" variable=g4}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Open" constructor=f6 staticFields=[{key="count" variable=g5}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
+layout L7 kind=Instance name="MethodBase" constructor=f7 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="count" side=Static function=f11 mutability=Fixed}]}
+layout L8 kind=Instance name="BelowMethod" predictedBase=L7 constructor=f8 staticFields=[{key="count" variable=g6}] flags=[HasHeritage] flow={baseState=Layout base=L7} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L9 kind=Instance name="SetterBase" constructor=f9 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="count" side=Static kind=Setter function=f12 mutability=Fixed}]}
+layout L10 kind=Instance name="BelowSetter" predictedBase=L9 constructor=f10 staticFields=[{key="count" variable=g7}] flags=[HasHeritage] flow={baseState=Layout base=L9} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L11 kind=Instance name="BelowSetterAfterDefinition" predictedBase=L9 constructor=f33 staticFields=[{key="count" variable=g8}] flags=[HasHeritage] flow={baseState=Layout base=L9} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Child" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Escaped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="InLoop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="ReadEarly" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Constant" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f7 name="MethodBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="BelowMethod" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f9 name="SetterBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f10 name="BelowSetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f11 name="count" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f12 name="count" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+
+function f13 name="read" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f13 name="read"
+# CHECK-NEXT: b0(v0: f0):
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f14 name="read-through-subclass" parameters=[{type=f1}] results=[{type=anything}] {
+  b0(v0: f1):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f14 name="read-through-subclass"
+# CHECK-NEXT: b0(v0: f1):
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f15 name="read-of-constant" parameters=[{type=f5}] results=[{type=anything}] {
+  b0(v0: f5):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="read-of-constant"
+# CHECK-NEXT: b0(v0: f5):
+# CHECK-NEXT: v1: number = GetModuleVariable variable=g4
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f16 name="test" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropHas v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f16 name="test"
+# CHECK-NEXT: b0(v0: f0):
+# CHECK-NEXT: v1: true = Boolean boolean=true
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f17 name="definition" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    PropDefine v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f17 name="definition"
+# CHECK-NEXT: b0(v0: f0, v1: number):
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f18 name="store" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f18 name="store"
+# CHECK-NEXT: b0(v0: f0, v1: number):
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f19 name="sloppy-store" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    PropSet v0, v1 key="count" mode=Sloppy
+    Return
+}
+# CHECK-LABEL: function f19 name="sloppy-store"
+# CHECK-NEXT: b0(v0: f0, v1: number):
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f20 name="read-and-store" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
+  b0(v0: f0, v1: number):
+    v2 = PropGet v0 key="count"
+    PropSet v0, v1 key="count"
+    Return v2
+}
+# CHECK-LABEL: function f20 name="read-and-store"
+# CHECK-NEXT: b0(v0: f0, v1: number):
+# CHECK-NEXT: v2: number = GetModuleVariable variable=g0
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f21 name="store-meeting-a-method-before-the-definition" parameters=[{type=f8}, {type=number}] results=[{type=anything}] {
+  b0(v0: f8, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f21 name="store-meeting-a-method-before-the-definition"
+# CHECK-NEXT: b0(v0: f8, v1: number):
+# CHECK-NEXT: PutModuleVariable v1 variable=g6
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+
+function f22 name="store-meeting-a-setter-before-the-definition" parameters=[{type=f10}, {type=number}] results=[{type=anything}] {
+  b0(v0: f10, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f22 name="store-meeting-a-setter-before-the-definition"
+# CHECK-NEXT: b0(v0: f10, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f23 name="store-through-subclass" parameters=[{type=f1}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f23 name="store-through-subclass"
+# CHECK-NEXT: b0(v0: f1, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f24 name="store-of-unknown-value" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: f0, v1: anything):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f24 name="store-of-unknown-value"
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f25 name="store-of-value-of-other-type" parameters=[{type=f0}, {type=string}] results=[{type=anything}] {
+  b0(v0: f0, v1: string):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f25 name="store-of-value-of-other-type"
+# CHECK-NEXT: b0(v0: f0, v1: string):
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f26 name="store-to-constant" parameters=[{type=f5}, {type=number}] results=[{type=anything}] {
+  b0(v0: f5, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f26 name="store-to-constant"
+# CHECK-NEXT: b0(v0: f5, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+function f27 name="writers-are-not-all-known" parameters=[{type=f2}, {type=number}] results=[{type=anything}] {
+  b0(v0: f2, v1: number):
+    v2 = PropGet v0 key="count"
+    PropSet v0, v1 key="count"
+    Return v2
+}
+# CHECK-LABEL: function f27 name="writers-are-not-all-known"
+# CHECK-NEXT: b0(v0: f2, v1: number):
+# CHECK-NEXT: = PropGet v0 key="count"
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f28 name="class-evaluated-more-than-once" parameters=[{type=f3}, {type=number}] results=[{type=anything}] {
+  b0(v0: f3, v1: number):
+    v2 = PropGet v0 key="count"
+    PropSet v0, v1 key="count"
+    Return v2
+}
+# CHECK-LABEL: function f28 name="class-evaluated-more-than-once"
+# CHECK-NEXT: b0(v0: f3, v1: number):
+# CHECK-NEXT: = PropGet v0 key="count"
+# CHECK-NEXT: PropSet v0, v1 key="count"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+function f29 name="read-may-come-before-the-definition" parameters=[{type=f4}] results=[{type=anything}] {
+  b0(v0: f4):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f29 name="read-may-come-before-the-definition"
+# CHECK-NEXT: b0(v0: f4):
+# CHECK-NEXT: = PropGet v0 key="count"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f30 name="class-object-may-gain-names" parameters=[{type=f6}] results=[{type=anything}] {
+  b0(v0: f6):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f30 name="class-object-may-gain-names"
+# CHECK-NEXT: b0(v0: f6):
+# CHECK-NEXT: = PropGet v0 key="count"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f31 name="nullable-class-object" parameters=[{type=undefined|f0}] results=[{type=anything}] {
+  b0(v0: undefined|f0):
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f31 name="nullable-class-object"
+# CHECK-NEXT: b0(v0: undefined|f0):
+# CHECK-NEXT: = PropGet v0 key="count"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f32 name="own-properties-of-every-class-object" parameters=[{type=f0}] results=[{type=anything}] {
+  b0(v0: f0):
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v0 key="name"
+    v3 = PropGet v0 key="length"
+    Return v1
+}
+# CHECK-LABEL: function f32 name="own-properties-of-every-class-object"
+# CHECK-NEXT: b0(v0: f0):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = PropGet v0 key="name"
+# CHECK-NEXT: = PropGet v0 key="length"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+function f33 name="BelowSetterAfterDefinition" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f34 name="store-below-a-setter-after-the-definition" parameters=[{type=f33}, {type=number}] results=[{type=anything}] {
+  b0(v0: f33, v1: number):
+    PropSet v0, v1 key="count"
+    Return
+}
+# CHECK-LABEL: function f34 name="store-below-a-setter-after-the-definition"
+# CHECK-NEXT: b0(v0: f33, v1: number):
+# CHECK-NEXT: PutModuleVariable v1 variable=g8
+# CHECK-NEXT: Return
+# CHECK-NEXT: }

@@ -1,0 +1,51 @@
+# A first state that is Unspecified is never read, so the builder begins empty; the same shape with a string parameter appends it
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="firstStateIsUnspecified" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+  b0(v0: string, v1: number):
+    v2 = Unspecified valueType=string
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = Add v4, v0
+    Return v11
+}
+# CHECK-LABEL: name="firstStateIsUnspecified"
+# CHECK: [[h0]]: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1([[h0]], v3)
+# CHECK: b1(v4: stringbuilder, v5: int|whole):
+
+function f1 name="firstStateIsGiven" parameters=[{type=string}, {type=number}, {type=string}] results=[{type=string}] {
+  b0(v0: string, v1: number, v2: string):
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = Add v4, v0
+    Return v11
+}
+# CHECK-LABEL: name="firstStateIsGiven"
+# CHECK: [[h1]]: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend [[h1]], v2
+# CHECK-NEXT: Jump -> next b1([[h1]], v3)

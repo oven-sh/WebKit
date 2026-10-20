@@ -1,0 +1,139 @@
+# A comparison of typeof with a word the operator can give becomes a type test, and with any other word it is false
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 6
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+
+function f0 name="wordsForOneType" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    v2 = String string="undefined"
+    v3 = StrictEq v1, v2
+    v4 = String string="boolean"
+    v5 = StrictEq v1, v4
+    v6 = String string="number"
+    v7 = StrictEq v1, v6
+    v8 = String string="string"
+    v9 = StrictEq v1, v8
+    v10 = String string="symbol"
+    v11 = StrictEq v1, v10
+    v12 = String string="bigint"
+    v13 = StrictEq v1, v12
+    v14 = String string="function"
+    v15 = StrictEq v1, v14
+    Return v3
+}
+# CHECK-LABEL: function f0 name="wordsForOneType"
+# CHECK: v3: boolean = TypeTest v0 testedType=undefined
+# CHECK: v5: boolean = TypeTest v0 testedType=boolean
+# CHECK: v7: boolean = TypeTest v0 testedType=number
+# CHECK: v9: boolean = TypeTest v0 testedType=string
+# CHECK: v11: boolean = TypeTest v0 testedType=symbol
+# CHECK: v13: boolean = TypeTest v0 testedType=bigint
+# CHECK: v15: boolean = TypeTest v0 testedType=function
+# CHECK-NOT: StrictEq
+
+function f1 name="objectWordNoCallableSource" parameters=[{type=null|string|L0}] results=[{type=boolean}] {
+  b0(v0: null|string|L0):
+    v1 = TypeOf v0
+    v2 = String string="object"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f1 name="objectWordNoCallableSource"
+# CHECK: v3: boolean = TypeTest v0 testedType=null|object
+
+function f2 name="objectWordOnlyCallableObjects" parameters=[{type=null|string|function}] results=[{type=boolean}] {
+  b0(v0: null|string|function):
+    v1 = TypeOf v0
+    v2 = String string="object"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f2 name="objectWordOnlyCallableObjects"
+# CHECK: v3: boolean = TypeTest v0 testedType=null
+# CHECK-NOT: object
+# CHECK: Return v3
+
+function f3 name="objectWordMixedObjects" parameters=[{type=anything}, {type=object}] results=[{type=boolean}] {
+  b0(v0: anything, v1: object):
+    v2 = String string="object"
+    v3 = TypeOf v0
+    v4 = StrictEq v3, v2
+    v5 = TypeOf v1
+    v6 = StrictEq v5, v2
+    Return v4
+}
+# CHECK-LABEL: function f3 name="objectWordMixedObjects"
+# CHECK-NOT: TypeTest
+# CHECK: v4: boolean = StrictEq v3, v2
+# CHECK-NOT: TypeTest
+# CHECK: v6: boolean = StrictEq v5, v2
+
+function f4 name="otherWords" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    v2 = String string="Number"
+    v3 = StrictEq v1, v2
+    v4 = String string="null"
+    v5 = StrictEq v1, v4
+    v6 = String string=""
+    v7 = Eq v1, v6
+    Return v3
+}
+# CHECK-LABEL: function f4 name="otherWords"
+# CHECK: v3: false = Boolean
+# CHECK: v5: false = Boolean
+# CHECK: v7: false = Boolean
+# CHECK-NOT: TypeTest
+
+function f5 name="wordOnTheLeftAndLooseEquality" parameters=[{type=anything}] results=[{type=boolean}] {
+  b0(v0: anything):
+    v1 = TypeOf v0
+    v2 = String string="string"
+    v3 = StrictEq v2, v1
+    v4 = Eq v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f5 name="wordOnTheLeftAndLooseEquality"
+# CHECK: v3: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: v4: boolean = TypeTest v0 testedType=string
+
+function f6 name="decidedByTheTypeOfTheOperand" parameters=[{type=number}, {type=L0}] results=[{type=boolean}] {
+  b0(v0: number, v1: L0):
+    v2 = TypeOf v0
+    v3 = String string="number"
+    v4 = StrictEq v2, v3
+    v5 = String string="object"
+    v6 = StrictEq v2, v5
+    v7 = TypeOf v1
+    v8 = StrictEq v7, v5
+    Return v4
+}
+# CHECK-LABEL: function f6 name="decidedByTheTypeOfTheOperand"
+# CHECK: v4: true = Boolean boolean=true
+# CHECK: v6: false = Boolean
+# CHECK: v8: true = Boolean boolean=true
+
+function f7 name="wordIsNoConstant" parameters=[{type=anything}, {type=string}] results=[{type=boolean}] {
+  b0(v0: anything, v1: string):
+    v2 = TypeOf v0
+    v3 = StrictEq v2, v1
+    Return v3
+}
+# CHECK-LABEL: function f7 name="wordIsNoConstant"
+# CHECK: v3: boolean = StrictEq v2, v1
+
+function f8 name="stringIsNoTypeof" parameters=[{type=string}] results=[{type=boolean}] {
+  b0(v0: string):
+    v1 = String string="number"
+    v2 = StrictEq v0, v1
+    v3 = String string="nope"
+    v4 = StrictEq v0, v3
+    Return v2
+}
+# CHECK-LABEL: function f8 name="stringIsNoTypeof"
+# CHECK: v2: boolean = StrictEq v0, v1
+# CHECK: v4: boolean = StrictEq v0, v3

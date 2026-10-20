@@ -1,0 +1,32 @@
+# Without rotation the test stays at the head of each of the two loops, and so does its poll
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:StripMinePolls disable=b3:RotateLoops
+# RUN: generate-code
+# STATISTIC: LoopsRotated = 0
+# CHECK: f1: size={{*}} polls=2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = BitOr v1, v1
+    v3 = CallDirect v2 function=f1
+    Return v3
+}
+function f1 name="countsUp" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = BitXor v3, v2
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Return v3
+}

@@ -740,7 +740,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     if (pointersInImage) {
         RELEASE_ASSERT(exceptionChecks.empty());
         jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfImageCodePointers()), scratchGPR);
-        jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->generalEntry * sizeof(void*))), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->genericEntrypoint * sizeof(void*))), scratchGPR);
         jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
         jit.emitFunctionEpilogue();
         jit.farJump(scratchGPR, JSEntryPtrTag);

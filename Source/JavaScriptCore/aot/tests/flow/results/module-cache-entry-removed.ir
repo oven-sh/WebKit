@@ -1,0 +1,42 @@
+# A CommonJS module whose cache entry the program can delete may be evaluated again, so its body may run more than once. A CommonJS module that the key cannot name and an ES module keep their one evaluation.
+# Neither of the two bodies can throw: one that may is run again by the next require(), flow/results/commonjs-body-runs-again-after-it-threw.ir
+# RUN: flow
+# CHECK: function f0 executions=AtMostOnce
+# CHECK: function f1
+# CHECK-NOT: executions=
+# CHECK: function f2 executions=AtMostOnce
+# CHECK: function f3
+# CHECK-NOT: executions=
+# CHECK: function f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="removed.cjs" displayPath="removed.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+module m2 path="kept.cjs" displayPath="kept.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f2
+module m3 path="remover.cjs" displayPath="remover.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f3
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1
+    v1 = RequireModule module=m2
+    v2 = RequireModule module=m3
+    Return
+}
+function f1 name="removed" module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f2 name="kept" module=m2 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return
+}
+function f3 name="remover" module=m3 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+    v6 = PropGet v2 key="cache"
+    v7 = String string="removed.cjs"
+    v8 = ElemDelete v6, v7 mode=Strict
+    Return
+}
+function f4 name="unused" module=m0 results=[{type=anything}] {
+  b0():
+    Return
+}

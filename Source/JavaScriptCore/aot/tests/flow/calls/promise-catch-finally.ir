@@ -1,0 +1,75 @@
+# The callback of catch gets the reason the promise holds and the derived promise holds what it returns, the promise of finally holds what its receiver holds, and no value reaches a sink
+# RUN(REJECTED): flow-solve nodes
+# RUN(CAUGHT): flow-solve nodes
+# RUN(CALLBACK): flow-solve nodes
+# RUN(LOADED): flow-solve nodes
+# RUN(FINALLY): flow-solve nodes
+# RUN(CLEANUP): flow-solve nodes
+# RUN(SINKS): flow-solve sinks
+# REJECTED: , f1, v1) = {Promise@f4:result@[[caller]]}
+# REJECTED: DeclaredPart(Promise@f4:result@[[caller]], 1) = {L1#[[failure]]
+# CAUGHT: DeclaredPart(Promise@f1:v4{{*}}, 0) = {L2#[[recovered]]@[[recover]]}
+# CALLBACK: , f5, parameter 0) = {L1#[[failure]]
+# CALLBACK-NEXT: , f5, result 0) = {L2#[[recovered]]@[[recover]]}
+# LOADED: , f2, v1) = {Promise@f3:result@[[caller]]}
+# LOADED: DeclaredPart(Promise@f3:result@[[caller]], 0) = {L0#[[user]]}
+# FINALLY: DeclaredPart(Promise@f2:v4{{*}}, 0) = {{*}}L0#[[user]]}
+# CLEANUP: , f6, result 0) = {undefined}
+# SINKS-NOT: L0#
+# SINKS-NOT: L2#
+# SINKS-NOT: Promise@f
+# SINKS-NOT: f3
+# SINKS-NOT: f4
+# SINKS-NOT: f5
+# SINKS-NOT: f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="User" fields=[{key="name" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Failure" fields=[{key="code" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Recovered" fields=[{key="from" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return
+}
+function f1 name="useCatch" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    v2 = PropGet v1 key="catch"
+    v3 = NewClosure function=f5
+    v4 = Call v2, v1, v3 calleeKey="catch"
+    Return v4
+}
+function f2 name="useFinally" results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Call v0
+    v2 = PropGet v1 key="finally"
+    v3 = NewClosure function=f6
+    v4 = Call v2, v1, v3 calleeKey="finally"
+    Return v4
+}
+function f3 name="load" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = String string="ann"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f4 name="fail" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    Throw v1
+}
+function f5 name="recover" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    Return v1
+}
+function f6 name="cleanUp" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

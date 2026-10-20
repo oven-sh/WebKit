@@ -1,0 +1,51 @@
+# The calls of one member on receivers nobody knows, from any number of sites, all reach the escaped objects that inherit it: an escaped array holds what both sites push. A member that leaves its receiver alone changes nothing
+# RUN: flow
+# CHECK: class {{*}} layout=L0 impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType, LoseShape] addedKeysAreComplete=true
+# CHECK: variable g0 type=Array<1|"first"|"second", Contiguous, pristine[Storage, Names, Dense]> written=anything
+# CHECK: variable g2 type=Set<
+# RUN(NODES): flow-solve nodes
+# NODES-NOT: (unknown, "length")
+# NODES-NOT: Set@f0:v5{{*}}"first"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="escapedArray" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="escapedRecord" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="escapedSet" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v3 variable=g1
+    v5 = Builtin builtin=Set
+    v6 = Construct v5
+    PutModuleVariable v6 variable=g2
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="publish" [isFreeName]
+    v10 = Call v9, -, v1
+    v11 = Call v9, -, v3
+    v12 = Call v9, -, v6
+    v13 = PropGet v8 key="input" [isFreeName]
+    v14 = String string="first"
+    v15 = CallDirect v13, v14 function=f1
+    v16 = String string="second"
+    v17 = CallDirect v13, v16 function=f2
+    v18 = PropGet v13 key="includes"
+    v19 = Call v18, v13, v0 calleeKey="includes"
+    Return
+}
+function f1 name="pushFirst" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+function f2 name="pushSecond" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}

@@ -1,0 +1,47 @@
+# A built-in that the program only tests has no use that reads, calls or hands it on, and no function its entry calls is entered
+# RUN: flow-links calls uses
+# RUN(ONLY): flow-links uses
+# RUN(INSTANCES): flow-solve instances
+# CHECK-NOT: f1
+# CHECK: host - -> [[entered]] f2 Host
+# CHECK-NOT: f1
+# CHECK: use BunPeek [Read] f0:v8
+# CHECK: use BunServe [Tested]
+# ONLY-NOT: use BunServe [{{*}}Read
+# ONLY-NOT: use BunServe [{{*}}Called
+# ONLY-NOT: use BunServe [{{*}}Escaped
+# ONLY-NOT: use Map [{{*}}Read
+# ONLY-NOT: use Map [{{*}}Called
+# ONLY-NOT: use Map [{{*}}Constructed
+# ONLY-NOT: use Map [{{*}}Escaped
+# INSTANCES-NOT: f1
+# INSTANCES: f2 Generic
+# INSTANCES-NOT: f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve" [isForTypeOf]
+    v2 = TypeOf v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="x" [isFreeName]
+    v5 = Builtin builtin=Map
+    v6 = StrictEq v4, v5
+    v7 = InstanceOf v4, v5
+    v8 = PropGet v0 key="peek"
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f1 name="calledByServe" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="calledByPeek" role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+runtimefunction id=65537 function=f1
+runtimefunction id=65569 function=f2

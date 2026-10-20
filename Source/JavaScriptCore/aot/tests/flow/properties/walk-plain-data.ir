@@ -1,0 +1,37 @@
+# What a parse gives back is plain data whose keys nobody can name: every name reads the part for unnamed keys, nothing found on or above it is proven, and a property stored later holds the data as well
+# RUN: flow-walk
+# CHECK: f0@i{{*}} v3 Get {"items"}
+# CHECK: Object@f0:[[data]]: Value own Predicted Object@f0:[[data]] *
+# CHECK: f0@i{{*}} v4 Get {"toString"}
+# CHECK: Object@f0:[[data]]: BuiltinMember Predicted ObjectPrototype "toString" ObjectPrototypeToString
+# CHECK: f0@i{{*}} v9 Get {"logger"}
+# CHECK: Object@f0:[[data]]: Value own Predicted Object@f0:[[data]] "logger"
+# CHECK: f0@i{{*}} v10 Get {"toString"}
+# CHECK-NEXT: L0#[[literal]]: BuiltinMember Proven ObjectPrototype "toString" ObjectPrototypeToString
+# CHECK-NEXT: f0@i{{*}} v11 Get {"level"}
+# CHECK-NEXT: L0#[[literal]]: Value own Proven L0#[[literal]] "level"
+# RUN(NODES): flow-solve nodes
+# NODES: Property(Object@f0:[[data]], "logger") = {{*}}L0#{{*}}|Object@f0:[[data]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Logger" fields=[{key="level" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = Builtin builtin=JSONParse
+    v1 = String string="{}"
+    v2 = Call v0, -, v1
+    v3 = PropGet v2 key="items"
+    v4 = PropGet v2 key="toString"
+    v5 = Integer integer=1
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    PropSet v2, v7 key="logger" mode=Strict
+    v9 = PropGet v2 key="logger"
+    v10 = PropGet v7 key="toString"
+    v11 = PropGet v7 key="level"
+    Return
+  b1() role=CatchHandler:
+    v12 = CatchValue
+    Return
+}

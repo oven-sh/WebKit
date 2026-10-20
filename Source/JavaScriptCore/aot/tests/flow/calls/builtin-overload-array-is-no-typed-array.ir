@@ -1,0 +1,18 @@
+# An array is no typed array: Array.from of an array is linked with the overload for iterables and not with the one for typed arrays
+# RUN: flow-links builtins
+# CHECK: builtin [[main]] v4 ArrayFrom/1 Call
+# CHECK-NOT: builtin [[main]] v4
+# RUN(OTHER): flow-links builtins
+# OTHER-NOT: v4 ArrayFrom/0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=ArrayFrom
+    v3 = Builtin builtin=Array
+    v4 = Call v2, v3, v1
+    Return
+}

@@ -1,0 +1,68 @@
+# An import alone does not evaluate a module that its package declares free of side effects. Naming one of its variables does, and so does entering one of its functions. The barrel between them and the file nobody uses are not evaluated
+# LIBRARY: own
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NOT: unreached f4
+# CHECK-NOT: unreached f5
+
+variable g0 name="first" module=m2 declared={type=anything} initialization=Uninitialized
+variable g1 name="second" module=m3 declared={type=anything} initialization=Uninitialized
+variable g2 name="limit" module=m4 declared={type=anything} initialization=Uninitialized
+variable g3 name="kept" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1}]
+module m1 path="/package/index.js" displayPath="package/index.js" flags=[HasNoSideEffects] body=f1 requests=[{target=m2}, {target=m3}, {target=m4}] exports=[{name="first" variable=g0}, {name="second" variable=g1}]
+module m2 path="/package/first.js" displayPath="package/first.js" flags=[HasNoSideEffects] body=f2 exports=[{name="first" variable=g0}]
+module m3 path="/package/second.js" displayPath="package/second.js" flags=[HasNoSideEffects] body=f3 exports=[{name="second" variable=g1}]
+module m4 path="/package/third.js" displayPath="package/third.js" flags=[HasNoSideEffects] body=f4
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1, -
+    v3 = GetModuleVariable variable=g0
+    PutModuleVariable v3 variable=g3
+    v5 = CallDirect function=f5
+    Return
+}
+function f1 name="index" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1, -
+    Return
+}
+function f2 name="first" module=m2 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1, -
+    v3 = Integer integer=1
+    PutModuleVariable v3 variable=g0
+    Return
+}
+function f3 name="second" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1, -
+    v3 = Integer integer=2
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f4 name="third" module=m4 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Call v1, -
+    v3 = Integer integer=3
+    PutModuleVariable v3 variable=g2
+    Return
+}
+function f5 name="readsLimit" module=m4 results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    Return v0
+}

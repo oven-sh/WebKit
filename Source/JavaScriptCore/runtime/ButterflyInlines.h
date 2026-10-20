@@ -143,6 +143,8 @@ inline Butterfly* Butterfly::createOrGrowPropertyStorage(
         oldButterfly->propertyStorage() - oldPropertyCapacity,
         totalSize(0, oldPropertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes));
     memset(result->propertyStorage() - newPropertyCapacity, 0, (newPropertyCapacity - oldPropertyCapacity) * sizeof(EncodedJSValue));
+    if (structure->hasElementsStartOffset()) [[unlikely]]
+        result->indexingHeader()->elementsStartOffset(newPropertyCapacity) = preCapacity;
     return result;
 }
 
@@ -166,7 +168,7 @@ inline Butterfly* Butterfly::growArrayRight(
     bool hadIndexingHeader, size_t oldIndexingPayloadSizeInBytes,
     size_t newIndexingPayloadSizeInBytes)
 {
-    ASSERT_UNUSED(oldStructure, !indexingHeader()->preCapacity(oldStructure));
+    ASSERT_UNUSED(oldStructure, !hadIndexingHeader || !indexingHeader()->preCapacity(oldStructure));
     ASSERT_UNUSED(intendedOwner, hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
     void* theBase = base(0, propertyCapacity);
     size_t oldSize = totalSize(0, propertyCapacity, hadIndexingHeader, oldIndexingPayloadSizeInBytes);

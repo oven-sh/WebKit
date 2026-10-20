@@ -1,0 +1,51 @@
+# The receiver is a parameter of a handler block: the prediction stands behind the read of the caught value, which has to start its block.
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="receiverKeptForTheHandler" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    v2 = PropGet v0 key="text"
+    Jump -> next b1()
+  b1() handler=b4(v2):
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2() handler=b4(v3):
+    v4 = Call v0, -, v3
+    Jump -> next b3()
+  b3():
+    Return v4
+  b4(v5: anything) role=CatchHandler:
+    v6 = CatchValue
+    v7 = PropGet v5 key="slice"
+    v8 = Predict v7 predicted=undefined|builtin(StringPrototypeSlice)
+    v9 = Call v8, v5, v1 calleeKey="slice"
+    Return v9
+}
+# CHECK-LABEL: function f0 name="receiverKeptForTheHandler"
+# CHECK: b4([[kept]]: anything{{*}}) role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: [[predicted]]: anything ~ string = Predict [[kept]] predicted=string
+# CHECK-NEXT: = PropGet [[predicted]] key="slice"
+
+function f1 name="receiverIsTheCaughtValue" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: i32):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = Call v0, -, v1
+    Jump -> next b2()
+  b2():
+    Return v2
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = PropGet v3 key="slice"
+    v5 = Predict v4 predicted=undefined|builtin(StringPrototypeSlice)
+    v6 = Call v5, v3, v1 calleeKey="slice"
+    Return v6
+}
+# CHECK-LABEL: function f1 name="receiverIsTheCaughtValue"
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: [[caught]]: anything = CatchValue
+# CHECK-NEXT: [[narrowed]]: anything ~ string = Predict [[caught]] predicted=string
+# CHECK-NEXT: = PropGet [[narrowed]] key="slice"

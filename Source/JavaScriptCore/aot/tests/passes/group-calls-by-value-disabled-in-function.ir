@@ -1,0 +1,58 @@
+# A call in a function in the range of the switch joins no group, and an equal call outside the range does
+# FORM: Prepared
+# OPTIONS: disable=pass:GroupCallsByValue disable-in=0:1
+# RUN: pass GroupCallsByValue
+# CHECK: group g0 members=[f7, f8, f9, f10, f11] sites=[a1] this=[omitted] arguments=[]
+# CHECK-NOT: group
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inRange" parameters=[{type=f2|f3|f4|f5|f6}] results=[{type=anything}] {
+  b0(v0: f2|f3|f4|f5|f6):
+    v1 = Call v0 accessSite=0 callees=[f2, f3, f4, f5, f6]
+    Return v1
+}
+function f1 name="outsideRange" parameters=[{type=f7|f8|f9|f10|f11}] results=[{type=anything}] {
+  b0(v0: f7|f8|f9|f10|f11):
+    v1 = Call v0 accessSite=1 callees=[f7, f8, f9, f10, f11]
+    Return v1
+}
+function f2 name="first" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f3 name="second" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f4 name="third" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f5 name="fourth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f6 name="fifth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f7 name="sixth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f8 name="seventh" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f9 name="eighth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f10 name="ninth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}
+function f11 name="tenth" kind=Arrow results=[{type=undefined}] {
+  b0():
+    Return
+}

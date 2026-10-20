@@ -43,8 +43,28 @@ namespace JSC {
 class CachedCall : public CallLinkInfoBase {
     WTF_MAKE_NONCOPYABLE(CachedCall);
     WTF_FORBID_HEAP_ALLOCATION;
+    class ConstructionKey {
+        friend class CachedCall;
+        ConstructionKey() = default;
+    };
 public:
-    JS_EXPORT_PRIVATE CachedCall(JSGlobalObject*, JSObject*, int argumentCount);
+    static bool supports(const CallData& callData) { return callData.type == CallData::Type::JS || callData.type == CallData::Type::Compiled; }
+
+    static std::optional<CachedCall> tryCreate(JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+    {
+        if (!supports(callData))
+            return std::nullopt;
+        return std::optional<CachedCall>(std::in_place, ConstructionKey { }, globalObject, callee, callData, argumentCount);
+    }
+
+    static CachedCall* tryEmplace(std::optional<CachedCall>& holder, JSGlobalObject* globalObject, JSObject* callee, const CallData& callData, int argumentCount)
+    {
+        if (!supports(callData))
+            return nullptr;
+        return &holder.emplace(ConstructionKey { }, globalObject, callee, callData, argumentCount);
+    }
+
+    JS_EXPORT_PRIVATE CachedCall(ConstructionKey, JSGlobalObject*, JSObject* callee, const CallData&, int argumentCount);
 
     ~CachedCall()
     {
@@ -61,6 +81,7 @@ public:
     JSFunction* function()
     {
         ASSERT(m_valid);
+        ASSERT(m_functionExecutable);
         return uncheckedDowncast<JSFunction>(m_protoCallFrame.calleeValue.unboxedCell());
     }
     FunctionExecutable* functionExecutable() { return m_functionExecutable; }

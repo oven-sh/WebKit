@@ -1,0 +1,30 @@
+# Two copies of one shared literal, made by inlining its function twice, have one cell: the check accepts them, and the program has no other cell to give one of them
+# RUN: check-placement regexp-cell
+# RUN(PROGRAM): place program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="first" [isFreeName]
+    v2 = CallDirect v1 function=f1 [isAlwaysInlined]
+    v3 = PropGet v0 key="second" [isFreeName]
+    v4 = CallDirect v3 function=f1 [isAlwaysInlined]
+    v5 = PropGet v0 key="publish" [isFreeName]
+    v6 = Call v5, -, v2, v4
+    Return
+}
+function f1 name="pieces" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToString v0
+    v2 = PropGet v1 key="split"
+    v3 = NewRegExp pattern="a+" regExpFlags=[Global] @10
+    v4 = Call v2, v1, v3
+    Return v4
+}
+
+# CHECK: error: nothing to mutate
+# PROGRAM-LABEL: function f0 name="main"
+# PROGRAM: SharedRegExpLiteral pattern="a+" regExpFlags=[Global] regExpRecord=[[record]] staticsOffset=[[cell]]
+# PROGRAM: SharedRegExpLiteral pattern="a+" regExpFlags=[Global] regExpRecord=[[record]] staticsOffset=[[cell]]

@@ -21,7 +21,7 @@
 #include "config.h"
 #include "ErrorInstance.h"
 
-#include "AOTRuntime.h"
+#include "AOTStackTrace.h"
 #include "CodeBlock.h"
 #include "CustomGetterSetter.h"
 #include "ErrorInstanceInlines.h"
@@ -96,14 +96,7 @@ ErrorInstance* ErrorInstance::create(JSGlobalObject* globalObject, Structure* st
 
 String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, const String& message, RuntimeType type, ErrorInstance::SourceAppender appender)
 {
-    if (message.isNull())
-        return message;
-#if USE(BUN_JSC_ADDITIONS)
-    bool hasNoSourceText = codeBlock->source().provider()->hasNoSourceText();
-#else
-    bool hasNoSourceText = false;
-#endif
-    if (!codeBlock->hasExpressionInfo() && !hasNoSourceText)
+    if (!codeBlock->hasExpressionInfo() || message.isNull())
         return message;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -112,18 +105,6 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     // build, so that a message does not depend on the build and does not name the builtin's internals.
     if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); executable && executable->isPrivateBuiltinFunction())
         return message;
-#endif
-
-#if USE(BUN_JSC_ADDITIONS)
-    if (hasNoSourceText) {
-#if ENABLE(AOT)
-        if (auto function = AOT::FunctionRef::of(codeBlock)) {
-            if (auto quote = function.quoteAt(bytecodeIndex))
-                return appender(message, quote->first, type, quote->second ? ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource : ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource);
-        }
-#endif
-        return message;
-    }
 #endif
 
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
@@ -176,9 +157,11 @@ void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (!thisObject->m_returnAddresses)
+        return;
     Locker locker { thisObject->cellLock() };
-    if (thisObject->m_returnAddresses)
-        visitor.markAuxiliary(thisObject->m_returnAddresses);
+    if (auto* returnAddresses = thisObject->m_returnAddresses)
+        visitor.markAuxiliary(returnAddresses);
 }
 
 DEFINE_VISIT_CHILDREN(ErrorInstance);
@@ -192,8 +175,10 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
         Locker locker { errorInstance->cellLock() };
         if (errorInstance->m_stackTrace)
             size += errorInstance->m_stackTrace->sizeInBytes();
+#if ENABLE(AOT)
         if (errorInstance->m_returnAddresses)
             size += errorInstance->m_returnAddresses->sizeInBytes();
+#endif
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
     }
@@ -203,16 +188,18 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 
 void ErrorInstance::materializeStackTrace()
 {
+#if ENABLE(AOT)
     auto stackTrace = makeUnique<Vector<StackFrame>>();
-    unsigned onTop = m_returnAddresses->hasHostFunctionFrameOnTop;
+    unsigned onTop = m_returnAddresses->numberOfFramesOnTop;
     if (onTop)
         stackTrace->append(m_stackTrace->span().first(onTop));
-    StackFrame::appendTypedFrames(*m_returnAddresses, *stackTrace);
+    StackFrame::appendCompiledFrames(*m_returnAddresses, *stackTrace);
     if (m_stackTrace)
         stackTrace->append(m_stackTrace->span().subspan(onTop));
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
     m_returnAddresses = nullptr;
+#endif
 }
 
 void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
@@ -263,10 +250,10 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     std::unique_ptr<Vector<StackFrame>> stackTrace;
     AOT::ReturnAddressTrace* returnAddresses = nullptr;
 #if ENABLE(AOT)
-    if (vm.useImmutableIntrinsics) [[unlikely]] {
+    if (vm.hasCompiledCode()) [[unlikely]] {
         if (useCurrentFrame) {
             if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
-                returnAddresses = subclassCaller ? vm.interpreter.tryGetStackTraceSkippingConstructors(this, *stackTraceLimit, stackTrace, subclassCaller) : vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
+                returnAddresses = AOT::tryCaptureStackTrace(vm, this, *stackTraceLimit, stackTrace, subclassCaller);
         }
     }
 #endif
@@ -281,15 +268,9 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
 
     String messageWithSource = message;
 
-    if (hasSourceAppender() && (m_returnAddresses || (m_stackTrace && !m_stackTrace->isEmpty()))) {
-        if (auto quote = quoteSourceWithoutSourceText(vm, vm.topCallFrame)) {
-            ErrorInstance::SourceAppender appender = sourceAppender();
-            clearSourceAppender();
-            RuntimeType type = runtimeTypeForCause();
-            clearRuntimeTypeForCause();
-            if (!quote->text.isNull() && !message.isNull())
-                messageWithSource = appender(message, quote->text, type, quote->isExact ? SourceTextWhereErrorOccurred::FoundExactSource : SourceTextWhereErrorOccurred::FoundApproximateSource);
-        } else if (auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame); codeBlock) {
+    if (((m_stackTrace && !m_stackTrace->isEmpty()) || m_returnAddresses) && hasSourceAppender()) {
+        auto [codeBlock, bytecodeIndex] = getBytecodeIndex(vm, vm.topCallFrame);
+        if (codeBlock) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
             RuntimeType type = runtimeTypeForCause();

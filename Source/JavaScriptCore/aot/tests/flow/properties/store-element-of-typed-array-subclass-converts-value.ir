@@ -1,0 +1,75 @@
+# An instance of a subclass of a typed array converts what is stored under an index like an instance of the built-in class: valueOf of the object runs at the store
+# OPTIONS: check=FlowFixpoint
+# RUN(CONVERTED): flow-links calls
+# CONVERTED: f0 v20 -> i{{*}} f1 Protocol
+# RUN(WRITTEN): flow-solve nodes
+# WRITTEN: DeclaredPart(L1#{{*}}, 0) = {1|"text"}
+# RUN(FIXPOINT): flow-solve fixpoint
+# FIXPOINT: nothing changes
+
+layout L0 kind=Instance name="Samples" module=m0 position=95 constructor=f2 flags=[HasHeritage]
+layout L1 module=m0 position=14 fields=[{key="n" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L2 module=m0 position=42 fields=[{key="valueOf" declared={type=anything predicted=function} flags=[IsRequired, IsMethod]}]
+variable g0 name="state" module=m0 declared={type=anything|absent predicted=L1} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Data data=d0 @14
+    v1 = Predict v0 predicted=L1 @6
+    PutModuleVariable v1 variable=g0 @6
+    v3 = NewObject layout=L2 @44
+    v4 = NewClosure function=f1 @44
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @44
+    PropDefine v3, v5 key="valueOf" @44
+    v7 = FinishObject v3 @42
+    v8 = Predict v7 predicted=L2 @30
+    v9 = Builtin builtin=GlobalThis @111
+    v10 = PropGet v9 key="Float64Array" [isFreeName] @111
+    v11 = Predict v10 predicted=builtin(Float64Array) @111
+    v12 = ResolveHeritage v11 @89
+    v13 = NewClosure function=f2 @89
+    v14 = NewClass v13, v11, v12 layout=L0 @89
+    PutModuleVariable v14 variable=g1 @89
+    v16 = FinishClass v14 layout=L0 @89
+    v17 = ClaimDeclared v16 declared={type=anything predicted=function} @89
+    v18 = ClaimDeclared v16 declared={type=anything predicted=function} @89
+    v19 = Integer integer=2 @155
+    v20 = Construct v18, -, v19 calleeName="Samples" @147
+    v21 = Predict v20 predicted=L0 @143
+    v22 = Integer integer=1 @159
+    v23 = ClaimDeclared v8 declared={type=anything predicted=number} @159
+    ElemSet v21, v22, v23 @159
+    v25 = Builtin builtin=GlobalThis @183
+    v26 = PropGet v25 key="print" [isFreeName] @183
+    v27 = PropGet v1 key="n" @189
+    v28 = Predict v27 predicted=number @189
+    v29 = Call v26, -, v28 calleeName="print" @183
+    v30 = Undefined @183
+    Return v30 @183
+}
+function f1 name="valueOf" module=m0 position=44 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything predicted=number}] {
+  b0():
+    Jump -> next b1() @44
+  b1():
+    v0 = GetModuleVariable variable=g0 @56
+    v1 = CheckInitialized v0 name="state" @56
+    v2 = String string="text" @66
+    v3 = ClaimDeclared v2 declared={type=anything predicted=number} @56
+    PropSet v1, v3 key="n" @56
+    v5 = Integer integer=7 @81
+    v6 = ClaimDeclared v5 declared={type=anything predicted=number} @81
+    Return v6 @81
+}
+function f2 name="Samples" module=m0 position=95 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+  b0(v0: function, v1: anything, v2: Array):
+    Jump -> next b1() @95
+  b1():
+    v3 = GetSuperBase v0 @95
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @95
+    Return v4 @95
+}
+data d0 root=Object{layout=L1 members=[{key="n" value=Number{value=1}}]} module=m0
+entry module=m0

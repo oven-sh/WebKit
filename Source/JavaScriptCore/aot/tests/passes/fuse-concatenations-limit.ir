@@ -1,0 +1,17 @@
+# A fused concatenation has at most as many parts as the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxFusedConcatenationParts:3
+# RUN: pass FuseConcatenations
+# LOSS: MaxFusedConcatenationParts
+# STATISTIC: ConcatenationsFused = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="chain" parameters=[{type=string}, {type=string}, {type=string}, {type=string}] results=[{type=string}] {
+  b0(v0: string, v1: string, v2: string, v3: string):
+    v4 = Add v0, v1
+    v5 = Add v4, v2
+    v6 = Add v5, v3
+    Return v6
+}
+# CHECK: [[three]]: string = Strcat v0, v1, v2
+# CHECK-NEXT: string = Add [[three]], v3

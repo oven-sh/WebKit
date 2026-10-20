@@ -35,7 +35,6 @@ namespace JSC { namespace B3 {
 // B3::Procedure and Air::Code have a lot of collections of indexed things. This has all of the
 // logic.
 
-#if USE(BUN_JSC_ADDITIONS)
 template<typename T>
 struct SparseCollectionTraits {
     using Deleter = std::default_delete<T>;
@@ -49,18 +48,13 @@ template<>
 struct SparseCollectionTraits<Value> {
     using Deleter = ValueDestroyer;
 };
-#endif
 
 template<typename T>
 class SparseCollection {
-#if USE(BUN_JSC_ADDITIONS)
 public:
     using Pointer = std::unique_ptr<T, typename SparseCollectionTraits<T>::Deleter>;
 
 private:
-#else
-    using Pointer = std::unique_ptr<T>;
-#endif
     typedef Vector<Pointer> VectorType;
     
 public:
@@ -147,10 +141,7 @@ public:
     }
 
     unsigned size() const { return m_vector.size(); }
-#if USE(BUN_JSC_ADDITIONS)
     unsigned numberOfEntries() const { return m_vector.size() - m_indexFreeList.size(); }
-    std::span<const size_t> indexFreeList() const LIFETIME_BOUND { return m_indexFreeList.span(); }
-#endif
     bool isEmpty() const { return m_vector.isEmpty(); }
     
     T* at(unsigned index) const { return m_vector[index].get(); }

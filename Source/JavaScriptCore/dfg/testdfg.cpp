@@ -114,9 +114,6 @@ int main(int argc, char** argv)
         break;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    JSC::installCompilers();
-#endif
     JSC::initialize();
     
     run(filter);

@@ -1,0 +1,49 @@
+# A field that nothing reads stays stored while a for-in loop over an object that inherits from its object lists the key
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+# CHECK: layout L0 name="Parent" fields=[{key="listed"{{*}}stores=AtMostOnce
+# CHECK: layout L1 name="Other" fields=[{key="unlisted"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK: = NewObject layout=L1
+# CHECK: = ForInOpen
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Parent" fields=[{key="listed" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="unlisted" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f1
+    v7 = Call v1, -, v6
+    v8 = Builtin builtin=ObjectCreate
+    v9 = Call v8, -, v3
+    v10 = Call v8, -, v9
+    v11 = ForInOpen v10
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = ForInStep v11, v10
+    v14 = ResultAt v13
+    v15 = ResultAt v13 index=1
+    Branch v14 -> taken b2(), notTaken b3()
+  b2():
+    Return
+  b3():
+    v16 = Call v1, -, v15
+    Jump -> next b1()
+}
+function f1 name="keepsOtherAlive" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = TypeOf v0
+    Return v1
+}

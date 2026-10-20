@@ -1,0 +1,175 @@
+# function even(p) { return odd(p, p) }   function odd(p, q) { p.x; return p.y ? even(q) : leaf(p.x) }   even(new Pair())   odd(input, new Pair())
+# Flow links the call in `even` to the proven version of `odd`, and a pass may send it into the generic version. The cycle then runs through the generic version,
+# so its tail call of `even` has to reuse the frame like the one of the proven version. Its tail call of `leaf` lies on no cycle and may become an ordinary call
+# RUN: flow-apply
+# STATISTIC: FlowGenericVersions = 1
+# CHECK-LABEL: function f1 name="even"
+# CHECK: = CallDirect v0, v0 function=f2
+# CHECK-NEXT: ReturnCall v1
+# CHECK-NOT: requirement=
+# CHECK-LABEL: function f2 name="odd"
+# CHECK-NOT: ReturnCall v5 requirement=
+# CHECK: ReturnCall v6 requirement=Allowed
+# CHECK-LABEL: name="odd" {{*}}role=GenericVersion
+# CHECK-NOT: ReturnCall v5 requirement=
+# CHECK: ReturnCall v6 requirement=Allowed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v1, v2 function=f2
+    v5 = CallDirect function=f4
+    Return
+}
+function f1 name="even" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0, v0 function=f2
+    ReturnCall v1
+}
+function f2 name="odd" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="y"
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallDirect v1 function=f1
+    ReturnCall v5
+  b2():
+    v6 = CallDirect v2 function=f3
+    ReturnCall v6
+}
+function f3 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="padding" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Undefined
+    v3 = Undefined
+    v4 = Undefined
+    v5 = Undefined
+    v6 = Undefined
+    v7 = Undefined
+    v8 = Undefined
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Undefined
+    v13 = Undefined
+    v14 = Undefined
+    v15 = Undefined
+    v16 = Undefined
+    v17 = Undefined
+    v18 = Undefined
+    v19 = Undefined
+    v20 = Undefined
+    v21 = Undefined
+    v22 = Undefined
+    v23 = Undefined
+    v24 = Undefined
+    v25 = Undefined
+    v26 = Undefined
+    v27 = Undefined
+    v28 = Undefined
+    v29 = Undefined
+    v30 = Undefined
+    v31 = Undefined
+    v32 = Undefined
+    v33 = Undefined
+    v34 = Undefined
+    v35 = Undefined
+    v36 = Undefined
+    v37 = Undefined
+    v38 = Undefined
+    v39 = Undefined
+    v40 = Undefined
+    v41 = Undefined
+    v42 = Undefined
+    v43 = Undefined
+    v44 = Undefined
+    v45 = Undefined
+    v46 = Undefined
+    v47 = Undefined
+    v48 = Undefined
+    v49 = Undefined
+    v50 = Undefined
+    v51 = Undefined
+    v52 = Undefined
+    v53 = Undefined
+    v54 = Undefined
+    v55 = Undefined
+    v56 = Undefined
+    v57 = Undefined
+    v58 = Undefined
+    v59 = Undefined
+    v60 = Undefined
+    v61 = Undefined
+    v62 = Undefined
+    v63 = Undefined
+    v64 = Undefined
+    v65 = Undefined
+    v66 = Undefined
+    v67 = Undefined
+    v68 = Undefined
+    v69 = Undefined
+    v70 = Undefined
+    v71 = Undefined
+    v72 = Undefined
+    v73 = Undefined
+    v74 = Undefined
+    v75 = Undefined
+    v76 = Undefined
+    v77 = Undefined
+    v78 = Undefined
+    v79 = Undefined
+    v80 = Undefined
+    v81 = Undefined
+    v82 = Undefined
+    v83 = Undefined
+    v84 = Undefined
+    v85 = Undefined
+    v86 = Undefined
+    v87 = Undefined
+    v88 = Undefined
+    v89 = Undefined
+    v90 = Undefined
+    v91 = Undefined
+    v92 = Undefined
+    v93 = Undefined
+    v94 = Undefined
+    v95 = Undefined
+    v96 = Undefined
+    v97 = Undefined
+    v98 = Undefined
+    v99 = Undefined
+    v100 = Undefined
+    v101 = Undefined
+    v102 = Undefined
+    v103 = Undefined
+    v104 = Undefined
+    v105 = Undefined
+    v106 = Undefined
+    v107 = Undefined
+    v108 = Undefined
+    v109 = Undefined
+    v110 = Undefined
+    v111 = Undefined
+    v112 = Undefined
+    v113 = Undefined
+    v114 = Undefined
+    v115 = Undefined
+    v116 = Undefined
+    v117 = Undefined
+    v118 = Undefined
+    v119 = Undefined
+    Return
+}

@@ -804,18 +804,6 @@ op :get_by_id_direct,
         offset: unsigned,
     }
 
-op :in_by_id,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: unsigned,
-    },
-    metadata: {
-        structureID: StructureID,
-        offset: unsigned,
-        kind: unsigned,
-    }
-
 # Alignment: 1
 op :jneq_ptr,
     args: {
@@ -884,6 +872,13 @@ op :to_object,
         operand: VirtualRegister,
         message: unsigned,
         valueProfile: unsigned,
+    }
+
+op :in_by_id,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
     }
 
 op :has_private_name,

@@ -36,6 +36,13 @@
 #include "JSPromise.h"
 #include "MicrotaskCall.h"
 
+namespace JSC {
+
+static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorPrototypeReturn);
+static JSC_DECLARE_HOST_FUNCTION(asyncGeneratorPrototypeThrow);
+
+} // namespace JSC
+
 #include "AsyncGeneratorPrototype.lut.h"
 
 namespace JSC {

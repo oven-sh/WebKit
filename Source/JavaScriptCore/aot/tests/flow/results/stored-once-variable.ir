@@ -1,0 +1,22 @@
+# One store at the top level of a module body runs at most once, two stores are not counted as one
+# RUN: flow
+# CHECK: variable g0 {{*}}flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+# CHECK: variable g1 {{*}}flow={writers=AllKnown
+# CHECK-NOT: stores=
+# CHECK: variable g2 {{*}}flow={writers=AllKnown stores=Never
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="once" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="twice" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="never" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v0 variable=g1
+    v4 = GetModuleVariable variable=g0
+    v5 = GetModuleVariable variable=g2
+    Return
+}

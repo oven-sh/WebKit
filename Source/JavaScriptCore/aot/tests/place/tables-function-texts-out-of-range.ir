@@ -1,0 +1,26 @@
+# A text range that ends past the text of its module fails the build with one diagnostic. The range that ends where the text ends reports nothing
+# RUN: tables
+# DIAGNOSTIC: ProgramTableCheckFailed 1
+# CHECK-NOT: magic
+# CHECK: rule TableOutOfBounds
+
+module m0 path="/a.ts" displayPath="a.ts" body=f0 functionText="0123456789"
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="endsWithText" text={start=8 end=10} results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="endsPastText" text={start=8 end=11} results=[{type=anything}] {
+  b0():
+    Return
+}

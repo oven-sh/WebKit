@@ -1,0 +1,39 @@
+# An object that a built-in retains reaches native code and not unknown JavaScript, and a direct eval nobody reaches changes nothing
+# RUN: flow-solve sinks objects
+# CHECK: nativeCode {{*}}L0#[[retained]]
+# CHECK-NOT: L1#
+# CHECK: unknownJavaScript {
+# CHECK-NOT: L0#
+# CHECK-NOT: L1#
+# CHECK: L0#[[retained]] mutations=[ReachNativeCode] uses=
+# CHECK-NEXT: L1#[[kept]] mutations=[] uses=[] events=[Allocated]
+# RUN(WITNESS): flow-solve objects witnesses
+# WITNESS: [[object]] L0#[[retained]] mutations=
+# WITNESS: [[object]] ReachNativeCode f0:v5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+evalscope e0
+entry module=m0
+layout L0 name="Retained" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = Builtin builtin=SuppressedError
+    v4 = Undefined
+    v5 = Construct v3, -, v1, v4
+    Return
+  b2() role=CatchHandler:
+    v6 = CatchValue
+    Return
+}
+function f1 name="evaluate" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined
+    v2 = DirectEval v0, v1 evalScope=e0
+    Return v2
+}

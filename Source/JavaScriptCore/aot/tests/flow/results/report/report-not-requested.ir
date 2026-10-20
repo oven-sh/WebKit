@@ -1,0 +1,27 @@
+# Without the flow report only unseen code, the built-ins, features and locales in use and the counts are filled: the accesses, checks and type tests are counted and dropped
+# RUN: flow-report
+# RUN(ALL): flow-report
+# CHECK: unseen-code EvaluatesText Function witness f0:v2
+# CHECK: builtin-used MathMax [
+# CHECK: feature-used
+# CHECK: locale-used
+# CHECK: access-count m0 accesses=[1, 0, 0, 0] calls=[3, 0, 0, 0] typeTests=1
+# ALL-NOT: copies=
+# ALL-NOT: site=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=6 kind=Assertion
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = String string="return 1"
+    v2 = Construct v0, -, v1 @1
+    v3 = Builtin builtin=MathMax
+    v4 = Integer integer=1
+    v5 = Call v3, -, v4, v4 @2
+    v6 = Call v2 @3
+    v7 = Claim v6 castType=number site=w0 @4
+    v8 = PropGet v6 key="x" @5
+    Return
+}

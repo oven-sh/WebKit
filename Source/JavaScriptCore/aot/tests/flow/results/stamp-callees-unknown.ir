@@ -1,0 +1,38 @@
+# A callee nobody knows does not erase the callee beside it: the set lists the known function and is not complete, and the site names the cause and where the unknown value came from. The call beside it has a complete set and no loss
+# RUN: flow-apply
+# RUN(FLOW): flow
+# CHECK: = Call v6 accessSite={{*}} callees=[f2, ..]
+# CHECK-NEXT: = Call v2 accessSite={{*}} callees=[f1]
+# FLOW: access [[unknown]] function=f0 kind=Call loss cause=UnknownCallee witness=f0:v1
+# FLOW-NEXT: access [[known]] function=f0 kind=Call
+# FLOW-NOT: loss
+# FLOW: indirect
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = PropGet v0 key="condition" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v1)
+  b3(v6):
+    v7 = Call v6
+    v8 = Call v2
+    Return
+}
+function f1 name="calledAlone" results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="calledBesideUnknown" results=[{type=anything}] {
+  b0():
+    Return
+}

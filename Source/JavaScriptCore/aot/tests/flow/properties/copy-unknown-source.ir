@@ -1,0 +1,34 @@
+# A spread of an unknown object gives its target the unknown value under every key. The store is one under an unknown key, and no computed key of the program
+# RUN(UNKNOWN): flow-solve nodes objects
+# RUN(KNOWN): flow-solve nodes objects
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Copy" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Source" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    CopyDataProperties v3, v2
+    v5 = FinishObject v3
+    v6 = Integer integer=2
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = NewObject -, v0 layout=L0 fields=[0]
+    CopyDataProperties v9, v8
+    v11 = FinishObject v9
+    Return
+}
+# UNKNOWN: DeclaredPart(L0#[[open]], 0) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# UNKNOWN: , f0, v5) = {L0#[[open]]}
+# UNKNOWN: IndexedProperties(L0#[[open]]) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# UNKNOWN: StringProperties(L0#[[open]]) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# UNKNOWN: SymbolProperties(L0#[[open]]) = {undefined|null|boolean|number|string|symbol|bigint|unknown}
+# UNKNOWN: L0#[[open]] mutations=[AddProperty, StoreAfterCreation] uses={{*}} events=[Allocated, StoredByUnknownKey, StoredUnderNumericName, CopiedUnderUnknownKeys]
+# KNOWN: DeclaredPart(L0#[[exact]], 0) = {1}
+# KNOWN: , f0, v11) = {L0#[[exact]]}
+# KNOWN: Property(L0#[[exact]], "y") = {2}
+# KNOWN: L0#[[exact]] mutations=[AddProperty] uses={{*}} events=[Allocated]

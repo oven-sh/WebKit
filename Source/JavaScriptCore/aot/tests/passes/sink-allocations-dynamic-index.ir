@@ -1,0 +1,121 @@
+# A read of a virtual array at an unknown number is a switch over its elements: a number that is no index of an element finds nothing
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 4
+# STATISTIC: AllocationsSunk = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="threeElements" parameters=[{type=number}, {type=number}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number, v3: i32):
+    v4 = NewArray v0, v1, v2 contents=number
+    v5 = ElemGet v4, v3
+    Return v5
+}
+# CHECK-LABEL: function f0 name="threeElements"
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: [[none0]]: undefined = Undefined
+# CHECK-NEXT: Switch v3 cases=[0, 1, 2] -> case [[join0]](v0), case [[join0]](v1), case [[join0]](v2), otherwise [[join0]]([[none0]])
+# CHECK-NEXT: [[join0]]([[element0]]: anything):
+# CHECK-NEXT: v5:{{*}}= Upcast [[element0]]
+# CHECK-NEXT: Return v5
+
+function f1 name="hole" parameters=[{type=number}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: i32):
+    v3 = NewArray v0, v1 contents=number holes=[1]
+    v4 = ElemGet v3, v2
+    Return v4
+}
+# CHECK-LABEL: function f1 name="hole"
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: [[none1]]: undefined = Undefined
+# CHECK: Switch v2 cases=[0, 1, 2] -> case [[join1]](v0), case [[join1]]([[hole1]]), case [[join1]](v1), otherwise [[join1]]([[none1]])
+# CHECK-NEXT: [[join1]]([[element1]]: anything):
+# CHECK-NEXT: v4:{{*}}= Upcast [[element1]]
+
+function f2 name="elementsAreLiterals" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32):
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    v5 = NewArray v3, v4 contents=anything
+    v6 = ElemGet v5, v2
+    Return v6
+}
+# CHECK-LABEL: function f2 name="elementsAreLiterals"
+# CHECK: [[first2]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK: [[second2]]:{{*}}= NewObject -, v1 layout=L0 fields=[0]
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: Switch v2 cases=[0, 1] -> case [[join2]]([[first2]]), case [[join2]]([[second2]]), otherwise [[join2]](
+
+function f3 name="indexIsNumber" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: number):
+    v3 = NewArray v0, v1 contents=number
+    v4 = ElemGet v3, v2
+    Return v4
+}
+# CHECK-LABEL: function f3 name="indexIsNumber"
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemGet
+# CHECK: Switch v2 cases=[0, 1] -> case [[join3]](v0), case [[join3]](v1), otherwise [[join3]](
+
+function f4 name="readDoesNotAdmitElements" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: i32):
+    v3 = NewArray v0, v1 contents=number
+    v4 = HasArrayStorage v3 arrayStorage=Double
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetArrayElement v3, v2, v6 arrayStorage=Double level=Predicted
+    Return v7
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f4 name="readDoesNotAdmitElements"
+# CHECK-NOT: Switch
+# CHECK: v3:{{*}}= NewArray v0, v1 contents=number
+# CHECK: v7: undefined|number = GetArrayElement v3, v2, v6
+# CHECK-NOT: Switch
+
+function f5 name="writtenAtUnknownIndex" parameters=[{type=number}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: i32):
+    v3 = NewArray v0, v1 contents=number
+    ElemSet v3, v2, v0 mode=Strict
+    v5 = ElemGet v3, v2
+    Return v5
+}
+# CHECK-LABEL: function f5 name="writtenAtUnknownIndex"
+# CHECK-NOT: Switch
+# CHECK: v3:{{*}}= NewArray v0, v1 contents=number
+# CHECK-NEXT: ElemSet v3, v2, v0
+# CHECK-NEXT: v5:{{*}}= ElemGet v3, v2
+# CHECK-NOT: Switch
+
+function f6 name="passedToCall" parameters=[{type=number}, {type=number}, {type=i32}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: i32, v3: anything):
+    v4 = NewArray v0, v1 contents=number
+    v5 = Call v3, -, v4
+    v6 = ElemGet v4, v2
+    Return v6
+}
+# CHECK-LABEL: function f6 name="passedToCall"
+# CHECK-NOT: Switch
+# CHECK: v4:{{*}}= NewArray v0, v1 contents=number
+# CHECK-NEXT: = Call v3, -, v4
+# CHECK-NEXT: v6:{{*}}= ElemGet v4, v2
+# CHECK-NOT: Switch
+
+function f7 name="indexIsAnything" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything):
+    v3 = NewArray v0, v1 contents=number
+    v4 = ElemGet v3, v2
+    Return v4
+}
+# CHECK-LABEL: function f7 name="indexIsAnything"
+# CHECK-NOT: Switch
+# CHECK: v3:{{*}}= NewArray v0, v1 contents=number
+# CHECK-NEXT: v4:{{*}}= ElemGet v3, v2
+# CHECK-NOT: Switch

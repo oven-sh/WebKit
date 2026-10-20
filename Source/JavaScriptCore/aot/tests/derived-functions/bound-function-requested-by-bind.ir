@@ -1,0 +1,38 @@
+# From the program as read: bind on a closure of a known function makes a closure of a bound function, and a function with a rest parameter is not bound
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass only-passes=PlaceTypeTests,ResolveCalls,ChooseCallingConventions
+# STATISTIC: BoundFunctions = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[closure]]: f1 = NewClosure function=f1
+# CHECK: [[argument]]: fractional = Double number=1.5
+# CHECK: = NewClosure [[argument]], [[closure]] function=[[bound]]
+# CHECK: = CallBuiltin {{*}} overload=FunctionPrototypeBind/0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Undefined
+    v2 = Double number=1.5
+    v3 = PropGet v0 key="bind"
+    v4 = Call v3, v0, v1, v2 calleeKey="bind"
+    v5 = Call v4
+    v6 = NewClosure function=f2
+    v7 = PropGet v6 key="bind"
+    v8 = Call v7, v6, v1, v2 calleeKey="bind"
+    v9 = Call v8
+    Return
+}
+function f1 name="target" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="collects" kind=Arrow flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
+  b0(v0: Array<anything>):
+    Return v0
+}
+# CHECK: function [[bound]] name="target"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK-NOT: role=BoundFunction

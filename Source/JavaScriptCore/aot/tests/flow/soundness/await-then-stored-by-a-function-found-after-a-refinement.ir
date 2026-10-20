@@ -1,0 +1,131 @@
+# `then` is stored on an awaited object after the await has looked the object up: the await calls it and its result is unknown
+# The function that does it is found under the key "undefined", which a field read before its store yields only once the refinement of the construction is withdrawn, after everything else has come to rest
+# RUN: flow-links calls
+# RUN(NODES): flow-solve nodes
+# CHECK: f0 v24 -> [[install]] f4 Call Once
+# CHECK: f5 v2 -> [[then]] f2 Protocol Later cycle
+# NODES: , f5, v2) = {{*}}unknown
+
+layout L0 kind=Instance name="Leak" module=m0 position=102 constructor=f6 fields=[{key="k" declared={type=anything predicted="a"}}]
+layout L1 module=m0 position=10 fields=[{key="v" declared={type=anything predicted=number} flags=[IsRequired]}]
+layout L2 module=m0 position=295 fields=[{key="a" declared={type=anything predicted=function} flags=[IsRequired]}, {key="undefined" declared={type=anything predicted=function} flags=[IsRequired]}]
+variable g0 name="probe" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="then" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="o" module=m0 declared={type=anything|absent predicted=L1} flags=[IsImmutable]
+variable g3 name="leaked" module=m0 declared={type=anything|absent predicted=string}
+variable g4 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f3 @0
+    v1 = ClaimDeclared v0 declared={type=anything predicted=function} @0
+    v2 = NewClosure function=f4 @0
+    v3 = ClaimDeclared v2 declared={type=anything predicted=function} @0
+    v4 = NewClosure function=f5 @0
+    v5 = ClaimDeclared v4 declared={type=anything predicted=function} @0
+    v6 = Data data=d0 @10
+    v7 = Predict v6 predicted=L1 @6
+    PutModuleVariable v7 variable=g2 @6
+    v9 = String string="a" @55
+    v10 = Predict v9 predicted=string @46
+    PutModuleVariable v10 variable=g3 @46
+    v12 = NewClosure function=f6 @96
+    v13 = NewClass v12 layout=L0 @96
+    PutModuleVariable v13 variable=g4 @96
+    v15 = FinishClass v13 layout=L0 @96
+    v16 = ClaimDeclared v15 declared={type=anything predicted=function} @96
+    v17 = ClaimDeclared v15 declared={type=anything predicted=function} @96
+    v18 = Predict v1 predicted=function @300
+    v19 = Predict v3 predicted=function @320
+    v20 = NewObject -, v18, v19 layout=L2 fields=[0, 1] @295
+    v21 = FinishObject v20 @295
+    v22 = Predict v21 predicted=L2 @285
+    v23 = Predict v5 predicted=function @331
+    v24 = Call v23 calleeName="use" @331
+    v25 = Construct v17 calleeName="Leak" @342
+    v26 = GetModuleVariable variable=g3 @358
+    v27 = CheckInitialized v26 name="leaked" @358
+    v28 = ElemGet v22, v27 @350
+    v29 = Call v28, v22 @358
+    v30 = Call v23 calleeName="use" @369
+    v31 = Undefined @369
+    Return v31 @369
+}
+function f1 name="probe" module=m0 position=60 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @60
+  b1():
+    v1 = GetModuleVariable variable=g3 @80
+    v2 = CheckInitialized v1 name="leaked" @80
+    v3 = PropGet v0 key="k" @89
+    v4 = ClaimDeclared v3 declared={type=anything predicted=string} @80
+    PutModuleVariable v4 variable=g3 @80
+    v6 = Undefined @80
+    Return v6 @80
+}
+function f2 name="then" module=m0 position=156 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1() @156
+  b1():
+    v1 = String string="late" @189
+    v2 = Call v0, -, v1 calleeName="resolve" @181
+    v3 = Undefined @181
+    Return v3 @181
+}
+function f3 name="nothing" module=m0 position=20 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @20
+  b1():
+    v0 = Undefined @20
+    Return v0 @20
+}
+function f4 name="install" module=m0 position=200 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1() @200
+  b1():
+    v0 = GetModuleVariable variable=g2 @221
+    v1 = CheckInitialized v0 name="o" @221
+    v2 = GetModuleVariable variable=g1 @230
+    v3 = Predict v2 predicted=function @230
+    PropSet v1, v3 key="then" @221
+    v5 = Undefined @221
+    Return v5 @221
+}
+function f5 name="use" module=m0 position=238 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=anything predicted=Promise<L1>}] {
+  b0():
+    Jump -> next b1() @238
+  b1():
+    v0 = GetModuleVariable variable=g2 @274
+    v1 = CheckInitialized v0 name="o" @274
+    v2 = Await v1 @268
+    v3 = Predict v2 predicted=L1 @268
+    Return v3 @268
+}
+function f6 name="Leak" module=m0 position=109 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
+  b0(v0: anything):
+    Jump -> next b1() @109
+  b1():
+    v1 = GetConstructPrototype v0 layout=L0 @96
+    v2 = NewObject v1 layout=L0 @96
+    v3 = GetModuleVariable variable=g0 @125
+    v4 = Predict v3 predicted=function @125
+    v5 = Predict v2 predicted=L0 @131
+    v6 = Call v4, -, v5 calleeName="probe" @125
+    v7 = Predict v2 predicted=L0 @138
+    v8 = String string="a" @147
+    v9 = ClaimDeclared v8 declared={type=anything predicted=string} @138
+    PropSet v7, v9 key="k" @138
+    v11 = Undefined @138
+    v12 = TypeTest v11 testedType=object @138
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @138
+  b2(v13):
+    Jump -> next b4(v13) @138
+  b3(v14):
+    Jump -> next b4(v2) @138
+  b4(v15):
+    Return v15 @138
+}
+data d0 root=Object{layout=L1 members=[{key="v" value=Number{value=1}}]} module=m0
+entry module=m0

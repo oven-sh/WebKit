@@ -1,0 +1,86 @@
+# An arguments object holds its parameters by position, the surplus arguments, a length, its callee and the iterator method of arrays
+# RUN: flow-solve nodes
+# CHECK: Variable(g0) = {undefined|L0#
+# CHECK-NOT: L1#
+# CHECK: Variable(g1) = {undefined|1}
+# CHECK: Variable(g2) = {L0#{{*}}|L1#
+# CHECK-NOT: L2#
+# CHECK: Variable(g3) = {undefined|f2}
+# CHECK: Variable(g4) = {L2#
+# CHECK-NOT: L0#
+# CHECK: Variable(g5) =
+# CHECK: , f4, result 0) = {undefined}
+# CHECK-NOT: , f5,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Passed" fields=[{key="p" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Assigned" fields=[{key="q" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="PassedSecond" fields=[{key="r" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="element" module=m0 declared={type=anything} initialization=Uninitialized
+variable g1 name="length" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="firstMapped" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="callee" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="secondMapped" module=m0 declared={type=anything} initialization=Uninitialized
+variable g5 name="last" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Boolean boolean=true
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v2
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v2, v4
+    v9 = NewClosure function=f4
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v9
+    v12 = NewClosure function=f5
+    PutModuleVariable v0 variable=g5
+    Return
+}
+function f1 name="unmapped" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = Integer integer=0
+    v4 = ElemGet v2, v3
+    PutModuleVariable v4 variable=g0
+    v6 = PropGet v2 key="length"
+    PutModuleVariable v6 variable=g1
+    Return
+}
+function f2 name="mapped" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: Array):
+    v5 = CreateMappedArguments v0, v1, v4, v2, v3
+    v6 = Boolean boolean=true
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    SetMappedArgument v5, v8 index=0
+    v10 = GetMappedArgument v5 index=0
+    PutModuleVariable v10 variable=g2
+    v12 = PropGet v5 key="callee"
+    PutModuleVariable v12 variable=g3
+    v14 = GetMappedArgument v5 index=1
+    PutModuleVariable v14 variable=g4
+    Return
+}
+function f3 name="spreads" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = Integer integer=0
+    v6 = ElemGet v3, v5
+    v7 = Call v6
+    Return
+}
+function f4 name="spreadElement" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f5 name="neverCalled" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

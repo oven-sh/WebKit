@@ -1,0 +1,30 @@
+# An access whose code a pass removed counts as a source access: it is listed and counted as proven, with no copy. A read whose value is used and an unused read that may run a getter keep their one copy
+# RUN: flow-report through=EliminateDeadCode
+# RUN(PROGRAM): pipeline EliminateDeadCode
+# OPTIONS: report=Flow
+# CHECK: access-count m0 accesses=[{{*}}, 0, 0, 1]
+# CHECK: access m0:10 Read Proven copies=0
+# CHECK-NEXT: access m0:20 Read Unknown {{*}}copies=1
+# CHECK-NEXT: access m0:30 Read Unknown cause=UnknownObject witness f0:v1 copies=1
+# PROGRAM-LABEL: function f0 name="main"
+# PROGRAM-NOT: @10
+# PROGRAM: = PropGet v2 key="y" {{*}}@20
+# PROGRAM-NOT: @10
+# PROGRAM: = PropGet v1 key="x" {{*}}@30
+# PROGRAM-LABEL: function f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName] @1
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    PropSet v0, v2 key="point" [isFreeName] @2
+    v4 = PropGet v2 key="x" @10
+    v5 = PropGet v2 key="y" @20
+    PropSet v0, v5 key="used" [isFreeName] @3
+    v7 = PropGet v1 key="x" @30
+    Return
+}

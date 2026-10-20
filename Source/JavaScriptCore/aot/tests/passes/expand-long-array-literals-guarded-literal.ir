@@ -1,0 +1,58 @@
+# A guard on a long array literal that lasts across unknown code, because nothing else holds the array, lasts as well once the literal is allocated first and filled
+# FORM: Prepared
+# RUN: pass ExpandLongArrayLiterals
+# LOSS: MaxArrayLiteralBatch x1 f0 v35
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsAroundUnknownCode" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+  b0(v0: anything, v1: object):
+    v2 = Call v0
+    v3 = Call v0
+    v4 = Call v0
+    v5 = Call v0
+    v6 = Call v0
+    v7 = Call v0
+    v8 = Call v0
+    v9 = Call v0
+    v10 = Call v0
+    v11 = Call v0
+    v12 = Call v0
+    v13 = Call v0
+    v14 = Call v0
+    v15 = Call v0
+    v16 = Call v0
+    v17 = Call v0
+    v18 = Call v0
+    v19 = Call v0
+    v20 = Call v0
+    v21 = Call v0
+    v22 = Call v0
+    v23 = Call v0
+    v24 = Call v0
+    v25 = Call v0
+    v26 = Call v0
+    v27 = Call v0
+    v28 = Call v0
+    v29 = Call v0
+    v30 = Call v0
+    v31 = Call v0
+    v32 = Call v0
+    v33 = Call v0
+    v34 = Call v0
+    v35 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34 contents=anything
+    v36 = IsPristine v35 builtinClass=Array aspects=[Storage]
+    Branch v36 -> taken b1(| 0), notTaken b2()
+  b1(v37):
+    v38 = Integer integer=1
+    v39 = GetArrayElement v35, v38, v37 level=Predicted [keyIsIntegral]
+    PropSet v1, v39 key="first"
+    v41 = GetArrayElement v35, v38, v37 level=Predicted [keyIsIntegral]
+    Return v41
+  b2():
+    Return
+}
+# CHECK: [[filled]]: Array = NewContiguousArray
+# CHECK: v35: Array = TruncateNewArray [[filled]],
+# CHECK: PropSet v1, v39 key="first"
+# CHECK-NEXT: v41: anything = GetArrayElement v35, v38, v37 level=Predicted

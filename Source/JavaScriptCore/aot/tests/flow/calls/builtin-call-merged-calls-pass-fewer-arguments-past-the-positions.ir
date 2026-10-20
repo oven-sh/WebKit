@@ -1,0 +1,52 @@
+# Three bound functions over one bound function are called by one operation with eight arguments. Two of them put one argument in front, so they pass nine, and the third passes eight.
+# The calls of the inner bound function share one statement with nodes of its own: eight positions and one node for the rest. The ninth argument lies in the rest,
+# and the call that leaves it out reads undefined there. The eighth is passed by all three and never reads undefined.
+# LOSS: MaxPositionalParts f0
+# RUN: flow-solve nodes
+# CHECK: , f1, parameter 7) = {int[7, 8]}
+# CHECK-NEXT: , f1, parameter 8) = {undefined|8}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="bind"
+    v2 = Null
+    v3 = Call v1, v0, v2 calleeKey="bind"
+    v4 = PropGet v3 key="bind"
+    v5 = Integer integer=0
+    v6 = String string="x"
+    v7 = Call v4, v3, v2, v5 calleeKey="bind"
+    v8 = Call v4, v3, v2, v6 calleeKey="bind"
+    v9 = Call v4, v3, v2 calleeKey="bind"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="first" [isFreeName]
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v7)
+  b2():
+    v13 = PropGet v10 key="second" [isFreeName]
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v8)
+  b4():
+    Jump -> next b5(v9)
+  b5(v15):
+    v16 = Integer integer=1
+    v17 = Integer integer=2
+    v18 = Integer integer=3
+    v19 = Integer integer=4
+    v20 = Integer integer=5
+    v21 = Integer integer=6
+    v22 = Integer integer=7
+    v23 = Integer integer=8
+    v24 = Call v15, -, v16, v17, v18, v19, v20, v21, v22, v23
+    Return
+}
+function f1 name="target" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything):
+    Return v8
+}

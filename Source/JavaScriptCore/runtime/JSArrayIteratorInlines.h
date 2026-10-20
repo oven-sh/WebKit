@@ -46,6 +46,7 @@ ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance(JSArray* 
 ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance()
 {
     auto* array = downcast<JSArray>(iteratedObject());
+    ASSERT(isJSArray(array));
 
     int64_t index = this->index();
     auto indexToLoad = nextWithAdvance(array, index);

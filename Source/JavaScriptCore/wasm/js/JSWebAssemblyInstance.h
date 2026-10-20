@@ -29,6 +29,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "CallLinkInfo.h"
 #include "JSDestructibleObject.h"
 #include "JSWebAssemblyGlobal.h"
@@ -106,6 +107,8 @@ public:
 
     void initializeImports(JSGlobalObject*, JSObject* importObject, Wasm::CreationMode);
     void finalizeCreation(VM&, JSGlobalObject*, Ref<Wasm::CalleeGroup>&&, Wasm::CreationMode);
+    void adoptCalleeGroup(const Wasm::CalleeGroup&);
+    void* const* imageCodePointers() const { return m_imageCodePointers; }
 
     WebAssemblyModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
 
@@ -242,6 +245,7 @@ public:
 
     NEVER_INLINE void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
     {
+        JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::updateMatchingCachedMemoriesConcurrently);
         if (!m_wasmMemory)
             return;
 

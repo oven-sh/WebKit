@@ -1,0 +1,61 @@
+# A recursive call enters the shared instance of the function, so the instances of a recursive function are two, and a call of another function goes on per call site
+# RUN: flow-solve instances
+# RUN(OTHER): flow-solve instances
+# CHECK-NOT: f1
+# CHECK: f1 at f0:v4 Initialized
+# CHECK-NOT: f1
+# CHECK: f1 Proven Initialized
+# CHECK-NOT: f1
+# OTHER-NOT: f3
+# OTHER: [[outer]] f2 at f0:v6 Initialized
+# OTHER-NOT: f3
+# OTHER: f3 at f2:v5 in [[outer]] Initialized
+# OTHER-NOT: f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="walk" module=m0 declared={type=function} initialization=Function function=f1
+variable g1 name="step" module=m0 declared={type=function} initialization=Function function=f2
+variable g2 name="same" module=m0 declared={type=function} initialization=Function function=f3
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = GetModuleVariable variable=g0
+    v4 = Call v3, -, v2
+    v5 = GetModuleVariable variable=g1
+    v6 = Call v5, -, v2
+    Return
+}
+function f1 name="walk" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="next"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v0 key="next"
+    v5 = Call v3, -, v4
+    Return v5
+  b2():
+    Return v0
+}
+function f2 name="step" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="next"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = GetModuleVariable variable=g2
+    v4 = PropGet v0 key="next"
+    v5 = Call v3, -, v4
+    Return v5
+  b2():
+    Return v0
+}
+function f3 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -1,0 +1,22 @@
+# With appended fields switched off a name stored on a literal stays an added key of its allocation class, and the declared field keeps its results
+# RUN: flow
+# RUN(NOWHERE): flow
+# OPTIONS: disable=flow:AppendedFields
+# STATISTIC: FlowAppendedFields = 0
+# CHECK: class {{*}} layout=L0 {{*}}addedKeys=["b"] addedKeysAreComplete=true
+# CHECK: field L0.0 "a" type=1 written=anything flags=[IsRequired] flow={location={writers=AllKnown
+# NOWHERE-NOT: IsAppendedByFlow
+# NOWHERE-NOT: field L0.1
+# NOWHERE-NOT: layout=L0 impossibleMutations=[{{*}}AddProperty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="s"
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v2, v1 key="b" mode=Strict
+    Return
+}

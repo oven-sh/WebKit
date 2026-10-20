@@ -1,0 +1,104 @@
+# An access through super starts at the prototype of the home object and keeps this: a method and a setter of the parent get the receiver, and a store that finds no setter defines on the receiver, not on the parent's prototype
+# RUN: flow-links calls
+# CHECK: f5 v4 -> i{{*}} f2 Call
+# RUN(SETTER): flow-links calls
+# SETTER: f7 v4 -> i{{*}} f3 Accessor
+# RUN(OWN): flow-links calls
+# OWN-NOT: f5 v4 -> i{{*}} f5
+# OWN-NOT: f6 v4 -> i
+# RUN(CALLER): flow-solve nodes
+# CALLER: Local(i{{*}}, f5, parameter 0) = {L1#[[receiver]]}
+# RUN(METHOD): flow-solve nodes
+# METHOD: Local(i{{*}}, f2, parameter 0) = {{*}}L1#[[receiver]]}
+# RUN(STORED): flow-solve nodes
+# STORED: Local(i{{*}}, f3, parameter 0) = {L1#[[receiver]]}
+# STORED-NEXT: Local(i{{*}}, f3, parameter 1) = {2}
+# RUN(DEFINED): flow-solve nodes objects
+# DEFINED-NOT: Property(f1.prototype, "x")
+# DEFINED: Property(L1#{{*}}, "x") = {1}
+# DEFINED-NOT: Property(f1.prototype, "x")
+# DEFINED: L1#{{*}} mutations=[AddProperty] uses
+# RUN(PARENT): flow-solve objects
+# PARENT: f1.prototype mutations=[BecomePrototype] uses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Parent" constructor=f1
+layout L1 kind=Instance name="Child" predictedBase=L0 constructor=f4 flags=[HasHeritage]
+variable g0 name="Child" module=m0 declared={type=function} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0() handler=b1():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 methodKind=Setter index=1 key="y"
+    v6 = FinishClass v1 layout=L0
+    v7 = NewClosure function=f4
+    v8 = ResolveHeritage v6
+    v9 = NewClass v7, v6, v8 layout=L1
+    PutModuleVariable v9 variable=g0
+    v11 = NewClosure function=f5
+    DefineMethod v9, v11 layout=L1 key="m"
+    v13 = NewClosure function=f6
+    DefineMethod v9, v13 layout=L1 index=1 key="setX"
+    v15 = NewClosure function=f7
+    DefineMethod v9, v15 layout=L1 index=2 key="setY"
+    v17 = FinishClass v9 layout=L1
+    v18 = Construct v17
+    v19 = PropGet v18 key="m"
+    v20 = Call v19, v18 calleeKey="m"
+    v21 = PropGet v18 key="setX"
+    v22 = Call v21, v18 calleeKey="setX"
+    v23 = PropGet v18 key="setY"
+    v24 = Call v23, v18 calleeKey="setY"
+    Return
+  b1() role=CatchHandler:
+    v25 = CatchValue
+    Return
+}
+function f1 name="Parent" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="y" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return
+}
+function f4 name="Child" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+  b0(v0: function, v1: anything):
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="m"
+    v4 = Call v3, v0
+    Return v4
+}
+function f6 name="setX" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = Integer integer=1
+    SuperSet v2, v0, v3 mode=Strict key="x"
+    Return
+}
+function f7 name="setY" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = Integer integer=2
+    SuperSet v2, v0, v3 mode=Strict key="y"
+    Return
+}

@@ -1,0 +1,51 @@
+# A member that the language defines and the table leaves open is open because packages replace it, and a polyfill writes through a helper that is handed the object and the key. A store by name, and a store,
+# a definition and a deletion under a key nobody can name, all through an unknown receiver, count for the open members of a holder that has escaped. The members that the table fixes stay constants
+# RUN: flow
+# CHECK: builtin-location Date."now" Unknown written at f0:v10
+# CHECK: builtin-location Date."parse" Unknown
+# CHECK: builtin-location Date."UTC" Constant
+# CHECK: builtin-location JSON."parse" Unknown written at f0:v21
+# CHECK: builtin-location JSON."stringify" Unknown written at f0:v21
+# CHECK: builtin-location JSON."rawJSON" Constant
+# RUN(NODES): flow-solve nodes
+# NODES: Variable(g0) = {{*}}unknown|DateNow}
+# NODES-NEXT: Variable(g1) = {{*}}unknown|DateParse
+# RUN(TABLES): tables constants
+# TABLES-NOT: constantBuiltinMember member=DateNow
+# TABLES-NOT: constantBuiltinMember member=DateParse
+# TABLES-NOT: constantBuiltinMember member=JSON
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="now" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="parse" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="added" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="stringify" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    v2 = PropGet v0 key="JSON" [isFreeName]
+    v3 = PropGet v0 key="sink" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Call v3, -, v2
+    v6 = PropGet v0 key="input" [isFreeName]
+    v7 = PropGet v0 key="name" [isFreeName]
+    v8 = ToPropertyKey v7
+    v9 = Integer integer=1
+    PropSet v6, v9 key="now" mode=Strict
+    ElemSet v6, v8, v9 mode=Strict
+    v12 = ClaimDeclared v6 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v12, v8, v9
+    v14 = ElemDelete v6, v8 mode=Strict
+    v15 = PropGet v1 key="now"
+    PutModuleVariable v15 variable=g0
+    v17 = PropGet v1 key="parse"
+    PutModuleVariable v17 variable=g1
+    v19 = PropGet v1 key="added"
+    PutModuleVariable v19 variable=g2
+    ElemSet v2, v8, v9 mode=Strict
+    v22 = PropGet v2 key="stringify"
+    PutModuleVariable v22 variable=g3
+    Return
+}

@@ -1,0 +1,31 @@
+# A store that finds a setter of a built-in class counts for the receiver as what the setter does to this
+# RUN: flow
+# RUN(ALL): flow
+# CHECK: function f1 parameter 0 uses=[Inspects, ReadsContents, WritesContents, MovesElements, StoresByKey]
+# CHECK: function f2 parameter 0 uses=[Inspects, StoresByKey]
+# ALL-NOT: function f2 parameter 0 uses={{*}}Contents
+
+layout L0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    v2 = CallDirect v1 function=f1
+    v3 = NewObject layout=L0 fields=[]
+    v4 = CallDirect v3 function=f2
+    Return
+}
+function f1 name="truncated" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="length" mode=Strict
+    Return
+}
+function f2 name="extended" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="x" mode=Strict
+    Return
+}
