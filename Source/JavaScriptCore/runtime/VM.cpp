@@ -1351,7 +1351,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
     if (!exception) {
         auto action = Exception::StackCaptureAction::CaptureStack;
-        if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())
+        if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClauseOrMicrotaskJob())
             action = Exception::StackCaptureAction::DoNotCaptureStack;
         exception = Exception::create(*this, thrownValue, action);
     }
