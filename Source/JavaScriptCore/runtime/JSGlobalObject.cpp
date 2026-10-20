@@ -3279,12 +3279,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             }
         }
     }
-
-    {
-        Locker locker { thisObject->cellLock() };
-        for (auto& object : thisObject->m_globalsLeftMutable)
-            visitor.append(object);
-    }
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -3980,7 +3974,7 @@ static void appendFunctionsOfProperty(VM& vm, ObjectsToMakeImmutable& objects, J
         objects.append(asObject(value));
 }
 
-// The value of a global is covered even if it is not a function, and even if -globalThis leaves the global object itself mutable.
+// The value of a global is covered even if it is not a function, and even if the global object is of a class that cannot be made immutable.
 static void appendGlobal(VM& vm, ObjectsToMakeImmutable& objects, JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isObject())
@@ -3989,19 +3983,12 @@ static void appendGlobal(VM& vm, ObjectsToMakeImmutable& objects, JSGlobalObject
         appendFunctionsOfProperty(vm, objects, globalObject, nullptr, value);
 }
 
-static JSObject* withoutGlobalProxy(JSObject* object)
-{
-    return object->type() == GlobalProxyType ? uncheckedDowncast<JSGlobalProxy>(object)->target() : object;
-}
-
-static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects, const Vector<WriteBarrier<JSObject>>& leftMutable)
+static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable& objects)
 {
     DeferGC deferGC(vm); // The collector does not visit `objects`.
     while (!objects.isEmpty()) {
-        JSObject* object = withoutGlobalProxy(objects.takeLast());
-        if (object->structure()->hasImmutableProperties() || leftMutable.containsIf([&](auto& other) { return other.get() == object; }))
-            continue;
-        if (!object->makePropertiesImmutable(vm))
+        JSObject* object = objects.takeLast();
+        if (object->structure()->hasImmutableProperties() || !object->makePropertiesImmutable(vm))
             continue;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
@@ -4014,7 +4001,7 @@ void JSGlobalObject::makeObjectAndItsFunctionsImmutable(VM& vm, JSObject* object
 {
     ObjectsToMakeImmutable objects;
     objects.append(object);
-    makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
 }
 
 void JSGlobalObject::didReifyStaticProperty(VM& vm, JSObject* holder, JSValue value)
@@ -4025,7 +4012,7 @@ void JSGlobalObject::didReifyStaticProperty(VM& vm, JSObject* holder, JSValue va
         appendGlobal(vm, objects, this, value);
     else if (holder->structure()->hasImmutableProperties())
         appendFunctionsOfProperty(vm, objects, holder, nullptr, value);
-    makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
 }
 
 void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
@@ -4034,39 +4021,11 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
     if (!option || !*option) [[likely]]
         return;
 
-    DeferGC deferGC(vm); // The collector does not visit `objects`.
-    DeferTermination deferTermination(vm);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    // The lookup can create a lazy global. m_hasImmutableGlobals is still false, so nothing makes it immutable as it is created.
-    auto leaveMutable = [&](JSObject* holder, const Identifier& name) -> JSObject* {
-        PropertySlot slot(holder, PropertySlot::InternalMethodType::GetOwnProperty);
-        JSValue value;
-        if (holder->methodTable()->getOwnPropertySlot(holder, this, name, slot))
-            value = slot.getValue(this, name);
-        if (scope.exception()) [[unlikely]] {
-            scope.clearException();
-            return nullptr;
-        }
-        if (!value || !value.isObject())
-            return nullptr;
-        Locker locker { cellLock() };
-        m_globalsLeftMutable.append(WriteBarrier<JSObject>(vm, this, withoutGlobalProxy(asObject(value))));
-        return asObject(value);
-    };
-    String string = String::fromUTF8(unsafeSpan(option));
-    bool isFirst = true;
-    for (StringView entry : StringView(string).splitAllowingEmptyEntries(',')) {
-        if (isFirst ? entry != "*"_s : (!entry.startsWith('-') || entry.length() == 1)) {
-            dataLogLn("ERROR: immutableGlobals is '*', followed by ',-name' for each global to leave mutable: ", string);
-            CRASH();
-        }
-        if (std::exchange(isFirst, false))
-            continue;
-        JSObject* global = leaveMutable(this, Identifier::fromString(vm, entry.substring(1).toString()));
-        if (global && global->isCallable())
-            leaveMutable(global, vm.propertyNames->prototype);
+    if (String string = String::fromUTF8(unsafeSpan(option)); string != "*"_s) {
+        dataLogLn("ERROR: the only value of immutableGlobals is '*': ", string);
+        CRASH();
     }
+    DeferGC deferGC(vm); // The collector does not visit `objects`.
     m_hasImmutableGlobals = true;
 
     ObjectsToMakeImmutable objects;
@@ -4087,7 +4046,7 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
     }
     // Not a function, so Array.prototype does not lead to it.
     objects.append(uncheckedDowncast<JSObject>(arrayPrototype()->getDirect(vm, vm.propertyNames->unscopablesSymbol)));
-    makeObjectsAndTheirFunctionsImmutable(vm, objects, m_globalsLeftMutable);
+    makeObjectsAndTheirFunctionsImmutable(vm, objects);
 }
 
 JSGlobalObject* JSGlobalObject::create(VM& vm, Structure* structure)
