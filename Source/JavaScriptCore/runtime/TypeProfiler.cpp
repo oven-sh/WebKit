@@ -158,6 +158,17 @@ void TypeProfiler::invalidateTypeSetCache(VM& vm)
     }
 }
 
+void TypeProfiler::clear()
+{
+    for (Bag<TypeLocation>::iterator iter = m_typeLocationInfo.begin(); !!iter; ++iter) {
+        TypeLocation* location = *iter;
+        location->m_lastSeenType = TypeNothing;
+        location->m_instructionTypeSet->clear();
+        if (location->m_globalTypeSet)
+            location->m_globalTypeSet->clear();
+    }
+}
+
 void TypeProfiler::dumpTypeProfilerData(VM& vm)
 {
     for (Bag<TypeLocation>::iterator iter = m_typeLocationInfo.begin(); !!iter; ++iter) {
