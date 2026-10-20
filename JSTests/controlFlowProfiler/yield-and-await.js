@@ -119,7 +119,6 @@ async function testKindsOfStatement() {
     foo(3);
     ({ a = await 1 } = { });
     foo(4);
-    function hoisted() { }
 }
 testKindsOfStatement();
 drainMicrotasks();
@@ -191,15 +190,18 @@ drainMicrotasks();
 checkBasicBlock(testAsyncGenerator, "foo(2)", ShouldHaveExecuted);
 checkBasicBlock(testAsyncGenerator, "foo(3)", ShouldNotHaveExecuted);
 
-async function testForAwait() {
-    for await (const x of [never])
+async function testForAwait(list) {
+    for await (const x of list)
         foo(1);
     foo(2);
 }
-testForAwait();
+testForAwait([never]);
 drainMicrotasks();
 checkBasicBlock(testForAwait, "foo(1)", ShouldNotHaveExecuted);
 checkBasicBlock(testForAwait, "foo(2)", ShouldNotHaveExecuted);
+testForAwait([1]);
+drainMicrotasks();
+assert(basicBlockExecutionCount(testForAwait, "foo(2)") === 1, "what is after the loop ran once");
 
 var testArrowFunction = async () => {
     await never;

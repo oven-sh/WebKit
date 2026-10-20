@@ -34,6 +34,7 @@ function testCall(f) {
     return r;
 }
 testCall(null);
+checkBasicBlock(testCall, "?.(", ShouldNotHaveExecuted);
 checkBasicBlock(testCall, "foo()", ShouldNotHaveExecuted);
 checkBasicBlock(testCall, "return r", ShouldHaveExecuted);
 testCall(foo);
@@ -90,31 +91,48 @@ checkBasicBlock(testCallAndApply, "foo(1)", ShouldHaveExecuted);
 checkBasicBlock(testCallAndApply, "foo(2)", ShouldHaveExecuted);
 checkBasicBlock(testCallAndApply, "foo(3)", ShouldNotHaveExecuted);
 
+// Calls that have bytecode of their own.
+function testKindsOfCall(x, o, Reflect, skipped1, skipped2) {
+    x?.hasOwnProperty(skipped1);
+    o.hasOwnProperty?.(skipped2);
+    o.call?.(x, foo(1));
+    o.apply?.(x, [foo(2)]);
+    (0, x)?.(foo(3));
+    Reflect?.construct(Object, [foo(4)]);
+    o.Reflect = Reflect = { };
+    Reflect.construct?.(Object, [foo(5)]);
+    x?.["method"](foo(6));
+    return x;
+}
+testKindsOfCall(null, { hasOwnProperty: null }, null);
+checkBasicBlock(testKindsOfCall, "(skipped1", ShouldNotHaveExecuted);
+checkBasicBlock(testKindsOfCall, "(skipped2", ShouldNotHaveExecuted);
+for (let i = 1; i <= 6; ++i)
+    checkBasicBlock(testKindsOfCall, "foo(" + i + ")", ShouldNotHaveExecuted);
+checkBasicBlock(testKindsOfCall, "return x", ShouldHaveExecuted);
+
 function testDelete(x) {
     let r = delete x?.[foo()];
+    delete x?.skipped;
     return r;
 }
 testDelete(null);
 checkBasicBlock(testDelete, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testDelete, "skipped", ShouldNotHaveExecuted);
 checkBasicBlock(testDelete, "return r", ShouldHaveExecuted);
-
-function testCallee(x) {
-    let r = (x?.[foo()].method);
-    (x?.nothing, object?.method)();
-    return r;
-}
-testCallee(null);
-checkBasicBlock(testCallee, "foo()", ShouldNotHaveExecuted);
-checkBasicBlock(testCallee, "return r", ShouldHaveExecuted);
 
 function testParenthesizedCallee(x) {
     try {
         (x?.[foo()])();
     } catch { }
+    try {
+        (x?.skipped)();
+    } catch { }
     return x;
 }
 testParenthesizedCallee(null);
 checkBasicBlock(testParenthesizedCallee, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testParenthesizedCallee, "skipped", ShouldNotHaveExecuted);
 checkBasicBlock(testParenthesizedCallee, "return x", ShouldHaveExecuted);
 
 function testCoalesce(x) {
@@ -138,6 +156,23 @@ checkBasicBlock(testCondition, "foo(3)", ShouldNotHaveExecuted);
 checkBasicBlock(testCondition, "foo(4)", ShouldHaveExecuted);
 checkBasicBlock(testCondition, "return x", ShouldHaveExecuted);
 
+// The basic block ends with the chain.
+function testPropertyValue(x) {
+    return [{ a: x?.[foo(1)] , b: 1 }, { a: x?.[foo(2)] /* last */ }];
+}
+testPropertyValue(null);
+checkBasicBlock(testPropertyValue, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testPropertyValue, ", b", ShouldHaveExecuted);
+checkBasicBlock(testPropertyValue, "foo(2)", ShouldNotHaveExecuted);
+checkBasicBlock(testPropertyValue, "/* last */", ShouldHaveExecuted);
+
+function testParentheses(x) {
+    return (x?.[foo()] /* last */);
+}
+testParentheses(null);
+checkBasicBlock(testParentheses, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testParentheses, "/* last */", ShouldHaveExecuted);
+
 function testCount(x) {
     return x?.[foo()];
 }
@@ -149,7 +184,7 @@ testCount(object);
 assert(basicBlockExecutionCount(testCount, "x?.") === 5, "the base runs each time");
 assert(basicBlockExecutionCount(testCount, "foo()") === 3, "the rest runs when the base is an object");
 
-// The test of a `case` has the count of its clause.
+// Not in the test of a `case`.
 function testCaseTest(x) {
     switch (2) {
     case x?.[foo(1)]: foo(2);

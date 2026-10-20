@@ -95,6 +95,16 @@ arrowFunction();
 arrowFunction();
 assert(basicBlockExecutionCount(testArrowFunction, "foo()") === 2, "the arrow function ran twice");
 
+// Not in the test of a `case`.
+function testCaseTest(x) {
+    switch (2) {
+    case x ||= foo(1): foo(2);
+    }
+}
+testCaseTest(0);
+checkBasicBlock(testCaseTest, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCaseTest, "foo(2)", ShouldNotHaveExecuted);
+
 function testCount(x) {
     x ||= foo();
     return x;

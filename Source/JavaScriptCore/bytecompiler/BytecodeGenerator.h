@@ -703,7 +703,8 @@ namespace JSC {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
-        // For what `?.`, a logical assignment or a default value can skip. The test of a `case` has the count of its clause.
+        // For what `?.`, a logical assignment or a default value can skip. In the test of a `case`, on one line with
+        // the clause, it would make a clause that did not run read as run.
         void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
         {
             if (!m_isInCaseTest)
@@ -719,12 +720,7 @@ namespace JSC {
             return false;
         }
         int& statementsEndOffset() { return m_statementsEndOffset; }
-        // A generator that is not resumed leaves a statement at a `yield` or an `await`.
-        void emitProfileControlFlowAfter(StatementNode* statement, unsigned yieldPointsBefore)
-        {
-            if (m_yieldPoints != yieldPointsBefore && m_lastStatementWithProfileControlFlowAfter != statement)
-                emitProfileControlFlowAfter(statement);
-        }
+        bool hasProfileControlFlowAfter(StatementNode* statement) const { return m_lastStatementWithProfileControlFlowAfter == statement; }
         unsigned yieldPoints() const { return m_yieldPoints; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);

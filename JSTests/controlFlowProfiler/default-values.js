@@ -90,6 +90,17 @@ arrowFunction();
 arrowFunction();
 assert(basicBlockExecutionCount(testArrowFunctionInAPattern, "foo()") === 2, "the arrow function ran twice");
 
+// Not in the test of a `case`.
+function testCaseTest(o) {
+    let a;
+    switch (2) {
+    case { a = foo(1) } = o: foo(2);
+    }
+}
+testCaseTest({ });
+checkBasicBlock(testCaseTest, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCaseTest, "foo(2)", ShouldNotHaveExecuted);
+
 function testCount(a = foo()) {
     return a;
 }

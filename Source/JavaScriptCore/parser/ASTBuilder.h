@@ -1234,7 +1234,9 @@ ExpressionNode* ASTBuilder::makeDeleteNode(const JSTokenLocation& location, Expr
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr);
         if (optionalChain->expr()->isLocation()) {
             ASSERT(!optionalChain->expr()->isResolveNode());
-            optionalChain->setExpr(makeDeleteNode(location, optionalChain->expr(), start, divot, end));
+            ExpressionNode* deleteNode = makeDeleteNode(location, optionalChain->expr(), start, divot, end);
+            deleteNode->setEndOffset(optionalChain->expr()->endOffset());
+            optionalChain->setExpr(deleteNode);
             return optionalChain;
         }
     }

@@ -5721,8 +5721,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
         }
 endOfChain:
         if (optionalChainBase) {
-            base = context.createOptionalChain(location, isOptionalCall ? 0 : optionalChainBase, base, !match(QUESTIONDOT));
             context.setEndOffset(base, m_lastTokenLocation.endOffset);
+            base = context.createOptionalChain(location, isOptionalCall ? 0 : optionalChainBase, base, !match(QUESTIONDOT));
         }
     } while (match(QUESTIONDOT));
 
