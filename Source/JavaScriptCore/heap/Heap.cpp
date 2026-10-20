@@ -1136,6 +1136,9 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsPar
     // executable, so after the code is detached above its callee check would still hit and call into it.
     vm.clearMicrotaskCallCaches();
 
+    // No CodeBlock is left to write into a profiler, and the compilations are done.
+    vm.releaseProfilersThatAreOff();
+
 #if ENABLE(WEBASSEMBLY)
     {
         // We must ensure that we clear the JS call ICs from Wasm. Otherwise, Wasm will
