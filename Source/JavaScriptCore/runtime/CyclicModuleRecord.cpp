@@ -488,7 +488,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                    unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                    unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                    unlinkedFunctionExecutable->parseMode());
             }
             // 24.a.iii. If d is either a FunctionDeclaration, a GeneratorDeclaration, an AsyncFunctionDeclaration, or an AsyncGeneratorDeclaration, then
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.

@@ -1099,6 +1099,11 @@ public:
         node->setStartOffset(offset);
     }
 
+    void setEndOffset(CaseClauseNode* node, int offset)
+    {
+        node->setEndOffset(offset);
+    }
+
     void setStartOffset(Node* node, int offset)
     {
         node->setStartOffset(offset);
@@ -1411,6 +1416,7 @@ ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, Ex
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
+            optionalChain->expr()->setEndOffset(optionalChain->endOffset());
             return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
         }
     }
@@ -1498,6 +1504,9 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
 
 ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int token, std::pair<ExpressionNode*, BinaryOpInfo> lhs, std::pair<ExpressionNode*, BinaryOpInfo> rhs)
 {
+    lhs.first->setEndOffset(lhs.second.end.offset);
+    rhs.first->setEndOffset(rhs.second.end.offset);
+
     switch (token) {
     case COALESCE:
         return makeCoalesceNode(location, lhs.first, rhs.first);

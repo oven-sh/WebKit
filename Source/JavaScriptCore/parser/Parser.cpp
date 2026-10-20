@@ -899,6 +899,7 @@ template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseDoWhileStatement(TreeBuilder& context)
 {
     ASSERT(match(DO));
+    int startOffset = tokenStart();
     next();
     const Identifier* unused = nullptr;
     startLoop();
@@ -914,7 +915,9 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseDoWhileStatem
     recordPauseLocation(context.breakpointLocation(expr));
     handleProductionOrFail(CLOSEPAREN, ")", "end", "do-while loop condition");
     consume(SEMICOLON); // Always performs automatic semicolon insertion.
-    return context.createDoWhileStatement(location, statement, expr);
+    TreeStatement result = context.createDoWhileStatement(location, statement, expr);
+    context.setStartOffset(result, startOffset);
+    return result;
 }
 
 template <typename LexerType>
@@ -1920,6 +1923,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
     failIfFalse(statements, "Cannot parse the body of a switch clause");
     TreeClause clause = context.createClause(condition, statements);
     context.setStartOffset(clause, startOffset);
+    context.setEndOffset(clause, m_lastTokenLocation.endOffset);
     TreeClauseList clauseList = context.createClauseList(clause);
     TreeClauseList tail = clauseList;
 
@@ -1933,6 +1937,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
         failIfFalse(statements, "Cannot parse the body of a switch clause");
         clause = context.createClause(condition, statements);
         context.setStartOffset(clause, startOffset);
+        context.setEndOffset(clause, m_lastTokenLocation.endOffset);
         tail = context.createClauseList(tail, clause);
     }
     return clauseList;
@@ -1950,6 +1955,7 @@ template <class TreeBuilder> TreeClause Parser<LexerType>::parseSwitchDefaultCla
     failIfFalse(statements, "Cannot parse the body of a switch default clause");
     TreeClause result = context.createClause(0, statements);
     context.setStartOffset(result, startOffset);
+    context.setEndOffset(result, m_lastTokenLocation.endOffset);
     return result;
 }
 
@@ -2020,6 +2026,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseTryStatement(
         // of https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget
         // being caught by the `catch` block.
         finallyBlock = context.createEmptyStatement(location);
+        context.setEndOffset(finallyBlock, m_lastTokenLocation.endOffset);
     }
 
     return context.createTryStatement(location, tryBlock, catchPattern, catchBlock, finallyBlock, WTF::move(catchEnvironment));
@@ -2071,7 +2078,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
     DeclarationStacks::FunctionStack functionStack;
     next();
     if (match(CLOSEBRACE)) {
-        int endOffset = m_token.m_startPosition.offset;
+        int endOffset = m_token.m_endPosition.offset;
         next();
         if (shouldPushLexicalScope)
             std::tie(lexicalEnvironment, functionStack) = popScope(lexicalScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -2083,7 +2090,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
     TreeSourceElements subtree = parseSourceElements(context, DontCheckForStrictMode);
     failIfFalse(subtree, "Cannot parse the body of the block statement");
     matchOrFail(CLOSEBRACE, "Expected a closing '}' at the end of a block statement");
-    int endOffset = m_token.m_startPosition.offset;
+    int endOffset = m_token.m_endPosition.offset;
     next();
     if (shouldPushLexicalScope)
         std::tie(lexicalEnvironment, functionStack) = popScope(lexicalScope, TreeBuilder::NeedsFreeVariableInfo);
@@ -3301,6 +3308,7 @@ parseMethod:
                 initializer = parseAssignmentExpression(context);
                 classScope->setExpectedSuperBinding(SuperBinding::NotNeeded);
                 failIfFalse(initializer, "Cannot parse initializer for class field");
+                context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
                 classScope->markLastUsedVariablesSetAsCaptured(usedVariablesSize);
             }
             failIfFalse(autoSemiColon(), "Expected a ';' following a class field");
@@ -3439,6 +3447,10 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().
                 initializer = parseExpression(context);
                 failIfFalse(initializer, "Cannot parse expression statement");
+                // parseClass() ended the initializer after the close parens that match the skipped open parens.
+                while (match(CLOSEPAREN))
+                    next();
+                context.setEndOffset(initializer, m_lastTokenLocation.endOffset);
             }
 
             DefineFieldNode::Type type = DefineFieldNode::Type::Name;
