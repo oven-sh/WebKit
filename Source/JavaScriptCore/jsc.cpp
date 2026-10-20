@@ -487,6 +487,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCacheFor);
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinFromBytecodeCache);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache);
+static JSC_DECLARE_HOST_FUNCTION(functionEvalTwiceFromPersistentBytecodeCache);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionBuiltinBytecodeSize);
 static JSC_DECLARE_HOST_FUNCTION(functionBytecodeCachePageTouch);
@@ -857,6 +858,7 @@ private:
         addFunction(vm, "builtinFromBytecodeCache"_s, functionBuiltinFromBytecodeCache, 3);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "evalTwiceFromTransientBytecodeCache"_s, functionEvalTwiceFromTransientBytecodeCache, 1);
+        addFunction(vm, "evalTwiceFromPersistentBytecodeCache"_s, functionEvalTwiceFromPersistentBytecodeCache, 1);
 #endif
         addFunction(vm, "builtinBytecodeSize"_s, functionBuiltinBytecodeSize, 2);
         addFunction(vm, "bytecodeCachePageTouch"_s, functionBytecodeCachePageTouch, 4);
@@ -2156,6 +2158,66 @@ JSC_DEFINE_HOST_FUNCTION(functionEvalTwiceFromTransientBytecodeCache, (JSGlobalO
     }
     keepAlive.append(first);
     // A fresh realm, so the second link clones the block's SymbolTable constants afresh instead of reusing the first realm's clones (JSGlobalObject::symbolTableCache).
+    GlobalObject* realm = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), Vector<String>());
+    JSValue second = evaluate(realm, source, block, JSValue(), exception);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(second);
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 0, first);
+    RETURN_IF_EXCEPTION(scope, { });
+    array->putDirectIndex(globalObject, 1, second);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(array);
+}
+
+// evalTwiceFromPersistentBytecodeCache(sourceText) — what an embedder does with a bytecode image it built ahead of time
+// (bun build --bytecode): generate all the code of sourceText as a program with the bytecode optimizer, encode it, decode
+// its code block from a payload that lives for the rest of the process, and evaluate that one block in this realm and in
+// a fresh one, so that the two link the same unlinked executables, whose code is decoded from the payload when they
+// first run. Returns [firstResult, secondResult].
+JSC_DEFINE_HOST_FUNCTION(functionEvalTwiceFromPersistentBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    URL url { "file:///evalTwiceFromPersistentBytecodeCache.js"_s };
+    SourceCode source = makeSource(text, SourceOrigin { url }, SourceTaintedOrigin::Untainted, url.string(), TextPosition(), SourceProviderSourceType::Program);
+    SourceCodeKey key = sourceCodeKeyForSerializedProgram(vm, source);
+    RefPtr<CachedBytecode> generated;
+    {
+        ParserError error;
+        UnlinkedProgramCodeBlock* optimized = recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes);
+        if (error.isValid())
+            return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
+        generated = encodeCodeBlock(vm, key, optimized, nullptr, BytecodeCacheUpdatable::No);
+        if (!generated)
+            return throwVMError(globalObject, scope, "no bytecode generated"_s);
+    }
+    // Copied into a buffer that lives for the process and marked persistent, like an embedder's executable section.
+    size_t size = generated->size();
+    auto* copy = static_cast<uint8_t*>(fastMalloc(size));
+    memcpySpan(std::span { copy, size }, generated->span());
+    generated = nullptr;
+    Ref<CachedBytecode> persistent = CachedBytecode::create(std::span { copy, size }, [](const void*) { }, { });
+    persistent->setPayloadIsPersistent();
+
+    UnlinkedProgramCodeBlock* block = decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(persistent));
+    if (!block)
+        return throwVMError(globalObject, scope, "decode rejected the payload"_s);
+    MarkedArgumentBuffer keepAlive; // evaluate() roots neither the block between calls nor `first`
+    keepAlive.append(block);
+    NakedPtr<Exception> exception;
+    JSValue first = evaluate(globalObject, source, block, JSValue(), exception);
+    if (exception) {
+        scope.throwException(globalObject, exception);
+        return { };
+    }
+    keepAlive.append(first);
     GlobalObject* realm = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), Vector<String>());
     JSValue second = evaluate(realm, source, block, JSValue(), exception);
     if (exception) {

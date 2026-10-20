@@ -385,6 +385,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
     , codeBlockSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, CodeBlock) // Hash:0x2b743c6a
     , functionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, FunctionExecutable) // Hash:0xbcb36268
+    , functionExecutablesWithCodeOfStartedBody(functionExecutableSpaceAndSet.space)
     , programExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, ProgramExecutable) // Hash:0x4c9208f7
     , unlinkedFunctionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, UnlinkedFunctionExecutable) // Hash:0x3ba0f4e1
 
@@ -1175,7 +1176,20 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
 
     HeapIterationScope heapIterationScope(*this);
 #if USE(BUN_JSC_ADDITIONS)
-    if (returnsCodeToCache) {
+    // A body keeps the code it started in for the generator frames that code saved
+    // (FunctionExecutable::codeOfStartedBody()). With no such frame, and no CodeBlock that an activation could be
+    // running in or start in, the next activation may start in any code: the code then goes like that of any other
+    // function, and is not held for as long as the linked executable lives.
+    UncheckedKeyHashSet<FunctionExecutable*> startedBodiesToRelease;
+    if (which.containsAny({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache })) {
+        functionExecutablesWithCodeOfStartedBody.forEachLiveCell(
+            [&] (HeapCell* cell, HeapCell::Kind) {
+                auto* executable = static_cast<FunctionExecutable*>(cell);
+                if (!executable->eitherCodeBlock())
+                    startedBodiesToRelease.add(executable);
+            });
+    }
+    if (returnsCodeToCache || !startedBodiesToRelease.isEmpty()) {
         // A generator or an async function that is suspended resumes in the code it is suspended in: its CodeBlock may have
         // been jettisoned for old age, so nothing links against that code now, but it is about to be linked again, and
         // decoding it again first would only hand the resumed activation new copies of everything it already has.
@@ -1186,9 +1200,14 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
             if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
                 return;
             auto* function = dynamicDowncast<JSFunction>(next);
-            if (!function || function->isHostOrBuiltinFunction())
+            if (!function || function->isHostFunction())
                 return;
-            suspended.add(function->jsExecutable()->unlinkedExecutable());
+            FunctionExecutable* executable = function->jsExecutable();
+            // Suspended after it started: it has a generator frame.
+            if (state.asInt32() != static_cast<int32_t>(JSGenerator::State::Init))
+                startedBodiesToRelease.remove(executable);
+            if (returnsCodeToCache && !executable->isBuiltinFunction())
+                suspended.add(executable->unlinkedExecutable());
         };
         auto addSuspendedIn = [&]<typename GeneratorType>(IsoSubspace* space) {
             if (!space)
@@ -1202,13 +1221,18 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
         addSuspendedIn.template operator()<JSAsyncGenerator>(m_asyncGeneratorSpace.get());
         addSuspendedIn.template operator()<JSAsyncFunctionGenerator>(m_asyncFunctionGeneratorSpace.get());
 
-        // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
-        unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
-            [&] (HeapCell* cell, HeapCell::Kind) {
-                auto* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
-                if (!suspended.contains(executable))
-                    executable->returnCodeToCache(vm, linkedAgainst);
-            });
+        if (returnsCodeToCache) {
+            // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
+            unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
+                [&] (HeapCell* cell, HeapCell::Kind) {
+                    auto* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                    if (!suspended.contains(executable))
+                        executable->returnCodeToCache(vm, linkedAgainst);
+                });
+        }
+
+        for (FunctionExecutable* executable : startedBodiesToRelease)
+            executable->clearCodeOfStartedBody(vm);
     }
 #endif
     if (which.contains(UnlinkedCodeToDelete::Generated)) {

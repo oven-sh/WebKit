@@ -60,10 +60,9 @@ ScriptExecutable::ScriptExecutable(Structure* structure, VM& vm, const SourceCod
     , m_neverFTLOptimize(false)
     , m_isArrowFunctionContext(isInArrowFunctionContext)
     , m_canUseOSRExitFuzzing(true)
-    , m_codeForGeneratorBodyWasGenerated(false)
     , m_isInsideOrdinaryFunction(isInsideOrdinaryFunction)
-    , m_derivedContextType(static_cast<unsigned>(derivedContextType))
-    , m_evalContextType(static_cast<unsigned>(evalContextType))
+    , m_derivedContextType(static_cast<uint8_t>(derivedContextType))
+    , m_evalContextType(static_cast<uint8_t>(evalContextType))
 {
 }
 
@@ -312,17 +311,23 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
     ParserError error;
-    OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
-    // We continue using the same CodeGenerationMode for Generators because live generator objects can
-    // keep the state which is only valid with the CodeBlock compiled with the same CodeGenerationMode.
-    if (isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode())) {
-        codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
-        pinCodeGenerationModeForResumableBody();
-    }
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
-        executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
-            vm, executable->source(), kind, codeGenerationMode, error, 
+    // The body of a generator or an async function keeps its registers in a generator frame while it is suspended, and
+    // only the code that saved them finds them there again. So a body that has started is linked from the unlinked code
+    // it first ran in, whatever the global object asks for by now, and whatever that function's code is by now
+    // (FunctionExecutable::codeOfStartedBody()).
+    bool isResumableBody = isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode());
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = isResumableBody ? executable->codeOfStartedBody() : nullptr;
+    if (!unlinkedCodeBlock) {
+        OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+        unlinkedCodeBlock = executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
+            vm, executable->source(), kind, codeGenerationMode, error,
             executable->parseMode());
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(!unlinkedCodeBlock
+            || UnlinkedFunctionExecutable::codeGenerationModeForSharing(unlinkedCodeBlock->codeGenerationMode()) == UnlinkedFunctionExecutable::codeGenerationModeForSharing(codeGenerationMode)
+            || (unlinkedCodeBlock->wasCompiledWithDebuggingOpcodes() && executable->isPrivateBuiltinFunction()));
+#endif
+    }
     // The (lastLine, endColumn) overload drops those two for a FunctionExecutable; computing them would pull the
     // function's end position out of the bytecode cache (UnlinkedFunctionExecutable::materializeDeferredScalarsIfNeeded).
     executable->recordParse(
@@ -333,6 +338,8 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
+    if (isResumableBody && !executable->codeOfStartedBody())
+        executable->setCodeOfStartedBody(vm, unlinkedCodeBlock);
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
 
