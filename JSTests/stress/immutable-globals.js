@@ -82,9 +82,10 @@
 
     shouldBe(mutableObjectsReachableFrom($vm.createGlobalObject()), "");
 
-    // The embedder's global object. What it holds is covered; from there on an object that is not a function is not followed.
+    // The embedder's global object. The shell leaves its own globals out of Reflect.ownKeys(), so the walk does not see them.
     shouldBe(mutableObjectsReachableFrom(globalThis), "");
     shouldBe(mutableObjectsReachableFrom(createGlobalObject()), "");
+    // What a global object holds is covered; from there on an object that is not a function is not followed.
     shouldBe(isImmutable($), true);
     shouldBe(isImmutable($.evalScript), true);
     shouldBe(isImmutable($.agent), false);

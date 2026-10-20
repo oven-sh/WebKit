@@ -1272,7 +1272,8 @@ public:
     bool hasImmutableGlobals() const { return m_hasImmutableGlobals; }
     // JSObject::makePropertiesImmutable() for the object, for the functions its properties hold (methods, getters and setters) and,
     // if it is a function, for its "prototype"; then the same for each of those. An object of a class that does not support it is
-    // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too.
+    // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too if
+    // hasImmutableGlobals().
     JS_EXPORT_PRIVATE void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
     // For a built-in that is created after applyImmutableGlobalsOption() ran. A function in a property of a covered object does not
     // need it: that is found when the property is materialized.
