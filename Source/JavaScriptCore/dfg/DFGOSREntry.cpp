@@ -223,7 +223,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
     
     sanitizeStackForVM(vm);
     
-    if (bytecodeIndex)
+    if (bytecodeIndex.offset())
         codeBlock->ownerExecutable()->setDidTryToEnterInLoop(true);
     
     if (codeBlock->jitType() != JITType::DFGJIT) {
