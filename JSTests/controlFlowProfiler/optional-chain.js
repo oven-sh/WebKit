@@ -1,0 +1,160 @@
+var basicBlockExecutionCount = $vm.basicBlockExecutionCount;
+
+load("./driver/driver.js");
+
+function foo() { return "key"; }
+var object = { nothing: null, key: 1, method() { return object; } };
+object.self = object;
+
+function testMember(x) {
+    let r = x?.self.method(foo());
+    return r;
+}
+testMember(null);
+checkBasicBlock(testMember, "x?.", ShouldHaveExecuted);
+checkBasicBlock(testMember, "self", ShouldNotHaveExecuted);
+checkBasicBlock(testMember, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testMember, "return r", ShouldHaveExecuted);
+testMember(object);
+checkBasicBlock(testMember, "self", ShouldHaveExecuted);
+checkBasicBlock(testMember, "foo()", ShouldHaveExecuted);
+
+function testSubscript(x) {
+    let r = x?.[foo()];
+    return r;
+}
+testSubscript(undefined);
+checkBasicBlock(testSubscript, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testSubscript, "return r", ShouldHaveExecuted);
+testSubscript(object);
+checkBasicBlock(testSubscript, "foo()", ShouldHaveExecuted);
+
+function testCall(f) {
+    let r = f?.(foo());
+    return r;
+}
+testCall(null);
+checkBasicBlock(testCall, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testCall, "return r", ShouldHaveExecuted);
+testCall(foo);
+checkBasicBlock(testCall, "foo()", ShouldHaveExecuted);
+
+function testMethodCall(x) {
+    return x.nothing?.(foo());
+}
+testMethodCall(object);
+checkBasicBlock(testMethodCall, "x.nothing", ShouldHaveExecuted);
+checkBasicBlock(testMethodCall, "foo()", ShouldNotHaveExecuted);
+
+function testSubscriptCall(x) {
+    return x["nothing"]?.(foo());
+}
+testSubscriptCall(object);
+checkBasicBlock(testSubscriptCall, "foo()", ShouldNotHaveExecuted);
+
+// Each `?.` skips what is left of the chain.
+function testSecondLink(x) {
+    let r = x?.method(1).nothing?.method(foo()).self;
+    return r;
+}
+testSecondLink(object);
+checkBasicBlock(testSecondLink, "method(1)", ShouldHaveExecuted);
+checkBasicBlock(testSecondLink, "nothing", ShouldHaveExecuted);
+checkBasicBlock(testSecondLink, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testSecondLink, "self", ShouldNotHaveExecuted);
+checkBasicBlock(testSecondLink, "return r", ShouldHaveExecuted);
+
+function testChainInChain(x, y) {
+    return x?.method(y?.method(foo()), 2);
+}
+testChainInChain(object, null);
+checkBasicBlock(testChainInChain, "y?.", ShouldHaveExecuted);
+checkBasicBlock(testChainInChain, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testChainInChain, ", 2", ShouldHaveExecuted);
+
+function testCallAndApply(x) {
+    x?.method.call(x, foo(1));
+    x?.method.apply(x, [foo(2)]);
+    object.nothing?.call(x, foo(3));
+    object.nothing?.apply(x, [foo(4)]);
+    return x;
+}
+testCallAndApply(null);
+checkBasicBlock(testCallAndApply, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCallAndApply, "foo(2)", ShouldNotHaveExecuted);
+checkBasicBlock(testCallAndApply, "foo(3)", ShouldNotHaveExecuted);
+checkBasicBlock(testCallAndApply, "foo(4)", ShouldNotHaveExecuted);
+checkBasicBlock(testCallAndApply, "return x", ShouldHaveExecuted);
+testCallAndApply(object);
+checkBasicBlock(testCallAndApply, "foo(1)", ShouldHaveExecuted);
+checkBasicBlock(testCallAndApply, "foo(2)", ShouldHaveExecuted);
+checkBasicBlock(testCallAndApply, "foo(3)", ShouldNotHaveExecuted);
+
+function testDelete(x) {
+    let r = delete x?.[foo()];
+    return r;
+}
+testDelete(null);
+checkBasicBlock(testDelete, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testDelete, "return r", ShouldHaveExecuted);
+
+function testCallee(x) {
+    let r = (x?.[foo()].method);
+    (x?.nothing, object?.method)();
+    return r;
+}
+testCallee(null);
+checkBasicBlock(testCallee, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testCallee, "return r", ShouldHaveExecuted);
+
+function testParenthesizedCallee(x) {
+    try {
+        (x?.[foo()])();
+    } catch { }
+    return x;
+}
+testParenthesizedCallee(null);
+checkBasicBlock(testParenthesizedCallee, "foo()", ShouldNotHaveExecuted);
+checkBasicBlock(testParenthesizedCallee, "return x", ShouldHaveExecuted);
+
+function testCoalesce(x) {
+    return x?.[foo(1)] ?? foo(2);
+}
+testCoalesce(null);
+checkBasicBlock(testCoalesce, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCoalesce, "foo(2)", ShouldHaveExecuted);
+
+function testCondition(x) {
+    if (x?.[foo(1)])
+        foo(2);
+    if (x?.[foo(3)] ?? true)
+        foo(4);
+    return x;
+}
+testCondition(null);
+checkBasicBlock(testCondition, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCondition, "foo(2)", ShouldNotHaveExecuted);
+checkBasicBlock(testCondition, "foo(3)", ShouldNotHaveExecuted);
+checkBasicBlock(testCondition, "foo(4)", ShouldHaveExecuted);
+checkBasicBlock(testCondition, "return x", ShouldHaveExecuted);
+
+function testCount(x) {
+    return x?.[foo()];
+}
+testCount(null);
+testCount(object);
+testCount(null);
+testCount(object);
+testCount(object);
+assert(basicBlockExecutionCount(testCount, "x?.") === 5, "the base runs each time");
+assert(basicBlockExecutionCount(testCount, "foo()") === 3, "the rest runs when the base is an object");
+
+// The test of a `case` has the count of its clause.
+function testCaseTest(x) {
+    switch (2) {
+    case x?.[foo(1)]: foo(2);
+    }
+}
+testCaseTest(object);
+checkBasicBlock(testCaseTest, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCaseTest, "foo(2)", ShouldNotHaveExecuted);

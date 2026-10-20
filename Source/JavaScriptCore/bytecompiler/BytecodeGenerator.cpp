@@ -1312,6 +1312,7 @@ void BytecodeGenerator::initializeDefaultParameterValuesAndSetupFunctionScopeSta
             if (parameter.second) {
                 Ref<Label> skipDefaultParameterBecauseNotUndefined = newLabel();
                 emitJumpIfFalse(emitIsUndefined(newTemporary(), temp.get()), skipDefaultParameterBecauseNotUndefined.get());
+                emitProfileControlFlow(startOffsetOfBasicBlock(parameter.second), parameter.second->endOffset());
                 emitNode(temp.get(), parameter.second);
                 emitLabel(skipDefaultParameterBecauseNotUndefined.get());
             }
@@ -2109,6 +2110,8 @@ void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOf
 
 bool BytecodeGenerator::emitProfileControlFlowAfterSlow(StatementNode* statement)
 {
+    m_lastStatementWithProfileControlFlowAfter = statement;
+
     // A function declaration does not run where it is.
     StatementNode* next = statement->next();
     while (next && next->isFuncDeclNode())
@@ -6056,20 +6059,20 @@ void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& no
     emitThrow(context.completionValueRegister());
 }
 
-void BytecodeGenerator::pushOptionalChainTarget()
+void BytecodeGenerator::pushOptionalChainTarget(int textEndOffset)
 {
-    m_optionalChainTargetStack.append(newLabel());
+    m_optionalChainTargetStack.append({ newLabel(), textEndOffset });
 }
 
-void BytecodeGenerator::pushOptionalChainTarget(Label& existingTarget)
+void BytecodeGenerator::pushOptionalChainTarget(Label& existingTarget, int textEndOffset)
 {
-    m_optionalChainTargetStack.append(existingTarget);
+    m_optionalChainTargetStack.append({ existingTarget, textEndOffset });
 }
 
 void BytecodeGenerator::popOptionalChainTarget()
 {
     ASSERT(m_optionalChainTargetStack.size());
-    emitLabel(m_optionalChainTargetStack.takeLast().get());
+    emitLabel(m_optionalChainTargetStack.takeLast().label.get());
 }
 
 void BytecodeGenerator::popOptionalChainTarget(RegisterID* dst, bool isDelete)
@@ -6089,10 +6092,12 @@ void BytecodeGenerator::discardOptionalChainTarget()
     m_optionalChainTargetStack.removeLast();
 }
 
-void BytecodeGenerator::emitOptionalCheck(RegisterID* src)
+void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int textOffset)
 {
     ASSERT(m_optionalChainTargetStack.size());
-    emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), m_optionalChainTargetStack.last().get());
+    auto& target = m_optionalChainTargetStack.last();
+    emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), target.label.get());
+    emitProfileControlFlowOutsideOfCaseTest(textOffset, target.textEndOffset);
 }
 
 template <typename OldOpType, typename NewOpType, typename TupleType>
