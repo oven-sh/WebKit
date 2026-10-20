@@ -163,8 +163,16 @@ JSValue ModuleRegistryEntry::error(JSGlobalObject* globalObject) const
         RELEASE_AND_RETURN(scope, error);
     }
     if (m_record) {
-        if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get()))
+        if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(m_record.get())) {
+#if USE(BUN_JSC_ADDITIONS)
+            // A job rejected the record while it is on the stack of an evaluation
+            // (CyclicModuleRecord::asyncExecutionRejected). Step 9.a of that Evaluate() can still give it another
+            // error, and an Evaluate() of the record waits for that (CyclicModuleRecord::evaluationWaiter).
+            if (cyclic->status() == CyclicModuleRecord::Status::Evaluating)
+                return { };
+#endif
             RELEASE_AND_RETURN(scope, cyclic->evaluationError());
+        }
     }
     return { };
 }
