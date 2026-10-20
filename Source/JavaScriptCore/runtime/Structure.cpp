@@ -636,7 +636,7 @@ Structure* Structure::removePropertyTransition(VM& vm, Structure* structure, Pro
         vm, structure, propertyName, offset, deferred);
 }
 
-Structure* Structure::removePropertyTransitionFromExistingStructureImpl(Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset)
+Structure* Structure::removePropertyTransitionFromExistingStructureImpl(Structure* structure, PropertyName propertyName, PropertyOffset& offset)
 {
     ASSERT(!structure->isUncacheableDictionary());
     ASSERT(structure->isObject());
@@ -646,7 +646,10 @@ Structure* Structure::removePropertyTransitionFromExistingStructureImpl(Structur
     if (structure->hasBeenDictionary())
         return nullptr;
 
-    if (Structure* existingTransition = structure->m_transitionTable.get(propertyName.uid(), attributes, TransitionKind::PropertyDeletion)) {
+    // The key of a deletion transition has no attributes: removeNewPropertyTransition() sets none. They would not tell two
+    // transitions apart, because this Structure has the property with one set of attributes. Only a Structure that has the
+    // property gets such a transition, and it keeps the property for as long as it was never a dictionary.
+    if (Structure* existingTransition = structure->m_transitionTable.get(propertyName.uid(), 0, TransitionKind::PropertyDeletion)) {
         validateOffset(existingTransition->transitionOffset(), existingTransition->inlineCapacity());
         offset = existingTransition->transitionOffset();
         return existingTransition;
@@ -658,19 +661,13 @@ Structure* Structure::removePropertyTransitionFromExistingStructureImpl(Structur
 Structure* Structure::removePropertyTransitionFromExistingStructure(Structure* structure, PropertyName propertyName, PropertyOffset& offset)
 {
     ASSERT(!isCompilationThread());
-    unsigned attributes = 0;
-    if (structure->getConcurrently(propertyName.uid(), attributes) == invalidOffset)
-        return nullptr;
-    return removePropertyTransitionFromExistingStructureImpl(structure, propertyName, attributes, offset);
+    return removePropertyTransitionFromExistingStructureImpl(structure, propertyName, offset);
 }
 
 Structure* Structure::removePropertyTransitionFromExistingStructureConcurrently(Structure* structure, PropertyName propertyName, PropertyOffset& offset)
 {
-    unsigned attributes = 0;
-    if (structure->getConcurrently(propertyName.uid(), attributes) == invalidOffset)
-        return nullptr;
     ConcurrentJSLocker locker(structure->m_lock);
-    return removePropertyTransitionFromExistingStructureImpl(structure, propertyName, attributes, offset);
+    return removePropertyTransitionFromExistingStructureImpl(structure, propertyName, offset);
 }
 
 Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, PropertyOffset& offset, DeferredStructureTransitionWatchpointFire* deferred)
@@ -718,6 +715,11 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
         structure->m_transitionTable.add(vm, structure, transition);
     }
+#if ASSERT_ENABLED
+    // The lookup has to find what was just stored. If it does not, each delete of this property makes a Structure.
+    PropertyOffset existingOffset = invalidOffset;
+    ASSERT(structure->hasBeenDictionary() || removePropertyTransitionFromExistingStructure(structure, propertyName, existingOffset) == transition);
+#endif
     transition->checkOffsetConsistency();
     structure->checkOffsetConsistency();
     return transition;
