@@ -383,422 +383,89 @@ private:
         char32_t m_character;
     };
 
-    /*
-     * ClassSetParserDelegate:
-     *
-     * The class ClassSetParserDelegate is used in the parsing of class sets
-     * This class handles detection of class set ops and character ranges.
-     * This class implements enough of the delegate interface such that it can be passed to
-     * parseEscape() as an EscapeDelegate.  This allows parseEscape() to be reused
-     * to perform the parsing of escape characters in character sets.
-     */
-    class ClassSetParserDelegate {
-    private:
-        struct NestingState {
-        public:
-            NestingState(CharacterClassSetOp setOp, bool mayContainStrings, bool hasJuxtaposedOperands, bool inverted)
-                : m_setOp(setOp)
-                , m_mayContainStrings(mayContainStrings)
-                , m_hasJuxtaposedOperands(hasJuxtaposedOperands)
-                , m_inverted(inverted)
-            { }
+    // One class of a class set: what parseClassSet() knows about the ClassContents between a [ and its ].
+    // A nested class has a frame of its own, and the frame of the class around it waits in a Vector meanwhile.
+    struct ClassSetFrame {
+        explicit ClassSetFrame(bool inverted)
+            : inverted(inverted)
+        {
+        }
 
-            CharacterClassSetOp m_setOp;
-            bool m_mayContainStrings;
-            bool m_hasJuxtaposedOperands;
-            bool m_inverted;
+        // The operand that the class ends with so far.
+        enum class Last : uint8_t {
+            Nothing, // No operand yet, or an operator since the last one.
+            Character, // A ClassSetCharacter. The delegate has not seen it: a hyphen makes it the start of a range.
+            CharacterClassEscape,
+            Range,
+            Operand, // A \q{} or a nested class.
         };
 
-    public:
-        ClassSetParserDelegate(Delegate& delegate, ErrorCode& err)
-            : m_delegate(delegate)
-            , m_errorCode(err)
-            , m_state(ClassSetConstructionState::Empty)
-            , m_setOp(CharacterClassSetOp::Default)
-            , m_mayContainStrings(false)
-            , m_hasOperand(false)
-            , m_hasJuxtaposedOperands(false)
-            , m_inverted(false)
-            , m_character(0)
+        bool isUnion() const
         {
+            return production == CharacterClassSetOp::Default || production == CharacterClassSetOp::Union;
         }
 
-        /*
-         * begin():
-         *
-         * Called at beginning of construction.
-         */
-        void begin(bool invert)
+        // The class has one more operand. Its operator, if it has one, is in production by now.
+        void addOperand(Last operand, bool operandMayContainStrings)
         {
-            m_inverted = invert;
-            m_delegate.atomCharacterClassBegin(invert);
-        }
-
-        void nestedClassBegin(bool invert)
-        {
-            flushCachedCharacterIfNeeded();
-            noteOperand();
-
-            m_delegate.atomCharacterClassPushNested(invert);
-            nestedParseState.append(NestingState(m_setOp, m_mayContainStrings, m_hasJuxtaposedOperands, m_inverted));
-            m_setOp = CharacterClassSetOp::Default;
-            m_mayContainStrings = false;
-            m_hasOperand = false;
-            m_hasJuxtaposedOperands = false;
-            m_inverted = invert;
-        }
-
-        bool nestedClassEnd()
-        {
-            flushCachedCharacterIfNeeded();
-
-            if (m_inverted && m_mayContainStrings)
-                m_errorCode = ErrorCode::NegatedClassSetMayContainStrings;
-
-            if (nestedParseState.isEmpty()) {
-                end();
-                return true;
-            }
-
-            bool rhsMayContainStrings = m_mayContainStrings;
-
-            NestingState lastState = nestedParseState.takeLast();
-            m_setOp = lastState.m_setOp;
-            m_inverted = lastState.m_inverted;
-            m_mayContainStrings = lastState.m_mayContainStrings;
-            m_hasOperand = true;
-            m_hasJuxtaposedOperands = lastState.m_hasJuxtaposedOperands;
-
-            m_delegate.atomCharacterClassPopNested(m_inverted);
-            m_state = ClassSetConstructionState::AfterSetOperand;
-            computeMayContainStrings(rhsMayContainStrings);
-            return false;
-        }
-
-        void setUnionOp()
-        {
-            if (m_setOp != CharacterClassSetOp::Default && m_setOp != CharacterClassSetOp::Union) {
-                m_errorCode = ErrorCode::InvalidClassSetOperation;
-                return;
-            }
-
-            flushCachedCharacterIfNeeded();
-            m_setOp = CharacterClassSetOp::Union;
-            m_delegate.atomCharacterClassSetOp(m_setOp);
-        }
-
-        void switchFromDefaultOpToUnionOpIfNeeded()
-        {
-            if (m_setOp == CharacterClassSetOp::Default) {
-                m_setOp = CharacterClassSetOp::Union;
-                m_delegate.atomCharacterClassSetOp(m_setOp);
-            }
-        }
-
-        void setSubtractOp()
-        {
-            if (m_state == ClassSetConstructionState::Empty || (m_setOp != CharacterClassSetOp::Default && m_setOp != CharacterClassSetOp::Subtraction)) {
-                m_errorCode = ErrorCode::InvalidClassSetOperation;
-                return;
-            }
-
-            flushCachedCharacterIfNeeded();
-            m_setOp = CharacterClassSetOp::Subtraction;
-            m_delegate.atomCharacterClassSetOp(m_setOp);
-            m_state = ClassSetConstructionState::AfterSetOperator;
-        }
-
-        void setIntersectionOp()
-        {
-            if (m_state == ClassSetConstructionState::Empty || (m_setOp != CharacterClassSetOp::Default && m_setOp != CharacterClassSetOp::Intersection)) {
-                m_errorCode = ErrorCode::InvalidClassSetOperation;
-                return;
-            }
-
-            flushCachedCharacterIfNeeded();
-            m_setOp = CharacterClassSetOp::Intersection;
-            m_delegate.atomCharacterClassSetOp(m_setOp);
-            m_state = ClassSetConstructionState::AfterSetOperator;
-        }
-
-        void computeMayContainStrings(bool rhsMayContainStrings)
-        {
-            switch (m_setOp) {
+            switch (production) {
             case CharacterClassSetOp::Default:
             case CharacterClassSetOp::Union:
-                m_mayContainStrings |= rhsMayContainStrings;
+                mayContainStrings |= operandMayContainStrings;
                 break;
 
             case CharacterClassSetOp::Intersection:
-                m_mayContainStrings = m_mayContainStrings && rhsMayContainStrings;
+                mayContainStrings = mayContainStrings && operandMayContainStrings;
                 break;
 
             case CharacterClassSetOp::Subtraction:
                 // Result is the value of the LHS
                 break;
             }
+            last = operand;
         }
 
-        // Called for each operand of the class. Operands with no operator between them are a ClassUnion, and the
-        // grammar has no && or -- after one. This parser accepts some (an escape, \q{} or a nested class next to
-        // another operand leaves m_setOp at Default). Until it refuses them, the class remembers that it has such
-        // operands: see processCharacter in atomPatternCharacter(). A check of the grammar replaces all of this.
-        void noteOperand()
+        // ClassUnion, ClassIntersection or ClassSubtraction. Default while the class has at most one operand:
+        // what follows the first operand decides. The delegate hears of && and --, never of a union.
+        CharacterClassSetOp production { CharacterClassSetOp::Default };
+        Last last { Last::Nothing };
+        bool mayContainStrings { false };
+        bool inverted;
+    };
+    static_assert(sizeof(ClassSetFrame) == 4, "A deeply nested class set has one for each open class");
+
+    /*
+     * ClassSetOperandDelegate:
+     *
+     * The class ClassSetOperandDelegate is used in the parsing of class sets. It adds an
+     * operand to the class in a ClassSetFrame: a ClassSetCharacter or a character class
+     * escape. This class implements enough of the delegate interface such that it can be
+     * passed to parseEscape() as an EscapeDelegate, for an escape where the grammar has a
+     * ClassSetOperand. (A \q{} is what parseEscape() returns.) It decides nothing:
+     * parseClassSet() only parses an operand where the grammar has one.
+     */
+    class ClassSetOperandDelegate {
+    public:
+        ClassSetOperandDelegate(Delegate& delegate, ClassSetFrame& frame, char32_t& character)
+            : m_delegate(delegate)
+            , m_frame(frame)
+            , m_character(character)
         {
-            if (m_setOp != CharacterClassSetOp::Default)
-                return;
-            if (m_hasOperand)
-                m_hasJuxtaposedOperands = true;
-            m_hasOperand = true;
         }
 
-        void flushCachedCharacterIfNeeded()
+        void atomPatternCharacter(char32_t ch, bool)
         {
-            if (m_state == ClassSetConstructionState::CachedCharacter) {
-                m_delegate.atomCharacterClassAtom(m_character);
-                m_state = ClassSetConstructionState::Empty;
-            } else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen)
-                m_errorCode = ErrorCode::InvalidClassSetCharacter;
+            // MayContainStrings of a ClassSetCharacter is false, which under && makes it false for the class.
+            m_frame.addOperand(ClassSetFrame::Last::Character, false);
+            // The delegate gets the character once it is known not to begin a range.
+            m_character = ch;
         }
 
-        void afterSetOperand()
-        {
-            flushCachedCharacterIfNeeded();
-            noteOperand();
-            m_state = ClassSetConstructionState::AfterSetOperand;
-        }
-
-        bool canTakeSetOperand()
-        {
-            bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
-
-            switch (m_state) {
-            case ClassSetConstructionState::Empty:
-            case ClassSetConstructionState::AfterSetOperator:
-                return true;
-
-            case ClassSetConstructionState::CachedCharacter:
-                if (!unionOpActive)
-                    return false;
-
-                flushCachedCharacterIfNeeded();
-                return true;
-
-            case ClassSetConstructionState::CachedCharacterHyphen:
-            case ClassSetConstructionState::AfterCharacterClassHyphen:
-            case ClassSetConstructionState::AfterCharacterClass:
-            case ClassSetConstructionState::AfterSetRange:
-            case ClassSetConstructionState::AfterSetOperand:
-                return unionOpActive;
-            }
-
-            return false;
-        }
-
-        /*
-         * atomPatternCharacter():
-         *
-         * This method is called either from parseCharacterClass() (for an unescaped
-         * character in a character class), or from parseEscape(). In the former case
-         * the value true will be passed for the argument 'hyphenIsRange', and in this
-         * mode we will allow a hypen to be treated as indicating a range (i.e. /[a-z]/
-         * is different to /[a\-z]/).
-         */
-        void atomPatternCharacter(char32_t ch, bool hyphenIsRange)
-        {
-            bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
-
-            auto processCharacter = [&] () {
-                noteOperand();
-                // MayContainStrings of a ClassSetCharacter is false, which under && makes it false for the class.
-                // Not after juxtaposed operands: the grammar has no such class, and a negated one that holds strings
-                // stays a SyntaxError.
-                if (!m_hasJuxtaposedOperands)
-                    computeMayContainStrings(false);
-                m_character = ch;
-                m_state = ClassSetConstructionState::CachedCharacter;
-                return;
-            };
-
-            switch (m_state) {
-            case ClassSetConstructionState::AfterCharacterClass:
-                // Following a built-in character class we need look out for a hyphen.
-                // We're looking for invalid ranges, such as /[\d-x]/ or /[\d-\d]/.
-                // If we see a hyphen following a character class then unlike usual
-                // we'll report it to the delegate immediately, and put ourself into
-                // a poisoned state. In a unicode pattern, any following calls to add
-                // another character or character class will result in syntax error.
-                // A hypen following a character class is itself valid, but only at
-                // the end of a regex.
-                if (hyphenIsRange && unionOpActive && ch == '-') {
-                    m_delegate.atomCharacterClassAtom('-');
-                    m_state = ClassSetConstructionState::AfterCharacterClassHyphen;
-                    return;
-                }
-                // Otherwise just fall through - cached character so treat this as ClassSetConstructionState::Empty.
-                [[fallthrough]];
-
-            case ClassSetConstructionState::AfterSetRange:
-                switchFromDefaultOpToUnionOpIfNeeded();
-
-                // Continue processing the current character.
-                [[fallthrough]];
-
-            case ClassSetConstructionState::Empty:
-            case ClassSetConstructionState::AfterSetOperator:
-                // (hyphenIsRange is false exactly for an escaped character.)
-                if (hyphenIsRange && ch == '-') {
-                    m_errorCode = ErrorCode::InvalidClassSetCharacter;
-                    return;
-                }
-
-                processCharacter();
-                return;
-
-            case ClassSetConstructionState::CachedCharacter:
-                if (!unionOpActive) {
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                    return;
-                }
-
-                if (ch == '-')
-                    m_state = ClassSetConstructionState::CachedCharacterHyphen;
-                else {
-                    m_delegate.atomCharacterClassAtom(m_character);
-                    switchFromDefaultOpToUnionOpIfNeeded();
-                    processCharacter();
-                }
-                return;
-
-            case ClassSetConstructionState::CachedCharacterHyphen:
-                if (ch < m_character) {
-                    m_errorCode = ErrorCode::CharacterClassRangeOutOfOrder;
-                    return;
-                }
-
-                m_delegate.atomCharacterClassRange(m_character, ch);
-                switchFromDefaultOpToUnionOpIfNeeded();
-                m_state = ClassSetConstructionState::AfterSetRange;
-                return;
-
-                // If we hit this case, we have an invalid range like /[\d-a]/.
-                // See coment in atomBuiltInCharacterClass() below.
-            case ClassSetConstructionState::AfterCharacterClassHyphen:
-                m_errorCode = ErrorCode::CharacterClassRangeInvalid;
-                return;
-
-            case ClassSetConstructionState::AfterSetOperand:
-                // A character right after a nested class or \q{...}: a union with it. (There is no
-                // cached character to flush in this state -- doing so added a stale one, U+0000
-                // after [\q{ab}x] -- and an escaped hyphen is an ordinary member here.)
-                if (!unionOpActive) {
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                    return;
-                }
-                if (hyphenIsRange && ch == '-') { // an unescaped '-' (a ClassSetSyntaxCharacter)
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                    return;
-                }
-                switchFromDefaultOpToUnionOpIfNeeded();
-                processCharacter();
-                return;
-            }
-        }
-
-        /*
-         * atomBuiltInCharacterClass():
-         *
-         * Adds a built-in character class, called by parseEscape().
-         */
         void atomBuiltInCharacterClass(BuiltInCharacterClassID classID, bool invert)
         {
-            bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
-
-            auto processBuiltInCharacterClass = [&] () {
-                noteOperand();
-                computeMayContainStrings(characterClassMayContainStrings(classID));
-
-                m_delegate.atomCharacterClassBuiltIn(classID, invert);
-                m_state = ClassSetConstructionState::AfterCharacterClass;
-                return;
-            };
-
-            switch (m_state) {
-            case ClassSetConstructionState::CachedCharacter:
-                if (!unionOpActive) {
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                    return;
-                }
-
-                // Flush the currently cached character, then fall through.
-                m_delegate.atomCharacterClassAtom(m_character);
-
-                // Yes, we really want to fall through to the AfterSetRange case to switch from Default to Union op
-                // and then handle the built in class by falling through again.
-                [[fallthrough]];
-
-            case ClassSetConstructionState::AfterSetRange:
-                switchFromDefaultOpToUnionOpIfNeeded();
-
-                // Continue processing the current character.
-                [[fallthrough]];
-
-            case ClassSetConstructionState::Empty:
-            case ClassSetConstructionState::AfterCharacterClass:
-            case ClassSetConstructionState::AfterSetOperator:
-                processBuiltInCharacterClass();
-                return;
-
-                // If we hit either of these cases, we have an invalid range that
-                // looks something like /[a-\d]/ or /[\d-\d]/.
-                // Since ES2015, this should be syntax error in a unicode pattern,
-                // yet gracefully handled in a regular regex to avoid breaking the web.
-                // Effectively we handle the hyphen as if it was (implicitly) escaped,
-                // e.g. /[\d-a-z]/ is treated as /[\d\-a\-z]/.
-                // See usages of CharacterRangeOrUnion abstract op in
-                // https://tc39.es/ecma262/#sec-regular-expression-patterns-semantics
-            case ClassSetConstructionState::CachedCharacterHyphen:
-                m_delegate.atomCharacterClassAtom(m_character);
-                m_delegate.atomCharacterClassAtom('-');
-                [[fallthrough]];
-            case ClassSetConstructionState::AfterCharacterClassHyphen:
-                m_errorCode = ErrorCode::CharacterClassRangeInvalid;
-                return;
-
-            case ClassSetConstructionState::AfterSetOperand:
-                if (!unionOpActive)
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-
-                processBuiltInCharacterClass();
-                return;
-            }
+            m_frame.addOperand(ClassSetFrame::Last::CharacterClassEscape, characterClassMayContainStrings(classID));
+            m_delegate.atomCharacterClassBuiltIn(classID, invert);
         }
-
-        /*
-         * end():
-         *
-         * Called at end of construction.
-         */
-        void end()
-        {
-            if (m_state == ClassSetConstructionState::CachedCharacter)
-                m_delegate.atomCharacterClassAtom(m_character);
-            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen || m_state == ClassSetConstructionState::AfterSetOperator)
-                m_errorCode = ErrorCode::InvalidClassSetCharacter;
-
-            // The delegate is not told about the end of a class this refuses: YarrPatternConstructor asserts that its
-            // own check of the built class never fires.
-            if (isInverted() && m_mayContainStrings) {
-                m_errorCode = ErrorCode::NegatedClassSetMayContainStrings;
-                return;
-            }
-
-            m_delegate.atomCharacterClassEnd();
-        }
-
-        bool isInverted() { return m_inverted; }
-
-        ErrorCode error() { return m_errorCode; }
 
         // parseEscape() should never call these delegate methods when
         // invoked with inCharacterClass set.
@@ -809,26 +476,40 @@ private:
 
     private:
         Delegate& m_delegate;
-        ErrorCode& m_errorCode;
-        enum class ClassSetConstructionState {
-            Empty,
-            CachedCharacter,
-            CachedCharacterHyphen,
-            AfterCharacterClass,
-            AfterCharacterClassHyphen,
-            AfterSetRange,
-            AfterSetOperand,
-            AfterSetOperator,
-        };
-        ClassSetConstructionState m_state;
-        CharacterClassSetOp m_setOp;
-        bool m_mayContainStrings;
-        bool m_hasOperand;
-        bool m_hasJuxtaposedOperands;
-        bool m_inverted;
-        char32_t m_character;
-        Vector<NestingState> nestedParseState;
+        ClassSetFrame& m_frame;
+        char32_t& m_character;
     };
+
+    /*
+     * ClassSetRangeEndDelegate:
+     *
+     * For the escape after the hyphen of a ClassSetRange, where the grammar has a
+     * ClassSetCharacter. It keeps what parseEscape() found for parseClassSetRangeEnd().
+     */
+    struct ClassSetRangeEndDelegate {
+        void atomPatternCharacter(char32_t ch, bool)
+        {
+            character = ch;
+        }
+
+        void atomBuiltInCharacterClass(BuiltInCharacterClassID, bool)
+        {
+            isCharacterClass = true;
+        }
+
+        NO_RETURN_DUE_TO_ASSERT void assertionWordBoundary(bool) { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void atomBackReference(unsigned) { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void atomNamedBackReference(const String&) { RELEASE_ASSERT_NOT_REACHED(); }
+        NO_RETURN_DUE_TO_ASSERT void atomNamedForwardReference(const String&) { RELEASE_ASSERT_NOT_REACHED(); }
+
+        char32_t character { 0 };
+        bool isCharacterClass { false };
+    };
+
+    // What parseClassSetOperand() found. Of a nested class it has only consumed the [.
+    enum class ClassSetOperandType : uint8_t { Failed, Operand, NestedClass };
+    // What comes next in a class: an operand, or nothing, when its ] is consumed.
+    enum class ClassSetContinuation : uint8_t { Failed, Operand, End };
 
     /*
      * ClassStringDisjunctionParserDelegate:
@@ -909,7 +590,7 @@ private:
      * parseEscape():
      *
      * Helper for parseTokens(), parseAtomEscape(), parseCharacterClassEscape(),
-     * parseClassSetEscape() and parseClassStringDisjunctionEscape().
+     * parseClassSetOperand(), parseClassSetRangeEnd() and parseClassStringDisjunctionEscape().
      *
      * Unlike the other parser methods, this function does not report tokens
      * directly to the member delegate (m_delegate), instead tokens are
@@ -919,9 +600,9 @@ private:
      *
      * However this method may also be used by parseCharacterClass(), parseClassSet(), or
      * parseClassStringDisjunctionEscape() in which case a CharacterClassParserDelegate,
-     * ClassSetParserDelegate or ClassStringDisjunctionParserDelegate respectively will be
-     * passed as the delegate that tokens should be added to.  Delegate should have the
-     * following methods:
+     * ClassSetOperandDelegate (ClassSetRangeEndDelegate for the end of a range) or
+     * ClassStringDisjunctionParserDelegate respectively will be passed as the delegate
+     * that tokens should be added to.  Delegate should have the following methods:
      *
      *   Required methods:
      *    void atomPatternCharacter(char32_t ch, bool hyphenIsRange);
@@ -1307,7 +988,7 @@ private:
     }
 
     /*
-     * parseAtomEscape(), parseCharacterClassEscape(), parseClassSetEscape() and parseClassStringDisjunctionEscape():
+     * parseAtomEscape(), parseCharacterClassEscape() and parseClassStringDisjunctionEscape():
      *
      * These methods alias to parseEscape().
      */
@@ -1319,11 +1000,6 @@ private:
     void parseCharacterClassEscape(CharacterClassParserDelegate& delegate)
     {
         parseEscape<ParseEscapeMode::CharacterClass>(delegate);
-    }
-
-    TokenType parseClassSetEscape(ClassSetParserDelegate& delegate)
-    {
-        return parseEscape<ParseEscapeMode::ClassSet>(delegate);
     }
 
     void parseClassStringDisjunctionEscape(ClassStringDisjunctionParserDelegate& delegate)
@@ -1370,115 +1046,313 @@ private:
         m_errorCode = ErrorCode::CharacterClassUnmatched;
     }
 
+    // A ] where the class in frame cannot end.
+    void refuseClassSetEnd(ClassSetFrame& frame)
+    {
+        m_errorCode = frame.inverted && frame.mayContainStrings ? ErrorCode::NegatedClassSetMayContainStrings : ErrorCode::InvalidClassSetCharacter;
+    }
+
+    // At a - or a &. Consumes -- or &&, and returns that operation. Otherwise returns Default: a single - is
+    // consumed, and a single & is left where it is, since it is a ClassSetCharacter.
+    CharacterClassSetOp tryConsumeClassSetOperator()
+    {
+        ParseState state = saveState();
+        char32_t ch = consume();
+        if (atEndOfPattern()) {
+            m_errorCode = ErrorCode::CharacterClassUnmatched;
+            return CharacterClassSetOp::Default;
+        }
+        if (peek() != ch) {
+            if (ch == '&')
+                restoreState(state);
+            return CharacterClassSetOp::Default;
+        }
+        consume();
+        // The grammar has [lookahead != &] after &&, and no operand begins with a hyphen.
+        if (atEndOfPattern() || peek() == ch) {
+            m_errorCode = ErrorCode::InvalidClassSetCharacter;
+            return CharacterClassSetOp::Default;
+        }
+        return ch == '-' ? CharacterClassSetOp::Subtraction : CharacterClassSetOp::Intersection;
+    }
+
+    // ClassSetRange :: ClassSetCharacter - ClassSetCharacter. Called after the hyphen. Returns the second
+    // ClassSetCharacter, or errorCodePoint with the error set when what follows is not one.
+    // Out of line: it is rare, and it has a parseEscape() of its own.
+    NEVER_INLINE char32_t parseClassSetRangeEnd(ClassSetFrame& frame)
+    {
+        if (atEndOfPattern()) {
+            m_errorCode = ErrorCode::CharacterClassUnmatched;
+            return errorCodePoint;
+        }
+
+        switch (peek()) {
+        case ']':
+            refuseClassSetEnd(frame);
+            return errorCodePoint;
+
+        case '[':
+            m_errorCode = ErrorCode::InvalidClassSetCharacter;
+            return errorCodePoint;
+
+        case '\\': {
+            ClassSetRangeEndDelegate escape;
+            TokenType tokenType = parseEscape<ParseEscapeMode::ClassSet>(escape);
+            if (hasError(m_errorCode))
+                return errorCodePoint;
+            if (tokenType != TokenType::Atom) {
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
+                return errorCodePoint;
+            }
+            if (escape.isCharacterClass) {
+                m_errorCode = ErrorCode::CharacterClassRangeInvalid;
+                return errorCodePoint;
+            }
+            return escape.character;
+        }
+
+        case '&':
+            if (tryConsumeClassSetOperator() != CharacterClassSetOp::Default) {
+                m_errorCode = frame.production == CharacterClassSetOp::Default ? ErrorCode::InvalidClassSetCharacter : ErrorCode::InvalidClassSetOperation;
+                return errorCodePoint;
+            }
+            if (hasError(m_errorCode))
+                return errorCodePoint;
+            [[fallthrough]];
+
+        default:
+            return consumeAndCheckIfValidClassSetCharacter();
+        }
+    }
+
+    // ClassContents :: [empty] | ClassSetExpression. Called after the [ of a class, and its ^.
+    ClassSetContinuation parseClassSetStart()
+    {
+        if (atEndOfPattern()) {
+            m_errorCode = ErrorCode::CharacterClassUnmatched;
+            return ClassSetContinuation::Failed;
+        }
+        if (peek() != ']')
+            return ClassSetContinuation::Operand;
+        consume();
+        return ClassSetContinuation::End;
+    }
+
+    // ClassSetOperand :: NestedClass | ClassStringDisjunction | ClassSetCharacter. Called where the class in
+    // frame has an operand: at its start, after an operator, and after a member of a ClassUnion. The delegate
+    // gets a character class escape and a \q{} at once. A ClassSetCharacter waits, since it can begin a range.
+    ALWAYS_INLINE ClassSetOperandType parseClassSetOperand(ClassSetFrame& frame, ClassSetOperandDelegate& operandDelegate)
+    {
+        char32_t ch = peek();
+        switch (ch) {
+        case '[':
+            consume();
+            return ClassSetOperandType::NestedClass;
+
+        case ']':
+            // After an operator. (parseClassSetStart() takes the ] of an empty class.)
+            refuseClassSetEnd(frame);
+            return ClassSetOperandType::Failed;
+
+        case '\\': {
+            TokenType tokenType = parseEscape<ParseEscapeMode::ClassSet>(operandDelegate);
+            if (hasError(m_errorCode))
+                return ClassSetOperandType::Failed;
+
+            // A \q{}: parseClassStringDisjunction() has given the delegate its strings.
+            if (tokenType != TokenType::Atom)
+                frame.addOperand(ClassSetFrame::Last::Operand, tokenType == TokenType::SetDisjunctionMayContainStrings);
+            return ClassSetOperandType::Operand;
+        }
+
+        case '-':
+        case '&':
+            // An operator where the grammar has an operand, or a hyphen that is not in a range.
+            if (tryConsumeClassSetOperator() != CharacterClassSetOp::Default)
+                m_errorCode = ErrorCode::InvalidClassSetOperation;
+            else if (ch == '-' && !hasError(m_errorCode))
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
+            if (hasError(m_errorCode))
+                return ClassSetOperandType::Failed;
+            [[fallthrough]];
+
+        default:
+            ch = consumeAndCheckIfValidClassSetCharacter();
+            if (ch == errorCodePoint)
+                return ClassSetOperandType::Failed;
+
+            operandDelegate.atomPatternCharacter(ch, /* hyphenIsRange */ true);
+            return ClassSetOperandType::Operand;
+        }
+    }
+
+    // Called after an operand of the class in frame. Consumes the ] of the class, or what its production has
+    // between two operands:
+    //   ClassUnion: nothing. A hyphen and a ClassSetCharacter make the operand before them a ClassSetRange.
+    //   ClassIntersection: &&.
+    //   ClassSubtraction: --.
+    // What follows the first operand of a class decides which of the three it is.
+    // character is the operand when that is a ClassSetCharacter.
+    ALWAYS_INLINE ClassSetContinuation parseAfterClassSetOperand(ClassSetFrame& frame, char32_t character)
+    {
+        while (!atEndOfPattern()) {
+            char32_t ch = peek();
+            if (ch == ']') {
+                // The delegate is not told about the end of a class this refuses: YarrPatternConstructor asserts
+                // that its own check of the built class never fires.
+                if (frame.inverted && frame.mayContainStrings) {
+                    m_errorCode = ErrorCode::NegatedClassSetMayContainStrings;
+                    return ClassSetContinuation::Failed;
+                }
+                consume();
+                if (frame.last == ClassSetFrame::Last::Character)
+                    m_delegate.atomCharacterClassAtom(character);
+                return ClassSetContinuation::End;
+            }
+
+            if (ch == '-' || ch == '&') {
+                CharacterClassSetOp op = tryConsumeClassSetOperator();
+                if (hasError(m_errorCode))
+                    return ClassSetContinuation::Failed;
+
+                if (op != CharacterClassSetOp::Default) {
+                    // The grammar has && or -- after the first operand, and after an operand of the same operator.
+                    if (frame.production != CharacterClassSetOp::Default && frame.production != op) {
+                        m_errorCode = ErrorCode::InvalidClassSetOperation;
+                        return ClassSetContinuation::Failed;
+                    }
+                    if (frame.last == ClassSetFrame::Last::Character)
+                        m_delegate.atomCharacterClassAtom(character);
+                    frame.production = op;
+                    m_delegate.atomCharacterClassSetOp(op);
+                    frame.last = ClassSetFrame::Last::Nothing;
+                    return ClassSetContinuation::Operand;
+                }
+
+                if (ch == '-') {
+                    // A hyphen: the grammar only has one between the two characters of a ClassSetRange,
+                    // and a ClassSetRange only in a ClassUnion.
+                    switch (frame.last) {
+                    case ClassSetFrame::Last::Character: {
+                        if (!frame.isUnion()) {
+                            m_errorCode = ErrorCode::InvalidClassSetOperation;
+                            return ClassSetContinuation::Failed;
+                        }
+                        char32_t end = parseClassSetRangeEnd(frame);
+                        if (end == errorCodePoint)
+                            return ClassSetContinuation::Failed;
+                        if (end < character) {
+                            m_errorCode = ErrorCode::CharacterClassRangeOutOfOrder;
+                            return ClassSetContinuation::Failed;
+                        }
+                        m_delegate.atomCharacterClassRange(character, end);
+                        frame.production = CharacterClassSetOp::Union;
+                        frame.last = ClassSetFrame::Last::Range;
+                        continue;
+                    }
+
+                    case ClassSetFrame::Last::CharacterClassEscape:
+                        // We're looking at an invalid range, such as /[\d-x]/ or /[\d-\d]/, or at a hyphen
+                        // with nothing after it, as in /[\d-]/. What is after the hyphen picks the error.
+                        if (!frame.isUnion())
+                            m_errorCode = ErrorCode::InvalidClassSetCharacter;
+                        else if (parseClassSetRangeEnd(frame) != errorCodePoint)
+                            m_errorCode = ErrorCode::CharacterClassRangeInvalid;
+                        return ClassSetContinuation::Failed;
+
+                    case ClassSetFrame::Last::Operand:
+                        m_errorCode = ErrorCode::InvalidClassSetOperation;
+                        return ClassSetContinuation::Failed;
+
+                    case ClassSetFrame::Last::Nothing:
+                    case ClassSetFrame::Last::Range:
+                        m_errorCode = ErrorCode::InvalidClassSetCharacter;
+                        return ClassSetContinuation::Failed;
+                    }
+                }
+            }
+
+            // An operand right after an operand: the class is a ClassUnion, or it is not in the grammar.
+            if (!frame.isUnion()) {
+                m_errorCode = ErrorCode::InvalidClassSetOperation;
+                return ClassSetContinuation::Failed;
+            }
+            if (frame.last == ClassSetFrame::Last::Character)
+                m_delegate.atomCharacterClassAtom(character);
+            frame.production = CharacterClassSetOp::Union;
+            return ClassSetContinuation::Operand;
+        }
+
+        m_errorCode = ErrorCode::CharacterClassUnmatched;
+        return ClassSetContinuation::Failed;
+    }
+
     /*
      * parseClassSet():
      *
-     * Helper for parseTokens() calls directly and indirectly (via parseClassSetEscape)
-     * to an instance of CharacterClassParserDelegate, to describe the character class to the
-     * delegate.
+     * Helper for parseTokens(). Parses a class of a pattern with the v flag and the classes nested in it, and
+     * describes them to the delegate. It follows the grammar of ClassContents[+UnicodeSetsMode]: a class is
+     * empty (parseClassSetStart), or it is an operand (parseClassSetOperand) and then what its production has
+     * between two operands (parseAfterClassSetOperand), and so on up to its ]. A nested class is an operand of
+     * the class around it: its frame takes the place of the frame of that class until its ], so that no class
+     * sees the state of another.
+     *
+     * Out of line: parseTokens() then has no class set code in it, and a pattern without one does not pay for it.
      */
-    void parseClassSet()
+    NEVER_INLINE void parseClassSet()
     {
         ASSERT(!hasError(m_errorCode));
         ASSERT(peek() == '[');
         consume();
 
-        ClassSetParserDelegate classSetConstructor(m_delegate, m_errorCode);
+        Vector<ClassSetFrame> enclosingClasses;
+        ClassSetFrame frame(tryConsume('^'));
+        // The last operand of the class in frame, when that is a ClassSetCharacter.
+        char32_t character = 0;
+        ClassSetOperandDelegate operandDelegate(m_delegate, frame, character);
+        m_delegate.atomCharacterClassBegin(frame.inverted);
 
-        classSetConstructor.begin(tryConsume('^'));
-
-        auto processCharacterNormally = [&] () {
-            char32_t ch = consumeAndCheckIfValidClassSetCharacter();
-            if (ch == errorCodePoint)
+        ClassSetContinuation continuation = parseClassSetStart();
+        while (true) {
+            switch (continuation) {
+            case ClassSetContinuation::Failed:
                 return;
 
-            classSetConstructor.atomPatternCharacter(static_cast<char32_t>(ch), /* hyphenIsRange */ true);
-        };
-
-        while (!atEndOfPattern()) {
-            auto ch = peek();
-            switch (ch) {
-            case ']':
-                consume();
-                if (classSetConstructor.nestedClassEnd())
+            case ClassSetContinuation::Operand:
+                switch (parseClassSetOperand(frame, operandDelegate)) {
+                case ClassSetOperandType::Failed:
                     return;
-                break;
 
-            case '[': {
-                consume();
-                classSetConstructor.nestedClassBegin(tryConsume('^'));
-                break;
-            }
+                case ClassSetOperandType::Operand:
+                    continuation = parseAfterClassSetOperand(frame, character);
+                    break;
 
-            case '\\': {
-                if (!classSetConstructor.canTakeSetOperand()) {
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-                    return;
-                }
-
-                TokenType tokenType = parseClassSetEscape(classSetConstructor);
-
-                // A character or a character class escape has applied its own MayContainStrings in the delegate.
-                if (tokenType == TokenType::SetDisjunction || tokenType == TokenType::SetDisjunctionMayContainStrings) {
-                    classSetConstructor.computeMayContainStrings(tokenType == TokenType::SetDisjunctionMayContainStrings);
-                    classSetConstructor.afterSetOperand();
-                }
-
-                break;
-            }
-
-            case '-': {
-                ParseState state = saveState();
-                consume();
-                if (atEndOfPattern()) {
-                    m_errorCode = ErrorCode::CharacterClassUnmatched;
-                    return;
-                }
-                if (peek() == '-') {
-                    consume();
-                    if (atEndOfPattern() || peek() == '-') {
-                        m_errorCode = ErrorCode::InvalidClassSetCharacter;
-                        return;
-                    }
-                    classSetConstructor.setSubtractOp();
+                case ClassSetOperandType::NestedClass: {
+                    bool inverted = tryConsume('^');
+                    m_delegate.atomCharacterClassPushNested(inverted);
+                    enclosingClasses.append(std::exchange(frame, ClassSetFrame(inverted)));
+                    continuation = parseClassSetStart();
                     break;
                 }
-                restoreState(state);
-                processCharacterNormally();
+                }
                 break;
-            }
 
-            case '&': {
-                ParseState state = saveState();
-                consume();
-                if (atEndOfPattern()) {
-                    m_errorCode = ErrorCode::CharacterClassUnmatched;
+            case ClassSetContinuation::End: {
+                if (enclosingClasses.isEmpty()) {
+                    m_delegate.atomCharacterClassEnd();
                     return;
                 }
-                if (peek() == '&') {
-                    consume();
-                    if (atEndOfPattern() || peek() == '&') {
-                        m_errorCode = ErrorCode::InvalidClassSetCharacter;
-                        return;
-                    }
-                    classSetConstructor.setIntersectionOp();
-                    break;
-                }
-                restoreState(state);
-                processCharacterNormally();
+
+                // The class that ended is an operand of the class around it.
+                bool nestedMayContainStrings = frame.mayContainStrings;
+                frame = enclosingClasses.takeLast();
+                m_delegate.atomCharacterClassPopNested(frame.inverted);
+                frame.addOperand(ClassSetFrame::Last::Operand, nestedMayContainStrings);
+                continuation = parseAfterClassSetOperand(frame, character);
                 break;
             }
-
-            default:
-                processCharacterNormally();
-                break;
             }
-
-            if (hasError(m_errorCode))
-                return;
         }
-
-        m_errorCode = ErrorCode::CharacterClassUnmatched;
     }
 
     /*
