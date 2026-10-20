@@ -436,12 +436,27 @@ public:
         if (m_compileMode != CompileMode::UnicodeSets)
             return;
 
-        latin1Op(rhsMatches8, rhsRanges8);
-        // Sort the incoming non-Latin-1 matches, since Unicode case folding canonicalization may cause
-        // characters to be added to rhsMatches32 out of code point order.
+        // A union with an operand that has nothing in one half of the tables, and a subtraction of one, leave that
+        // half as it is.
+        bool isIntersection = m_setOp == CharacterClassSetOp::Intersection;
+        bool hasLatin1 = !rhsMatches8.isEmpty() || !rhsRanges8.isEmpty();
+        bool hasNonLatin1 = !rhsMatches32.isEmpty() || !rhsRanges32.isEmpty();
+
+        if (isIntersection || hasLatin1)
+            latin1Op(rhsMatches8, rhsRanges8);
+
+        if (!isIntersection && !hasNonLatin1)
+            return;
+
+        // Unicode case folding canonicalization may cause characters to be added to rhsMatches32 out of code
+        // point order.
+        if (std::ranges::is_sorted(rhsMatches32)) {
+            nonLatin1OpSorted(rhsMatches32, rhsRanges32);
+            return;
+        }
+
         Vector<char32_t> rhsSortedMatches32(rhsMatches32);
         std::ranges::sort(rhsSortedMatches32);
-
         nonLatin1OpSorted(rhsSortedMatches32, rhsRanges32);
     }
 
