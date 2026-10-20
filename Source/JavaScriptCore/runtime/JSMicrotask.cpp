@@ -290,7 +290,9 @@ static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue prom
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     {
-        callMicrotask(globalObject, then, promise, dynamicCastToCell(then), "|then| is not a function"_s, microtaskCallCache, resolve, reject);
+        // The entry context says what the job settles, for an async stack trace that is taken in then():
+        // the resolve function holds the promise, or the await, that it was made for.
+        callMicrotask(globalObject, then, promise, dynamicCastToCell(resolve), "|then| is not a function"_s, microtaskCallCache, resolve, reject);
         if (!scope.exception()) [[likely]]
             return;
     }
@@ -895,7 +897,8 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     JSValue error;
     {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        result = callMicrotask(globalObject, onFinally, jsUndefined(), dynamicCastToCell(onFinally), "onFinally is not a function"_s, microtaskCallCache);
+        // The entry context is the promise that the job settles (see PromiseReactionJob).
+        result = callMicrotask(globalObject, onFinally, jsUndefined(), resultPromise, "onFinally is not a function"_s, microtaskCallCache);
         if (catchScope.exception()) {
             error = catchScope.exception()->value();
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -1965,16 +1968,21 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue error;
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            // The entry context is the promise or the capability that the job settles with what the handler
+            // returns or throws: an async stack trace that is taken in the handler starts there, and a throw
+            // that leaves the handler needs no Exception stack
+            // (Interpreter::isExceptionCaughtByUserCatchClauseOrMicrotaskJob). A job that settles nothing has
+            // the handler as its context.
 #if USE(BUN_JSC_ADDITIONS)
             // Pass userContext if present, allowing handlers to receive extra context
-            // When userContext is defined (not empty, undefined, or null), pass 2 arguments and use userContext as the cell context
+            // When userContext is defined (not empty, undefined, or null), pass 2 arguments
             // When userContext is empty/undefined/null, pass 1 argument only
             if (userContext.isEmpty() || userContext.isUndefinedOrNull())
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
+                result = callMicrotask(globalObject, handler, jsUndefined(), promiseOrCapability.isCell() ? promiseOrCapability.asCell() : dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
             else
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, argument2, userContext);
+                result = callMicrotask(globalObject, handler, jsUndefined(), promiseOrCapability.isCell() ? promiseOrCapability.asCell() : dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2, userContext);
 #else
-            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
+            result = callMicrotask(globalObject, handler, jsUndefined(), promiseOrCapability.isCell() ? promiseOrCapability.asCell() : dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
 #endif
             if (catchScope.exception()) {
                 if (promiseOrCapability.isUndefinedOrNull()) {
