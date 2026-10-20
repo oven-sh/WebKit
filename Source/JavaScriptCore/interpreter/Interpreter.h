@@ -81,6 +81,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ModuleProgramExecutable;
     class Register;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
+    struct AsyncStackTraceLink;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -179,6 +181,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 #else
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
 #endif
+        // Adds the async frames of what waits for the promise to settle, innermost first: the async functions, and
+        // the module whose top-level await ends the chain. Bun calls it for a promise that native code rejects.
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise*, size_t maxStackSize);
         // Adds the async frame of each generator of an await chain: firstGenerator, getParentGenerator(firstGenerator), and so on.
         // Bun calls it with its own lookup, for the chain of a promise that native code rejects.
         void appendAsyncStackFrames(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const ScopedLambda<JSAsyncFunctionGenerator*(JSAsyncFunctionGenerator*)>& getParentGenerator);
@@ -187,7 +192,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         bool isExceptionCaughtByUserCatchClauseOrMicrotaskJob();
 
     private:
-        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, AsyncStackTraceLink, size_t maxStackSize);
         template<typename GetParentGenerator> void walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const GetParentGenerator&);
         enum ExecutionFlag { Normal, InitializeAndReturn };
 

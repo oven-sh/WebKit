@@ -38,6 +38,30 @@ namespace JSC {
 class JSPromiseConstructor;
 class JSPromiseReaction;
 
+// For an async stack trace: what the newest pending reaction of a promise resumes or settles.
+enum class AsyncStackTraceLinkKind : uint8_t {
+    None,
+    // cell is the JSAsyncFunctionGenerator of the async function that awaits the promise.
+    AsyncFunction,
+    // cell is the JSModuleRecord of the module that awaits the promise at its top level.
+    Module,
+    // cell is the JSAsyncGenerator whose body awaits the promise.
+    // JSPromise::asyncStackTraceLinkForEntryContext(cell) says what waits for the request that the body works on.
+    AsyncGenerator,
+    // cell is the JSPromise that Promise.all, allSettled, any or race returned. The promise is one of its elements.
+    Combinator,
+    // cell is the JSPromise that then(), catch() or finally() returned, that was resolved with the promise,
+    // or that an async generator returned for the request it works on.
+    Promise,
+};
+
+struct AsyncStackTraceLink {
+    JSCell* cell { nullptr };
+    AsyncStackTraceLinkKind kind { AsyncStackTraceLinkKind::None };
+    // False when the promise has older reactions too.
+    bool isOnlyReaction { true };
+};
+
 // JSPromise stores its state in two machine words:
 //   m_packed: CompactPointerTuple<JSCell*, uint16_t>
 //       Lower 48 bits: payload cell pointer (may be null)
@@ -119,7 +143,27 @@ public:
         return m_slot.get();
     }
 
-    JSValue asyncStackTraceContext() const;
+    // Only reads, and so does not allocate: a stack trace is taken where a collection must not run.
+    ALWAYS_INLINE AsyncStackTraceLink asyncStackTraceLink() const
+    {
+        uint16_t flags = this->flags();
+        // The common link of a chain: the one reaction is the `await` of an async function. Only
+        // asyncFunctionArrangeAwaitResume registers this task, and its context is the function's generator.
+        static constexpr uint16_t mask = stateMask | inlineReactionKindMask | inlineReactionMicrotaskMask;
+        static constexpr uint16_t awaitOfAsyncFunction = static_cast<uint16_t>(Status::Pending)
+            | (static_cast<uint16_t>(InlineReactionKind::InternalMicrotask) << inlineReactionKindShift)
+            | (static_cast<uint16_t>(InternalMicrotask::AsyncFunctionResume) << inlineReactionMicrotaskShift);
+        if ((flags & mask) == awaitOfAsyncFunction) [[likely]]
+            return { m_slot.get().asCell(), AsyncStackTraceLinkKind::AsyncFunction };
+        // The end of a chain: a settled promise, or a pending promise that nothing reacts to.
+        if ((flags & stateMask) != static_cast<uint16_t>(Status::Pending) || (!(flags & inlineReactionKindMask) && !payloadCell()))
+            return { };
+        return asyncStackTraceLinkSlow();
+    }
+    // The same for the job that runs in a VM entry with this context (VMEntryRecord::m_context), when the job is
+    // not the resumption of an async function: the promise that a promise reaction job or a thenable job settles,
+    // or what waits for the request that an async generator works on. The link says where the walk continues.
+    static AsyncStackTraceLink asyncStackTraceLinkForEntryContext(JSCell*);
 
 #if USE(BUN_JSC_ADDITIONS)
     void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
@@ -267,6 +311,7 @@ public:
 private:
 #endif
 
+    AsyncStackTraceLink asyncStackTraceLinkSlow() const;
     void setInlineMicrotaskReaction(VM&, InternalMicrotask, JSCell*, JSValue context, uint16_t extraFlags = 0);
     void setInlineHandlerReaction(VM&, InlineReactionKind, JSPromise*, JSValue handler);
     JSPromiseReaction* spillInlineReaction(VM&);
