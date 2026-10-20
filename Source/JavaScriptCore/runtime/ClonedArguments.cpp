@@ -332,10 +332,11 @@ void ClonedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
         unsigned i;
         for (i = offset; i < limit; ++i) {
             JSValue value = data[i].get();
-            if (!value) [[unlikely]] {
-                value = get(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
+            // A hole sends the read to the prototype chain, which can run a getter, which can
+            // move this butterfly. Leave the loop and read the rest one index at a time, as
+            // JSArray::copyToArguments does.
+            if (!value) [[unlikely]]
+                break;
             firstElementDest[i - offset] = value;
         }
         for (; i < length + offset; ++i) {
