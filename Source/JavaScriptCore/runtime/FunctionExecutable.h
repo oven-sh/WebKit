@@ -34,6 +34,7 @@
 namespace JSC {
 
 struct FunctionOverrideInfo;
+class UnlinkedFunctionCodeBlock;
 
 class FunctionExecutable final : public ScriptExecutable {
     friend class JIT;
@@ -128,8 +129,15 @@ public:
         
     FunctionMode functionMode() { return m_unlinkedExecutable->functionMode(); }
     ImplementationVisibility implementationVisibility() const { return m_unlinkedExecutable->implementationVisibility(); }
+    // For the body of a generator or an async function that has started: the unlinked code it first ran in. Every
+    // CodeBlock of the body is linked from it (ScriptExecutable::newCodeBlockFor). It stays until unlinked code is
+    // deleted while no activation of the body is suspended or running (Heap::deleteAllUnlinkedCodeBlocks).
+    UnlinkedFunctionCodeBlock* codeOfStartedBody() const { return m_codeOfStartedBody.get(); }
+    void setCodeOfStartedBody(VM&, UnlinkedFunctionCodeBlock*);
+    void clearCodeOfStartedBody(VM&);
+
     bool isBuiltinFunction() const { return m_unlinkedExecutable->isBuiltinFunction(); }
-    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!m_source.provider() || !m_source.provider()->sourceURL()); }
+    bool isPrivateBuiltinFunction() const { return UnlinkedFunctionExecutable::isPrivateBuiltinFunction(isBuiltinFunction(), m_source); }
     ConstructAbility constructAbility() const { return m_unlinkedExecutable->constructAbility(); }
     InlineAttribute inlineAttribute() const { return m_unlinkedExecutable->inlineAttribute(); }
     bool isClass() const { return m_unlinkedExecutable->isClass(); }
@@ -350,6 +358,9 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
+    WriteBarrier<UnlinkedFunctionCodeBlock> m_codeOfStartedBody;
 };
+// m_codeOfStartedBody takes what was left of the 128 bytes a FunctionExecutable is allocated in.
+static_assert(sizeof(FunctionExecutable) <= 128);
 
 } // namespace JSC
