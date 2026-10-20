@@ -1275,18 +1275,20 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
     if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
         moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
 #endif
-    // An activation of a generator, an async function or a module body can outlive this code: while it is suspended its
-    // CodeBlock can be jettisoned and the unlinked code it was linked from thrown away, and it then resumes in a CodeBlock
-    // linked from code that was generated or decoded again, whose SymbolTable constants are new objects. The environments
-    // it made before came from the clones of the old ones, and closures over those are compiled against those clones'
-    // inferences (DFG::ByteCodeParser folds a closure's scope under SymbolTable::singleton()), so the environments it
-    // makes from here on have to come from the same clones, or nothing would ever tell that code about them.
+    // An activation of a module body can outlive this code: while it is suspended its CodeBlock can be jettisoned and the
+    // unlinked code it was linked from thrown away, and it then resumes in a CodeBlock linked from code that was generated
+    // or decoded again, whose SymbolTable constants are new objects. The environments it made before came from the clones
+    // of the old ones, and closures over those are compiled against those clones' inferences (DFG::ByteCodeParser folds a
+    // closure's scope under SymbolTable::singleton()), so the environments it makes from here on have to come from the
+    // same clones, or nothing would ever tell that code about them.
+    // (The body of a generator or an async function is linked from the unlinked code it started in for as long as an
+    // activation of it is suspended, FunctionExecutable::codeOfStartedBody(): its SymbolTable constants stay the same
+    // objects, and symbolTableCache finds their clones.)
     JSCell* resumableCodeOwner = nullptr;
     if (m_unlinkedCode->codeType() == ModuleCode) {
         if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
             resumableCodeOwner = ownerExecutable();
-    } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
-        resumableCodeOwner = uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable();
+    }
 
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();

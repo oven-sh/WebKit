@@ -164,35 +164,22 @@ protected:
     static void visitCodeBlockEdge(Visitor&, CodeBlock*);
     void jettisonCodeBlockEdgeIfDead(VM&, WriteBarrier<CodeBlock>&);
 
-    // The body of a generator or an async function keeps its registers in a generator frame while it is suspended, and
-    // only code that was generated the same way finds them there again: once such a body has run, its code is always
-    // generated the way it was then, whatever the realm asks for by now. (A module keeps the mode its environment's
-    // symbol table was made for: ModuleProgramExecutable::getUnlinkedCodeBlock.)
-    OptionSet<CodeGenerationMode> codeGenerationModeForResumableBody(OptionSet<CodeGenerationMode> current)
-    {
-        if (m_codeForGeneratorBodyWasGenerated)
-            return m_codeGenerationModeForGeneratorBody;
-        m_codeGenerationModeForGeneratorBody = current;
-        return current;
-    }
-    void pinCodeGenerationModeForResumableBody() { m_codeForGeneratorBodyWasGenerated = true; }
-
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };
     bool m_didTryToEnterInLoop { false };
     CodeFeatures m_features;
     LexicallyScopedFeatures m_lexicallyScopedFeatures : bitWidthOfLexicallyScopedFeatures;
-    OptionSet<CodeGenerationMode> m_codeGenerationModeForGeneratorBody;
     bool m_hasCapturedVariables : 1;
     bool m_neverInline : 1;
     bool m_neverOptimize : 1;
     bool m_neverFTLOptimize : 1;
     bool m_isArrowFunctionContext : 1;
     bool m_canUseOSRExitFuzzing : 1;
-    bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
-    unsigned m_derivedContextType : 2; // DerivedContextType
-    unsigned m_evalContextType : 2; // EvalContextType
+    // One byte wide, like the bit-fields before them: the Microsoft ABI starts a new unit for a bit-field of another
+    // size, which made every executable 8 bytes larger there.
+    uint8_t m_derivedContextType : 2; // DerivedContextType
+    uint8_t m_evalContextType : 2; // EvalContextType
 };
 
 } // namespace JSC
