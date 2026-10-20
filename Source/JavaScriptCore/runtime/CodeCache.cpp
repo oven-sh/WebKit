@@ -110,9 +110,10 @@ void CodeCacheMap::removeEntriesNotUsedInCurrentFullCollectionCycle()
         return true;
     });
     // The working set starts over from what is left: the capacity a busy period grew to does not outlive it, and the
-    // next sources admitted are a new window, as after pruneSlowCase().
-    m_capacity = std::min(m_capacity, m_size);
-    m_minCapacity = 0;
+    // next sources admitted are a new window, as after pruneSlowCase(). What is left is in use, so hits on it must not
+    // shrink the capacity below it (they would, down to a minimum of 0, and the next pruneSlowCase() would evict it).
+    m_capacity = m_size;
+    m_minCapacity = m_size;
     m_sizeAtLastPrune = m_size;
     m_timeAtLastPrune = ApproximateTime::now();
 }

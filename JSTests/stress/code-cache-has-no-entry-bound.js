@@ -11,7 +11,7 @@ function assert(condition, message) {
 }
 
 var globalEval = eval;
-var count = 4000;
+var count = 2500; // over the entry bound this engine no longer has (2000), and no more: slow configurations run this too
 var sources = [];
 for (var i = 0; i < count; ++i)
     sources.push("1 + " + i);

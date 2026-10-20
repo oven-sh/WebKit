@@ -173,6 +173,9 @@ public:
     {
         m_size = 0;
         m_age = 0;
+#if USE(BUN_JSC_ADDITIONS)
+        m_ageAtLastFullCollection = 0;
+#endif
         m_map.clear();
     }
 
