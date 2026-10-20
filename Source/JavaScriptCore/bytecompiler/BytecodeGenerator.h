@@ -689,6 +689,22 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
+        // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
+        // it is in goes on after it.
+        void emitProfileControlFlow(int textOffset, int textEndOffset)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileControlFlowSlow(textOffset, textEndOffset);
+        }
+        // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
+        // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
+        bool emitProfileControlFlowAfter(StatementNode* statement)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                return emitProfileControlFlowAfterSlow(statement);
+            return false;
+        }
+        int& statementsEndOffset() { return m_statementsEndOffset; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
@@ -1097,6 +1113,8 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset);
+        bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
@@ -1433,6 +1451,7 @@ namespace JSC {
         Vector<Ref<Label>> m_optionalChainTargetStack;
 
         int m_nextConstantOffset { 0 };
+        int m_statementsEndOffset { 0 };
         
         // Constant pool
         IdentifierMap m_identifierMap;
