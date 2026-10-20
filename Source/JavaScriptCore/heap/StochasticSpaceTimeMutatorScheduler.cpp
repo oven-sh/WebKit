@@ -119,15 +119,6 @@ void StochasticSpaceTimeMutatorScheduler::didExecuteConstraints()
 void StochasticSpaceTimeMutatorScheduler::synchronousDrainingDidStall()
 {
     Snapshot snapshot(*this);
-
-#if USE(BUN_JSC_ADDITIONS)
-    // A collection that is small so far finishes sooner in this pause than in a later one: a resume would have a
-    // helper woken to do the marking meanwhile, and the mutator allocate into the cycle's headroom.
-    if (m_collector.isSmallSoFar()) {
-        m_plannedResumeTime = snapshot.now() + m_targetPause;
-        return;
-    }
-#endif
     
     double resumeProbability = mutatorUtilization(snapshot);
     if (resumeProbability < Options::epsilonMutatorUtilization()) {

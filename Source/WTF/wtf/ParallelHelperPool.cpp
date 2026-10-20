@@ -73,15 +73,16 @@ void ParallelHelperClient::setTaskOnRequest(RefPtr<SharedTask<void ()>>&& task)
     m_numRequested = 0;
 }
 
-void ParallelHelperClient::requestThread()
+bool ParallelHelperClient::requestThread()
 {
     Locker locker { *m_pool->m_lock };
     if (!m_task || !m_taskIsOnRequest)
-        return;
+        return false;
     if (m_numRequested >= m_pool->m_numThreads)
-        return;
+        return false;
     m_numRequested++;
     m_pool->didMakeWorkAvailableForOneThread(locker);
+    return true;
 }
 #endif
 

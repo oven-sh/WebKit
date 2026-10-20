@@ -46,6 +46,10 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/simde/simde.h>
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -119,7 +123,7 @@ void SlotVisitor::reset()
     m_flushedBytesMarked = 0;
 #if USE(BUN_JSC_ADDITIONS)
     m_bytesVisitedAgain = 0;
-    m_bytesVisitedAtLastMarkerWakeup = 0;
+    m_bytesVisitedAtLastPayment = 0;
 #endif
     m_extraMemoryHeap = nullptr;
     RELEASE_ASSERT(!m_currentCell);
@@ -456,46 +460,6 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // NOTE: Because we re-try often, we can afford to be conservative, and
     // assume that donating is not profitable.
 
-#if USE(BUN_JSC_ADDITIONS)
-    // To wake a thread costs more than to mark a few cells, and in a graph like a linked list a few cells are all
-    // that a donation has. So a donation wakes nobody by itself: the markers that are at work take it when they run
-    // dry. A visitor wakes one more marker for the shared stacks each time it has visited this much itself.
-    bool canWakeMarker = bytesVisited() - m_bytesVisitedAtLastMarkerWakeup >= Options::minimumBytesMarkedForParallelMarking();
-
-    // Avoid locking when a thread reaches a dead end in the object graph.
-    if (from.size() < 2) {
-        // A chain never has two cells to share. It is still not a small collection once it is this long.
-        if (canWakeMarker)
-            collector().didVisitEnoughForParallelMarking();
-        return;
-    }
-
-    // If there's already some shared work queued up, be conservative and assume
-    // that donating more is not profitable.
-    if (to.size() && !canWakeMarker)
-        return;
-
-    // If we're contending on the lock, be conservative and assume that another
-    // thread is already donating.
-    if (!collector().m_markingMutex.tryLock())
-        return;
-    Locker locker { AdoptLock, collector().m_markingMutex };
-
-    if (canWakeMarker) {
-        m_bytesVisitedAtLastMarkerWakeup = bytesVisited();
-        if (!to.size())
-            from.donateSomeCellsTo(to);
-        auto markerToWake = collector().chooseMarkerToWake(locker);
-        // The wake-up is a system call, and whoever wakes up wants this lock next.
-        locker.unlockEarly();
-        collector().wakeMarker(markerToWake);
-        return;
-    }
-
-    // In a collection that is small so far this visitor marks alone, and what it shares comes back to it.
-    if (!collector().isSmallSoFar())
-        from.donateSomeCellsTo(to);
-#else
     // Avoid locking when a thread reaches a dead end in the object graph.
     if (from.size() < 2)
         return;
@@ -504,6 +468,12 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // that donating more is not profitable.
     if (to.size())
         return;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // In a collection that is small so far this visitor marks alone, and what it shares comes back to it.
+    if (collector().isSmallSoFar())
+        return;
+#endif
 
     // If we're contending on the lock, be conservative and assume that another
     // thread is already donating.
@@ -514,9 +484,43 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // To wake a thread costs more than to mark a few cells, and in a graph like a linked list a few cells are all
+    // that a donation has. So a donation wakes a marker only if the marking of this cycle has paid for one. The
+    // markers that are in the cycle take the cells without that.
+    auto markers = collector().choosePaidForMarkersToWake(locker, Collector::MarkerWork::SharedCells);
+    locker.unlockEarly();
+    collector().wakeMarkers(markers);
+#else
     collector().m_markingConditionVariable.notifyAll();
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+ALWAYS_INLINE void SlotVisitor::payForMarkerWakeupIfNeeded()
+{
+    // With the option at 0 no wake-up needs paying for.
+    size_t bytesPerMarkerWakeup = Options::minimumBytesMarkedForParallelMarking();
+    if (bytesPerMarkerWakeup && bytesVisited() - m_bytesVisitedAtLastPayment >= bytesPerMarkerWakeup) [[unlikely]]
+        payForMarkerWakeup();
+}
+
+NEVER_INLINE void SlotVisitor::payForMarkerWakeup()
+{
+    m_bytesVisitedAtLastPayment = bytesVisited();
+    collector().didPayForMarkerWakeup();
+
+    // A donation spends it. Cells that are shared already do not wait for one.
+    if (collector().m_sharedCollectorMarkStack->isEmpty() && collector().m_sharedMutatorMarkStack->isEmpty())
+        return;
+    Collector::MarkersToWake markers;
+    {
+        Locker locker { collector().m_markingMutex };
+        markers = collector().choosePaidForMarkersToWake(locker, Collector::MarkerWork::SharedCells);
+    }
+    collector().wakeMarkers(markers);
+}
+#endif
 
 void SlotVisitor::donateKnownParallel()
 {
@@ -537,13 +541,15 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 #if USE(BUN_JSC_ADDITIONS)
     // In a chain of cells (a linked list) every round of this loop gets one cell, since the stack is empty again once
     // the cell is popped. To read the clock costs more than to visit such a cell, so the clock is read once per
-    // minimumNumberOfScansBetweenRebalance cells, as it is when the stack is never empty.
+    // minimumNumberOfScansBetweenRebalance cells, as it is when the stack is never empty. The same goes for what
+    // this visitor owes for the wake-up of another marker.
     unsigned scansUntilTimeoutCheck = 0;
     for (;;) {
         if (!scansUntilTimeoutCheck) {
             if (hasElapsed(timeout))
                 break;
             scansUntilTimeoutCheck = Options::minimumNumberOfScansBetweenRebalance();
+            payForMarkerWakeupIfNeeded();
         }
 #else
     while (!hasElapsed(timeout)) {
@@ -572,13 +578,16 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                     const JSCell* cell = next;
                     next = popAndPrefetch();
                     visitChildren(cell);
-#if USE(BUN_JSC_ADDITIONS)
-                    if (!m_isFirstVisit)
-                        m_bytesVisitedAgain += cell->cellSize();
-                    if (scansUntilTimeoutCheck)
-                        --scansUntilTimeoutCheck;
-#endif
                 }
+#if USE(BUN_JSC_ADDITIONS)
+                // Once per round, so that a cell costs nothing more. A cell that was marked before (the remembered
+                // set of an eden collection, what the mutator's barrier sent back) is work that bytesMarked() does
+                // not have: it counts as the smallest cell, without a look at its size.
+                unsigned scans = Options::minimumNumberOfScansBetweenRebalance() - countdown;
+                scansUntilTimeoutCheck -= std::min(scansUntilTimeoutCheck, scans);
+                if (!m_isFirstVisit)
+                    m_bytesVisitedAgain += scans * MarkedBlock::atomSize;
+#endif
                 return IterationStatus::Done;
             });
         propagateExternalMemoryVisitedIfNecessary();
@@ -645,6 +654,10 @@ size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
         donateKnownParallel();
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    payForMarkerWakeupIfNeeded();
+#endif
+
     donateAll();
 
     return bytesVisited();
@@ -669,6 +682,181 @@ bool SlotVisitor::hasWork(const AbstractLocker&)
         || !collector().m_sharedMutatorMarkStack->isEmpty();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A marker that is at work shares cells within a round or two of its draining, if it has two (donateKnownParallel()).
+// So a marker that runs dry while another one is at work looks at the shared mark stacks for a moment before it parks
+// or leaves: to come back for those cells takes a wake-up, which costs about as much as this wait. It returns when a
+// shared stack has a cell, when no marker is at work, or after Options::gcMarkerPollMS().
+void SlotVisitor::pollSharedMarkStacks(MonotonicTime timeout)
+{
+    MonotonicTime deadline = std::min(timeout, MonotonicTime::now() + Seconds::fromMilliseconds(Options::gcMarkerPollMS()));
+    for (;;) {
+        for (unsigned i = 0; i < 64; ++i) {
+            if (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty())
+                return;
+            if (!collector().m_numberOfActiveParallelMarkers.load(std::memory_order_relaxed))
+                return;
+            simde_mm_pause();
+        }
+        if (MonotonicTime::now() >= deadline)
+            return;
+    }
+}
+
+// No helper parks in a collection. One that finds no shared cell and no bonus task leaves the collection, and
+// Collector::wakeMarkers() asks the pool for a thread again when the marking has paid for one. So the notices that
+// are for the thread in MainDrain (and the end of the cycle) find no helper to wake.
+NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedDrainMode sharedDrainMode, MonotonicTime timeout)
+{
+    ASSERT(m_isInParallelMode);
+
+    ASSERT(Options::numberOfGCMarkers());
+
+    bool isActive = false;
+    bool isPolling = false;
+    // This marker polls once with nothing done, and then once for each stretch of work that was worth it: a marker
+    // that gets a cell or two at a time (a linked list) does not stay to spin.
+    bool canPollForFree = true;
+    size_t bytesVisitedAtLastPoll = 0;
+    while (true) {
+        RefPtr<SharedTask<void(SlotVisitor&)>> bonusTask;
+        bool shouldPoll = false;
+        bool shouldLeave = false;
+        bool shouldNotifyTermination = false;
+
+        {
+            Locker locker { collector().m_markingMutex };
+            if (isActive)
+                collector().m_numberOfActiveParallelMarkers--;
+            if (isPolling)
+                collector().m_numberOfPollingParallelMarkers--;
+            isActive = false;
+            isPolling = false;
+            collector().m_numberOfWaitingParallelMarkers++;
+            auto stopWaiting = makeScopeExit([&] {
+                locker.assertIsHolding(collector().m_markingMutex);
+                collector().m_numberOfWaitingParallelMarkers--;
+            });
+
+            auto canPoll = [&] () -> bool {
+                if (!collector().m_numberOfActiveParallelMarkers || !Options::gcMarkerPollMS())
+                    return false;
+                size_t visited = bytesVisited();
+                if (!canPollForFree && visited - bytesVisitedAtLastPoll < Options::gcMarkerPollRearmBytes())
+                    return false;
+                canPollForFree = false;
+                bytesVisitedAtLastPoll = visited;
+                return true;
+            };
+
+            if (sharedDrainMode == MainDrain) {
+                while (true) {
+                    if (hasElapsed(timeout))
+                        return SharedDrainResult::TimedOut;
+
+                    if (didReachTermination(locker)) {
+                        // No marker needs waking here. There is no work which can be processed in the helpers.
+                        return SharedDrainResult::Done;
+                    }
+
+                    if (hasWork(locker))
+                        break;
+
+                    if (canPoll()) {
+                        shouldPoll = true;
+                        break;
+                    }
+
+                    collector().m_threadInMainDrainIsParked = true;
+                    collector().m_markingConditionVariable.waitUntil(collector().m_markingMutex, timeout);
+                    collector().m_threadInMainDrainIsParked = false;
+                }
+            } else {
+                ASSERT(sharedDrainMode == HelperDrain);
+
+                if (hasElapsed(timeout))
+                    return SharedDrainResult::TimedOut;
+
+                // The conductor has to hear of it: it is parked in MainDrain, or it waits in
+                // drainInParallelPassively(). It hears once this thread has released the lock.
+                shouldNotifyTermination = didReachTermination(locker);
+
+                if (collector().m_parallelMarkersShouldExit)
+                    shouldLeave = true;
+                else if (!hasWork(locker)) {
+                    if (collector().m_bonusVisitorTask)
+                        bonusTask = collector().m_bonusVisitorTask;
+                    else if (canPoll())
+                        shouldPoll = true;
+                    else
+                        shouldLeave = true;
+                }
+            }
+
+            if (shouldPoll) {
+                collector().m_numberOfPollingParallelMarkers++;
+                isPolling = true;
+            } else if (!shouldLeave) {
+                if (!bonusTask && isEmpty()) {
+                    // Each marker that looks for shared cells, or is on its way to, gets a share.
+                    size_t numberOfIdleMarkers = collector().m_numberOfWaitingParallelMarkers + collector().m_numberOfPollingParallelMarkers + collector().m_numberOfRequestedParallelMarkers;
+                    forEachMarkStack(
+                        [&] (MarkStackArray& stack) -> IterationStatus {
+                            locker.assertIsHolding(collector().m_markingMutex);
+                            stack.stealSomeCellsFrom(correspondingGlobalStack(stack), numberOfIdleMarkers);
+                            return IterationStatus::Continue;
+                        });
+                }
+
+                collector().m_numberOfActiveParallelMarkers++;
+                isActive = true;
+            }
+        }
+
+        if (shouldNotifyTermination) {
+            collector().m_markingConditionVariable.notifyAll();
+
+            // If we're in concurrent mode, then we know that the mutator will eventually do
+            // the right thing because:
+            // - It's possible that the collector has the conn. In that case, the collector will
+            //   wake up from the notification above. This will happen if the app released heap
+            //   access. Native apps can spend a lot of time with heap access released.
+            // - It's possible that the mutator will allocate soon. Then it will check if we
+            //   reached termination. This is the most likely outcome in programs that allocate
+            //   a lot.
+            // - WebCore never releases access. But WebCore has a runloop. The runloop will check
+            //   if we reached termination.
+            // So, this tells the runloop that it's got things to do.
+            m_collector.heap().m_stopIfNecessaryTimer->scheduleSoon();
+        }
+
+        if (shouldLeave)
+            return SharedDrainResult::Done;
+
+        if (shouldPoll) {
+            pollSharedMarkStacks(timeout);
+            continue;
+        }
+
+        if (bonusTask) {
+            bonusTask->run(*this);
+
+            // The main thread could still be running, and may run for a while. Unless we clear the task
+            // ourselves, we will keep looping around trying to run the task.
+            {
+                Locker locker { collector().m_markingMutex };
+                if (collector().m_bonusVisitorTask == bonusTask)
+                    collector().m_bonusVisitorTask = nullptr;
+                bonusTask = nullptr;
+                collector().m_bonusVisitorTaskConditionVariable.notifyOne();
+            }
+        } else {
+            RELEASE_ASSERT(!isEmpty());
+            drain(timeout);
+        }
+    }
+}
+#else
 NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedDrainMode sharedDrainMode, MonotonicTime timeout)
 {
     ASSERT(m_isInParallelMode);
@@ -728,19 +916,6 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                     m_collector.heap().m_stopIfNecessaryTimer->scheduleSoon();
                 }
 
-#if USE(BUN_JSC_ADDITIONS)
-                if (collector().m_parallelMarkersShouldExit)
-                    return SharedDrainResult::Done;
-
-                if (!hasWork(locker)) {
-                    // A helper with nothing to do leaves. Collector::wakeMarker() asks for it again when there is
-                    // something. A helper that waited here would be woken, with every other one, by each notice
-                    // that is for the thread in MainDrain, and once more to be told that the cycle is over.
-                    if (!collector().m_bonusVisitorTask)
-                        return SharedDrainResult::Done;
-                    bonusTask = collector().m_bonusVisitorTask;
-                }
-#else
                 auto isReady = [&] () -> bool {
                     locker.assertIsHolding(collector().m_markingMutex);
                     return hasWork(locker)
@@ -755,7 +930,6 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
 
                 if (!hasWork(locker) && collector().m_bonusVisitorTask)
                     bonusTask = collector().m_bonusVisitorTask;
-#endif
             }
             
             if (!bonusTask && isEmpty()) {
@@ -792,6 +966,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
         isActive = true;
     }
 }
+#endif
 
 SlotVisitor::SharedDrainResult SlotVisitor::drainInParallel(MonotonicTime timeout)
 {
@@ -807,11 +982,6 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     
     JSC::Heap& heap = m_collector.heap();
     if (Options::numberOfGCMarkers() == 1
-#if USE(BUN_JSC_ADDITIONS)
-        // In a collection that is small so far, the marking is this thread's to do (and its draining wakes a helper
-        // once there is enough of it).
-        || collector().isSmallSoFar()
-#endif
         || (heap.m_worldState.load() & Heap::mutatorWaitingBit)
         || !heap.hasHeapAccess()
         || heap.worldIsStopped()) {
@@ -820,8 +990,21 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
         return drainInParallel(timeout);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // This thread stops marking: somebody has to go on with it.
+    Collector::MarkersToWake markers;
+    {
+        Locker locker { collector().m_markingMutex };
+        donateAll(locker);
+        markers = collector().chooseMarkerToWakeIfNoneIsMarking(locker);
+    }
+    collector().wakeMarkers(markers);
+
+    Locker locker { collector().m_markingMutex };
+#else
     Locker locker { collector().m_markingMutex };
     donateAll(locker);
+#endif
 
     // Wait for termination.
     for (;;) {
@@ -841,11 +1024,22 @@ void SlotVisitor::donateAll()
 {
     if (isEmpty())
         return;
-    
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The thread that gives all its work away stops marking: somebody has to go on with it.
+    Collector::MarkersToWake markers;
+    {
+        Locker locker { collector().m_markingMutex };
+        donateAll(locker);
+        markers = collector().chooseMarkerToWakeIfNoneIsMarking(locker);
+    }
+    collector().wakeMarkers(markers);
+#else
     donateAll(Locker { collector().m_markingMutex });
+#endif
 }
 
-void SlotVisitor::donateAll(const AbstractLocker& locker)
+void SlotVisitor::donateAll(const AbstractLocker&)
 {
     forEachMarkStack(
         [&] (MarkStackArray& stack) -> IterationStatus {
@@ -853,12 +1047,7 @@ void SlotVisitor::donateAll(const AbstractLocker& locker)
             return IterationStatus::Continue;
         });
 
-#if USE(BUN_JSC_ADDITIONS)
-    // The thread that gives all its work away stops marking.
-    assertIsHeld(collector().m_markingMutex);
-    collector().wakeMarker(collector().chooseMarkerToWakeIfNoneIsMarking(locker));
-#else
-    UNUSED_PARAM(locker);
+#if !USE(BUN_JSC_ADDITIONS)
     collector().m_markingConditionVariable.notifyAll();
 #endif
 }

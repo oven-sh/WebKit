@@ -191,15 +191,10 @@ public:
     // share of its work is worth, and that knows when it has work for one more of them.
     WTF_EXPORT_PRIVATE void setTaskOnRequest(RefPtr<SharedTask<void ()>>&&);
 
-    template<typename Functor>
-    void setFunctionOnRequest(const Functor& functor)
-    {
-        setTaskOnRequest(createSharedTask<void ()>(functor));
-    }
-
-    // Asks one more thread of the pool to run the task set by setTaskOnRequest(). A request that no thread has taken
-    // yet is taken by the next thread that is free, so it does nothing once every thread of the pool has one to take.
-    WTF_EXPORT_PRIVATE void requestThread();
+    // Asks one more thread of the pool to run the task set by setTaskOnRequest(). Unlike the rest of this class, any
+    // thread may call it, also a thread that runs the task. Returns false if no thread will come for this request:
+    // no such task is set, or every thread of the pool has a request to take already.
+    WTF_EXPORT_PRIVATE bool requestThread();
 #endif
 
     WTF_EXPORT_PRIVATE void finish();

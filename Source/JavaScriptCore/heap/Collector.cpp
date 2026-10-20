@@ -418,16 +418,17 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
 #if USE(BUN_JSC_ADDITIONS)
     {
         Locker locker { m_markingMutex };
+        ASSERT(!m_numberOfParallelMarkersInCycle);
+        ASSERT(!m_numberOfPollingParallelMarkers);
+        ASSERT(!m_helperClientHasTask);
         m_numberOfMarkerWakeups = 0;
+        m_numberOfRequestedParallelMarkers = 0;
+        m_threadInMainDrainIsParked = false;
     }
-    m_numberOfRequestedParallelMarkers = 0;
-    // With one marker there is nobody to wake, and with the option at 0 every donation wakes somebody: those cycles
-    // are scheduled as they always were.
+    m_numberOfMarkerWakeupsPaidFor = 0;
+    // With one marker there is nobody to wake, and with the option at 0 a wake-up needs no payment: those cycles
+    // are scheduled as they always were. No thread of the helper pool comes until wakeMarkers() asks for one.
     m_isSmallSoFar = Options::numberOfGCMarkers() != 1 && Options::minimumBytesMarkedForParallelMarking();
-    // No thread of the pool comes until wakeMarker() asks for one.
-    m_helperClient.setFunctionOnRequest([this] {
-        runMarkingHelper();
-    });
 #else
     m_helperClient.setFunction([this] {
         runMarkingHelper();
@@ -447,7 +448,7 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
         dataLog("visitor.isEmpty(): ", visitor.isEmpty(), "\n");
         dataLog("visitor.collectorMarkStack().isEmpty(): ", visitor.collectorMarkStack().isEmpty(), "\n");
         dataLog("visitor.mutatorMarkStack().isEmpty(): ", visitor.mutatorMarkStack().isEmpty(), "\n");
-        dataLog("m_numberOfActiveParallelMarkers: ", m_numberOfActiveParallelMarkers, "\n");
+        dataLog("m_numberOfActiveParallelMarkers: ", static_cast<unsigned>(m_numberOfActiveParallelMarkers), "\n");
         dataLog("m_sharedCollectorMarkStack->isEmpty(): ", m_sharedCollectorMarkStack->isEmpty(), "\n");
         dataLog("m_sharedMutatorMarkStack->isEmpty(): ", m_sharedMutatorMarkStack->isEmpty(), "\n");
         dataLog("visitor.didReachTermination(): ", visitor.didReachTermination(), "\n");
@@ -535,7 +536,16 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
     {
         ParallelModeEnabler enabler(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+        MonotonicTime timeToResume = m_scheduler->timeToResume();
+        // A cycle that is small so far does not resume (below), whatever the scheduler says. It marks for a minimum
+        // pause more.
+        if (isSmallSoFar())
+            timeToResume = std::max(timeToResume, MonotonicTime::now() + Seconds::fromMilliseconds(Options::minimumGCPauseMS()));
+        visitor.drainInParallel(timeToResume);
+#else
         visitor.drainInParallel(m_scheduler->timeToResume());
+#endif
     }
 
     m_scheduler->synchronousDrainingDidStall();
@@ -552,6 +562,14 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
     if (visitor.didReachTermination())
         return true; // This is like relooping to the top of runFixpointPhase().
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A cycle that is small so far has asked no other thread to mark, and it finishes sooner in this pause than in
+    // a later one: a resume would have a helper woken to do the marking meanwhile, and the mutator allocate into
+    // the cycle's headroom.
+    if (isSmallSoFar())
+        return true;
+#endif
+
     if (!m_scheduler->shouldResume())
         return true;
 
@@ -564,13 +582,17 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 
 #if USE(BUN_JSC_ADDITIONS)
     // Marking goes on while the mutator runs, and when the mutator has the conn nothing but the helpers can do it.
-    visitor.donateAll();
-    MarkerToWake markerToWake;
+    // They get the cells that this thread has left: every marker that the marking so far has paid for, and one
+    // marker if it has paid for none.
+    MarkersToWake markers;
     {
         Locker locker { m_markingMutex };
-        markerToWake = chooseMarkerToWakeIfNoneIsMarking(locker);
+        visitor.donateAll(locker);
+        markers = choosePaidForMarkersToWake(locker, MarkerWork::SharedCells);
+        if (!markers)
+            markers = chooseMarkerToWakeIfNoneIsMarking(locker);
     }
-    wakeMarker(markerToWake);
+    wakeMarkers(markers);
 #endif
 
     // Forgive the mutator for its past failures to keep up.
@@ -628,12 +650,25 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
 {
     m_scheduler->endCollection();
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool helperClientHasTask;
+    {
+        Locker locker { m_markingMutex };
+        m_parallelMarkersShouldExit = true;
+        helperClientHasTask = std::exchange(m_helperClientHasTask, false);
+    }
+    // No helper is parked in the cycle, so there is nobody to tell. This waits for the ones that are on their way
+    // out.
+    if (helperClientHasTask)
+        m_helperClient.finish();
+#else
     {
         Locker locker { m_markingMutex };
         m_parallelMarkersShouldExit = true;
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
+#endif
 
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());
@@ -999,53 +1034,86 @@ void Collector::endSignpost()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-auto Collector::chooseMarkerToWake(const AbstractLocker&) -> MarkerToWake
+void Collector::didPayForMarkerWakeup()
 {
-    didVisitEnoughForParallelMarking();
-    if (m_numberOfWaitingParallelMarkers) {
-        // Only the thread in SlotVisitor::drainFromShared(MainDrain) waits: a helper with nothing to do leaves.
-        m_numberOfMarkerWakeups++;
-        return MarkerToWake::ThreadInMainDrain;
-    }
-    // Every thread of the pool is asked for already. The next one that is free comes.
-    if (m_numberOfRequestedParallelMarkers >= heapHelperPool().numberOfThreads())
-        return MarkerToWake::None;
-    m_numberOfMarkerWakeups++;
-    m_numberOfRequestedParallelMarkers++;
-    return MarkerToWake::Helper;
+    m_numberOfMarkerWakeupsPaidFor.fetch_add(1, std::memory_order_relaxed);
+    if (isSmallSoFar())
+        m_isSmallSoFar.store(false, std::memory_order_relaxed);
 }
 
-auto Collector::chooseMarkerToWakeIfNoneIsMarking(const AbstractLocker& locker) -> MarkerToWake
+auto Collector::choosePaidForMarkersToWake(const AbstractLocker& locker, MarkerWork work) -> MarkersToWake
 {
-    if (m_numberOfActiveParallelMarkers || m_numberOfRequestedParallelMarkers)
-        return MarkerToWake::None;
+    // Every marker but the one that asks.
+    unsigned numberOfMarkers = heapHelperPool().numberOfThreads() + 1;
+    // A marker needs a cell to start with.
+    if (work == MarkerWork::SharedCells)
+        numberOfMarkers = static_cast<unsigned>(std::min<size_t>(numberOfMarkers, m_sharedCollectorMarkStack->size() + m_sharedMutatorMarkStack->size()));
+    // With the option at 0 no wake-up needs paying for.
+    if (Options::minimumBytesMarkedForParallelMarking()) {
+        unsigned paidFor = m_numberOfMarkerWakeupsPaidFor.load(std::memory_order_relaxed);
+        numberOfMarkers = std::min(numberOfMarkers, paidFor - std::min(paidFor, m_numberOfMarkerWakeups));
+    }
+    return chooseMarkersToWake(locker, numberOfMarkers);
+}
+
+auto Collector::chooseMarkerToWakeIfNoneIsMarking(const AbstractLocker& locker) -> MarkersToWake
+{
+    if (m_numberOfActiveParallelMarkers)
+        return { };
     if (m_sharedCollectorMarkStack->isEmpty() && m_sharedMutatorMarkStack->isEmpty())
-        return MarkerToWake::None;
-    return chooseMarkerToWake(locker);
+        return { };
+    return chooseMarkersToWake(locker, 1);
 }
 
-void Collector::wakeMarker(MarkerToWake markerToWake)
+auto Collector::chooseMarkersToWake(const AbstractLocker&, unsigned numberOfMarkers) -> MarkersToWake
 {
-    switch (markerToWake) {
-    case MarkerToWake::None:
-        return;
-    case MarkerToWake::ThreadInMainDrain:
-        m_markingConditionVariable.notifyOne();
-        return;
-    case MarkerToWake::Helper:
-        m_helperClient.requestThread();
-        return;
+    MarkersToWake markers;
+
+    // These take what is shared with no wake-up: the markers that look at the shared mark stacks now, and the
+    // helpers that are on their way.
+    unsigned numberOfMarkersToCome = m_numberOfPollingParallelMarkers + m_numberOfRequestedParallelMarkers;
+    if (numberOfMarkers <= numberOfMarkersToCome)
+        return markers;
+    numberOfMarkers -= numberOfMarkersToCome;
+
+    if (m_threadInMainDrainIsParked) {
+        // One wake-up is enough for it. It says so again if it parks again.
+        m_threadInMainDrainIsParked = false;
+        markers.m_threadInMainDrain = true;
+        numberOfMarkers--;
     }
+
+    unsigned numberOfHelpers = heapHelperPool().numberOfThreads();
+    unsigned numberOfHelpersInUse = m_numberOfParallelMarkersInCycle + m_numberOfRequestedParallelMarkers;
+    markers.m_numberOfHelpers = std::min(numberOfMarkers, numberOfHelpers - std::min(numberOfHelpers, numberOfHelpersInUse));
+    if (markers.m_numberOfHelpers && !m_helperClientHasTask) {
+        if (!m_markingHelperTask) {
+            m_markingHelperTask = createSharedTask<void()>([this] {
+                runMarkingHelper();
+            });
+        }
+        m_helperClient.setTaskOnRequest(RefPtr { m_markingHelperTask });
+        m_helperClientHasTask = true;
+    }
+    m_numberOfRequestedParallelMarkers += markers.m_numberOfHelpers;
+    m_numberOfMarkerWakeups += markers.m_threadInMainDrain + markers.m_numberOfHelpers;
+    return markers;
 }
 
-size_t Collector::bytesVisited()
+void Collector::wakeMarkers(MarkersToWake markers)
 {
-    size_t result = 0;
-    forEachSlotVisitor(
-        [&] (SlotVisitor& visitor) {
-            result += visitor.bytesVisited();
-        });
-    return result;
+    if (markers.m_threadInMainDrain)
+        m_markingConditionVariable.notifyOne();
+
+    unsigned numberOfHelpersThatDoNotCome = 0;
+    for (unsigned i = markers.m_numberOfHelpers; i--;) {
+        if (!m_helperClient.requestThread())
+            numberOfHelpersThatDoNotCome++;
+    }
+    if (numberOfHelpersThatDoNotCome) [[unlikely]] {
+        Locker locker { m_markingMutex };
+        m_numberOfRequestedParallelMarkers -= std::min(m_numberOfRequestedParallelMarkers, numberOfHelpersThatDoNotCome);
+    }
 }
 #endif
 
@@ -1061,14 +1129,26 @@ void Collector::runMarkingHelper()
     Thread::registerGCThread(GCThreadType::Helper);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // This thread has arrived. Zero if it was asked for in a cycle that ended before it came.
-    for (unsigned requested = m_numberOfRequestedParallelMarkers; requested && !m_numberOfRequestedParallelMarkers.compare_exchange_weak(requested, requested - 1);) { }
+    {
+        Locker locker { m_markingMutex };
+        // This thread has arrived.
+        if (m_numberOfRequestedParallelMarkers)
+            m_numberOfRequestedParallelMarkers--;
+        m_numberOfParallelMarkersInCycle++;
+    }
 #endif
 
     {
         ParallelModeEnabler parallelModeEnabler(*visitor);
         visitor->drainFromShared(SlotVisitor::HelperDrain);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        Locker locker { m_markingMutex };
+        m_numberOfParallelMarkersInCycle--;
+    }
+#endif
 
     {
         Locker locker { m_parallelSlotVisitorLock };
@@ -1080,29 +1160,21 @@ void Collector::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
 {
     unsigned initialRefCount = task->refCount();
 #if USE(BUN_JSC_ADDITIONS)
-    unsigned numberOfHelpersToWake = 0;
-#endif
+    // No helper waits for a task. The task gets the helpers that the marking of this cycle has paid for and not
+    // woken: none in a cycle that has marked little, every one in a large cycle.
+    MarkersToWake markers;
     {
         Locker locker { m_markingMutex };
         m_bonusVisitorTask = task;
-#if USE(BUN_JSC_ADDITIONS)
-        // No helper waits for a task. The task gets the helpers that the marking of this cycle has paid for and not
-        // woken (one per Options::minimumBytesMarkedForParallelMarking): none in a cycle that has marked little,
-        // every one in a large cycle.
-        size_t numberOfHelpers = heapHelperPool().numberOfThreads();
-        if (size_t bytesPerWakeup = Options::minimumBytesMarkedForParallelMarking()) {
-            size_t numberOfWakeupsPaidFor = bytesVisited() / bytesPerWakeup;
-            numberOfHelpers = std::min(numberOfHelpers, numberOfWakeupsPaidFor - std::min<size_t>(numberOfWakeupsPaidFor, m_numberOfMarkerWakeups));
-        }
-        while (numberOfHelpers-- && chooseMarkerToWake(locker) == MarkerToWake::Helper)
-            numberOfHelpersToWake++;
-#else
-        m_markingConditionVariable.notifyAll();
-#endif
+        markers = choosePaidForMarkersToWake(locker, MarkerWork::BonusVisitorTask);
     }
-#if USE(BUN_JSC_ADDITIONS)
-    while (numberOfHelpersToWake--)
-        wakeMarker(MarkerToWake::Helper);
+    wakeMarkers(markers);
+#else
+    {
+        Locker locker { m_markingMutex };
+        m_bonusVisitorTask = task;
+        m_markingConditionVariable.notifyAll();
+    }
 #endif
 
     task->run(*m_collectorSlotVisitor);

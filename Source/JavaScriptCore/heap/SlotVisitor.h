@@ -136,8 +136,8 @@ public:
 
     size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
 #if USE(BUN_JSC_ADDITIONS)
-    // What this visitor has marked, and the cells that were marked before and that it has visited again (the
-    // remembered set of an eden collection, the cells that the mutator's barrier sent back). That is its work.
+    // The work of this visitor: what it has marked, and MarkedBlock::atomSize for each cell that was marked before
+    // and that it has visited again (drain()).
     size_t bytesVisited() const { return bytesMarked() + m_bytesVisitedAgain; }
 #endif
     void flushBytesMarked();
@@ -197,6 +197,9 @@ public:
 private:
     friend class ParallelModeEnabler;
     friend class MarkingConstraintSolver;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class Collector;
+#endif
     
     void appendJSCellOrAuxiliary(HeapCell*);
 
@@ -224,6 +227,14 @@ private:
 
     void donateAll(const AbstractLocker&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A visitor tells the Collector each time it has visited Options::minimumBytesMarkedForParallelMarking: that
+    // pays for the wake-up of one marker (Collector::didPayForMarkerWakeup()).
+    void payForMarkerWakeupIfNeeded();
+    void payForMarkerWakeup();
+    void pollSharedMarkStacks(MonotonicTime timeout);
+#endif
+
     bool LEGACY_NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
@@ -241,7 +252,7 @@ private:
     size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
 #if USE(BUN_JSC_ADDITIONS)
     size_t m_bytesVisitedAgain { 0 };
-    size_t m_bytesVisitedAtLastMarkerWakeup { 0 }; // bytesVisited() when this visitor last woke a marker, see donateKnownParallel().
+    size_t m_bytesVisitedAtLastPayment { 0 }; // bytesVisited() at the last payForMarkerWakeup().
 #endif
 
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
