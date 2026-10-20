@@ -30,11 +30,13 @@
 #include "CCallHelpers.h"
 #include "CacheableIdentifierInlines.h"
 #include "CallFrameShuffler.h"
+#include "ClonedArguments.h"
 #include "DFGOperations.h"
 #include "DFGSpeculativeJIT.h"
 #include "DOMJITGetterSetter.h"
 #include "DirectArguments.h"
 #include "ECMAMode.h"
+#include "ErrorInstance.h"
 #include "ExecutableBaseInlines.h"
 #include "FTLThunks.h"
 #include "FullCodeOrigin.h"
@@ -50,8 +52,11 @@
 #include "JIT.h"
 #include "JITInlines.h"
 #include "JITThunks.h"
+#include "JSArray.h"
 #include "JSCInlines.h"
+#include "JSFunction.h"
 #include "JSModuleNamespaceObject.h"
+#include "JSTypedArrays.h"
 #include "JSWebAssembly.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
@@ -65,6 +70,7 @@
 #include "ScopedArguments.h"
 #include "ScratchRegisterAllocator.h"
 #include "StackAlignment.h"
+#include "StringObject.h"
 #include "StructureRareDataInlines.h"
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
@@ -1510,6 +1516,28 @@ void repatchArrayPutByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
     }
 }
 
+// A delete stub answers for every object of one Structure and does not call the deleteProperty of the class. That is
+// right for JSObject::deleteProperty and for these overrides. Before the base class runs, each of them does one of three
+// things: it refuses a name of its own without the slot, it makes properties that the class gives lazily, which
+// tryCacheDeleteBy() sees in the Structure, or it disables caching in the slot (JSFunction, for `name` and `length`).
+// Any other override gets no stub. It can do work that no Structure shows: JSSymbolTableObject::deleteProperty answers
+// from the symbol table.
+static bool deletePropertyCanBeSkippedByStub(Structure* structure)
+{
+    auto deleteProperty = structure->classInfoForCells()->methodTable.deleteProperty;
+    for (const ClassInfo* classInfo : {
+        JSObject::info(), JSArray::info(), JSFunction::info(), ErrorInstance::info(), RegExpObject::info(), StringObject::info(),
+        ClonedArguments::info(), DirectArguments::info(), ScopedArguments::info(),
+#define TYPED_ARRAY_CLASS_INFO(type) JS ## type ## Array::info(),
+        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(TYPED_ARRAY_CLASS_INFO)
+#undef TYPED_ARRAY_CLASS_INFO
+    }) {
+        if (deleteProperty == classInfo->methodTable.deleteProperty)
+            return true;
+    }
+    return false;
+}
+
 static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, DeletePropertySlot& slot, JSValue baseValue, Structure* oldStructure, CacheableIdentifier propertyName, PropertyInlineCache& propertyCache, DelByKind, ECMAMode ecmaMode)
 {
     VM& vm = globalObject->vm();
@@ -1523,6 +1551,9 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
 
         ASSERT(oldStructure);
         if (!baseValue.isObject() || !oldStructure->propertyAccessesAreCacheable() || oldStructure->isProxy())
+            return GiveUpOnCache;
+
+        if (!deletePropertyCanBeSkippedByStub(oldStructure))
             return GiveUpOnCache;
 
         if (!slot.isCacheableDelete())
@@ -1540,6 +1571,12 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
 
         RefPtr<AccessCase> newCase;
 
+        // The stub does to every object of oldStructure what this delete did to this one. So a delete that removed nothing
+        // has to have left the object on oldStructure, and one that removed the property on the Structure of that transition.
+        // If it did not, the class made properties first (ClonedArguments makes `callee`), and the stub would not.
+        if (!slot.isDeleteHit() && baseValue.asCell()->structure() != oldStructure)
+            return GiveUpOnCache;
+
         if (slot.isDeleteHit()) {
             PropertyOffset newOffset = invalidOffset;
             Structure* newStructure = Structure::removePropertyTransitionFromExistingStructureConcurrently(oldStructure, propertyName.uid(), newOffset);
@@ -1549,6 +1586,9 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
                 return GiveUpOnCache;
             // Right now, we disable IC for put onto prototype.
             if (oldStructure->mayBePrototype())
+                return GiveUpOnCache;
+
+            if (baseValue.asCell()->structure() != newStructure)
                 return GiveUpOnCache;
 
             ASSERT(newOffset == slot.cachedOffset());
