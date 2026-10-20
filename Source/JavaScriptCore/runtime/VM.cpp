@@ -1625,11 +1625,28 @@ static bool disableProfilerWithRespectToCount(unsigned& counter, NOESCAPE const 
     return needsToRecompile;
 }
 
+void VM::makeTypeProfiler()
+{
+    // The log first: the collector looks for it when it finds the profiler (Heap::addCoreConstraints).
+    m_typeProfilerLog = makeUnique<TypeProfilerLog>(*this);
+    m_typeProfiler = makeUnique<TypeProfiler>();
+}
+
+void VM::makeControlFlowProfiler()
+{
+    m_controlFlowProfiler = makeUnique<ControlFlowProfiler>();
+}
+
 bool VM::enableTypeProfiler()
 {
     auto enableTypeProfiler = [this] () {
-        this->m_typeProfiler = makeUnique<TypeProfiler>();
-        this->m_typeProfilerLog = makeUnique<TypeProfilerLog>(*this);
+        if (!m_typeProfiler) {
+            makeTypeProfiler();
+            return;
+        }
+        // Code that has outlived the last time the profiler was on still writes into the log
+        // (VM::typeProfilerForInstrumentedCode()), and the collector has not visited those entries.
+        m_typeProfilerLog->clear();
     };
 
     return enableProfilerWithRespectToCount(m_typeProfilerEnabledCount, enableTypeProfiler);
@@ -1637,18 +1654,25 @@ bool VM::enableTypeProfiler()
 
 bool VM::disableTypeProfiler()
 {
-    auto disableTypeProfiler = [this] () {
-        this->m_typeProfiler.reset(nullptr);
-        this->m_typeProfilerLog.reset(nullptr);
-    };
-
-    return disableProfilerWithRespectToCount(m_typeProfilerEnabledCount, disableTypeProfiler);
+    // The profiler stays for the code that was generated for it (VM::typeProfilerForInstrumentedCode()). While it is
+    // off the collector neither visits its log nor prunes its type sets. So both are emptied here, and stay empty:
+    // what that code still writes into the log is dropped (TypeProfilerLog::processLogEntries). The type sets of
+    // variables belong to the SymbolTables too, and outlive the profiler.
+    return disableProfilerWithRespectToCount(m_typeProfilerEnabledCount, [this] {
+        m_typeProfilerLog->clear();
+        m_typeProfiler->clear();
+    });
 }
 
 bool VM::enableControlFlowProfiler()
 {
     auto enableControlFlowProfiler = [this] () {
-        this->m_controlFlowProfiler = makeUnique<ControlFlowProfiler>();
+        if (!m_controlFlowProfiler) {
+            makeControlFlowProfiler();
+            return;
+        }
+        // As in enableTypeProfiler().
+        m_controlFlowProfiler->clearExecutionCounts();
     };
 
     return enableProfilerWithRespectToCount(m_controlFlowProfilerEnabledCount, enableControlFlowProfiler);
@@ -1656,11 +1680,20 @@ bool VM::enableControlFlowProfiler()
 
 bool VM::disableControlFlowProfiler()
 {
-    auto disableControlFlowProfiler = [this] () {
-        this->m_controlFlowProfiler.reset(nullptr);
-    };
+    // The profiler stays for the code that was generated for it: see VM::typeProfilerForInstrumentedCode().
+    return disableProfilerWithRespectToCount(m_controlFlowProfilerEnabledCount, [] { });
+}
 
-    return disableProfilerWithRespectToCount(m_controlFlowProfilerEnabledCount, disableControlFlowProfiler);
+// Called once all linked code has been deleted: nothing points into a profiler then. One that is off is destroyed, and
+// code for it that is linked later makes a new one.
+void VM::releaseProfilersThatAreOff()
+{
+    if (!m_typeProfilerEnabledCount) {
+        m_typeProfiler = nullptr;
+        m_typeProfilerLog = nullptr;
+    }
+    if (!m_controlFlowProfilerEnabledCount)
+        m_controlFlowProfiler = nullptr;
 }
 
 void VM::dumpTypeProfilerData()

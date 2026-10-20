@@ -418,6 +418,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    // Code for a profiler can be linked while the profiler is off, and after it was destroyed with the code that
+    // existed then: VM::typeProfilerForInstrumentedCode().
+    if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes())
+        vm.ensureTypeProfilerForInstrumentedCode();
+    if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
+        vm.ensureControlFlowProfilerForInstrumentedCode();
+
     if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) {
         auto* function = dynamicDowncast<FunctionExecutable>(ownerExecutable);
         if (!function || function->unlinkedExecutable()->hasFunctionRangeInParentSource())
@@ -827,7 +834,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
             }
 
-            std::pair<TypeLocation*, bool> locationPair = vm.typeProfiler()->typeLocationCache()->getTypeLocation(globalVariableID,
+            std::pair<TypeLocation*, bool> locationPair = vm.typeProfilerForInstrumentedCode()->typeLocationCache()->getTypeLocation(globalVariableID,
                 ownerExecutable->sourceID(), divotStart, divotEnd, WTF::move(globalTypeSet), &vm);
             TypeLocation* location = locationPair.first;
             bool isNewLocation = locationPair.second;
@@ -836,7 +843,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 location->m_divotForFunctionOffsetIfReturnStatement = ownerExecutable->typeProfilingStartOffset();
 
             if (shouldAnalyze && isNewLocation)
-                vm.typeProfiler()->insertNewLocation(location);
+                vm.typeProfilerForInstrumentedCode()->insertNewLocation(location);
 
             metadata.m_typeLocation = location;
             break;
@@ -4044,7 +4051,7 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
         auto& metadata = bytecodeAt(i).metadata(this);
         auto [basicBlockStartOffset, basicBlockEndOffset] = basicBlocks[i];
 
-        BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
+        BasicBlockLocation* basicBlockLocation = vm().controlFlowProfilerForInstrumentedCode()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
 
         Vector<BasicBlockLocation::Gap> gaps;
         auto inner = std::ranges::lower_bound(ranges, basicBlockStartOffset, { }, &Range::startOffset);
