@@ -1234,7 +1234,9 @@ ExpressionNode* ASTBuilder::makeDeleteNode(const JSTokenLocation& location, Expr
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr);
         if (optionalChain->expr()->isLocation()) {
             ASSERT(!optionalChain->expr()->isResolveNode());
+            int endOffset = optionalChain->expr()->endOffset();
             optionalChain->setExpr(makeDeleteNode(location, optionalChain->expr(), start, divot, end));
+            optionalChain->expr()->setEndOffset(endOffset);
             return optionalChain;
         }
     }
@@ -1416,8 +1418,10 @@ ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, Ex
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
+            // The operand ends after any parentheses around the chain. What the chain skips ends with the chain.
+            int optionalChainEndOffset = optionalChain->expr()->endOffset();
             optionalChain->expr()->setEndOffset(optionalChain->endOffset());
-            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
+            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain, optionalChainEndOffset);
         }
     }
     constexpr bool hasAbsorbedOptionalChain = false;

@@ -510,6 +510,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseModuleSo
 
         if (!statement)
             goto end;
+        context.setEndOffset(statement, m_lastTokenLocation.endOffset);
         context.appendStatement(sourceElements, statement);
     }
 
@@ -1479,7 +1480,10 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseDefaultValue
         return 0;
 
     next(TreeBuilder::DontBuildStrings); // consume '='
-    return parseAssignmentExpression(context);
+    TreeExpression defaultValue = parseAssignmentExpression(context);
+    if (defaultValue)
+        context.setEndOffset(defaultValue, m_lastTokenLocation.endOffset);
+    return defaultValue;
 }
 
 template <typename LexerType>
@@ -5614,6 +5618,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             semanticFailIfTrue(baseIsSuper, "Cannot use super as the base of an optional chain");
             optionalChainBase = base;
             optionalChainLocation = tokenLocation();
+            context.setEndOffset(base, m_lastTokenLocation.endOffset);
 
             SavePoint savePoint = createSavePoint(context);
             next();
@@ -5732,8 +5737,10 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             type = m_token.m_type;
         }
 endOfChain:
-        if (optionalChainBase)
+        if (optionalChainBase) {
+            context.setEndOffset(base, m_lastTokenLocation.endOffset);
             base = context.createOptionalChain(location, isOptionalCall ? 0 : optionalChainBase, base, !match(QUESTIONDOT));
+        }
     } while (match(QUESTIONDOT));
 
     semanticFailIfTrue(baseIsSuper, newCount ? "Cannot use new with super call" : "super is not valid in this context");
