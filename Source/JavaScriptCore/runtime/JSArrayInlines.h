@@ -218,9 +218,13 @@ ALWAYS_INLINE uint64_t toLength(JSGlobalObject* globalObject, JSObject* object)
 
     switch (object->type()) {
     case DirectArgumentsType:
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<DirectArguments>(object)->length(globalObject));
+        if (auto* arguments = uncheckedDowncast<DirectArguments>(object); !arguments->overrodeThings()) [[likely]]
+            return arguments->internalLength();
+        break;
     case ScopedArgumentsType:
-        RELEASE_AND_RETURN(scope, uncheckedDowncast<ScopedArguments>(object)->length(globalObject));
+        if (auto* arguments = uncheckedDowncast<ScopedArguments>(object); !arguments->overrodeThings()) [[likely]]
+            return arguments->internalLength();
+        break;
     case ClonedArgumentsType:
         RELEASE_AND_RETURN(scope, uncheckedDowncast<ClonedArguments>(object)->length(globalObject));
     default:
