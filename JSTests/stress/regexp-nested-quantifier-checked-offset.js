@@ -25,7 +25,7 @@ let neverMatches = [
 
 for (let [source, flags, input] of neverMatches) {
     shouldBe(new RegExp(source, flags).exec(input), null);
-    // A different source, so that this compiles for test() instead of reusing what exec() compiled.
+    // A different source: the minimum size recorded when exec() compiled would reject the input before test() compiles.
     shouldBe(new RegExp(`(?:${source})`, flags).test(input), false);
 }
 
@@ -35,7 +35,7 @@ let matches = [
     [`(?:(?<=b{${max}})a{${max}})?cc`, "", "cc", "cc"],
     [`(?<!(?:a{${max}})+)bb`, "", "bb", "bb"],
     [`(?:(?:b{${max}})*c{${max}})*aa`, "", "aa", "aa"],
-    [`(?:(?<=b{${max}})a{${max}})?cc|(?<=(?=(?:foo|barbaz|quxxxx|zipzap)a{${max - 3}})b{${max}})`, "", "cc", "cc"],
+    [`(?:(?<=b{${max}})a{${max}})?cc|(?<=(?=a{${max}}(?:b{${max}})?)c{2})`, "", "cc", "cc"],
 ];
 
 for (let [source, flags, input, expected] of matches) {
