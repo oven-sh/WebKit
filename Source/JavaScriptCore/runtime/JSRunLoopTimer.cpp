@@ -58,6 +58,14 @@ void JSRunLoopTimer::Manager::timerDidFireCallback()
 
 JSRunLoopTimer::Manager::PerVMData::~PerVMData()
 {
+#if USE(BUN_EVENT_LOOP)
+    // Bun does not run what is dispatched to a run loop, so a dispatched timer would stay
+    // queued until its thread exits. On the thread of its run loop, which is where it fires,
+    // the timer is deallocated here, with this object. Bun does not destroy a VM inside a
+    // timer callback that it returns to.
+    if (runLoop->isCurrent())
+        return;
+#endif
     // Because RunLoop::Timer is not reference counted, we need to deallocate it
     // on the same thread on which it fires; otherwise, we might deallocate it
     // while it's firing.
@@ -133,11 +141,15 @@ void JSRunLoopTimer::Manager::registerVM(VM& vm)
 
 void JSRunLoopTimer::Manager::unregisterVM(VM& vm)
 {
+    // Declared before the locker, so it is destroyed after m_lock is released: in Bun,
+    // ~PerVMData can deallocate the timer, which calls into Bun's timer heap.
+    std::unique_ptr<PerVMData> data;
+
     Locker locker { m_lock };
 
     auto iter = m_mapping.find({ vm.apiLock() });
     RELEASE_ASSERT(iter != m_mapping.end());
-    m_mapping.remove(iter);
+    data = m_mapping.take(iter);
 }
 
 void JSRunLoopTimer::Manager::scheduleTimer(JSRunLoopTimer& timer, Seconds delay)

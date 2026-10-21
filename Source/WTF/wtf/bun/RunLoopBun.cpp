@@ -188,8 +188,9 @@ void RunLoop::wakeUp()
         m_genericState->wakeUp();
         return;
     case Kind::Bun:
-        // Do nothing. This means that JSRunLoopTimer::Manager::PerVMData's RunLoop::Timer leaks instead
-        // of being freed.
+        // Do nothing: Bun's event loop does not run what is dispatched to this run loop, so it
+        // stays queued until threadWillExit(). That is why JSRunLoopTimer::Manager::PerVMData
+        // does not dispatch its RunLoop::Timer when it is destroyed on the timer's thread.
     }
 }
 
