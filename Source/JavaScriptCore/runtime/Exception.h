@@ -62,9 +62,10 @@ public:
 
     JSValue value() const { return m_value.get(); }
     const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
-    // The stack may be skipped when a user catch clause handles the throw, but vm.lastException()
-    // outlives the catch and can still be reported, so fall back to the Error's own stack. That one
-    // is freed whenever the Error materializes its stack property, so it is copied in, not borrowed.
+    // The stack may be skipped when a user catch clause or a microtask job handles the throw, but
+    // vm.lastException() outlives the catch and can still be reported, so fall back to the Error's own
+    // stack. That one is freed whenever the Error materializes its stack property, so it is copied in,
+    // not borrowed.
     JS_EXPORT_PRIVATE const Vector<StackFrame>& stackForReporting(VM&) LIFETIME_BOUND;
     static size_t estimatedSize(JSCell*, VM&);
 

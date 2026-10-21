@@ -182,6 +182,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         // Adds the async frame of each generator of an await chain: firstGenerator, getParentGenerator(firstGenerator), and so on.
         // Bun calls it with its own lookup, for the chain of a promise that native code rejects.
         void appendAsyncStackFrames(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const ScopedLambda<JSAsyncFunctionGenerator*(JSAsyncFunctionGenerator*)>& getParentGenerator);
+        // Nothing reads the stack of the Exception that a throw at the top call frame creates: a user catch clause
+        // takes the thrown value, or the throw leaves a microtask job that rejects a promise with the value.
         bool isExceptionCaughtByUserCatchClause();
 
     private:
