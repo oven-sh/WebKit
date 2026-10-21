@@ -2751,9 +2751,8 @@ class YarrGenerator final : public YarrJITInfo {
         // The anchor's real string position is index - (checkedOffset - position), so
         // it is the start of input iff index == checkedOffset - position. A top-level
         // ^ at position 0 gives the classic index == checkedOffset; the general form
-        // also covers a ^ in the body of an assertion nested inside a lookbehind, whose
-        // numbering continues from a nonzero origin (and makes a ^ that can never be
-        // at position 0 -- e.g. /a^b/ -- simply never satisfied, as before).
+        // makes a ^ that can never be at position 0 -- e.g. /a^b/ -- simply never
+        // satisfied, as before.
         MacroAssembler::Imm32 startFrontier(static_cast<int32_t>((op.m_checkedOffset - term->inputPosition).value()));
 
         if (term->multiline()) {
@@ -2936,9 +2935,7 @@ class YarrGenerator final : public YarrJITInfo {
         MacroAssembler::JumpList matchDest;
         // Forward: the boundary's real position is index - (checked - pos), so it
         // is the real start of input iff index == checked - pos (the classic
-        // index == checked when the ^-like term is at pos 0; the general form also
-        // covers a \b in the body of an assertion nested inside a lookbehind, whose
-        // numbering continues from a nonzero origin). The preceding real character
+        // index == checked when the ^-like term is at pos 0). The preceding real character
         // is at frame offset (checked - pos + 1). Backward (mirrored): the real
         // start test is at the frame's right edge (pos == checked) with index == 0,
         // and the preceding real character is at (checked - pos).
@@ -6967,17 +6964,16 @@ class YarrGenerator final : public YarrJITInfo {
             case PatternTerm::Type::ParentheticalAssertion:
                 // The assertion's own position is the virtual assertion point. A
                 // nested lookbehind keeps its original 0-based body (mirrored and
-                // renumbered on demand when compiled); a nested forward assertion's
-                // body is numbered from this position, as in
-                // setupAlternativeOffsets: the enclosing checkedOffset continues into
-                // the body, so read offsets (checkedOffset - inputPosition) are the
-                // same as any forward body's, and the body is renumbered from this
-                // position to stay on that line -- recursively, through further
-                // nesting. BOL/EOL inside such a body test the real assertion point
-                // (see generateAssertionBOL/EOL), never the absolute inputPosition.
+                // renumbered on demand when compiled). A forward assertion's body
+                // claims rightwards: in a mirrored alternative, which claims
+                // leftwards, it starts a fresh frame numbered from 0; in a forward
+                // alternative it is numbered from this position, as in
+                // setupAlternativeOffsets, and the enclosing checkedOffset continues
+                // into it.
                 term.inputPosition = currentInputPosition;
                 if (term.matchDirection() != Backward) {
-                    if (!assignDisjunctionOffsets(term.parentheses.disjunction, currentInputPosition))
+                    unsigned bodyInputPosition = alternative->matchDirection() == Backward ? 0 : currentInputPosition.value();
+                    if (!assignDisjunctionOffsets(term.parentheses.disjunction, bodyInputPosition))
                         return false;
                 }
                 break;
@@ -7205,22 +7201,15 @@ class YarrGenerator final : public YarrJITInfo {
         m_ops.last().m_checkedOffset = checkedOffset;
 
         // The body's ops are emitted in the body's own direction. A lookbehind body
-        // is a mirrored copy numbered from 0, so it starts a fresh frame
-        // (checkedOffset 0). A forward body keeps its coordinates and continues the
-        // enclosing checkedOffset: under a forward frame it uses the pattern layer's
-        // numbering; nested inside a mirrored (Backward) body it was renumbered by
-        // assignAlternativeOffsets from the assertion's virtual position, which is
-        // the same line. The Begin op has already placed the index register at the
-        // assertion point in every case.
+        // is a mirrored copy numbered from 0, and assignAlternativeOffsets numbers a
+        // forward body in a lookbehind from 0 too: both start a fresh frame
+        // (checkedOffset 0). A forward body under a forward frame keeps its
+        // coordinates and continues the enclosing checkedOffset. The Begin op has
+        // already placed the index register at the assertion point in every case.
         MatchDirection enclosingDirection = m_direction;
-        unsigned enclosingFrameStart = m_frameStart;
         m_direction = bodyDirection;
-        if (bodyDirection == Backward)
-            checkedOffset = 0;
-        // A forward body in a lookbehind claims rightwards from the assertion point, not on top of
-        // what the lookbehind has claimed leftwards.
         if (bodyDirection == Backward || enclosingDirection == Backward)
-            m_frameStart = checkedOffset;
+            checkedOffset = 0;
 
         appendOp(YarrOpCode::SimpleNestedAlternativeBegin);
         m_ops.last().m_previousOp = notFound;
@@ -7260,7 +7249,6 @@ class YarrGenerator final : public YarrJITInfo {
 
         // The End op is back in the enclosing direction.
         m_direction = enclosingDirection;
-        m_frameStart = enclosingFrameStart;
 
         size_t parenEnd = m_ops.size();
         appendOp(YarrOpCode::ParentheticalAssertionEnd);
@@ -7278,9 +7266,9 @@ class YarrGenerator final : public YarrJITInfo {
     // Called to emit nodes for all terms in an alternative.
     void opCompileAlternative(Checked<unsigned> checkedOffset, PatternAlternative* alternative)
     {
-        // No string has this many characters in one direction, so the input check on entry always fails
-        // and the terms are never reached. Compiling them would add to an offset close to UINT_MAX.
-        if (checkedOffset - m_frameStart > static_cast<unsigned>(INT_MAX)) [[unlikely]]
+        // No string has this many characters, so the input check on entry always fails and the terms
+        // are never reached. Skipping them keeps every checked offset that is added to within INT_MAX.
+        if (checkedOffset > INT_MAX) [[unlikely]]
             return;
 
         optimizeAlternative(alternative);
@@ -8262,13 +8250,6 @@ class YarrGenerator final : public YarrJITInfo {
         info->firstCharacterOffset = checkedOffset - groupStart;
         if (info->firstCharacterOffset.hasOverflowed())
             return nullptr;
-        // emitInlineLiteralAlternative claims the rest of an alternative on top of checkedOffset.
-        for (auto& alternative : alternatives) {
-            Checked<unsigned, RecordOverflow> alternativeCheckedOffset(checkedOffset);
-            alternativeCheckedOffset += alternative->m_minimumSize - disjunction->m_minimumSize;
-            if (alternativeCheckedOffset.hasOverflowed())
-                return nullptr;
-        }
         info->frameLocation = term->frameLocation;
         info->disjunction = disjunction;
         info->enclosingCheckedOffset = checkedOffset;
@@ -10122,8 +10103,6 @@ private:
     // that the direction-aware primitives (input checks, character addressing,
     // end-of-input) emit the leftward variants inside lookbehind bodies.
     MatchDirection m_direction { Forward };
-    // The checked offset that claims in m_direction count from, while compiling ops.
-    unsigned m_frameStart { 0 };
 
     // Owns the mirrored (term-reversed) copies of lookbehind bodies. The original
     // YarrPattern is left untouched so the bytecode fallback remains valid.

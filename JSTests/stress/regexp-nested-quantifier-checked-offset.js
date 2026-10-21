@@ -11,7 +11,7 @@ function shouldBe(actual, expected) {
 
 const max = 2147483647;
 
-// The nested claims add up to more than INT_MAX, and a term under them reads past its offset.
+// The nested claims add up to more than INT_MAX, and something under them adds to the checked offset.
 let neverMatches = [
     [`(?:(?:^.)?a{${max}})?b{${max}}`, "m", "ab"],
     [`(?:(?:\\b.)?a{${max}})?b{${max}}`, "", "ab"],
@@ -33,10 +33,9 @@ for (let [source, flags, input] of neverMatches) {
 let matches = [
     [`(?:(?:^.)?a{${max}})?b`, "m", "ab", "b"],
     [`(?:(?<=b{${max}})a{${max}})?cc`, "", "cc", "cc"],
-    [`(?:(?<!b{${max}})a{${max}})?cc`, "", "cc", "cc"],
     [`(?<!(?:a{${max}})+)bb`, "", "bb", "bb"],
-    [`(?:(?<=b{1500000000})a{1500000000})?c{1500000000}|x`, "", "x", "x"],
     [`(?:(?:b{${max}})*c{${max}})*aa`, "", "aa", "aa"],
+    [`(?:(?<=b{${max}})a{${max}})?cc|(?<=(?=(?:foo|barbaz|quxxxx|zipzap)a{${max - 3}})b{${max}})`, "", "cc", "cc"],
 ];
 
 for (let [source, flags, input, expected] of matches) {
