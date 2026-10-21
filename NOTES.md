@@ -112,3 +112,20 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   TODO: wait preview e54eb6af + CI; build-arm.sh final2 autobuild-preview-pr-838-e54eb6af; rerun bun tests + tables A, D, E, F (and objdump gate 1);
   then open bun PR (base robobun/6d0d11d3/lazy-parallel-markers), update WebKit#838 title/body, issue comment, status comment, wrap-up.
 - 2026-10-21 22:46 UTC: FINAL WebKit commit amended again: 618674cea25071fa43e24417aa733e6a41e1ffd4 (preview autobuild-preview-pr-838-618674ce): donateKnownParallel checks force-inlined into drain (no behaviour change vs ad68fb32, which had all 49 checks green and passed all bun GC tests: 'final2' arm). bun branch pin updated to it.
+- 2026-10-21 23:25 UTC: WebKit final = 618674cea2 (all 49 CI checks green). bun branch e47302a672 pins autobuild-preview-pr-838-618674ce; bun tests pass with that build
+  ("final3" arm): gc-controller-cadence marking tests 5/5, abort-controller-gc-reason 6/6, broadcast-channel-worker-gc 4/4, dynamic-import-evaluation-error-gc,
+  module-children-concurrent-gc, 29519. Gate 1 by objdump (final3 vs main, LTO bun-profile): per-cell loop 55 instructions in both (+0);
+  the two lock-free checks of donateKnownParallel are inline in drain in both (12 and 5-6 instructions); per round +15 in the lambda tail and 8 for the payment check.
+  bun text +4,416 bytes.
+  FINAL TABLES with the re-arm change (final2 = ad68fb32, same behaviour as 618674ce), 7-9 interleaved runs:
+   A repro: main 151.1 ns/op 2.31 s sys 57,485 vcs; wk800 145.7 / 1.88 / 50,241; final 67.8 / 0.16 / 794; final one marker 76.7 / 0.06 / 102; main one marker 76.7 / 0.06 / 110; node 78.6 / 0.22 / 681.
+   B LRU ns/op: 16,384: main 270.3 final 131.5 one 122.3 node 135.1; 65,536: 380.4 / 263.4 / 228.6 / 279.0; 131,072: 507.7 / 448.0 / 381.1 / 529.3 (final is 8-18% above one marker, vcs 1,400-1,700 vs main 28,000-52,000).
+   C records ns/record (vcs) [RSS]: 3 MB: main 2104 (43,751) [63] wk800 2124 final 867 (1,160) [64] one 820 node 743; 25 MB: 1428 (12,800) [209] / 1356 / 1029 (1,440) [221] / 888 / 2127;
+     101 MB: 1465 (7,975) [577] / 1334 [546] / 1157 (2,163) [649] / 1057 [624] / 2589 [670].
+   D big churn (9 runs, log on): in-pause main 19.7% wk800 18.3% final 31.4% one 99.2%; headroom used up 30% / 20% / 80% / 100%; peak RSS 698 / 662 / 803 / 748;
+     ns/record 1017 / 1102 / 878 / 1044; vcs 6,745 / 6,782 / 2,518 / 1,397. Rates: marked outside pauses MB/ms main 1.40 final 1.54; mutator alloc MB/ms in concurrent phases main 0.49 final 0.80.
+   E wide eden pause ms/MB (total ms): 2 MB: main 6.96 (327) wk800 5.67 (321) final 4.01 (167) one 2.20 (115); 8 MB: 2.33 (575) / 2.16 (519) / 1.46 (337) / 1.38 (363);
+     32 MB: 1.04 (1315) / 0.97 (1139) / 0.70 (839) / 0.96 (978). helpers used final 1 / 3 / 6 (main 5 / 7 / 7).
+   F 100 MB full GC ms (9 runs): tree main 78.4 wk800 52.8 final 42.4 one 105.1; records 30.5 / 25.7 / 31.3 / 94.9; map 51.5 / 55.6 / 53.0 / 78.6; wide 24.5 / 27.0 / 21.7 / 57.1;
+     list 86.9 / 193.4 / 86.6 / 84.4; list 2M: 52.9 / 116.9 / 52.8.
+  NEXT: debug-asan jsc probes; PR bodies; mark WebKit#838 ready + new title; open bun PR; status comment; issue comment; self-review.
