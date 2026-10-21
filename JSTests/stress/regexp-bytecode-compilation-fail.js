@@ -20,4 +20,7 @@ function v2() {
     const v5 = v4.test();
     return v5;
 }
-shouldThrow(v2, `SyntaxError: Invalid regular expression: pattern exceeds string length limits`);
+// Bun: the alternative that needs more input than a string can hold compiles as one that fails, as in V8, so v2() is
+// false. Upstream expects shouldThrow(v2, `SyntaxError: Invalid regular expression: pattern exceeds string length limits`).
+if (v2() !== false)
+    throw new Error('bad value');
