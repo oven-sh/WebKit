@@ -1202,6 +1202,8 @@ namespace JSC {
 
         void retrieveLastUnaryOp(int& dstIndex, int& srcIndex);
         ALWAYS_INLINE void LEGACY_NODELETE rewind();
+        template<typename Op, typename... Args>
+        void replaceLastInstruction(Args...);
 
         void allocateScope();
 
