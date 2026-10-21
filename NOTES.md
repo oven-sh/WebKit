@@ -63,3 +63,22 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     JSTests/stress test (30 s timeout); default mode and collect-continuously mode showed no new timeouts vs main.
   - CI logs and artifacts are NOT reachable from the container (blob host blocked): reproduce failures locally with run-jsc-tests.sh.
   - gh: REST quota is often exhausted by other sessions; bench/checks.sh <owner/repo> <sha> reads check runs through GraphQL.
+- 2026-10-21 21:01 UTC: FINAL WebKit commit 6e7c8ca952 force-pushed to robobun/c4a0b0aa/marker-wakeups (one commit on top of #800's 2cacac75).
+  Preview tag: autobuild-preview-pr-838-6e7c8ca9. The commit before the cleanup (691ff31b, same behaviour but rearm 64K and knobs) had ALL 49 CI checks green.
+  Final parameters: price = minimumBytesMarkedForParallelMarking = 2 MB; a woken marker pays after price/8 (256 KB), same threshold re-arms the poll;
+  gcMarkerPollMS = 0.05.
+  Gate 1 (objdump, LTO bun-profile main vs 1dbad083): the per-cell loop of the drain lambda has the same 55 instructions in both (identical sequence up
+  to the type dispatch), so +0 per cell. Per round: +15 instructions in the lambda tail and 8 at the top of the loop (payment check).
+  donateKnownParallel was a call in 1dbad083 (+4 instructions per early-out); 691ff31b splits the locked tail out of line (verify it inlines again).
+  Measured with 8a84de25 = "new2" (payback 256 KB, rearm 64 KB), LTO, 5-7 runs:
+    repro: main 190.5 ns/op / 3.17 s sys / 72,382 vcs; new2 70.9 / 0.14 / 917; one marker 75.4 / 0.03 / 105. (p4m: 64.5 / 0.06 / 354)
+    lru 16,384: main 224.6; new2 123.1; one 115.7; (4 MB price: 102-106). lru 65,536: main 336.8, new2 249.0, one 239.4, node 302.0.
+    lru 131,072: main 387.8, new2 351.5, one 368.2, node 518.1 (peak RSS 186 / 229 / 371 / 280).
+    big churn (bench-app 20000 8 100): main in-pause 16.6% hf 25% RSS 690 ns/op 1691; new2 30.0% / 67% / 792 / 1251 (mw 867);
+      MB/ms marked outside pauses: main 1.05, new2 0.93-1.15; mutator alloc MB/ms in concurrent phases: main 0.31, new2 0.46-0.53.
+    wide eden pause ms/MB (2/8/32 MB batches): main 5.73/2.20/0.98; new2 3.16/1.39/0.48; one 1.94/1.57/0.93. (4 MB price: 2.6-4.1/1.64/0.69-0.82)
+    100 MB heaps, full GC ms: tree main 158.0 new2 95.5 one 102.9; map 88.2/86.4/87.6; list 94.0/99.3/86.7; wide 52.0/39.0/57.3; records 79.3/67.3/100.7.
+    list 2M nodes best ms: main 52.8-56.2, new(1dbad083) 52.3-53.
+  TODO after CI of 6e7c8ca9: build arm "final" (build-arm.sh final autobuild-preview-pr-838-6e7c8ca9), re-measure the tables for the PR bodies
+  (repro, lru sizes, big churn, eden, shapes, records 3/25/101 MB), objdump gate 1 again, sizes; update bun branch pin + tests; open bun PR
+  (base robobun/6d0d11d3/lazy-parallel-markers); update WebKit#838 title/body; issue comment; pushback self-review if the session allows.
