@@ -2631,6 +2631,19 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             m_seenTaggedTemplateInNonReparsingFunctionMode = cachedInfo->containsTaggedTemplate;
 
             functionScope->restoreFromSourceProviderCache(cachedInfo);
+#if USE(BUN_JSC_ADDITIONS)
+            // A body that is parsed sets this flag where it meets a private name; one that is skipped here uses the same
+            // names. ParseInnerResult::usedPrivateNameCount, and with it the bytecode, must not depend on which of the two
+            // happened: what the bytecode cache writes is a function of the source alone.
+            if (!m_seenPrivateNameUse) {
+                for (auto& variable : cachedInfo->usedVariables()) {
+                    if (isPrivateFieldName(variable.get())) {
+                        m_seenPrivateNameUse = true;
+                        break;
+                    }
+                }
+            }
+#endif
             popScope(functionScope, TreeBuilder::NeedsFreeVariableInfo);
             
             m_token = cachedInfo->endFunctionToken();
