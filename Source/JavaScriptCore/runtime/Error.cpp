@@ -304,9 +304,9 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         }
 
         if (hostComputes) {
-            // The host's formatter can run user code (Error.prepareStackTrace), so it can throw. The caller made this
-            // error to throw it, or to hand it to someone who does, and expects no exception from here: what the
-            // formatter threw is dropped, short of a termination.
+            // The host is asked for the position and not for the stack, so no user code runs (Error.prepareStackTrace, a
+            // getter of the error's name). The caller made this error to throw it, or to hand it to someone who does,
+            // and expects no exception from here: if the host threw all the same, that is dropped, short of a termination.
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             errorInstance->materializeErrorInfoIfNeeded(vm);
             catchScope.clearExceptionExceptTermination();

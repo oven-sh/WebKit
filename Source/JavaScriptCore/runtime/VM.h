@@ -184,7 +184,16 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
 using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL)>;
-using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*)>;
+// What ErrorInfoFunctionJSValue is asked for.
+enum class ErrorInfoRequest : uint8_t {
+    // The value of the error's "stack", for a [[Get]] of it: the only request that may run JavaScript. formattedFrames is
+    // what ErrorInfoFunction made of the frames if a collection got to them first (stackTrace is empty then), and null otherwise.
+    Stack,
+    // The line, the column and the sourceURL, for anything else that needs the error's own properties. The result is the
+    // custom accessor (a CustomGetterSetter) that stands for "stack" until it is read, or empty for none.
+    Position,
+};
+using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, const String& formattedFrames, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, ErrorInfoRequest)>;
 #endif
 
 #if ENABLE(FTL_JIT)
