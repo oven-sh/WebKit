@@ -135,6 +135,11 @@ public:
     void clearMarkStacks();
 
     size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The work of this visitor: what it has marked, and MarkedBlock::atomSize for each cell that was marked before
+    // and that it has visited again (drain()).
+    size_t bytesVisited() const { return bytesMarked() + m_bytesVisitedAgain; }
+#endif
     void flushBytesMarked();
     JS_EXPORT_PRIVATE void flushExtraMemoryVisited();
 
@@ -192,6 +197,9 @@ public:
 private:
     friend class ParallelModeEnabler;
     friend class MarkingConstraintSolver;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class Collector;
+#endif
     
     void appendJSCellOrAuxiliary(HeapCell*);
 
@@ -216,8 +224,21 @@ private:
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
+#if USE(BUN_JSC_ADDITIONS)
+    void donateKnownParallelSlow(MarkStackArray& from, MarkStackArray& to);
+#endif
 
     void donateAll(const AbstractLocker&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A visitor tells the Collector each time it has visited Options::minimumBytesMarkedForParallelMarking: that
+    // pays for the wake-up of one marker (Collector::didPayForMarkerWakeup()).
+    void payForMarkerWakeupIfNeeded();
+    void payForMarkerWakeup();
+    void didWakeUpForMarking();
+    void pollSharedMarkStacks(MonotonicTime timeout);
+    SharedDrainResult drainFromSharedWithHelpersOnRequest(SharedDrainMode, MonotonicTime timeout);
+#endif
 
     bool LEGACY_NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
@@ -234,6 +255,10 @@ private:
     size_t m_bytesMarkedInHeap { 0 };
     SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_bytesMarkedHeap { nullptr }; // Heap is not refcounted.
     size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_bytesVisitedAgain { 0 };
+    size_t m_bytesVisitedAtNextPayment { 0 }; // This visitor calls payForMarkerWakeup() when bytesVisited() gets here.
+#endif
 
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
 
