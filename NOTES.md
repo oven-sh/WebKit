@@ -111,3 +111,4 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
    sizes: bun text +4.4 KB (106,754,509 -> 106,758,925).
   TODO: wait preview e54eb6af + CI; build-arm.sh final2 autobuild-preview-pr-838-e54eb6af; rerun bun tests + tables A, D, E, F (and objdump gate 1);
   then open bun PR (base robobun/6d0d11d3/lazy-parallel-markers), update WebKit#838 title/body, issue comment, status comment, wrap-up.
+- 2026-10-21 22:46 UTC: FINAL WebKit commit amended again: 618674cea25071fa43e24417aa733e6a41e1ffd4 (preview autobuild-preview-pr-838-618674ce): donateKnownParallel checks force-inlined into drain (no behaviour change vs ad68fb32, which had all 49 checks green and passed all bun GC tests: 'final2' arm). bun branch pin updated to it.
