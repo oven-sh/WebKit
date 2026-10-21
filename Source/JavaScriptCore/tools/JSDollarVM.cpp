@@ -101,6 +101,7 @@
 #include <wtf/ApproximateTime.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
+#include <wtf/Int128.h>
 #include <wtf/Language.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/ProcessID.h>
@@ -5876,6 +5877,32 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateBufferAccessors, (JSGlobalObject* globalO
     }
     return JSValue::encode(result);
 }
+
+// Returns the double that WTF::UInt128Impl converts high * 2^64 + low to. With isSigned the class is WTF::Int128Impl,
+// and with toFloat the conversion is to float. high and low are BigInts, taken modulo 2^64.
+// Where HAVE(INT128_T) is on, nothing else runs these conversions.
+// Usage: $vm.int128ImplToNumber(high, low, isSigned = false, toFloat = false)
+static JSC_DECLARE_HOST_FUNCTION(functionInt128ImplToNumber);
+JSC_DEFINE_HOST_FUNCTION(functionInt128ImplToNumber, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint64_t high = callFrame->argument(0).toBigUInt64(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    uint64_t low = callFrame->argument(1).toBigUInt64(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool isSigned = callFrame->argument(2).toBoolean(globalObject);
+    bool toFloat = callFrame->argument(3).toBoolean(globalObject);
+
+    if (isSigned) {
+        WTF::Int128Impl value = WTF::MakeInt128(static_cast<int64_t>(high), low);
+        return JSValue::encode(jsDoubleNumber(toFloat ? static_cast<float>(value) : static_cast<double>(value)));
+    }
+    WTF::UInt128Impl value = WTF::MakeUInt128(high, low);
+    return JSValue::encode(jsDoubleNumber(toFloat ? static_cast<float>(value) : static_cast<double>(value)));
+}
 #endif // USE(BUN_JSC_ADDITIONS)
 
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
@@ -6132,6 +6159,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "weakBlockCount"_s, functionWeakBlockCount, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "createBufferAccessors"_s, functionCreateBufferAccessors, 0);
+    addFunction(vm, alwaysAllow, "int128ImplToNumber"_s, functionInt128ImplToNumber, 2);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)

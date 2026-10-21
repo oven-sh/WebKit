@@ -30,9 +30,12 @@
 // 1. Use WTF macros instead of ABSL macros.
 // 2. Remove abseil HashTable handling
 // 3. Remove __int128_t handling
+// 4. Convert to floating point types with one rounding. abseil converts each
+//    64-bit half and adds the results, which rounds up to three times.
 
 #pragma once
 
+#include <bit>
 #include <cmath>
 #include <compare>
 #include <cstdint>
@@ -141,9 +144,9 @@ class UInt128Impl {
   constexpr explicit operator long long() const;
   // NOLINTNEXTLINE(runtime/int)
   constexpr explicit operator unsigned long long() const;
-  explicit operator float() const;
-  explicit operator double() const;
-  explicit operator long double() const;
+  constexpr explicit operator float() const;
+  constexpr explicit operator double() const;
+  constexpr explicit operator long double() const;
 
   // Trivial copy constructor, assignment operator and destructor.
 
@@ -327,9 +330,9 @@ class Int128Impl {
   constexpr explicit operator long long() const;
   // NOLINTNEXTLINE(runtime/int)
   constexpr explicit operator unsigned long long() const;
-  explicit operator float() const;
-  explicit operator double() const;
-  explicit operator long double() const;
+  constexpr explicit operator float() const;
+  constexpr explicit operator double() const;
+  constexpr explicit operator long double() const;
 
   // Trivial copy constructor, assignment operator and destructor.
 
@@ -618,17 +621,53 @@ constexpr UInt128Impl::operator unsigned long long() const {  // NOLINT(runtime/
 
 // Conversion operators to floating point types.
 
-inline UInt128Impl::operator float() const {
-  return static_cast<float>(lo_) + std::ldexp(static_cast<float>(hi_), 64);
+namespace int128_internal {
+
+// Returns the T nearest to hi * 2^64 + lo, for hi != 0. This is not inlined,
+// because values of 2^64 or more are rare and the callers stay small.
+template<typename T>
+NEVER_INLINE constexpr T UInt128ToFloatingPointSlow(uint64_t hi, uint64_t lo)
+{
+    // T keeps fewer than 63 bits, so the 64 leading bits hold every bit that T
+    // keeps and the bit that decides the rounding. The bits below that one only
+    // tell a tie from a value above a tie, so one bit can stand for all of them:
+    // the lowest leading bit is set when a bit below the leading bits is set.
+    static_assert(std::numeric_limits<T>::digits <= 62);
+    int shift = std::countl_zero(hi);
+    uint64_t leading = shift ? (hi << shift) | (lo >> (64 - shift)) : hi;
+    uint64_t sticky = (lo << shift) ? 1 : 0;
+    // The leading bits count in units of 2^(64 - shift), which is twice a power
+    // of two that a uint64_t holds. A product with a power of two is exact.
+    return static_cast<T>(leading | sticky) * static_cast<T>(uint64_t { 1 } << (63 - shift)) * 2;
 }
 
-inline UInt128Impl::operator double() const {
-  return static_cast<double>(lo_) + std::ldexp(static_cast<double>(hi_), 64);
+// Returns the T nearest to hi * 2^64 + lo, with one rounding. The conversion of
+// each half and then the sum of the results would round up to three times,
+// which does not always give the nearest T.
+template<typename T>
+constexpr T UInt128ToFloatingPoint(uint64_t hi, uint64_t lo)
+{
+    if (!hi) [[likely]]
+        return static_cast<T>(lo);
+    // A T that keeps 64 bits or more holds each half exactly, so only the sum rounds.
+    if constexpr (std::numeric_limits<T>::digits >= 64)
+        return static_cast<T>(hi) * static_cast<T>(0x1p64) + static_cast<T>(lo);
+    else
+        return UInt128ToFloatingPointSlow<T>(hi, lo);
 }
 
-inline UInt128Impl::operator long double() const {
-  return static_cast<long double>(lo_) +
-         std::ldexp(static_cast<long double>(hi_), 64);
+}  // namespace int128_internal
+
+constexpr UInt128Impl::operator float() const {
+  return int128_internal::UInt128ToFloatingPoint<float>(hi_, lo_);
+}
+
+constexpr UInt128Impl::operator double() const {
+  return int128_internal::UInt128ToFloatingPoint<double>(hi_, lo_);
+}
+
+constexpr UInt128Impl::operator long double() const {
+  return int128_internal::UInt128ToFloatingPoint<long double>(hi_, lo_);
 }
 
 // Comparison operators.
@@ -998,33 +1037,34 @@ constexpr Int128Impl::operator unsigned long long() const {  // NOLINT(runtime/i
   return static_cast<unsigned long long>(lo_);           // NOLINT(runtime/int)
 }
 
-inline Int128Impl::operator float() const {
-  // We must convert the absolute value and then negate as needed, because
-  // floating point types are typically sign-magnitude. Otherwise, the
-  // difference between the high and low 64 bits when interpreted as two's
-  // complement overwhelms the precision of the mantissa.
-  //
-  // Also check to make sure we don't negate Int128Min()
-  return hi_ < 0 && *this != Int128Min()
-             ? -static_cast<float>(-*this)
-             : static_cast<float>(lo_) +
-                   std::ldexp(static_cast<float>(hi_), 64);
+namespace int128_internal {
+
+// Returns the T nearest to v. This is not inlined, so that each caller has one
+// call and no copy of the sign handling and of the conversion.
+template<typename T>
+NEVER_INLINE constexpr T Int128ToFloatingPoint(const Int128Impl& v)
+{
+    // We must convert the absolute value and then negate as needed, because
+    // floating point types are typically sign-magnitude. Otherwise, the
+    // difference between the high and low 64 bits when interpreted as two's
+    // complement overwhelms the precision of the mantissa.
+    //
+    // The absolute value is a UInt128Impl, which can hold that of Int128Min().
+    return Int128High64(v) < 0 ? -static_cast<T>(-UInt128Impl(v)) : static_cast<T>(UInt128Impl(v));
 }
 
-inline Int128Impl::operator double() const {
-  // See comment in Int128Impl::operator float() above.
-  return hi_ < 0 && *this != Int128Min()
-             ? -static_cast<double>(-*this)
-             : static_cast<double>(lo_) +
-                   std::ldexp(static_cast<double>(hi_), 64);
+}  // namespace int128_internal
+
+constexpr Int128Impl::operator float() const {
+  return int128_internal::Int128ToFloatingPoint<float>(*this);
 }
 
-inline Int128Impl::operator long double() const {
-  // See comment in Int128Impl::operator float() above.
-  return hi_ < 0 && *this != Int128Min()
-             ? -static_cast<long double>(-*this)
-             : static_cast<long double>(lo_) +
-                   std::ldexp(static_cast<long double>(hi_), 64);
+constexpr Int128Impl::operator double() const {
+  return int128_internal::Int128ToFloatingPoint<double>(*this);
+}
+
+constexpr Int128Impl::operator long double() const {
+  return int128_internal::Int128ToFloatingPoint<long double>(*this);
 }
 
 // Comparison operators.

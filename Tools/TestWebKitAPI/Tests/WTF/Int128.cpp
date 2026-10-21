@@ -276,6 +276,47 @@ TEST(WTF_UInt128, ConversionTests)
     EXPECT_EQ(static_cast<WTF::UInt128Impl>(-0.1L), 0);
 }
 
+TEST(WTF_UInt128, FloatingPointConversionRoundsOnce)
+{
+    // From 2^64 to 2^65 a double is a multiple of 2^12. The low 64 bits alone round to a
+    // multiple of 2^11, which can be a tie of the sum where the value is not one.
+    EXPECT_EQ(0x1.8000000000001p+64, static_cast<double>(WTF::MakeUInt128(1, 0x8000000000000801)));
+    EXPECT_EQ(0x1.8000000000001p+64, static_cast<double>(WTF::MakeUInt128(1, 0x80000000000017ff)));
+    // A tie goes to the even neighbour.
+    EXPECT_EQ(0x1.8p+64, static_cast<double>(WTF::MakeUInt128(1, 0x8000000000000800)));
+    EXPECT_EQ(0x1.8000000000002p+64, static_cast<double>(WTF::MakeUInt128(1, 0x8000000000001800)));
+    // The high 64 bits alone are a tie, and the low 64 bits decide.
+    EXPECT_EQ(0x1p+117, static_cast<double>(WTF::MakeUInt128(0x0020000000000001, 0)));
+    EXPECT_EQ(0x1.0000000000001p+117, static_cast<double>(WTF::MakeUInt128(0x0020000000000001, 1)));
+    EXPECT_EQ(0x1.0000000000001p+117, static_cast<double>(WTF::MakeUInt128(0x0020000000000002, 0xffffffffffffffff)));
+    EXPECT_EQ(0x1.0000000000002p+117, static_cast<double>(WTF::MakeUInt128(0x0020000000000003, 0)));
+    // Up to the next power of two, and the largest value that stays below it.
+    EXPECT_EQ(0x1p+65, static_cast<double>(WTF::MakeUInt128(1, 0xfffffffffffff800)));
+    EXPECT_EQ(0x1.fffffffffffffp+64, static_cast<double>(WTF::MakeUInt128(1, 0xfffffffffffff7ff)));
+    EXPECT_EQ(0x1p+128, static_cast<double>(WTF::UInt128Max()));
+    EXPECT_EQ(0x1.fffffffffffffp+127, static_cast<double>(WTF::MakeUInt128(0xfffffffffffffbff, 0xffffffffffffffff)));
+    // Below 2^64, and at it.
+    EXPECT_EQ(0x1.0000000000001p+63, static_cast<double>(WTF::MakeUInt128(0, 0x8000000000000401)));
+    EXPECT_EQ(0x1p+64, static_cast<double>(WTF::MakeUInt128(0, 0xffffffffffffffff)));
+    EXPECT_EQ(0x1p+64, static_cast<double>(WTF::MakeUInt128(1, 0x800)));
+    EXPECT_EQ(0x1.0000000000001p+64, static_cast<double>(WTF::MakeUInt128(1, 0x801)));
+
+    // From 2^64 to 2^65 a float is a multiple of 2^41.
+    EXPECT_EQ(0x1.800002p+64f, static_cast<float>(WTF::MakeUInt128(1, 0x8000010000000001)));
+    EXPECT_EQ(0x1.800002p+64f, static_cast<float>(WTF::MakeUInt128(1, 0x800002ffffffffff)));
+    EXPECT_EQ(0x1.8p+64f, static_cast<float>(WTF::MakeUInt128(1, 0x8000010000000000)));
+    EXPECT_EQ(0x1.800004p+64f, static_cast<float>(WTF::MakeUInt128(1, 0x8000030000000000)));
+    EXPECT_EQ(0x1p+88f, static_cast<float>(WTF::MakeUInt128(0x0000000001000001, 0)));
+    EXPECT_EQ(0x1.000002p+88f, static_cast<float>(WTF::MakeUInt128(0x0000000001000001, 1)));
+    EXPECT_EQ(0x1p+65f, static_cast<float>(WTF::MakeUInt128(1, 0xffffff0000000000)));
+    EXPECT_EQ(0x1.fffffep+127f, static_cast<float>(WTF::MakeUInt128(0xffffff7fffffffff, 0xffffffffffffffff)));
+
+    // A long double keeps 53, 64 or 113 bits. Each of these values is the nearest one in all three.
+    EXPECT_EQ(0x1.8p+64L, static_cast<long double>(WTF::MakeUInt128(1, 0x8000000000000000)));
+    EXPECT_EQ(0x1.0000000000001p+117L, static_cast<long double>(WTF::MakeUInt128(0x0020000000000002, 0)));
+    EXPECT_EQ(0x1p+128L, static_cast<long double>(WTF::UInt128Max()));
+}
+
 TEST(WTF_UInt128, OperatorAssignReturnRef)
 {
     WTF::UInt128Impl v(1);
@@ -631,6 +672,38 @@ TYPED_TEST(WTF_Int128FloatConversionTest, ConstructAndCastTest)
         static_cast<TypeParam>(WTF::Int128Max()));
     EXPECT_DOUBLE_EQ(-std::ldexp(static_cast<TypeParam>(1), 127),
         static_cast<TypeParam>(WTF::Int128Min()));
+}
+
+TEST(WTF_Int128, FloatingPointConversionRoundsOnce)
+{
+    // The magnitude rounds as in WTF_UInt128.FloatingPointConversionRoundsOnce.
+    WTF::Int128Impl aboveTie = WTF::MakeInt128(1, 0x8000000000000801);
+    EXPECT_EQ(0x1.8000000000001p+64, static_cast<double>(aboveTie));
+    EXPECT_EQ(-0x1.8000000000001p+64, static_cast<double>(-aboveTie));
+    WTF::Int128Impl belowTie = WTF::MakeInt128(1, 0x80000000000017ff);
+    EXPECT_EQ(0x1.8000000000001p+64, static_cast<double>(belowTie));
+    EXPECT_EQ(-0x1.8000000000001p+64, static_cast<double>(-belowTie));
+    WTF::Int128Impl tie = WTF::MakeInt128(1, 0x8000000000001800);
+    EXPECT_EQ(0x1.8000000000002p+64, static_cast<double>(tie));
+    EXPECT_EQ(-0x1.8000000000002p+64, static_cast<double>(-tie));
+    WTF::Int128Impl highHalfIsATie = WTF::MakeInt128(0x0020000000000001, 1);
+    EXPECT_EQ(0x1.0000000000001p+117, static_cast<double>(highHalfIsATie));
+    EXPECT_EQ(-0x1.0000000000001p+117, static_cast<double>(-highHalfIsATie));
+
+    WTF::Int128Impl aboveFloatTie = WTF::MakeInt128(1, 0x8000010000000001);
+    EXPECT_EQ(0x1.800002p+64f, static_cast<float>(aboveFloatTie));
+    EXPECT_EQ(-0x1.800002p+64f, static_cast<float>(-aboveFloatTie));
+
+    // The limits. -2^127 has no positive counterpart in Int128Impl.
+    EXPECT_EQ(0x1p+127, static_cast<double>(WTF::Int128Max()));
+    EXPECT_EQ(-0x1p+127, static_cast<double>(WTF::Int128Min()));
+    EXPECT_EQ(-0x1p+127, static_cast<double>(WTF::Int128Min() + 1));
+    EXPECT_EQ(-0x1p+127, static_cast<double>(WTF::Int128Min() + (WTF::Int128Impl(1) << 73)));
+    EXPECT_EQ(-0x1.fffffffffffffp+126, static_cast<double>(WTF::Int128Min() + (WTF::Int128Impl(1) << 73) + 1));
+    EXPECT_EQ(-0x1p+127f, static_cast<float>(WTF::Int128Min()));
+    EXPECT_EQ(-0x1p+127L, static_cast<long double>(WTF::Int128Min()));
+    EXPECT_EQ(-1.0, static_cast<double>(WTF::Int128Impl(-1)));
+    EXPECT_EQ(-0x1p+64, static_cast<double>(WTF::MakeInt128(-1, 0)));
 }
 
 TEST(WTF_Int128, FactoryTest)
@@ -1358,6 +1431,40 @@ TEST(WTF_Int128, VsNativeInt128)
             TestVsNativeInt128(m ^ ~n, ~m ^ n);
             TestBinaryInt128(m, 10000000000000000); // important case for decimal conversion
             TestBinaryInt128(~m, 10000000000000000);
+        }
+    }
+}
+
+template<typename T>
+static void TestFloatingPointConversionVsNative(__uint128_t x)
+{
+    EXPECT_EQ(static_cast<T>(x), static_cast<T>(FromNativeUInt128(x)));
+    __int128_t positive = static_cast<__int128_t>(x >> 1);
+    EXPECT_EQ(static_cast<T>(positive), static_cast<T>(FromNativeInt128(positive)));
+    EXPECT_EQ(static_cast<T>(-positive), static_cast<T>(FromNativeInt128(-positive)));
+}
+
+TEST(WTF_Int128, FloatingPointConversionVsNative)
+{
+    std::mt19937_64 random(0x9e3779b97f4a7c15);
+    for (int bits = 1; bits <= 128; ++bits) {
+        for (int i = 0; i < 2000; ++i) {
+            uint64_t high = random();
+            uint64_t low = random();
+            __uint128_t x = static_cast<__uint128_t>(high) << 64 | low;
+            x >>= 128 - bits;
+            x |= static_cast<__uint128_t>(1) << (bits - 1);
+            // Half of the values end in zeros, so that ties and their neighbours are among them.
+            if (i & 1) {
+                x &= ~((static_cast<__uint128_t>(1) << (random() % bits)) - 1);
+                if (i & 2)
+                    x |= static_cast<__uint128_t>(1) << (random() % bits);
+            }
+            TestFloatingPointConversionVsNative<float>(x);
+            TestFloatingPointConversionVsNative<double>(x);
+            TestFloatingPointConversionVsNative<long double>(x);
+            if (::testing::Test::HasFailure())
+                return;
         }
     }
 }

@@ -29,6 +29,27 @@
 
 namespace WTF {
 
+// UInt128Impl and Int128Impl convert to the nearest floating point value, and a
+// tie goes to the even one. Checked here so that every build checks it: where
+// the classes are UInt128 and Int128, and where they are not.
+// From 2^64 to 2^65 a double is a multiple of 2^12 and a float of 2^41.
+static_assert(static_cast<double>(MakeUInt128(1, 0x8000000000000801)) == 0x1.8000000000001p+64); // Above a tie.
+static_assert(static_cast<double>(MakeUInt128(1, 0x0020000000000801)) == 0x1.0020000000001p+64); // Above a tie.
+static_assert(static_cast<double>(MakeUInt128(1, 0x0020000000000800)) == 0x1.002p+64); // A tie, down.
+static_assert(static_cast<double>(MakeUInt128(1, 0x0020000000001800)) == 0x1.0020000000002p+64); // A tie, up.
+static_assert(static_cast<double>(MakeUInt128(0x0020000000000001, 1)) == 0x1.0000000000001p+117); // The high half alone is a tie.
+static_assert(static_cast<double>(MakeUInt128(0, 0xfffffffffffffbff)) == 0x1.fffffffffffffp+63);
+static_assert(static_cast<float>(MakeUInt128(1, 0x0000010000000001)) == 0x1.000002p+64f); // Above a tie.
+static_assert(static_cast<double>(-MakeInt128(1, 0x8000000000000801)) == -0x1.8000000000001p+64);
+static_assert(static_cast<double>(Int128Max()) == 0x1p+127);
+static_assert(static_cast<double>(Int128Min()) == -0x1p+127);
+// A long double that keeps 53, 64 or 113 bits: 2^64 + 2^63 + 2049 is then above a tie, a tie, or exact.
+static constexpr int longDoubleDigits = std::numeric_limits<long double>::digits;
+static constexpr bool longDoubleIsChecked = longDoubleDigits == 53 || longDoubleDigits == 64 || longDoubleDigits == 113;
+static constexpr long double nearestLongDouble = longDoubleDigits == 53 ? 0x1.8000000000001p+64L : longDoubleDigits == 64 ? 0x1.80000000000008p+64L : 0x1.8000000000000801p+64L;
+static_assert(!longDoubleIsChecked || static_cast<long double>(MakeUInt128(1, 0x8000000000000801)) == nearestLongDouble);
+static_assert(!longDoubleIsChecked || static_cast<long double>(-MakeInt128(1, 0x8000000000000801)) == -nearestLongDouble);
+
 namespace {
 
 // Returns the 0-based position of the last set bit (i.e., most significant bit)
