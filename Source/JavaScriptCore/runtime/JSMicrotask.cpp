@@ -290,7 +290,9 @@ static void promiseResolveThenableJob(JSGlobalObject* globalObject, JSValue prom
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     {
-        callMicrotask(globalObject, then, promise, dynamicCastToCell(then), "|then| is not a function"_s, microtaskCallCache, resolve, reject);
+        // The entry context says what the job settles, for an async stack trace that is taken in then():
+        // the resolve function holds the promise, or the await, that it was made for.
+        callMicrotask(globalObject, then, promise, dynamicCastToCell(resolve), "|then| is not a function"_s, microtaskCallCache, resolve, reject);
         if (!scope.exception()) [[likely]]
             return;
     }

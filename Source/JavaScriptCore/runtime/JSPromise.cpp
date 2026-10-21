@@ -26,15 +26,22 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
 #include "ErrorInstanceInlines.h"
 #include "GlobalObjectMethodTable.h"
+#include "JSAsyncFromSyncIterator.h"
+#include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
 #include "JSFunctionWithFields.h"
+#include "JSLexicalEnvironment.h"
 #include "JSMicrotask.h"
+#include "JSModuleRecord.h"
 #include "JSPromiseCombinatorsContext.h"
+#include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromisePrototype.h"
 #include "JSPromiseReaction.h"
@@ -323,26 +330,388 @@ JSPromiseReaction* JSPromise::reactionHead(VM& vm)
     return uncheckedDowncast<JSPromiseReaction>(payloadCell());
 }
 
-JSValue JSPromise::asyncStackTraceContext() const
+static ALWAYS_INLINE JSCell* cellOrNull(JSValue value)
 {
-    if (status() != Status::Pending)
-        return { };
-    switch (inlineReactionKind()) {
-    case InlineReactionKind::None: {
-        auto* head = uncheckedDowncast<JSPromiseReaction>(payloadCell());
-        return head ? JSPromiseReaction::tryGetContext(head) : JSValue();
+    if (!value || !value.isCell())
+        return nullptr;
+    return value.asCell();
+}
+
+// What the request of an async generator, or a step of an async-from-sync iterator, settles: the promise that
+// next() returned, or the async function, async generator or module that a `for await` suspended.
+static AsyncStackTraceLink asyncStackTraceLinkForSettlementTarget(JSCell* target)
+{
+    if (auto* promise = dynamicDowncast<JSPromise>(target))
+        return { promise, AsyncStackTraceLinkKind::Promise };
+    // `for await` and `yield*` run the body of an async generator at once, while the async function or the async
+    // generator that has the loop is on the stack: what runs waits for nothing.
+    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(target)) {
+        if (generator->state() <= 0)
+            return { };
+        return { generator, AsyncStackTraceLinkKind::AsyncFunction };
     }
-    case InlineReactionKind::InternalMicrotask: {
-        if (promiseReactionPacksGlobalContextAndIndex(inlineReactionMicrotask())) {
-            ASSERT(payloadCell());
-            return JSValue(payloadCell());
+    if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(target)) {
+        if (asyncGenerator->state() <= 0)
+            return { };
+        return { asyncGenerator, AsyncStackTraceLinkKind::AsyncGenerator };
+    }
+    if (auto* module = dynamicDowncast<JSModuleRecord>(target))
+        return { module, AsyncStackTraceLinkKind::Module };
+    return { };
+}
+
+// The promise in the result slot of a then() reaction: the promise itself, or the promise of the capability
+// { resolve, reject, promise } that then() made for a subclass or for another species.
+static JSPromise* promiseOfResultSlot(JSValue promiseOrCapability)
+{
+    JSCell* cell = cellOrNull(promiseOrCapability);
+    if (!cell)
+        return nullptr;
+    if (auto* promise = dynamicDowncast<JSPromise>(cell))
+        return promise;
+    // Only createPromiseCapability() makes an object of this structure, and script never sees the object.
+    Structure* structure = cell->structure();
+    JSGlobalObject* realm = structure->realm();
+    if (!realm || structure != realm->m_promiseCapabilityObjectStructure.getConcurrently())
+        return nullptr;
+    return dynamicDowncast<JSPromise>(cellOrNull(asObject(cell)->getDirect(promiseCapabilityPromisePropertyOffset)));
+}
+
+// The job of a reaction that no then() made. `cell` and `context` are its arguments, with the meaning that the task
+// gives them. No default: a new task has to say here what it settles, and the build fails until it does.
+#if COMPILER(GCC_COMPATIBLE)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
+#endif
+static NEVER_INLINE AsyncStackTraceLink asyncStackTraceLinkForInternalMicrotask(InternalMicrotask task, JSCell* cell, JSValue context)
+{
+    switch (task) {
+    case InternalMicrotask::AsyncFunctionResume:
+        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(cellOrNull(context)))
+            return { generator, AsyncStackTraceLinkKind::AsyncFunction };
+        return { };
+
+    case InternalMicrotask::AsyncModuleExecutionResume:
+        if (auto* module = dynamicDowncast<JSModuleRecord>(cellOrNull(context)))
+            return { module, AsyncStackTraceLinkKind::Module };
+        return { };
+
+    case InternalMicrotask::PromiseAllResolveJob:
+    case InternalMicrotask::PromiseAllSettledResolveJob:
+    case InternalMicrotask::PromiseAnyResolveJob:
+        if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(cell)) {
+            if (auto* promise = dynamicDowncast<JSPromise>(cellOrNull(globalContext->promise())))
+                return { promise, AsyncStackTraceLinkKind::Combinator };
         }
-        return m_slot.get();
-    }
-    case InlineReactionKind::FulfillHandler:
-    case InlineReactionKind::RejectHandler:
+        return { };
+
+    case InternalMicrotask::PromiseRaceResolveJob:
+        if (auto* promise = dynamicDowncast<JSPromise>(cell))
+            return { promise, AsyncStackTraceLinkKind::Combinator };
+        return { };
+
+    // then() with no handler for this settlement, and a promise that was resolved with this one
+    // (`return promise` in an async function, resolve(promise)).
+    case InternalMicrotask::PromiseResolveWithoutHandlerJob:
+    case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
+        if (auto* promise = promiseOfResultSlot(cell))
+            return { promise, AsyncStackTraceLinkKind::Promise };
+        return { };
+
+    // The context is the record of finally(). Its promise slot holds the promise that finally() returned.
+    case InternalMicrotask::PromiseFinallyReactionJob:
+    case InternalMicrotask::PromiseFinallyAwaitJob:
+        if (auto* record = dynamicDowncast<JSSlimPromiseReaction>(cellOrNull(context))) {
+            if (auto* promise = dynamicDowncast<JSPromise>(cellOrNull(record->promise())))
+                return { promise, AsyncStackTraceLinkKind::Promise };
+        }
+        return { };
+
+    // An await or a yield in the body of an async generator.
+    case InternalMicrotask::AsyncGeneratorYieldAwaited:
+    case InternalMicrotask::AsyncGeneratorBodyCallNormal:
+        if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(cellOrNull(context)))
+            return { asyncGenerator, AsyncStackTraceLinkKind::AsyncGenerator };
+        return { };
+
+    // return(promise) of an async generator waits for the promise. As in V8, the walk does not follow it.
+    case InternalMicrotask::AsyncGeneratorBodyCallReturn:
+    case InternalMicrotask::AsyncGeneratorAwaitReturn:
+        return { };
+
+    // A `for await` that waits for a step of its iterator.
+    case InternalMicrotask::AsyncGeneratorDriverResume:
+        return asyncStackTraceLinkForSettlementTarget(cellOrNull(context));
+
+    case InternalMicrotask::AsyncFromSyncIteratorContinue:
+    case InternalMicrotask::AsyncFromSyncIteratorDone:
+        if (auto* iterator = dynamicDowncast<JSAsyncFromSyncIterator>(cellOrNull(context)))
+            return asyncStackTraceLinkForSettlementTarget(iterator->target());
+        return { };
+
+    // The steps of the module loader. Some of them lead to the promise that import() returned. The walk does not
+    // follow them: an Error that a module makes while it loads has no frame of what imports it.
+    case InternalMicrotask::AsyncModuleExecutionDone:
+    case InternalMicrotask::ModuleRegistryFetchSettled:
+    case InternalMicrotask::ModuleRegistryModuleSettled:
+    case InternalMicrotask::ModuleGraphLoadingError:
+    case InternalMicrotask::ModuleLoadStep:
+    case InternalMicrotask::ModuleLoadTopSettled:
+    case InternalMicrotask::ModuleLoadTopRejected:
+    case InternalMicrotask::ModuleLoadSpecifierTransform:
+    case InternalMicrotask::ModuleLoadCombinedLoadSettled:
+    case InternalMicrotask::ModuleLoadCombinedStateSettled:
+    case InternalMicrotask::ModuleLoadLinkEvaluateSettled:
+    case InternalMicrotask::ModuleLoadReturnRecord:
+    case InternalMicrotask::ModuleLoadReturnModuleKey:
+    case InternalMicrotask::ModuleLoadStoreError:
+    case InternalMicrotask::DynamicImportLoadSettled:
+    case InternalMicrotask::DynamicImportEvaluateSettled:
+    case InternalMicrotask::DynamicImportDeferLoadSettled:
+    case InternalMicrotask::DynamicImportDeferDependencySettled:
+    case InternalMicrotask::ImportModuleNamespace:
+        return { };
+
+    // These are never the task of a pending reaction, or they settle nothing that script can wait for.
+    case InternalMicrotask::None:
+    case InternalMicrotask::PromiseResolveThenableJobFast:
+    case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast:
+    case InternalMicrotask::PromiseResolveThenableJob:
+    case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
+    case InternalMicrotask::PromiseReactionJob:
+    case InternalMicrotask::InvokeFunctionJob:
+#if ENABLE(WEBASSEMBLY)
+    case InternalMicrotask::WebAssemblyCompileStreaming:
+    case InternalMicrotask::WebAssemblyInstantiateStreaming:
+#endif
+    case InternalMicrotask::Opaque:
+#if USE(BUN_JSC_ADDITIONS)
+    case InternalMicrotask::BunPerformMicrotaskJob:
+    case InternalMicrotask::BunInvokeJobWithArguments:
+#endif
         return { };
     }
+    return { };
+}
+#if COMPILER(GCC_COMPATIBLE)
+#pragma GCC diagnostic pop
+#endif
+
+// A handler that is a function of JSC: a host function or a builtin. Only such a function is a resolve function or
+// an element function of a combinator. A function of script is neither.
+static ALWAYS_INLINE bool isHostOrBuiltinHandler(JSCell* handler)
+{
+    auto* function = dynamicDowncast<JSFunction>(handler);
+    return function && function->isHostOrBuiltinFunction();
+}
+
+// The resolve function that `new Promise(executor)` gives to its executor is a closure of the builtin
+// (PromiseConstructor.js): the arrow function `(resolution) => ...` over one variable, the promise.
+// Nothing after it or the reject function was called.
+static AsyncStackTraceLink asyncStackTraceLinkForPromiseConstructorFunction(JSFunction* function)
+{
+    if (function->isHostFunction())
+        return { };
+    FunctionExecutable* executable = function->jsExecutable();
+    if (!executable->isArrowFunction())
+        return { };
+    const SourceCode& source = executable->source();
+    SourceCode constructorSource = function->vm().builtinExecutables()->promiseConstructorPromiseConstructorCodeSource();
+    if (source.provider() != constructorSource.provider() || source.startOffset() < constructorSource.startOffset() || source.endOffset() > constructorSource.endOffset())
+        return { };
+    if (!source.view().startsWith("(resolution)"_s))
+        return { };
+    auto* environment = dynamicDowncast<JSLexicalEnvironment>(function->scope());
+    if (!environment || environment->symbolTable()->scopeSize() != 1)
+        return { };
+    auto* promise = dynamicDowncast<JSPromise>(cellOrNull(environment->variableAt(ScopeOffset(0)).get()));
+    if (!promise || (promise->flags() & JSPromise::isFirstResolvingFunctionCalledFlag))
+        return { };
+    return { promise, AsyncStackTraceLinkKind::Promise };
+}
+
+// What a resolve function of JSC settles when it is called: the promise that it was made for, or what awaits
+// the thenable that it was made for. Nothing after it or its reject function was called. A reject function is no
+// link, as in V8.
+static AsyncStackTraceLink asyncStackTraceLinkForResolveFunction(JSFunction* resolveFunction)
+{
+    auto* function = dynamicDowncast<JSFunctionWithFields>(resolveFunction);
+    if (!function)
+        return asyncStackTraceLinkForPromiseConstructorFunction(resolveFunction);
+
+    TaggedNativeFunction nativeFunction = function->nativeFunction();
+    if (nativeFunction == TaggedNativeFunction(promiseResolvingFunctionResolve)) {
+        if (!cellOrNull(function->getField(JSFunctionWithFields::Field::ResolvingOther)))
+            return { };
+        if (auto* promise = dynamicDowncast<JSPromise>(cellOrNull(function->getField(JSFunctionWithFields::Field::ResolvingPromise))))
+            return { promise, AsyncStackTraceLinkKind::Promise };
+        return { };
+    }
+
+    if (nativeFunction == TaggedNativeFunction(promiseFirstResolvingFunctionResolve)) {
+        auto* promise = dynamicDowncast<JSPromise>(cellOrNull(function->getField(JSFunctionWithFields::Field::FirstResolvingPromise)));
+        if (!promise || (promise->flags() & JSPromise::isFirstResolvingFunctionCalledFlag))
+            return { };
+        return { promise, AsyncStackTraceLinkKind::Promise };
+    }
+
+    if (nativeFunction == TaggedNativeFunction(promiseResolvingFunctionResolveWithInternalMicrotask)) {
+        if (!cellOrNull(function->getField(JSFunctionWithFields::Field::ResolvingWithInternalMicrotaskOther)))
+            return { };
+        // The record holds the task and its context. Its promise slot holds no argument of the task.
+        if (auto* record = dynamicDowncast<JSSlimPromiseReaction>(cellOrNull(function->getField(JSFunctionWithFields::Field::ResolvingWithInternalMicrotaskContext))))
+            return asyncStackTraceLinkForInternalMicrotask(record->internalMicrotask(), nullptr, record->handlerOrContext());
+        return { };
+    }
+
+    return { };
+}
+
+// A function of JSC as the fulfill handler of a then() reaction: a resolve function, or the element function of
+// Promise.all or allSettled, which then() gets where the element cannot have the reaction of the combinator itself.
+static AsyncStackTraceLink asyncStackTraceLinkForFulfillFunction(JSFunction* handler)
+{
+    auto* function = dynamicDowncast<JSFunctionWithFields>(handler);
+    if (!function)
+        return asyncStackTraceLinkForPromiseConstructorFunction(handler);
+
+    TaggedNativeFunction nativeFunction = function->nativeFunction();
+    static_assert(JSFunctionWithFields::Field::PromiseAllContext == JSFunctionWithFields::Field::PromiseAllSettledContext);
+    if (nativeFunction != TaggedNativeFunction(promiseAllFulfillFunction) && nativeFunction != TaggedNativeFunction(promiseAllSlowFulfillFunction)
+        && nativeFunction != TaggedNativeFunction(promiseAllSettledFulfillFunction) && nativeFunction != TaggedNativeFunction(promiseAllSettledSlowFulfillFunction))
+        return asyncStackTraceLinkForResolveFunction(function);
+
+    auto* context = dynamicDowncast<JSPromiseCombinatorsContext>(cellOrNull(function->getField(JSFunctionWithFields::Field::PromiseAllContext)));
+    if (!context)
+        return { };
+    JSCell* promiseOrResolveFunction = cellOrNull(context->globalContext()->promise());
+    if (auto* promise = dynamicDowncast<JSPromise>(promiseOrResolveFunction))
+        return { promise, AsyncStackTraceLinkKind::Combinator };
+    // allSettled of a subclass keeps the resolve function of its capability where the others keep the promise.
+    if (auto* resolveFunction = dynamicDowncast<JSFunction>(promiseOrResolveFunction)) {
+        AsyncStackTraceLink link = asyncStackTraceLinkForResolveFunction(resolveFunction);
+        if (link.kind == AsyncStackTraceLinkKind::Promise)
+            link.kind = AsyncStackTraceLinkKind::Combinator;
+        return link;
+    }
+    return { };
+}
+
+// AsyncStackTraceRule::NativeRejection: the promise that then() returned, when something waits for it. Its link is
+// looked at with the rule for script, so that a chain of such reactions is not a recursion.
+static NEVER_INLINE JSPromise* awaitedResultPromise(JSValue promiseOrCapability)
+{
+    JSPromise* resultPromise = promiseOfResultSlot(promiseOrCapability);
+    if (resultPromise && resultPromise->asyncStackTraceLink().kind != AsyncStackTraceLinkKind::None)
+        return resultPromise;
+    return nullptr;
+}
+
+// A reaction that then() made. A resolve function as the fulfill handler settles its own promise: V8 follows its
+// PromiseCapabilityDefaultResolve the same way. Any other handler settles the promise that then() returned.
+static ALWAYS_INLINE AsyncStackTraceLink asyncStackTraceLinkForHandlers(JSValue onFulfilled, JSValue promiseOrCapability, AsyncStackTraceRule rule)
+{
+    // The kind of function is looked at here, so that a handler of script costs no call.
+    JSCell* handler = cellOrNull(onFulfilled);
+    if (handler && isHostOrBuiltinHandler(handler)) [[unlikely]] {
+        AsyncStackTraceLink link = asyncStackTraceLinkForFulfillFunction(uncheckedDowncast<JSFunction>(handler));
+        if (link.kind != AsyncStackTraceLinkKind::None) {
+            if (rule == AsyncStackTraceRule::NativeRejection) {
+                if (JSPromise* resultPromise = awaitedResultPromise(promiseOrCapability))
+                    return { resultPromise, AsyncStackTraceLinkKind::Promise };
+            }
+            return link;
+        }
+    }
+    if (auto* promise = promiseOfResultSlot(promiseOrCapability))
+        return { promise, AsyncStackTraceLinkKind::Promise };
+    return { };
+}
+
+// The promise is pending. Its one reaction is a then() whose fulfill handler is a function of JSC, or its reactions
+// are in the list.
+NEVER_INLINE AsyncStackTraceLink JSPromise::asyncStackTraceLinkForHandlersOrList(AsyncStackTraceRule rule) const
+{
+    if (inlineReactionKind() == InlineReactionKind::FulfillHandler)
+        return asyncStackTraceLinkForHandlers(inlineHandlerHandler(), inlineHandlerResultPromise(), rule);
+    ASSERT(inlineReactionKind() == InlineReactionKind::None);
+
+    // The list starts with the newest reaction.
+    auto* head = uncheckedDowncast<JSPromiseReaction>(payloadCell());
+    AsyncStackTraceLink link;
+    if (auto* slim = dynamicDowncast<JSSlimPromiseReaction>(head)) {
+        InternalMicrotask task = slim->internalMicrotask();
+        if (task == InternalMicrotask::None)
+            link = asyncStackTraceLinkForHandlers(slim->isFulfillHandler() ? slim->handlerOrContext() : JSValue(), slim->promise(), rule);
+        else {
+            JSCell* cell = cellOrNull(slim->promise());
+#if USE(BUN_JSC_ADDITIONS)
+            if (slim->promiseSlotIsAsyncContext())
+                cell = nullptr;
+#endif
+            link = asyncStackTraceLinkForInternalMicrotask(task, cell, slim->handlerOrContext());
+        }
+    } else {
+        auto* full = uncheckedDowncast<JSFullPromiseReaction>(head);
+        link = asyncStackTraceLinkForHandlers(full->onFulfilled(), full->promise(), rule);
+    }
+    link.isOnlyReaction = !head->next();
+    return link;
+}
+
+// The promise is pending and has a reaction that is not the `await` of an async function (asyncStackTraceLink()).
+AsyncStackTraceLink JSPromise::asyncStackTraceLinkSlow(AsyncStackTraceRule rule) const
+{
+    ASSERT(status() == Status::Pending);
+    InlineReactionKind kind = inlineReactionKind();
+    if (kind != InlineReactionKind::InternalMicrotask) {
+        // The one reaction is a then(), catch() or finally() with a handler of script: the promise that it returned.
+        // A long then() chain is made of these links, so this one is decoded here, with no further call.
+        if (kind != InlineReactionKind::None) [[likely]] {
+            JSCell* handler = kind == InlineReactionKind::FulfillHandler ? cellOrNull(m_slot.get()) : nullptr;
+            if (!handler || !isHostOrBuiltinHandler(handler)) [[likely]] {
+                if (JSPromise* resultPromise = inlineHandlerResultPromise())
+                    return { resultPromise, AsyncStackTraceLinkKind::Promise };
+                return { };
+            }
+        }
+        return asyncStackTraceLinkForHandlersOrList(rule);
+    }
+
+    InternalMicrotask task = inlineReactionMicrotask();
+    // With inlineReactionAsyncContextFlag the payload is the async context of the job, not its cell argument.
+    JSCell* cell = (flags() & inlineReactionAsyncContextFlag) ? nullptr : payloadCell();
+    // An element of Promise.all, allSettled, any or race. The walk followed these before it followed every link,
+    // so they come before the switch over all tasks.
+    if (promiseReactionPacksGlobalContextAndIndex(task)) {
+        if (auto* promise = dynamicDowncast<JSPromise>(cellOrNull(uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(cell)->promise()))) [[likely]]
+            return { promise, AsyncStackTraceLinkKind::Combinator };
+        return { };
+    }
+    if (task == InternalMicrotask::PromiseRaceResolveJob) {
+        if (auto* promise = dynamicDowncast<JSPromise>(cell)) [[likely]]
+            return { promise, AsyncStackTraceLinkKind::Combinator };
+        return { };
+    }
+    return asyncStackTraceLinkForInternalMicrotask(task, cell, m_slot.get());
+}
+
+AsyncStackTraceLink JSPromise::asyncStackTraceLinkForEntryContext(JSCell* context)
+{
+    // A promise reaction job: the promise that it settles with what its handler returns or throws.
+    if (auto* promise = dynamicDowncast<JSPromise>(context))
+        return { promise, AsyncStackTraceLinkKind::Promise };
+
+    // The body of an async generator: what waits for the request that the body works on.
+    if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(context)) {
+        if (asyncGenerator->isQueueEmpty())
+            return { };
+        return asyncStackTraceLinkForSettlementTarget(cellOrNull(asyncGenerator->resumePromise()));
+    }
+
+    // A thenable job: its resolve function.
+    if (auto* function = dynamicDowncast<JSFunctionWithFields>(context))
+        return asyncStackTraceLinkForResolveFunction(function);
     return { };
 }
 

@@ -67,10 +67,8 @@ public:
         return { target, result };
     }
 
-#if USE(BUN_JSC_ADDITIONS)
     // The promise or driver the pending step settles or resumes; null between steps.
     JSObject* target() const { return m_target.pointer(); }
-#endif
 
     JSValue cachedDriverResult() const { return m_cachedResult.get(); }
     void setCachedDriverResult(VM& vm, JSObject* result) { m_cachedResult.set(vm, this, result); }

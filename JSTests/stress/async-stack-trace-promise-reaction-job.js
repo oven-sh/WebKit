@@ -45,7 +45,6 @@ const shapes = {
     async boundHandlerThrows() { await Promise.resolve(1).then(thrower.bind(null)); },
 };
 
-// The walk goes through one combinator while then() is the function that the realm began with.
 const shapesWithCombinator = {
     async handlerThrowsInAll() { await Promise.all([Promise.resolve(1).then(thrower)]); },
     async handlerThrowsInRace() { await Promise.race([Promise.resolve(1).then(thrower)]); },
@@ -183,10 +182,10 @@ $vm.setAsyncContext(undefined);
 {
     const originalThen = Promise.prototype.then;
     Promise.prototype.then = function then(onFulfilled, onRejected) { return originalThen.call(this, onFulfilled, onRejected); };
-    checkShapes(2, "then() replaced", shapes);
+    checkShapes(2, "then() replaced", { ...shapes, ...shapesWithCombinator });
     Promise.prototype.then = originalThen;
     Promise.prototype.constructor = Promise;
-    checkShapes(2, "constructor written", shapes);
+    checkShapes(2, "constructor written", { ...shapes, ...shapesWithCombinator });
     Object.freeze(Promise.prototype);
-    checkShapes(2, "prototype frozen", shapes);
+    checkShapes(2, "prototype frozen", { ...shapes, ...shapesWithCombinator });
 }
