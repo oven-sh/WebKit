@@ -727,8 +727,11 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
         auto scope = DECLARE_THROW_SCOPE(vm);
 #if USE(BUN_JSC_ADDITIONS)
         // A [[Get]] of "stack" composes it, and nothing else does: every other lookup finds the host's accessor in its place.
+        // Where that accessor is there already it composes the stack for a read on the error itself, so that an inline
+        // cache of the read holds. It is given the receiver, so a read through another one (a Proxy) is composed here.
         if (propertyName == vm.propertyNames->stack && slot.internalMethodType() == PropertySlot::InternalMethodType::Get
-            && thisObject->hasStackToCompose() && !thisObject->m_isComposingStack && !thisObject->m_stackPropertyProvidedByCapturedStackTrace && vm.onComputeErrorInfoJSValue())
+            && thisObject->hasStackToCompose() && !thisObject->m_isComposingStack && !thisObject->m_stackPropertyProvidedByCapturedStackTrace && vm.onComputeErrorInfoJSValue()
+            && (!thisObject->m_errorInfoMaterialized || slot.thisValue() != JSValue(thisObject) || !thisObject->stackIsHostAccessor(vm)))
             thisObject->composeStack(vm);
         else
 #endif
