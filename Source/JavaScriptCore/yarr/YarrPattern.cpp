@@ -2270,8 +2270,11 @@ public:
                     if (hasError(error))
                         return error;
                     // If quantity is fixed, then pre-check its minimum size.
-                    if (term.quantityType == QuantifierType::FixedCount)
+                    if (term.quantityType == QuantifierType::FixedCount) {
                         currentInputPosition += term.parentheses.disjunction->m_minimumSize;
+                        if (currentInputPosition.hasOverflowed())
+                            return ErrorCode::OffsetTooLarge;
+                    }
                     term.inputPosition = currentInputPosition;
                 } else if (term.parentheses.isTerminal) {
                     currentCallFrameSize += YarrStackSpaceForBackTrackInfoParenthesesTerminal;
@@ -2356,8 +2359,19 @@ public:
             PatternAlternative* alternative = disjunction->m_alternatives[alt].get();
             CheckedUint32 currentAlternativeCallFrameSize;
             error = setupAlternativeOffsets(alternative, perAlternativeInitial, initialInputPosition, currentAlternativeCallFrameSize);
-            if (hasError(error))
-                return error;
+            if (hasError(error)) {
+                if (error != ErrorCode::OffsetTooLarge)
+                    return error;
+                // The alternative needs more than UINT_MAX code units of input, and a string has at most
+                // String::MaxLength. That fails the alternative, not the pattern: it becomes one that
+                // cannotMatch(). It keeps no term, since its terms have no usable offsets, and the largest
+                // minimum size, with which an alternative that has to match this disjunction overflows in turn.
+                alternative->m_terms.clear();
+                alternative->m_minimumSize = UINT_MAX;
+                alternative->m_hasFixedSize = false;
+                currentAlternativeCallFrameSize = perAlternativeInitial;
+                error = ErrorCode::NoError;
+            }
             minimumInputSize = std::min(minimumInputSize, alternative->m_minimumSize);
             maximumCallFrameSize = std::max(maximumCallFrameSize, currentAlternativeCallFrameSize.value());
             hasFixedSize &= alternative->m_hasFixedSize;

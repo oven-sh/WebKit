@@ -179,7 +179,7 @@ PASS "Testing 𐃰\n1 2 3".match(/g [က-𐃿]$\n1/um)[0] is "g 𐃰\n1"
 PASS "this is ba test".match(/is b\cha test/u)[0].length is 11
 PASS new RegExp("\\/", "u").source is "\\/"
 PASS r = new RegExp("\\u{110000}", "u") threw exception SyntaxError: Invalid regular expression: invalid Unicode code point \u{} escape.
-PASS r = new RegExp("𐐅{2147483648}", "u") threw exception SyntaxError: Invalid regular expression: pattern exceeds string length limits.
+PASS new RegExp("𐐅{2147483648}", "u").test("𐐅") is false
 PASS /{/u threw exception SyntaxError: Invalid regular expression: incomplete {} quantifier for Unicode pattern.
 PASS /[a-\d]/u threw exception SyntaxError: Invalid regular expression: invalid range in character class for Unicode pattern.
 PASS /]/u threw exception SyntaxError: Invalid regular expression: unmatched ] or } bracket for Unicode pattern.

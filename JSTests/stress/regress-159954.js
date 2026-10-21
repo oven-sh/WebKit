@@ -20,8 +20,10 @@ function testRegExpResult(regexpExpression, expectedResult)
 }
 
 // These patterns cause offset overflow and should throw
-testRegExpThrows("/a{2147483649,2147483650}a{2147483649,2147483650}/.exec('aaaa')");
-testRegExpThrows("/a{2147483649,2147483650}a{2147483649,2147483650}/.exec('aa')");
+// Bun: they need more input than a string can hold, so they compile and never match, as in V8. Upstream expects
+// testRegExpThrows(): "SyntaxError: Invalid regular expression: pattern exceeds string length limits".
+testRegExpResult("/a{2147483649,2147483650}a{2147483649,2147483650}/.exec('aaaa')", null);
+testRegExpResult("/a{2147483649,2147483650}a{2147483649,2147483650}/.exec('aa')", null);
 
 // These patterns are now supported with variable count parentheses and return valid results
 testRegExpResult("/(?:\\1{2147483649,2147483650})+/.exec('123')", null);

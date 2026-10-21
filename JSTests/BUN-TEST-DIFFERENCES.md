@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 128 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -116,14 +116,19 @@ Rules for an edit to an upstream test:
 
 ### A10. A RegExp path that needs more input than a string can hold fails, the pattern is not refused
 
-- Upstream: `SyntaxError: Invalid regular expression: pattern exceeds string length limits` from the first match, when
-  the sums of the byte compiler pass `UINT_MAX` (`/(?:z)?x{4294967295}/`).
-- Fork code: `ByteCompiler::emitDisjunction` (`yarr/YarrInterpreter.cpp`) emits checks that always fail
-  (`cannotMatchFromHere`) for the alternative or the lookbehind whose sum does not fit. The other alternatives match
-  as before. V8 accepts these patterns too.
-- Recognize: the test expects that message from a match for a quantifier count near 2^31 or 2^32 and gets a result.
-- Files (2): `stress/regexp-bytecode-compilation-fail.js`, `stress/regexp-test-minimum-length-filter.js`. The fork's
-  own test is `stress/regexp-required-input-beyond-string-length.js`.
+- Upstream: `SyntaxError: Invalid regular expression: pattern exceeds string length limits`. From `new RegExp` when the
+  offsets of the pattern build pass `UINT_MAX` (`/a{4294967295}b/`), from the first match when the sums of the byte
+  compiler do (`/(?:z)?x{4294967295}/`).
+- Fork code: `YarrPatternConstructor::setupDisjunctionOffsets` (`yarr/YarrPattern.cpp`) leaves such an alternative as one
+  that `cannotMatch()`, and `ByteCompiler::emitDisjunction` (`yarr/YarrInterpreter.cpp`) emits checks that always fail
+  for it (`cannotMatchFromHere`). The other alternatives match as before. V8 accepts these patterns too.
+- Recognize: the test expects that message for a quantifier count near 2^31 or 2^32 and gets a match result.
+- Not covered: a quantifier minimum of 2^64 - 1 or more is still `number too large in {} quantifier`
+  (`yarr/YarrParser.h`), so `stress/regexp-max-quantifier.js` and `LayoutTests/fast/regex/overflow` are as upstream has
+  them.
+- Files (6): `stress/regexp-bytecode-compilation-fail.js`, `stress/regexp-test-minimum-length-filter.js`,
+  `stress/regexp-max-size.js`, `stress/regress-159954.js`; `LayoutTests/js/regexp-unicode` (the script under
+  `script-tests/` and the `-expected.txt`). The fork's own test is `stress/regexp-required-input-beyond-string-length.js`.
 
 ---
 

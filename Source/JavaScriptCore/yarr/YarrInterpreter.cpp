@@ -2807,6 +2807,10 @@ public:
             }
 
             unsigned minimumSize = alternative->m_minimumSize;
+            if (alternative->cannotMatch()) [[unlikely]] {
+                cannotMatchFromHere();
+                continue;
+            }
             ASSERT(matchDirection == Backward || minimumSize >= parenthesesInputCountAlreadyChecked);
 
             unsigned countToCheck = 0;
