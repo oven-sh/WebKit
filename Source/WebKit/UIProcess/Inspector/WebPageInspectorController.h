@@ -49,6 +49,7 @@ class ProxyingPageAgent;
 
 namespace WebKit {
 
+class DebuggerPauseCoordinator;
 class InspectorBrowserAgent;
 class ProvisionalPageProxy;
 struct WebPageAgentContext;
@@ -64,6 +65,12 @@ public:
     void pageClosed();
 
     bool hasLocalFrontend() const;
+    bool hasFrontends() const;
+
+    void frameDidPauseForDebugger(WebProcessProxy&, WebCore::FrameIdentifier);
+    void frameDidContinueForDebugger(WebProcessProxy&, WebCore::FrameIdentifier);
+    void frameDidChangeProcess(WebCore::FrameIdentifier, WebCore::ProcessIdentifier newProcessID);
+    void processDidTerminate(WebProcessProxy&);
 
     void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
     void disconnectFrontend(Inspector::FrontendChannel&);
@@ -127,6 +134,7 @@ private:
     const RefPtr<Inspector::ProxyingPageAgent> m_pageAgent;
 
     bool m_didCreateLazyAgents { false };
+    std::unique_ptr<DebuggerPauseCoordinator> m_debuggerPauseCoordinator;
 };
 
 } // namespace WebKit

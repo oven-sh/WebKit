@@ -104,7 +104,6 @@
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderImageResource.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerInlines.h"
 #include "RenderListItem.h"
@@ -2954,7 +2953,7 @@ static CheckedPtr<RenderObject> nearestRendererFromNode(Node& node)
     return renderer;
 }
 
-static int zIndexFromRenderer(RenderObject* renderer)
+static int LEGACY_NODELETE zIndexFromRenderer(RenderObject* renderer)
 {
     for (auto* layer = renderer->enclosingLayer(); layer; layer = layer->parent()) {
         if (int zIndex = layer->zIndex())
@@ -3328,6 +3327,9 @@ AccessibilityRole AccessibilityObject::ariaRoleToWebCoreRole(const String& value
 
 String AccessibilityObject::computedRoleString() const
 {
+    // We only finalize some roles, like a list without markers, after adding children, so add them now.
+    const_cast<AccessibilityObject*>(this)->updateChildrenIfNecessary();
+
     // FIXME: Need a few special cases that aren't in the RoleMap: option, etc. http://webkit.org/b/128296
     auto role = this->role();
 
@@ -3387,33 +3389,38 @@ String AccessibilityObject::embeddedImageDescription() const
     return renderImage->accessibilityDescription();
 }
 
-static RefPtr<Image> imageFromRenderer(RenderObject* renderer)
+static RefPtr<Image> imageFromRenderer(const RenderImage& renderImage)
 {
-    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer);
-    RefPtr cachedImage = renderImage ? renderImage->cachedImage() : nullptr;
+    RefPtr cachedImage = renderImage.cachedImage();
     return cachedImage ? cachedImage->image() : nullptr;
 }
 
 FloatSize AccessibilityObject::imageDataSize() const
 {
-    if (RefPtr image = imageFromRenderer(renderer()))
-        return image->size();
-    return { };
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer());
+    if (!renderImage || !imageFromRenderer(*renderImage))
+        return { };
+    return renderImage->concreteObjectSizeForAccessibility().size();
 }
 
 RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters& parameters) const
 {
-    RefPtr image = imageFromRenderer(renderer());
+    CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer());
+    if (!renderImage)
+        return nullptr;
+
+    RefPtr image = imageFromRenderer(*renderImage);
     if (!image || !image->hasSomethingToDraw())
         return nullptr;
 
-    auto nativeSize = image->size();
-    if (nativeSize.isEmpty())
+    auto concreteObjectSize = renderImage->concreteObjectSizeForAccessibility();
+    auto imageSize = concreteObjectSize.size();
+    if (imageSize.isEmpty())
         return nullptr;
 
     // Determine the resize dimensions.
-    float targetWidth = parameters.resizeWidth ? parameters.resizeWidth : nativeSize.width();
-    float targetHeight = parameters.resizeHeight ? parameters.resizeHeight : nativeSize.height();
+    float targetWidth = parameters.resizeWidth ? parameters.resizeWidth : imageSize.width();
+    float targetHeight = parameters.resizeHeight ? parameters.resizeHeight : imageSize.height();
 
     // Clamp to a maximum of maxDimension x maxDimension pixels, preserving aspect ratio.
     constexpr float maxPixelArea = AXImageDataParameters::maxDimension * AXImageDataParameters::maxDimension;
@@ -3430,7 +3437,7 @@ RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters&
         return nullptr;
 
     // Draw the source image scaled into the buffer.
-    imageBuffer->context().drawImage(*image, ConcreteObjectSize::fixed(nativeSize), FloatRect({ }, bufferSize), FloatRect({ }, nativeSize));
+    imageBuffer->context().drawImage(*image, concreteObjectSize, FloatRect({ }, bufferSize), FloatRect({ }, imageSize), { renderImage->imageOrientation() });
 
     // Determine the extraction rect from subrect parameters or full image.
     IntRect extractionRect;
@@ -4083,7 +4090,7 @@ HashMap<String, AXEditingStyleValueVariant> AccessibilityObject::resolvedEditing
 // Note that the return value represents the ideal new scroll offset.
 // This may be out of range - the calling function should clip this
 // to the available range.
-static int computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
+static int LEGACY_NODELETE computeBestScrollOffset(int currentScrollOffset, int subfocusMin, int subfocusMax, int objectMin, int objectMax, int viewportMin, int viewportMax)
 {
     int viewportSize = viewportMax - viewportMin;
 

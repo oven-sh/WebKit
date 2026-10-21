@@ -1685,12 +1685,12 @@ void testUMulHigh32()
     }
 }
 
-void testMemoryCopy()
+void testMemoryMove()
 {
     Procedure proc;
     BasicBlock* root = proc.addBlock();
     auto arguments = cCallArgumentValues<void*, void*, void*>(proc, root);
-    root->appendNew<BulkMemoryValue>(proc, MemoryCopy, Origin(), arguments[0], arguments[1], arguments[2]);
+    root->appendNew<BulkMemoryValue>(proc, MemoryMove, Origin(), arguments[0], arguments[1], arguments[2]);
     root->clearSuccessors();
     root->appendNew<Value>(proc, Return, Origin());
 
@@ -1730,7 +1730,7 @@ void testMemoryCopy()
     }
 }
 
-void testMemoryCopyConstant()
+void testMemoryMoveConstant()
 {
     Vector<uint8_t> src(4096 + 1024);
     Vector<uint8_t> dst(4096 + 1024);
@@ -1739,7 +1739,7 @@ void testMemoryCopyConstant()
         Procedure proc;
         BasicBlock* root = proc.addBlock();
         auto arguments = cCallArgumentValues<void*, void*>(proc, root);
-        root->appendNew<BulkMemoryValue>(proc, MemoryCopy, Origin(), arguments[0], arguments[1], root->appendIntConstant(proc, Origin(), pointerType(), width));
+        root->appendNew<BulkMemoryValue>(proc, MemoryMove, Origin(), arguments[0], arguments[1], root->appendIntConstant(proc, Origin(), pointerType(), width));
         root->clearSuccessors();
         root->appendNew<Value>(proc, Return, Origin());
         auto code = compileProc(proc);
@@ -1813,6 +1813,39 @@ void testMemoryFillConstant()
             for (unsigned i = 0; i < width; ++i)
                 CHECK_EQ(src[i], static_cast<uint8_t>(a.value));
             CHECK_EQ(src[width], 0);
+        }
+    }
+}
+
+void testGCSafeMemoryMove()
+{
+    Vector<uint64_t> src(512 + 8);
+    for (unsigned words = 0; words <= 192; ++words) {
+        for (bool isConstant : { false, true }) {
+            Procedure proc;
+            BasicBlock* root = proc.addBlock();
+            auto arguments = cCallArgumentValues<void*, void*, size_t>(proc, root);
+            Value* count = isConstant ? root->appendIntConstant(proc, Origin(), pointerType(), words * 8) : static_cast<Value*>(root->appendNew<Value>(proc, Mul, Origin(), arguments[2], root->appendIntConstant(proc, Origin(), pointerType(), 8)));
+            root->appendNew<BulkMemoryValue>(proc, MemoryMove, Origin(), arguments[0], arguments[1], count, true);
+            root->clearSuccessors();
+            root->appendNew<Value>(proc, Return, Origin());
+            auto code = compileProc(proc);
+
+            for (unsigned shift : { 0u, 1u, 3u }) {
+                for (unsigned i = 0; i < src.size(); ++i)
+                    src[i] = i;
+                invoke<void>(*code, src.mutableSpan().data() + shift, src.span().data(), static_cast<uintptr_t>(words));
+                for (unsigned i = 0; i < words; ++i)
+                    CHECK_EQ(src[i + shift], i);
+                CHECK_EQ(src[words + shift], words + shift);
+
+                for (unsigned i = 0; i < src.size(); ++i)
+                    src[i] = i;
+                invoke<void>(*code, src.mutableSpan().data(), src.span().data() + shift, static_cast<uintptr_t>(words));
+                for (unsigned i = 0; i < words; ++i)
+                    CHECK_EQ(src[i], i + shift);
+                CHECK_EQ(src[words], words);
+            }
         }
     }
 }
@@ -2604,6 +2637,181 @@ void testCCmpChainRollback(int32_t i, int32_t len, int32_t a, int32_t b, int32_t
     int zero = 0; // style checker complains about == 0
     int32_t expected = (i < len && ((((a == b) & (c == d)) | (a ^ c)) == zero)) ? 1 : 0;
     CHECK_EQ(compileAndRun<int32_t>(proc, i, len, a, b, c, d), expected);
+}
+
+static void checkUsesXorOrCompareChain(Compilation& compilation)
+{
+    if (!isARM64())
+        return;
+    checkUsesInstruction(compilation, "ccmp");
+    checkDoesNotUseInstruction(compilation, "eor");
+}
+
+void testXorOrCompareChain32(B3::Opcode opcode, int32_t a, int32_t b, int32_t c, int32_t d)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t, int32_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], arguments[1]),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[2], arguments[3]));
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, opcode, Origin(), difference, root->appendNew<Const32Value>(proc, Origin(), 0)));
+
+    auto code = compileProc(proc);
+    checkUsesXorOrCompareChain(*code);
+    bool allEqual = a == b && c == d;
+    CHECK_EQ(invoke<int32_t>(*code, a, b, c, d), (opcode == Equal) == allEqual ? 1 : 0);
+}
+
+void testXorOrCompareChain64(B3::Opcode opcode, int64_t a, int64_t b, int64_t c)
+{
+    // Mixes a constant only cmp can encode, a constant ccmp can encode, and a register operand.
+    constexpr int64_t wide = 0x123;
+    constexpr int64_t narrow = 7;
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitOr, Origin(),
+            root->appendNew<Value>(proc, BitXor, Origin(), arguments[1], root->appendNew<Const64Value>(proc, Origin(), narrow)),
+            root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], root->appendNew<Const64Value>(proc, Origin(), wide))),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[2], arguments[0]));
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, opcode, Origin(), difference, root->appendNew<Const64Value>(proc, Origin(), 0)));
+
+    auto code = compileProc(proc);
+    checkUsesXorOrCompareChain(*code);
+    bool allEqual = a == wide && b == narrow && c == a;
+    CHECK_EQ(invoke<int32_t>(*code, a, b, c), (opcode == Equal) == allEqual ? 1 : 0);
+}
+
+void testXorOrCompareChainZExt64(int64_t a, int32_t b)
+{
+    constexpr int64_t wide = 0x123456789abcLL;
+    constexpr int32_t narrow = 0x61;
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int32_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], root->appendNew<Const64Value>(proc, Origin(), wide)),
+        root->appendNew<Value>(proc, ZExt32, Origin(),
+            root->appendNew<Value>(proc, BitXor, Origin(), arguments[1], root->appendNew<Const32Value>(proc, Origin(), narrow))));
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, Equal, Origin(), difference, root->appendNew<Const64Value>(proc, Origin(), 0)));
+
+    auto code = compileProc(proc);
+    checkUsesXorOrCompareChain(*code);
+    CHECK_EQ(invoke<int32_t>(*code, a, b), (a == wide && b == narrow) ? 1 : 0);
+}
+
+void testXorOrCompareChainBitImmediate32(int32_t a, int32_t b)
+{
+    // eor encodes these bitmask immediates directly, while cmp and ccmp would need both materialized.
+    constexpr int32_t first = 0x0f0f0f0f;
+    constexpr int32_t second = 0x30303030;
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], root->appendNew<Const32Value>(proc, Origin(), first)),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[1], root->appendNew<Const32Value>(proc, Origin(), second)));
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, Equal, Origin(), difference, root->appendNew<Const32Value>(proc, Origin(), 0)));
+
+    auto code = compileProc(proc);
+    if (isARM64())
+        checkDoesNotUseInstruction(*code, "ccmp");
+    CHECK_EQ(invoke<int32_t>(*code, a, b), (a == first && b == second) ? 1 : 0);
+}
+
+void testXorOrCompareChainBranch64(int64_t a, int64_t b, int64_t c, int64_t d)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* thenCase = proc.addBlock();
+    BasicBlock* elseCase = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t, int64_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], arguments[1]),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[2], arguments[3]));
+    root->setSuccessors(FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+    root->appendNew<Value>(proc, Branch, Origin(), difference);
+    thenCase->appendNew<Value>(proc, Return, Origin(), thenCase->appendNew<Const32Value>(proc, Origin(), 1));
+    elseCase->appendNew<Value>(proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 0));
+
+    auto code = compileProc(proc);
+    checkUsesXorOrCompareChain(*code);
+    CHECK_EQ(invoke<int32_t>(*code, a, b, c, d), (a == b && c == d) ? 0 : 1);
+}
+
+void testXorOrCompareChainBranchEqualZero32(int32_t a, int32_t b, int32_t c, int32_t d)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* thenCase = proc.addBlock();
+    BasicBlock* elseCase = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t, int32_t>(proc, root);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], arguments[1]),
+        root->appendNew<Value>(proc, BitXor, Origin(), arguments[2], arguments[3]));
+    Value* isZero = root->appendNew<Value>(proc, Equal, Origin(), difference, root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->setSuccessors(FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+    root->appendNew<Value>(proc, Branch, Origin(), isZero);
+    thenCase->appendNew<Value>(proc, Return, Origin(), thenCase->appendNew<Const32Value>(proc, Origin(), 1));
+    elseCase->appendNew<Value>(proc, Return, Origin(), elseCase->appendNew<Const32Value>(proc, Origin(), 0));
+
+    auto code = compileProc(proc);
+    checkUsesXorOrCompareChain(*code);
+    CHECK_EQ(invoke<int32_t>(*code, a, b, c, d), (a == b && c == d) ? 1 : 0);
+}
+
+void testXorOrCompareChainSharedLeaf32(int32_t a, int32_t b, int32_t c, int32_t d)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t, int32_t, int32_t>(proc, root);
+    Value* shared = root->appendNew<Value>(proc, BitXor, Origin(), arguments[0], arguments[1]);
+    Value* difference = root->appendNew<Value>(proc, BitOr, Origin(),
+        shared, root->appendNew<Value>(proc, BitXor, Origin(), arguments[2], arguments[3]));
+    Value* isZero = root->appendNew<Value>(proc, Equal, Origin(), difference, root->appendNew<Const32Value>(proc, Origin(), 0));
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, Add, Origin(), shared, isZero));
+
+    int32_t expected = static_cast<int32_t>(static_cast<uint32_t>(a ^ b) + ((a == b && c == d) ? 1 : 0));
+    CHECK_EQ(compileAndRun<int32_t>(proc, a, b, c, d), expected);
+}
+
+void testXorOrCompareChainLoads64(unsigned leafCount, unsigned mismatchIndex)
+{
+    constexpr unsigned maxLeafCount = 8;
+    constexpr unsigned maxFusedLeafCount = 5;
+    RELEASE_ASSERT(leafCount >= 2 && leafCount <= maxLeafCount);
+    std::array<int64_t, maxLeafCount * 2> pairs;
+    for (unsigned i = 0; i < leafCount; ++i) {
+        pairs[i * 2] = 0x1000 + i;
+        pairs[i * 2 + 1] = 0x1000 + i + (i == mismatchIndex ? 1 : 0);
+    }
+
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    Value* base = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    Value* difference = nullptr;
+    for (unsigned i = 0; i < leafCount; ++i) {
+        Value* leaf = root->appendNew<Value>(proc, BitXor, Origin(),
+            root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), base, static_cast<int32_t>(sizeof(int64_t) * i * 2)),
+            root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), base, static_cast<int32_t>(sizeof(int64_t) * (i * 2 + 1))));
+        difference = difference ? root->appendNew<Value>(proc, BitOr, Origin(), difference, leaf) : leaf;
+    }
+    root->appendNew<Value>(proc, Return, Origin(),
+        root->appendNew<Value>(proc, Equal, Origin(), difference, root->appendNew<Const64Value>(proc, Origin(), 0)));
+
+    auto code = compileProc(proc);
+    if (leafCount <= maxFusedLeafCount)
+        checkUsesXorOrCompareChain(*code);
+    else if (isARM64())
+        checkDoesNotUseInstruction(*code, "ccmp");
+    CHECK_EQ(invoke<int32_t>(*code, pairs.data()), mismatchIndex >= leafCount ? 1 : 0);
 }
 
 void testConstDoubleZero()

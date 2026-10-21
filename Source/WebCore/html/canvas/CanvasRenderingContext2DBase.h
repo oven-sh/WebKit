@@ -79,6 +79,11 @@ class WebCodecsVideoFrame;
 struct DOMMatrix2DInit;
 struct GlyphOverflow;
 
+enum class CanvasFontKerning : uint8_t;
+enum class CanvasFontStretch : uint8_t;
+enum class CanvasFontVariantCaps : uint8_t;
+enum class CanvasTextRendering : uint8_t;
+
 class CanvasRenderingContext2DBase : public CanvasRenderingContext, public CanvasPath {
     WTF_MAKE_TZONE_ALLOCATED(CanvasRenderingContext2DBase);
     friend class CanvasFilterContextSwitcher;
@@ -145,6 +150,18 @@ public:
 
     String wordSpacing() const { return state().wordSpacing; }
     void setWordSpacing(const String&);
+
+    CanvasFontKerning fontKerning() const { return state().canvasFontKerning(); }
+    void setFontKerning(CanvasFontKerning);
+
+    CanvasFontStretch fontStretch() const { return state().canvasFontStretch(); }
+    void setFontStretch(CanvasFontStretch);
+
+    CanvasFontVariantCaps fontVariantCaps() const { return state().canvasFontVariantCaps(); }
+    void setFontVariantCaps(CanvasFontVariantCaps);
+
+    CanvasTextRendering textRendering() const { return state().canvasTextRendering(); }
+    void setTextRendering(CanvasTextRendering);
 
     void save() { ++m_unrealizedSaveCount; }
     void restore();
@@ -276,6 +293,8 @@ public:
         float wordSpacing() const { return m_font.wordSpacing(); }
         void setWordSpacing(float wordSpacing) { m_font.setWordSpacing(wordSpacing); }
 
+        void update(NOESCAPE const Invocable<void(FontCascadeDescription&)> auto&);
+
     private:
         void update(FontSelector&);
         void fontsNeedUpdate(FontSelector&) final;
@@ -328,6 +347,10 @@ public:
         CanvasLineJoin LEGACY_NODELETE canvasLineJoin() const;
         CanvasTextAlign LEGACY_NODELETE canvasTextAlign() const;
         CanvasTextBaseline LEGACY_NODELETE canvasTextBaseline() const;
+        CanvasFontKerning LEGACY_NODELETE canvasFontKerning() const;
+        CanvasFontStretch LEGACY_NODELETE canvasFontStretch() const;
+        CanvasFontVariantCaps LEGACY_NODELETE canvasFontVariantCaps() const;
+        CanvasTextRendering LEGACY_NODELETE canvasTextRendering() const;
         String fontString() const;
         String globalCompositeOperationString() const;
         String shadowColorString() const;
@@ -341,6 +364,8 @@ protected:
     const State& state() const LIFETIME_BOUND { return m_stateStack.last(); }
     void realizeSaves();
     State& modifiableState() LIFETIME_BOUND { ASSERT(!m_unrealizedSaveCount || m_stateStack.size() >= MaxSaveCount); return m_stateStack.last(); }
+
+    void carryOverKerningAndTextRendering(FontCascadeDescription&) const;
 
     GraphicsContext* drawingContext() const;
     GraphicsContext* effectiveDrawingContext() const;
@@ -429,6 +454,12 @@ private:
     ColorSpace colorSpace() const final;
     bool willReadFrequently() const final;
 
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    void setDynamicRangeLimit(PlatformDynamicRangeLimit) final;
+    std::optional<double> getEffectiveDynamicRangeLimitValue() const final;
+    ImagePaintingOptions paintingOptionsForDisplay() const final;
+#endif
+
     void realizeSavesLoop();
     void setStrokeColorImpl(Color&& color, String&& unparsedColor = { });
     void setFillColorImpl(Color&& color, String&& unparsedColor = { });
@@ -476,21 +507,20 @@ private:
 
     Path transformAreaToDevice(const Path&) const;
     Path transformAreaToDevice(const FloatRect&) const;
-    bool rectContainsCanvas(const FloatRect&) const;
+    bool LEGACY_NODELETE rectContainsCanvas(const FloatRect&) const;
 
     template<class T> IntRect calculateCompositingBufferRect(const T&, IntSize*);
     void compositeBuffer(ImageBuffer&, const IntRect&, CompositeOperator);
 
-    FloatRect inflatedStrokeRect(const FloatRect&) const;
+    FloatRect LEGACY_NODELETE inflatedStrokeRect(const FloatRect&) const;
 
     template<class T> void fullCanvasCompositedDrawImage(T&, const FloatRect&, const FloatRect&, CompositeOperator, ImagePaintingOptions = { });
 
     RefPtr<ImageBuffer> surfaceBufferToImageBuffer(SurfaceBuffer) final;
     RefPtr<NativeImage> surfaceBufferToNativeImage(SurfaceBuffer) final;
     bool isSurfaceBufferTransparentBlack(SurfaceBuffer) const override;
-#if USE(SKIA)
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() override;
-#endif
+    void clearContentsFromLayer() final;
     bool hasDeferredOperations() const final;
     void flushDeferredOperations() final;
 
@@ -522,6 +552,9 @@ private:
     CanvasRenderingContext2DSettings m_settings;
     bool m_hasDeferredOperations { false };
     mutable bool m_hasCreatedImageBuffer { false };
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
+#endif
 };
 
 } // namespace WebCore

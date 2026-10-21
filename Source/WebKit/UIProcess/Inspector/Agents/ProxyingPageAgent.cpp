@@ -27,6 +27,7 @@
 #include "ProxyingPageAgent.h"
 
 #include "HandleMessage.h"
+#include "ProvisionalFrameProxy.h"
 #include "ProxyingPageAgentMessages.h"
 #include "ValidationProcedures.h"
 #include "WebFrameProxy.h"
@@ -36,6 +37,7 @@
 #include <JavaScriptCore/InspectorProtocolObjects.h>
 #include <WebCore/InspectorIdentifierRegistry.h>
 #include <WebCore/SecurityOriginData.h>
+#include <wtf/Borrow.h>
 #include <wtf/Box.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/Function.h>
@@ -259,9 +261,33 @@ CommandResult<void> ProxyingPageAgent::enable()
     if (!preferences->siteIsolationEnabled())
         return { };
 
+    if (m_enabled)
+        return { };
+
     m_enabled = true;
 
+    // Register once per frame, not once per process: WebPageInspectorController releases one registration per
+    // frame, so a process registered once would be released while it still hosts other frames.
+    for (RefPtr frame = inspectedPage->mainFrame(); frame; frame = frame->traverseNext().frame) {
+        if (auto pageID = frame->webPageIDInCurrentProcess()) {
+            Ref process = frame->process();
+            enableInstrumentationForProcess(process, *pageID);
+        }
+
+        // Released by willDestroyProvisionalFrame, or carried to the new process by didCommitProvisionalFrame.
+        if (RefPtr provisionalFrame = frame->provisionalFrame()) {
+            Ref process = provisionalFrame->process();
+            enableInstrumentationForProcess(process, inspectedPage->webPageIDInProcess(process));
+        }
+    }
+
+    // Processes that host this page's WebPage but no frame (e.g. the process of a popup in the same browsing context group,
+    // which holds only a remote page). They were instrumented when enable() registered every process once, so keep doing that.
+    // Nothing releases these per frame, so they are held on purpose until disable(): a process that later hosts a frame and
+    // loses it goes 1->2->1 and stays registered.
     inspectedPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
+        if (m_instrumentedProcessPageCounts.contains(std::make_pair(webProcess.coreProcessIdentifier(), pageID)))
+            return;
         Ref protectedWebProcess { webProcess };
         enableInstrumentationForProcess(protectedWebProcess, pageID);
     });
@@ -333,7 +359,7 @@ Ref<Protocol::Page::FrameResourceTree> ProxyingPageAgent::buildFrameTree(const W
     if (auto it = resourcesByFrame.find(frame.frameID()); it != resourcesByFrame.end()) {
         if (loaderId.isEmpty())
             loaderId = it->value.loaderId;
-        for (auto& resource : it->value.resources)
+        for (auto& resource : borrow(it->value.resources))
             resources->addItem(ResourceUtilities::buildResourceObject(resource));
     }
 
@@ -426,7 +452,7 @@ void ProxyingPageAgent::getResourceTree(Ref<GetResourceTreeCallback>&& callback)
     for (auto& entry : framesByProcess.values()) {
         Ref process = *entry.process;
         process->sendWithAsyncReply(Messages::WebInspectorBackend::GetFrameResourceData { WTF::move(entry.frameIDs) }, [resourcesByFrame, aggregator](Vector<std::pair<FrameIdentifier, FrameResourceData>>&& items) {
-            for (auto& item : items)
+            for (auto& item : borrow(items))
                 resourcesByFrame->set(item.first, WTF::move(item.second));
         }, inspectedPage->webPageIDInProcess(process));
     }
@@ -553,7 +579,7 @@ void ProxyingPageAgent::searchInResource(const Protocol::Network::FrameId& frame
             return;
         }
         auto array = JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>::create();
-        for (auto& match : matches) {
+        for (auto& match : borrow(matches)) {
             array->addItem(Protocol::GenericTypes::SearchMatch::create()
                 .setLineNumber(match.lineNumber)
                 .setLineContent(match.lineContent)
@@ -673,7 +699,7 @@ void ProxyingPageAgent::searchInResources(const String& text, std::optional<bool
     Ref aggregator = CallbackAggregator::create([callback, resultsByProcess]() mutable {
         auto array = JSON::ArrayOf<Protocol::Page::SearchResult>::create();
         for (auto& [processID, results] : *resultsByProcess) {
-            for (auto& r : results) {
+            for (auto& r : borrow(results)) {
                 // Page.SearchResult.frameId is required, so skip any result lacking a frameID
                 // (WebInspectorBackend always sets it; see SearchResult in InspectorResourceUtilities.h).
                 if (!r.frameID)

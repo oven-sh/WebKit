@@ -104,8 +104,7 @@ void ImageCapture::takePhoto(PhotoSettings&& settings, DOMPromiseDeferred<IDLInt
 
             ALWAYS_LOG_WITH_THIS(&capture, identifier, "resolving promise");
 
-            // FIXME: This is a static analysis false positive (rdar://146889777).
-            SUPPRESS_UNCOUNTED_ARG promise.resolve(Blob::create(capture.scriptExecutionContext(), WTF::move(get<0>(result.value())), WTF::move(get<1>(result.value()))));
+            promise.resolve(Blob::create(protect(capture.scriptExecutionContext()), WTF::move(get<0>(result.value())), WTF::move(get<1>(result.value()))));
         });
     });
 }
@@ -193,7 +192,7 @@ static void createImageBitmapOrException(VideoFrame& videoFrame, CompletionHandl
 
 class ImageCaptureVideoFrameObserver : public RealtimeMediaSource::VideoFrameObserver, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ImageCaptureVideoFrameObserver, WTF::DestructionThread::MainRunLoop> {
 public:
-    static Ref<ImageCaptureVideoFrameObserver> create(Ref<RealtimeMediaSource>&& source) { return adoptRef(*new ImageCaptureVideoFrameObserver(WTF::move(source))); }
+    static Ref<ImageCaptureVideoFrameObserver> LEGACY_NODELETE create(Ref<RealtimeMediaSource>&& source) { return adoptRef(*new ImageCaptureVideoFrameObserver(WTF::move(source))); }
     ~ImageCaptureVideoFrameObserver()
     {
         ASSERT(m_callbacks.isEmpty());

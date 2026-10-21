@@ -372,7 +372,7 @@ static std::optional<FloatSize> fixedContentSize(const WebCore::Image& image, We
     return FloatSize { *naturalDimensions.width, *naturalDimensions.height };
 }
 
-static ConcreteObjectSize viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
+static ConcreteObjectSize LEGACY_NODELETE viewportSize(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
 {
     auto zoom = renderer.style().usedZoom();
     return ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom() / zoom, zoom);
@@ -548,7 +548,10 @@ InterpolationQuality CachedImage::interpolationQualityForImageDraw(GraphicsConte
 {
     if (!m_cachedImage || renderSVGResource(&renderer) || legacyRenderSVGResource(&renderer))
         return Image::interpolationQualityForImageDraw(context, renderer, concreteObjectSize, layer, size);
-    return ImageQualityController::chooseInterpolationQuality(context, renderer, *protect(protect(m_cachedImage)->image()), layer, size);
+    auto contentSize = fixedContentSize(*protect(protect(m_cachedImage)->image()));
+    if (!contentSize)
+        return InterpolationQuality::Default;
+    return ImageQualityController::chooseInterpolationQuality(context, renderer, IntSize(*contentSize), layer, size);
 }
 
 bool CachedImage::usesDataProtocol() const

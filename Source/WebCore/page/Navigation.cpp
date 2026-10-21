@@ -980,8 +980,11 @@ void Navigation::MethodTrackerRegistry::unregister(NavigationAPIMethodTracker& t
     }
     auto& key = tracker.key();
     // FIXME: We should be able to assert key isn't null and m_upcomingTraverse contains it.
-    if (!key.isNull())
-        m_upcomingTraverse.remove(key);
+    if (key.isNull())
+        return;
+    // A tracker can be rejected again after it has settled, by which time a newer traversal to the same key may own the slot.
+    if (auto it = m_upcomingTraverse.find(key); it != m_upcomingTraverse.end() && it->value.ptr() == &tracker)
+        m_upcomingTraverse.remove(it);
 }
 
 bool Navigation::MethodTrackerRegistry::isEmpty() const
@@ -1108,7 +1111,7 @@ private:
     {
     }
 
-    bool isWaiting() const { return m_totalPromises > m_settledPromises; }
+    bool LEGACY_NODELETE isWaiting() const { return m_totalPromises > m_settledPromises; }
 
     void resolve()
     {

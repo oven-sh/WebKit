@@ -116,6 +116,7 @@ class SleepDisabler;
 class SourceBuffer;
 class SpeechSynthesis;
 class TextTrackList;
+class TrackOpaqueRoot;
 class TimeRanges;
 class VideoPlaybackQuality;
 class VideoTrackList;
@@ -202,6 +203,8 @@ public:
     // ActiveDOMObject, AudioSessionConfigurationChangeObserver.
     void ref() const final { HTMLElement::ref(); }
     void deref() const final { HTMLElement::deref(); }
+
+    TrackOpaqueRoot& trackOpaqueRoot() { return m_trackOpaqueRoot; }
 
     MediaPlayer* player() const { return m_player.get(); }
     WEBCORE_EXPORT std::optional<MediaPlayerIdentifier> playerIdentifier() const;
@@ -399,7 +402,7 @@ public:
 
     WEBCORE_EXPORT bool canPlay() const override;
 
-    bool shouldForceControlsDisplay() const;
+    WEBCORE_EXPORT bool shouldForceControlsDisplay() const;
 
     ExceptionOr<Ref<TextTrack>> addTextTrack(const AtomString& kind, const AtomString& label, const AtomString& language);
     ExceptionOr<void> removeTextTrack(TextTrack&);
@@ -979,8 +982,8 @@ private:
     void startPlaybackProgressTimer();
     void startProgressEventTimer();
     void stopPeriodicTimers();
-    void cancelPendingTasks();
-    void closeTaskQueues();
+    void LEGACY_NODELETE cancelPendingTasks();
+    void LEGACY_NODELETE closeTaskQueues();
 
     void seek(const MediaTime&);
     void seekInternal(const MediaTime&);
@@ -1431,6 +1434,7 @@ private:
 
     std::optional<CaptionUserPreferences::CaptionDisplayMode> m_captionDisplayMode;
 
+    Ref<TrackOpaqueRoot> m_trackOpaqueRoot;
     const RefPtr<AudioTrackList> m_audioTracks;
     const RefPtr<TextTrackList> m_textTracks;
     const RefPtr<VideoTrackList> m_videoTracks;
@@ -1469,7 +1473,6 @@ private:
     RefPtr<Blob> m_blob;
     URLKeepingBlobAlive m_blobURLForReading;
     std::optional<MediaProvider> m_mediaProvider;
-    const Ref<WTF::Observer<WebCoreOpaqueRoot()>> m_opaqueRootProvider;
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     RefPtr<WebKitMediaKeys> m_webKitMediaKeys;

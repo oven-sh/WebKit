@@ -44,6 +44,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SharedMemory.h>
 #include <string>
+#include <wtf/Borrow.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/FileHandle.h>
@@ -353,7 +354,7 @@ static std::expected<MappedData, std::error_code> compiledToFile(WTF::String&& j
             ASSERT(!m_topURLFiltersBytecodeWritten);
             ASSERT(!m_frameURLFiltersBytecodeWritten);
             m_actionsWritten += actions.size();
-            writeToFile(WebKit::NetworkCache::Data(actions.span()));
+            writeToFile(WebKit::NetworkCache::Data(borrow(actions)->span()));
         }
 
         void writeURLFiltersBytecode(Vector<DFABytecode>&& bytecode) final
@@ -361,20 +362,20 @@ static std::expected<MappedData, std::error_code> compiledToFile(WTF::String&& j
             ASSERT(!m_topURLFiltersBytecodeWritten);
             ASSERT(!m_frameURLFiltersBytecodeWritten);
             m_urlFiltersBytecodeWritten += bytecode.size();
-            writeToFile(WebKit::NetworkCache::Data(bytecode.span()));
+            writeToFile(WebKit::NetworkCache::Data(borrow(bytecode)->span()));
         }
 
         void writeTopURLFiltersBytecode(Vector<DFABytecode>&& bytecode) final
         {
             ASSERT(!m_frameURLFiltersBytecodeWritten);
             m_topURLFiltersBytecodeWritten += bytecode.size();
-            writeToFile(WebKit::NetworkCache::Data(bytecode.span()));
+            writeToFile(WebKit::NetworkCache::Data(borrow(bytecode)->span()));
         }
 
         void writeFrameURLFiltersBytecode(Vector<DFABytecode>&& bytecode) final
         {
             m_frameURLFiltersBytecodeWritten += bytecode.size();
-            writeToFile(WebKit::NetworkCache::Data(bytecode.span()));
+            writeToFile(WebKit::NetworkCache::Data(borrow(bytecode)->span()));
         }
 
         void finalize() final
@@ -640,8 +641,12 @@ void ContentRuleListStore::compileContentRuleListFile(WTF::String&& filePath, WT
     m_workQueue->dispatch([protectedThis = Ref { *this }, filePath = WTF::move(filePath).isolatedCopy(), identifier = WTF::move(identifier).isolatedCopy(), json = WTF::move(json).isolatedCopy(), parsedRules = crossThreadCopy(WTF::move(parsedRules).value()), storePath = m_storePath.isolatedCopy(), completionHandler = WTF::move(completionHandler), cssSelectorsAllowed] () mutable {
         if (cssSelectorsAllowed == WebCore::ContentExtensions::CSSSelectorsAllowed::No) {
             auto parsedRulesOnBackgroundQueue = WebCore::ContentExtensions::parseRuleList(json, cssSelectorsAllowed);
-            if (!parsedRulesOnBackgroundQueue.has_value())
-                return completionHandler(nullptr, parsedRulesOnBackgroundQueue.error());
+            if (!parsedRulesOnBackgroundQueue.has_value()) {
+                RunLoop::mainSingleton().dispatch([protectedThis = WTF::move(protectedThis), error = parsedRulesOnBackgroundQueue.error(), completionHandler = WTF::move(completionHandler)] mutable {
+                    completionHandler(nullptr, error);
+                });
+                return;
+            }
 
             parsedRules = parsedRulesOnBackgroundQueue.value();
         }

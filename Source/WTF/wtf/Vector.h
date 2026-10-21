@@ -344,8 +344,7 @@ protected:
 
     void crashIfBorrowed() const
     {
-        // FIXME: Switch to RELEASE_ASSERT once we have more experience and stability.
-        ASSERT(!m_isBorrowed);
+        RELEASE_ASSERT(!m_isBorrowed);
     }
 };
 
@@ -1599,7 +1598,7 @@ bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::appendSlow
     static_assert(action == FailureAction::Crash || action == FailureAction::Report);
     ASSERT_WITH_SECURITY_IMPLICATION(size() == capacity());
 
-    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(addressOfArgument(value));
     ptr = expandCapacity<action>(size() + 1, ptr);
     if constexpr (action == FailureAction::Report) {
         if (!ptr) [[unlikely]]
@@ -1706,7 +1705,7 @@ template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t min
 template<typename U>
 inline void Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::insert(size_t position, U&& value)
 {
-    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(addressOfArgument(value));
     if (size() == capacity()) {
         ptr = expandCapacity<FailureAction::Crash>(size() + 1, ptr);
         ASSERT(begin());

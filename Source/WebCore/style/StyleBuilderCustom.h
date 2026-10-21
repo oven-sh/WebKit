@@ -326,7 +326,7 @@ static inline float computeBaseComputedFontSize(const Document& document, const 
 
 static inline float computeLineHeightMultiplierDueToFontSize(const Document& document, const ComputedStyle& style, const CSSValue& value)
 {
-    bool percentageAutosizingEnabled = document.settings().textAutosizingEnabled() && style.textSizeAdjust().isPercentage();
+    bool percentageAutosizingEnabled = document.textAutosizingEnabled() && style.textSizeAdjust().isPercentage();
 
     if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value); primitiveValue && primitiveValue->isLength()) {
         auto minimumFontSize = document.settings().minimumFontSize();
@@ -410,7 +410,7 @@ inline void BuilderCustom::applyInitialFontFamily(BuilderState& builderState)
     // We need to adjust the size to account for the generic family change from monospace to non-monospace.
     if (fontDescription.useFixedDefaultSize()) {
         if (auto sizeIdentifier = fontDescription.keywordSizeAsIdentifier(); sizeIdentifier != CSSValueID::Invalid)
-            builderState.setFontDescriptionFontSize(fontSizeForKeyword(sizeIdentifier, false, builderState.document()));
+            builderState.setFontDescriptionFontSize(fontSizeForKeyword(sizeIdentifier, false, protect(builderState.document())));
     }
 
     builderState.setFontDescriptionFamilies(FontFamilies { standardFamily, FontFamilyKind::Generic });
@@ -432,14 +432,14 @@ inline void BuilderCustom::applyValueFontFamily(BuilderState& builderState, CSSV
 
     if (fontDescription.useFixedDefaultSize() != oldFamilyUsedFixedDefaultSize) {
         if (auto sizeIdentifier = fontDescription.keywordSizeAsIdentifier(); sizeIdentifier != CSSValueID::Invalid)
-            builderState.setFontDescriptionFontSize(fontSizeForKeyword(sizeIdentifier, !oldFamilyUsedFixedDefaultSize, builderState.document()));
+            builderState.setFontDescriptionFontSize(fontSizeForKeyword(sizeIdentifier, !oldFamilyUsedFixedDefaultSize, protect(builderState.document())));
     }
 }
 
 inline void BuilderCustom::applyInitialFontSize(BuilderState& builderState)
 {
     auto fontDescription = builderState.fontDescription();
-    float size = fontSizeForKeyword(CSSValueID::Medium, fontDescription.useFixedDefaultSize(), builderState.document());
+    float size = fontSizeForKeyword(CSSValueID::Medium, fontDescription.useFixedDefaultSize(), protect(builderState.document()));
 
     if (size < 0)
         return;
@@ -582,7 +582,7 @@ inline void BuilderCustom::applyValueFontSize(BuilderState& builderState, CSSVal
         case CSSValueID::XLarge:
         case CSSValueID::XxLarge:
         case CSSValueID::XxxLarge:
-            size = fontSizeForKeyword(ident, fontDescription.useFixedDefaultSize(), builderState.document());
+            size = fontSizeForKeyword(ident, fontDescription.useFixedDefaultSize(), protect(builderState.document()));
             builderState.setFontDescriptionKeywordSizeFromIdentifier(ident);
             break;
         case CSSValueID::Larger:
@@ -653,17 +653,30 @@ inline void BuilderCustom::applyValueFontSize(BuilderState& builderState, CSSVal
 
 // CanvasText is the initial color according to spec.
 // https://www.w3.org/TR/css-color-4/#the-color-property
+// FIXME: the logic is almost identical to applyValueColor, so we should de-duplicate it.
 inline void BuilderCustom::applyInitialColor(BuilderState& builderState)
 {
     const CSS::Color initialColor { CSS::KeywordColor { CSSValueID::Canvastext } };
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool axCustomColorModeActive = protect(builderState.document())->isAXCustomColorModeActive();
+#endif
 
     if (builderState.applyPropertyToRegularStyle()) {
         auto styleColor = toStyle(initialColor, builderState, ForVisitedLink::No);
-        builderState.style().setColor(styleColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
+        builderState.style().setColor(styleColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideColor(styleColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
     }
+
     if (builderState.applyPropertyToVisitedLinkStyle()) {
         auto styleColor = toStyle(initialColor, builderState, ForVisitedLink::Yes);
-        builderState.style().setVisitedLinkColor(styleColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
+        builderState.style().setVisitedLinkColor(styleColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideVisitedLinkColor(styleColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
     }
 
     builderState.style().setDisallowsFastPathInheritance();
@@ -673,13 +686,26 @@ inline void BuilderCustom::applyInitialColor(BuilderState& builderState)
 // For the color property, "currentcolor" is actually the inherited computed color.
 inline void BuilderCustom::applyValueColor(BuilderState& builderState, CSSValue& value)
 {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool axCustomColorModeActive = protect(builderState.document())->isAXCustomColorModeActive();
+#endif
+
     if (builderState.applyPropertyToRegularStyle()) {
         auto color = toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::No);
-        builderState.style().setColor(color.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
+        builderState.style().setColor(color.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideColor(color.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
     }
+
     if (builderState.applyPropertyToVisitedLinkStyle()) {
         auto color = toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::Yes);
-        builderState.style().setVisitedLinkColor(color.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
+        builderState.style().setVisitedLinkColor(color.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideVisitedLinkColor(color.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
     }
 
     builderState.style().setDisallowsFastPathInheritance();
@@ -700,16 +726,29 @@ inline void BuilderCustom::applyHighlightInitialColor(BuilderState& builderState
 // https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
 inline void BuilderCustom::applyHighlightInheritColor(BuilderState& builderState)
 {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool axCustomColorModeActive = protect(builderState.document())->isAXCustomColorModeActive();
+#endif
+
     CheckedPtr parentHighlightStyle = builderState.parentHighlightStyle();
     auto& inheritedColor = parentHighlightStyle ? parentHighlightStyle->colorForHighlight() : Color::currentColor();
 
     if (builderState.applyPropertyToRegularStyle()) {
-        builderState.style().setColor(inheritedColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
+        builderState.style().setColor(inheritedColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideColor(inheritedColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
         builderState.style().setColorForHighlight(Color { inheritedColor });
     }
     // FIXME: visitedLinkColor needs its own unresolved value for this.
-    if (builderState.applyPropertyToVisitedLinkStyle())
-        builderState.style().setVisitedLinkColor(inheritedColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
+    if (builderState.applyPropertyToVisitedLinkStyle()) {
+        builderState.style().setVisitedLinkColor(inheritedColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::ComputedStyle)));
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (axCustomColorModeActive)
+            builderState.style().setOverrideVisitedLinkColor(inheritedColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle(), StyleColorOptionsPurpose::Rendering)));
+#endif
+    }
 
     builderState.style().setDisallowsFastPathInheritance();
     // Builder::applyHighlightInheritance() calls this with no declaration, so the origin comes from

@@ -204,12 +204,12 @@ void CSSFontFace::setWeight(CSSValue& weight)
 static FontSelectionRange calculateWidthRange(CSSValue& value)
 {
     if (auto* pair = dynamicDowncast<CSSValuePair>(value)) {
-        auto result0 = Style::fontStretchFromCSSValueDeprecated(pair->first());
-        auto result1 = Style::fontStretchFromCSSValueDeprecated(pair->second());
+        auto result0 = Style::fontWidthFromCSSValueDeprecated(pair->first());
+        auto result1 = Style::fontWidthFromCSSValueDeprecated(pair->second());
         return { result0, result1 };
     }
 
-    FontSelectionValue result = Style::fontStretchFromCSSValueDeprecated(value);
+    auto result = Style::fontWidthFromCSSValueDeprecated(value);
     return { result, result };
 }
 
@@ -728,7 +728,7 @@ size_t CSSFontFace::pump(ExternalResourceDownloadPolicy policy)
             // but it seems that this behavior is a requirement of the design of FontRanges. FIXME: Perhaps rethink
             // this design.
             if (policy == ExternalResourceDownloadPolicy::Allow || !source->requiresExternalResource()) {
-                if (m_status == Status::Pending)
+                if (policy == ExternalResourceDownloadPolicy::Allow && m_status == Status::Pending)
                     setStatus(Status::Loading);
                 source->load(m_trustedType, protect(document()).get());
             }
@@ -751,12 +751,13 @@ size_t CSSFontFace::pump(ExternalResourceDownloadPolicy policy)
                 setStatus(Status::Success);
             return i;
         case CSSFontFaceSource::Status::Failure:
-            if ((policy == ExternalResourceDownloadPolicy::Allow || !source->requiresExternalResource()) && m_status == Status::Pending)
+            if (policy == ExternalResourceDownloadPolicy::Allow && m_status == Status::Pending)
                 setStatus(Status::Loading);
             break;
         }
     }
-    if (m_sources.isEmpty() && m_status == Status::Pending)
+    // All sources failed, possibly synchronously under the Forbid policy (local() only).
+    if (m_status == Status::Pending)
         setStatus(Status::Loading);
     if (m_status == Status::Loading || m_status == Status::TimedOut)
         setStatus(Status::Failure);

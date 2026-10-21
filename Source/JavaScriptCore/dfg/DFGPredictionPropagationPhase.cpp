@@ -1896,6 +1896,7 @@ private:
         case ClearCatchLocals:
         case DataViewSet:
         case BufferWrite:
+        case TypedArraySet:
         case InvalidationPoint:
         case ObjectAssign:
         case ResolvePromiseFirstResolving:

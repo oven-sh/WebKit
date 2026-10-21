@@ -27,6 +27,7 @@
 #include "WebPageInspectorController.h"
 
 #include "APIUIClient.h"
+#include "DebuggerPauseCoordinator.h"
 #include "FrameInspectorTarget.h"
 #include "FrameInspectorTargetProxy.h"
 #include "InspectorBrowserAgent.h"
@@ -99,6 +100,7 @@ void WebPageInspectorController::init()
 
 void WebPageInspectorController::pageClosed()
 {
+    m_debuggerPauseCoordinator = nullptr;
     disconnectAllFrontends();
 
     m_agents.discardValues();
@@ -107,6 +109,11 @@ void WebPageInspectorController::pageClosed()
 bool WebPageInspectorController::hasLocalFrontend() const
 {
     return m_frontendRouter->hasLocalFrontend();
+}
+
+bool WebPageInspectorController::hasFrontends() const
+{
+    return m_frontendRouter->hasFrontends();
 }
 
 void WebPageInspectorController::connectFrontend(Inspector::FrontendChannel& frontendChannel, bool, bool)
@@ -149,6 +156,8 @@ void WebPageInspectorController::disconnectFrontend(FrontendChannel& frontendCha
 
     Ref inspectedPage = m_inspectedPage.get();
     inspectedPage->didChangeInspectorFrontendCount(m_frontendRouter->frontendCount());
+    if (disconnectingLastFrontend && m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->closeSession();
 
 #if ENABLE(REMOTE_INSPECTOR)
     if (disconnectingLastFrontend)
@@ -175,6 +184,8 @@ void WebPageInspectorController::disconnectAllFrontends()
 
     Ref inspectedPage = m_inspectedPage.get();
     inspectedPage->didChangeInspectorFrontendCount(m_frontendRouter->frontendCount());
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->closeSession();
 
 #if ENABLE(REMOTE_INSPECTOR)
     inspectedPage->remoteInspectorInformationDidChange();
@@ -314,14 +325,17 @@ void WebPageInspectorController::didCommitProvisionalPage(std::optional<WebCore:
     }
 
     // Update target list to only include targets belonging to the committed page.
-    Vector<String> targetIDsToRemove;
-    for (auto& [targetID, target] : m_targets) {
-        if (targetID == newPageTargetID)
-            continue;
-        if (shouldManageFrameTargets && targetID == mainFrameTargetID)
-            continue;
-        targetIDsToRemove.append(targetID);
-    }
+    const Vector targetIDsToRemove = [&] {
+        Vector<String> targetIDsToRemove;
+        for (auto& [targetID, target] : m_targets) {
+            if (targetID == newPageTargetID)
+                continue;
+            if (shouldManageFrameTargets && targetID == mainFrameTargetID)
+                continue;
+            targetIDsToRemove.append(targetID);
+        }
+        return targetIDsToRemove;
+    }();
 
     RefPtr oldProcess = WebProcessProxy::processForIdentifier(oldProcessID);
     bool hasFrontends = m_frontendRouter->hasFrontends();
@@ -365,6 +379,31 @@ void WebPageInspectorController::didCommitProvisionalPage(std::optional<WebCore:
     }
 }
 
+void WebPageInspectorController::frameDidPauseForDebugger(WebProcessProxy& process, WebCore::FrameIdentifier frameID)
+{
+    if (!m_debuggerPauseCoordinator)
+        m_debuggerPauseCoordinator = makeUnique<DebuggerPauseCoordinator>(protect(m_inspectedPage));
+    CheckedPtr { m_debuggerPauseCoordinator }->frameDidPause(process, frameID);
+}
+
+void WebPageInspectorController::frameDidContinueForDebugger(WebProcessProxy& process, WebCore::FrameIdentifier frameID)
+{
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->frameDidContinue(process, frameID);
+}
+
+void WebPageInspectorController::frameDidChangeProcess(WebCore::FrameIdentifier frameID, WebCore::ProcessIdentifier newProcessID)
+{
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->frameDidChangeProcess(frameID, newProcessID);
+}
+
+void WebPageInspectorController::processDidTerminate(WebProcessProxy& process)
+{
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->processDidTerminate(process);
+}
+
 void WebPageInspectorController::didCreateFrame(WebFrameProxy& frame)
 {
     if (!shouldManageFrameTargets())
@@ -387,6 +426,9 @@ void WebPageInspectorController::didCreateFrame(WebFrameProxy& frame)
 
 void WebPageInspectorController::willDestroyFrame(const WebFrameProxy& frame)
 {
+    if (m_debuggerPauseCoordinator)
+        CheckedPtr { m_debuggerPauseCoordinator }->frameWillBeDestroyed(frame.frameID());
+
     if (!shouldManageFrameTargets())
         return;
 

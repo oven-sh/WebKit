@@ -50,7 +50,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
@@ -657,7 +656,7 @@ static RefPtr<Node> enclosingVisualBoundary(SUPPRESS_UNCHECKED_LOCAL Node* node)
 // The first-letter and remaining text are separate renderers but share one DOM
 // text node. upstream/downstream must not cross this boundary, just like they
 // must not cross visually distinct node boundaries.
-static bool crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
+static bool LEGACY_NODELETE crossesFirstLetterBoundary(const RenderObject& renderer, const PositionIterator& current, const PositionIterator& previousLastVisible)
 {
     auto* textFragment = dynamicDowncast<RenderTextFragment>(renderer);
     if (!textFragment || !textFragment->firstLetter())
@@ -939,7 +938,7 @@ bool Position::hasRenderedNonAnonymousDescendantsWithHeight(const RenderElement&
         auto shouldSkip = [&] {
             if (descendant->nonPseudoNode())
                 return false;
-            CheckedPtr renderElement = dynamicDowncast<RenderElement>(*descendant);
+            auto* renderElement = dynamicDowncast<RenderElement>(*descendant);
             return !renderElement || !renderElement->isFirstLetter();
         };
         if (shouldSkip())
@@ -959,8 +958,9 @@ bool Position::hasRenderedNonAnonymousDescendantsWithHeight(const RenderElement&
                 return true;
             continue;
         }
-        if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(*descendant)) {
-            if ((renderInline->isFirstLetter() || isEmptyInline(*renderInline)) && boundingBoxLogicalHeight(renderInline->borderBoxRectInContainer()))
+        if (descendant->isInlineBox()) {
+            CheckedRef inlineBox = downcast<RenderBoxModelObject>(*descendant);
+            if ((inlineBox->isFirstLetter() || isEmptyInline(inlineBox.get())) && boundingBoxLogicalHeight(inlineBox->borderBoxRectInContainer()))
                 return true;
             continue;
         }
@@ -1196,7 +1196,7 @@ InlineBoxAndOffset Position::inlineBoxAndOffset(Affinity affinity) const
     return inlineBoxAndOffset(affinity, primaryDirection());
 }
 
-static bool isNonTextLeafChild(RenderObject& object)
+static bool LEGACY_NODELETE isNonTextLeafChild(RenderObject& object)
 {
     if (auto* renderElement = dynamicDowncast<RenderElement>(object))
         return !renderElement->firstChild();
@@ -1650,8 +1650,8 @@ TextStream& operator<<(TextStream& ts, const Position& position)
 
 Node* commonInclusiveAncestor(const Position& a, const Position& b)
 {
-    RefPtr nodeA = a.containerNode();
-    RefPtr nodeB = b.containerNode();
+    auto* nodeA = a.containerNode();
+    auto* nodeB = b.containerNode();
     if (!nodeA || !nodeB)
         return nullptr;
     return commonInclusiveAncestor<ComposedTree>(*nodeA, *nodeB);
@@ -1708,7 +1708,7 @@ template<TreeType treeType> std::partial_ordering treeOrder(const Position& a, c
     RefPtr bContainer = b.containerNode();
 
     if (!aContainer || !bContainer) {
-        if (!commonInclusiveAncestor<treeType>(*protect(a.anchorNode()), *protect(b.anchorNode())))
+        if (!commonInclusiveAncestor<treeType>(*a.anchorNode(), *b.anchorNode()))
             return std::partial_ordering::unordered;
         if (!aContainer && !bContainer && a.anchorType() == b.anchorType())
             return std::partial_ordering::equivalent;

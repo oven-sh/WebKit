@@ -128,7 +128,7 @@ static bool LEGACY_NODELETE isZeroToOneCompositionType(WritingTools::Session::Co
     }
 }
 
-static CharacterRange rangeClampedToLength(CharacterRange range, unsigned length)
+static CharacterRange LEGACY_NODELETE rangeClampedToLength(CharacterRange range, unsigned length)
 {
     range.location = std::min<uint64_t>(range.location, length);
     range.length = std::min<uint64_t>(range.length, length - range.location);
@@ -877,8 +877,8 @@ void WritingToolsController::compositionSessionDidReceiveTextWithReplacementRang
     auto destinationAnimationUUID = WTF::UUID::createVersion4();
 
     auto addDestinationTextAnimation = [weakThis = WeakPtr { *this }, attributedText, range, context, finished, sourceAnimationUUID, destinationAnimationUUID](TextAnimationRunMode runMode) mutable {
-        if (weakThis)
-            weakThis->compositionSessionDidReceiveTextWithReplacementRangeAsync(sourceAnimationUUID, destinationAnimationUUID, attributedText, range, context, finished, runMode);
+        if (CheckedPtr checkedThis = weakThis)
+            checkedThis->compositionSessionDidReceiveTextWithReplacementRangeAsync(sourceAnimationUUID, destinationAnimationUUID, attributedText, range, context, finished, runMode);
     };
 
     // Unlike regular rewrites, we only get a single replace call for zero-to-one compositions with finished = true.
@@ -1030,7 +1030,7 @@ void WritingToolsController::willEndWritingToolsSession<WritingTools::Session::T
 }
 
 template<>
-void WritingToolsController::willEndWritingToolsSession<WritingTools::Session::Type::Composition>(bool)
+void LEGACY_NODELETE WritingToolsController::willEndWritingToolsSession<WritingTools::Session::Type::Composition>(bool)
 {
 }
 

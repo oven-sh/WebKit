@@ -45,7 +45,7 @@ XRBinding::XRBinding(Device& device)
 
 XRBinding::~XRBinding() = default;
 
-Ref<XRBinding> Device::createXRBinding()
+RefPtr<WebGPU::XRBinding> Device::createXRBinding()
 {
     if (!isValid())
         return XRBinding::createInvalid(*this);
@@ -65,36 +65,4 @@ bool XRBinding::isValid() const
 } // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuXRBindingAddRef(WGPUXRBinding binding)
-{
-    WebGPU::Metal::fromAPI(binding).ref();
-}
-
-void wgpuXRBindingRelease(WGPUXRBinding binding)
-{
-    WebGPU::Metal::fromAPI(binding).deref();
-}
-
-WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale)
-{
-    Ref protectedBinding = WebGPU::Metal::fromAPI(binding);
-    auto apiColorFormat = WebGPU::Metal::fromAPI(colorFormat);
-    auto apiDepthStencilFormat = optionalDepthStencilFormat ? WebGPU::Metal::fromAPI(*optionalDepthStencilFormat) : std::nullopt;
-    auto textureUsage = WebGPU::Metal::textureUsageFromAPI(flags);
-    // An invalid format or usage makes an invalid layer.
-    if (!apiColorFormat || (optionalDepthStencilFormat && !apiDepthStencilFormat) || !textureUsage)
-        return WebGPU::Metal::releaseToAPI(WebGPU::Metal::XRProjectionLayer::createInvalid(protectedBinding->device()));
-    return WebGPU::Metal::releaseToAPI(protectedBinding->createProjectionLayer({
-        .colorFormat = *apiColorFormat,
-        .depthStencilFormat = apiDepthStencilFormat,
-        .textureUsage = *textureUsage,
-        .scaleFactor = scale,
-    }));
-}
-
-WGPUXRSubImage wgpuBindingGetViewSubImage(WGPUXRBinding binding, WGPUXRProjectionLayer layer)
-{
-    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(binding))->getViewSubImage(protect(WebGPU::Metal::fromAPI(layer))));
-}
 

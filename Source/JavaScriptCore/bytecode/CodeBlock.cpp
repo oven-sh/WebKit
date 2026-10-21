@@ -4108,6 +4108,17 @@ std::optional<BytecodeIndex> CodeBlock::bytecodeIndexFromCallSiteIndex(CallSiteI
     return bytecodeIndex;
 }
 
+bool CodeBlock::checkIfJITThresholdReached()
+{
+#if ENABLE(JIT)
+    if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
+        if (worklist->compilationState(*m_vm, JITCompilationKey(m_unlinkedCode.get(), JITCompilationMode::Baseline)) == JITWorklist::Compiled)
+            return true;
+    }
+#endif
+    return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
+}
+
 void CodeBlock::jitSoon()
 {
     m_unlinkedCode->llintExecuteCounter().setNewThreshold(unlinkedCodeBlock()->thresholdForJIT(Options::thresholdForJITSoon()), this);

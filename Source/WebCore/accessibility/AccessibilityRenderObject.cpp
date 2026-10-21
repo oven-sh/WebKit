@@ -110,7 +110,6 @@
 #include "RenderGlyph.h"
 #include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
@@ -412,7 +411,7 @@ Element* AccessibilityRenderObject::anchorElement() const
 }
 
 // Null is distinct from empty: empty asks for the content to be ignored.
-static const String& generatedContentAltText(const RenderText* renderText)
+static const String& LEGACY_NODELETE generatedContentAltText(const RenderText* renderText)
 {
     if (auto* renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText))
         return renderTextFragment->altText();
@@ -722,7 +721,7 @@ static Path computePathForRenderBox(const RenderBox& renderBox)
     auto borderShape = BorderShape::shapeForBorderRect(renderBox.usedStyle(), renderBox.borderBoxRect());
     auto path = borderShape.pathForOuterShape(protect(renderBox.document())->deviceScaleFactor());
     // borderBoxRect() is in local coordinates. Offset it to absolute document coordinates
-    // to match the coordinate system used by SVG, RenderText, and RenderInline paths.
+    // to match the coordinate system used by SVG, RenderText, and inline box paths.
     auto absoluteOrigin = flooredLayoutPoint(renderBox.localToAbsolute(FloatPoint(), MapCoordinatesMode::UseTransforms));
     path.transform(AffineTransform().translate(absoluteOrigin.x(), absoluteOrigin.y()));
     return path;
@@ -732,7 +731,7 @@ static Path computePathForRenderBox(const RenderBox& renderBox)
 // different block-direction positions. For horizontal text, rects on different
 // lines have different Y positions. For vertical text, different columns have
 // different X positions.
-static bool rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
+static bool LEGACY_NODELETE rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHorizontal)
 {
     for (size_t i = 1; i < rects.size(); ++i) {
         if (isHorizontal) {
@@ -746,19 +745,19 @@ static bool rectsSpanMultipleLines(const Vector<LayoutRect>& rects, bool isHoriz
     return false;
 }
 
-static Path computePathForMultiLineRenderInline(const RenderInline& renderInline)
+static Path computePathForMultiLineInlineBox(const RenderBoxModelObject& inlineBox)
 {
     Vector<LayoutRect> rects;
-    renderInline.boundingRects(rects, flooredLayoutPoint(renderInline.localToAbsolute()));
+    inlineBox.boundingRects(rects, flooredLayoutPoint(inlineBox.localToAbsolute()));
     // Single-line inlines don't need a path -- the bounding rect is sufficient.
     if (rects.size() < 2)
         return { };
 
-    CheckedRef style = renderInline.style();
+    CheckedRef style = inlineBox.style();
     if (!rectsSpanMultipleLines(rects, style->writingMode().isHorizontal()))
         return { };
 
-    float deviceScaleFactor = protect(renderInline.document())->deviceScaleFactor();
+    float deviceScaleFactor = protect(inlineBox.document())->deviceScaleFactor();
     Vector<FloatRect> pixelSnappedRects;
     for (auto rect : rects)
         pixelSnappedRects.append(snapRectToDevicePixels(rect, deviceScaleFactor));
@@ -797,7 +796,7 @@ Path AccessibilityRenderObject::elementPath() const
             return { };
 
         float deviceScaleFactor = protect(renderText->document())->deviceScaleFactor();
-        auto outlineOffset = Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength(), deviceScaleFactor);
+        auto outlineOffset = Style::evaluate<float>(Style::effectiveOutlineOffset(style), style->usedZoomForLength(), deviceScaleFactor);
         Vector<FloatRect> pixelSnappedRects;
         for (auto rect : rects) {
             rect.inflate(outlineOffset);
@@ -859,8 +858,10 @@ Path AccessibilityRenderObject::elementPath() const
             return computePathForRenderBox(*renderBox);
     }
 
-    if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(*m_renderer))
-        return computePathForMultiLineRenderInline(*renderInline);
+    if (m_renderer->isInlineBox()) {
+        CheckedRef inlineBox = downcast<RenderBoxModelObject>(*m_renderer);
+        return computePathForMultiLineInlineBox(inlineBox.get());
+    }
 
     return { };
 }
@@ -1459,7 +1460,7 @@ CharacterRange AccessibilityRenderObject::selectedTextRange() const
 // content cannot be a valid text position nor be selected (with a mouse or otherwise), so emitting
 // text runs for it would make the isolated tree's text-marker strings diverge from what can actually
 // be represented on the main-thread.
-static bool shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
+static bool LEGACY_NODELETE shouldExcludeTextRunsForPseudoElement(std::optional<PseudoElementType> pseudoElementType)
 {
     if (!pseudoElementType) {
         // No pseudo type, so this function is not applicable.
@@ -1619,7 +1620,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
     };
 
     // Appends text to the current lineString, collapsing whitespace as necessary (similar to how TextIterator::handleTextRun() does).
-    auto appendToLineString = [&] (const InlineIterator::TextBoxIterator& textBox) {
+    auto appendToLineString = [&](const InlineIterator::TextBoxIterator& textBox) {
         auto text = textBox->originalText();
         if (text.isEmpty())
             return;
@@ -1636,9 +1637,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
 
         auto textRun = textBox->textRun(InlineIterator::TextRunMode::Editing);
         auto lineBox = textBox->lineBox();
-        if (!lineBox)
-            return;
-        lineHeight = LineSelection::logicalRect(*lineBox).height();
+        lineHeight = LineSelection::logicalRect(lineBox).height();
 
         // Compute distanceFromBoundsInDirection only for the first text box on each
         // line. Multiple text boxes can share a line (e.g. due to inline formatting
@@ -1648,7 +1647,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
         if (!didComputeDistanceFromBounds) {
             didComputeDistanceFromBounds = true;
             computeBoundsOffsetsIfNeeded();
-            distanceFromBoundsInDirection = isHorizontal ? textRun.xPos() + lineBox->contentLogicalLeft() + containingBlockOffset - elementRectOffset : -textRun.xPos() + containingBlockOffset - elementRectOffset;
+            distanceFromBoundsInDirection = isHorizontal ? textRun.xPos() + lineBox.contentLogicalLeft() + containingBlockOffset - elementRectOffset : -textRun.xPos() + containingBlockOffset - elementRectOffset;
         }
 
         // Populate GlyphBuffer with all of the glyphs for the text runs, enabling us to measure character widths.

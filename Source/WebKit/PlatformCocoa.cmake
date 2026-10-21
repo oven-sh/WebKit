@@ -101,8 +101,6 @@ endif ()
 
 list(APPEND WebKit_UNIFIED_SOURCE_LIST_FILES
     "SourcesCocoa.txt"
-
-    "Platform/SourcesCocoa.txt"
 )
 # FIXME: Test building on iOS and then enable on iOS.
 if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
@@ -110,6 +108,12 @@ if (NOT WEBKIT_SDK_IS_IOS_FAMILY)
         "SourcesCMakeCocoa.txt"
     )
 endif ()
+
+# See WebKit_USE_PLATFORM_SUBTARGET in CMakeLists.txt.
+list(APPEND WebKitPlatform_UNIFIED_SOURCE_LIST_FILES
+    "Platform/SourcesCMakeCocoa.txt"
+    "Platform/SourcesCocoa.txt"
+)
 
 list(APPEND WebKit_SOURCES
     GPUProcess/media/RemoteAudioDestinationManager.cpp
@@ -174,7 +178,7 @@ list(APPEND WebKit_SOURCES
     WebProcess/cocoa/AudioSessionRoutingArbitrator.cpp
     WebProcess/cocoa/LaunchServicesDatabaseManager.mm
 
-    ${WEBKIT_DIR}/WebProcess/InjectedBundle/API/c/mac/WKBundlePageMac.mm
+    ${WEBKIT_DIR}/WebProcess/InjectedBundle/API/c/cocoa/WKBundlePageMac.mm
 )
 
 # FIXME: Add the remaining `${WEBKIT_DIR}/UIProcess/API/Swift/` files once CMake has proper framework directories.
@@ -211,7 +215,7 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/Shared/API/Cocoa"
     "${WEBKIT_DIR}/Shared/API/c/cf"
     "${WEBKIT_DIR}/Shared/API/c/cg"
-    "${WEBKIT_DIR}/Shared/API/c/mac"
+    "${WEBKIT_DIR}/Shared/API/c/cocoa"
     "${WEBKIT_DIR}/Shared/ApplePay/cocoa/"
     "${WEBKIT_DIR}/Shared/Authentication/cocoa"
     "${WEBKIT_DIR}/Shared/Cocoa"
@@ -223,6 +227,7 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/Shared/cf"
     "${WEBKIT_DIR}/Shared/ios"
     "${WEBKIT_DIR}/Shared/mac"
+    "${WEBKIT_DIR}/UIProcess/API/C/cocoa"
     "${WEBKIT_DIR}/UIProcess/API/C/mac"
     "${WEBKIT_DIR}/UIProcess/API/Cocoa"
     "${WEBKIT_DIR}/UIProcess/API/ios"
@@ -271,7 +276,6 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/WebProcess/GPU/media/cocoa"
     "${WEBKIT_DIR}/WebProcess/GPU/media/ios"
     "${WEBKIT_DIR}/WebProcess/InjectedBundle/API/Cocoa"
-    "${WEBKIT_DIR}/WebProcess/InjectedBundle/API/mac"
     "${WEBKIT_DIR}/WebProcess/Inspector/mac"
     "${WEBKIT_DIR}/WebProcess/MediaSession"
     "${WEBKIT_DIR}/WebProcess/Model/mac"
@@ -346,6 +350,7 @@ list(APPEND WebKit_MESSAGES_IN_FILES
     UIProcess/ViewGestureController
 
     UIProcess/Cocoa/PlaybackSessionManagerProxy
+    UIProcess/Cocoa/SecItemShimProxy
     UIProcess/Cocoa/VideoPresentationManagerProxy
 
     UIProcess/Inspector/WebInspectorUIExtensionControllerProxy
@@ -360,8 +365,6 @@ list(APPEND WebKit_MESSAGES_IN_FILES
 
     UIProcess/ios/SmartMagnificationController
     UIProcess/ios/WebDeviceOrientationUpdateProviderProxy
-
-    UIProcess/mac/SecItemShimProxy
 
     WebProcess/ApplePay/WebPaymentCoordinator
 
@@ -430,12 +433,6 @@ list(APPEND WebCore_SERIALIZATION_IN_FILES
 )
 
 
-file(GLOB _webkit_additional_cocoa_sources RELATIVE "${WEBKIT_DIR}"
-    "${WEBKIT_DIR}/Shared/Cocoa/CoreIPC*.mm"
-    "${WEBKIT_DIR}/Shared/cf/CoreIPC*.mm"
-)
-list(APPEND WebKit_SOURCES ${_webkit_additional_cocoa_sources})
-unset(_webkit_additional_cocoa_sources)
 list(APPEND WebKit_SOURCES
     NetworkProcess/cocoa/DeviceManagementSoftLink.mm
     NetworkProcess/cocoa/NetworkSoftLink.mm
@@ -446,15 +443,10 @@ list(APPEND WebKit_SOURCES
     Shared/AdditionalFonts.mm
 
     Shared/Cocoa/AnnotatedMachSendRight.mm
-    Shared/Cocoa/ArgumentCodersCocoa.mm
     Shared/Cocoa/BackgroundFetchStateCocoa.mm
-    Shared/Cocoa/CoreTextHelpers.mm
-    Shared/Cocoa/DataDetectionResult.mm
     Shared/Cocoa/LaunchLogHook.mm
-    Shared/Cocoa/WKKeyedCoder.mm
     Shared/Cocoa/WKProcessExtension.mm
     Shared/Cocoa/WebKit2InitializeCocoa.mm
-    Shared/Cocoa/WebPushMessageCocoa.mm
 
     UIProcess/EndowmentStateTracker.mm
 
@@ -687,7 +679,7 @@ set(WebKit_FORWARDING_HEADERS_DIRECTORIES
     Shared/API/c
 
     Shared/API/c/cf
-    Shared/API/c/mac
+    Shared/API/c/cocoa
 
     UIProcess/Cocoa
 
@@ -695,12 +687,11 @@ set(WebKit_FORWARDING_HEADERS_DIRECTORIES
     UIProcess/API/Cocoa
     UIProcess/API/cpp
 
-    UIProcess/API/C/Cocoa
+    UIProcess/API/C/cocoa
     UIProcess/API/C/mac
 
     WebProcess/InjectedBundle/API/Cocoa
     WebProcess/InjectedBundle/API/c
-    WebProcess/InjectedBundle/API/mac
 )
 
 target_link_options(WebKit PRIVATE -framework AuthKit)
@@ -726,10 +717,6 @@ target_link_options(WebKit PRIVATE
     "LINKER:-unexported_symbol,_$s*3Cxx*"
 )
 
-# FIXME: Hide WebKit's Objective-C++ symbols too, as Xcode does. TestIPC needs
-# to be refactored to import WebKit's IPC serialization code.
-target_compile_options(WebKit PRIVATE "$<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fvisibility=default>")
-
 # Like Xcode, which dead-strips WebKit in every configuration. The precompiled headers' objects
 # otherwise keep references to inline functions that call hidden WebCore and WTF symbols.
 target_link_options(WebKit PRIVATE "$<$<CONFIG:Debug>:LINKER:-dead_strip>")
@@ -752,6 +739,8 @@ set(WebKit_GENERATED_SERIALIZERS_SUFFIX mm)
 
 list(APPEND WebKit_DERIVED_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedWebKitSecureCoding.h
+)
+list(APPEND WebKitPlatform_SOURCES
     ${WebKit_DERIVED_SOURCES_DIR}/GeneratedWebKitSecureCoding.${WebKit_GENERATED_SERIALIZERS_SUFFIX}
 )
 
@@ -1002,7 +991,7 @@ function(WEBKIT_DEFINE_AUXILIARY_PROCESSES)
     endfunction()
 
     set(_get_task_allow "${CMAKE_CURRENT_BINARY_DIR}/XPCService-get-task-allow.entitlements")
-    WEBKIT_WRITE_SIMULATOR_SIGNING_ENTITLEMENTS(${_get_task_allow})
+    WEBKIT_WRITE_DEFAULT_DEVELOPMENT_ENTITLEMENTS(${_get_task_allow})
 
     if (USE_EXTENSIONKIT)
         WEBKIT_DEFINE_PROCESS_EXTENSIONS()
@@ -1233,7 +1222,7 @@ function(WEBKIT_DEFINE_DAEMONS)
 
     # adattributiond doesn't have any custom entitlements on macOS.
     if (WEBKIT_SDK_IS_MACOS AND DEVELOPER_MODE)
-        set(_adattributiond_entitlements ENTITLEMENTS "${_get_task_allow}")
+        set(_adattributiond_entitlements ENTITLEMENTS OFF)
     endif ()
     WEBKIT_DAEMON(adattributiond
         ${WEBKIT_DIR}/Shared/EntryPointUtilities/Cocoa/Daemon/adattributiond.cpp
@@ -1704,23 +1693,23 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     Shared/API/c/cg/WKImageCG.h
 
-    Shared/API/c/mac/WKBaseMac.h
-    Shared/API/c/mac/WKCertificateInfoMac.h
-    Shared/API/c/mac/WKObjCTypeWrapperRef.h
-    Shared/API/c/mac/WKURLRequestNS.h
-    Shared/API/c/mac/WKURLResponseNS.h
-    Shared/API/c/mac/WKWebArchiveRef.h
-    Shared/API/c/mac/WKWebArchiveResource.h
+    Shared/API/c/cocoa/WKBaseMac.h
+    Shared/API/c/cocoa/WKCertificateInfoMac.h
+    Shared/API/c/cocoa/WKObjCTypeWrapperRef.h
+    Shared/API/c/cocoa/WKURLRequestNS.h
+    Shared/API/c/cocoa/WKURLResponseNS.h
+    Shared/API/c/cocoa/WKWebArchiveRef.h
+    Shared/API/c/cocoa/WKWebArchiveResource.h
 
-    Shared/mac/SecItemRequestData.h
-    Shared/mac/SecItemResponseData.h
+    Shared/Cocoa/SecItemRequestData.h
+    Shared/Cocoa/SecItemResponseData.h
 
-    UIProcess/API/C/mac/WKContextPrivateMac.h
+    UIProcess/API/C/cocoa/WKContextPrivateMac.h
+    UIProcess/API/C/cocoa/WKNotificationPrivateMac.h
+    UIProcess/API/C/cocoa/WKPagePrivateMac.h
+    UIProcess/API/C/cocoa/WKProtectionSpaceNS.h
+    UIProcess/API/C/cocoa/WKWebsiteDataStoreRefPrivateMac.h
     UIProcess/API/C/mac/WKInspectorPrivateMac.h
-    UIProcess/API/C/mac/WKNotificationPrivateMac.h
-    UIProcess/API/C/mac/WKPagePrivateMac.h
-    UIProcess/API/C/mac/WKProtectionSpaceNS.h
-    UIProcess/API/C/mac/WKWebsiteDataStoreRefPrivateMac.h
 
     UIProcess/API/Cocoa/NSAttributedStringPrivate.h
     UIProcess/API/Cocoa/PageLoadStateObserver.h
@@ -1864,7 +1853,19 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebNavigationURLFilter.h
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebRequestFilter.h
 
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMDocument.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMElement.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMInternals.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNode.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNodePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRange.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRangePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMText.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMTextIterator.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessBundleParameters.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugIn.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextController.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextControllerPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInCSSStyleDeclarationHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInEditingDelegate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInFrame.h
@@ -1874,22 +1875,9 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandlePrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPageGroup.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInRangeHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInScriptWorld.h
-
-    WebProcess/InjectedBundle/API/mac/WKDOMDocument.h
-    WebProcess/InjectedBundle/API/mac/WKDOMElement.h
-    WebProcess/InjectedBundle/API/mac/WKDOMInternals.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNode.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNodePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRange.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRangePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMText.h
-    WebProcess/InjectedBundle/API/mac/WKDOMTextIterator.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugIn.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextController.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextControllerPrivate.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInPrivate.h
 )
 
 # Headers referenced by iOS_Private.modulemap but not picked up elsewhere.
@@ -1917,7 +1905,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     UIProcess/API/C/cg/WKIconDatabaseCG.h
 
-    UIProcess/API/C/mac/WKFrameMac.h
+    UIProcess/API/C/cocoa/WKFrameMac.h
 
     UIProcess/API/mac/WKWebViewPrivateForTestingMac.h
 
@@ -1925,9 +1913,9 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     WebProcess/API/Cocoa/WKWebProcess.h
 
-    WebProcess/InjectedBundle/API/c/mac/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundlePageMac.h
     WebProcess/InjectedBundle/API/c/mac/WKBundlePageBannerMac.h
-    WebProcess/InjectedBundle/API/c/mac/WKBundlePageMac.h
 )
 
 file(GLOB _webkit_api_headers RELATIVE "${WEBKIT_DIR}"
@@ -2384,80 +2372,6 @@ add_custom_command(
     VERBATIM
 )
 
-# Headers which import WebKitAdditions fragments have to be run through the
-# replacement script rather than being copied verbatim. The processed copy takes
-# the source header's place in the list, so that the header maps resolve
-# <WebKit/Foo.h> to the copy with the additions spliced in rather than to the
-# source tree. WebKit's own sources are pointed back at the unprocessed headers
-# below.
-set(_webkitadditions_source_headers)
-set(_header_lists WebKit_PUBLIC_FRAMEWORK_HEADERS WebKit_PRIVATE_FRAMEWORK_HEADERS)
-set(_header_dirs WebKit_HEADERS_DIR WebKit_PRIVATE_HEADERS_DIR)
-foreach (_header_list _header_dir IN ZIP_LISTS _header_lists _header_dirs)
-    set(_updated_headers)
-    foreach (_header IN LISTS ${_header_list})
-        # Entries are relative to WEBKIT_DIR unless they are already absolute.
-        set(_src ${WEBKIT_DIR})
-        cmake_path(APPEND _src ${_header})
-        file(READ ${_src} _contents)
-        # Only run headers through the replacement script if they actually contain
-        # a WKA import.
-        if (NOT _contents MATCHES "#import <WebKitAdditions/.*\.h>")
-            list(APPEND _updated_headers ${_header})
-            continue ()
-        endif ()
-
-        cmake_path(GET _src FILENAME _name)
-        set(_dst ${${_header_dir}}/${_name})
-        add_custom_command(
-            OUTPUT ${_dst}
-            COMMAND
-                env ${WEBKITADDITIONS_DEFINITIONS_FOR_HEADER_REPLACEMENT}
-                    ${WEBKIT_DIR}/mac/replace-webkit-additions-includes.py
-                    ${WebKitAdditions_FRAMEWORK_HEADERS_DIR} ${CMAKE_OSX_SYSROOT}
-                    ${_src} ${_dst}
-            MAIN_DEPENDENCY ${_src}
-            DEPENDS ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
-            VERBATIM
-        )
-        list(APPEND _updated_headers ${_dst})
-        list(APPEND WebKit_WEBKITADDITIONS_HEADERS ${_dst})
-        list(APPEND _webkitadditions_source_headers ${_src})
-    endforeach ()
-    set(${_header_list} ${_updated_headers})
-endforeach ()
-
-if (WebKit_WEBKITADDITIONS_HEADERS)
-    # Everything reading these headers through a header map has to wait for the
-    # replacement to run, including targets that only link against WebKit.
-    add_custom_target(WebKit_ReplaceWebKitAdditionsIncludes ALL
-        DEPENDS ${WebKit_WEBKITADDITIONS_HEADERS})
-    list(APPEND WebKit_DEPENDENCIES WebKit_ReplaceWebKitAdditionsIncludes)
-    list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_ReplaceWebKitAdditionsIncludes)
-
-    if (USE_HEADER_MAPS)
-        # WebKit's own sources are the exception: they have to keep seeing the
-        # unprocessed headers, the way the Xcode build's project header map points
-        # them at the source tree. A spliced-in fragment declares its API inside one
-        # of WebKit's own categories, while the WebKitAdditions .mm that implements
-        # it declares a category of its own and imports the same fragment into that,
-        # so a translation unit which sees both ends up with duplicate declarations
-        # and with properties whose implementation is in the wrong category.
-        #
-        # The targets built from this directory pick up the header maps through the
-        # directory's include directories, and `include_directories(BEFORE)`
-        # prepends, so the last caller wins. Defer the call to the end of the
-        # directory so this override is searched ahead of WebKit-framework-headers.
-        WEBKIT_WRITE_HEADER_MAP(WebKit
-            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/WebKit-webkitadditions-source-headers.hmap
-            FILES ${_webkitadditions_source_headers}
-            QUOTED BRACKETED
-        )
-        cmake_language(DEFER DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} CALL include_directories BEFORE
-            ${CMAKE_CURRENT_BINARY_DIR}/WebKit-webkitadditions-source-headers.hmap)
-    endif ()
-endif ()
-
 # LINKER:-u forces a symbol reference so -dead_strip_dylibs won't prune the weak framework.
 target_link_options(WebKit PRIVATE
     -lsandbox
@@ -2621,6 +2535,80 @@ target_link_options(WebKit PRIVATE
     "SHELL:-Xlinker -weak_library -Xlinker ${CMAKE_OSX_SYSROOT}/usr/lib/libbsm.tbd"
 )
 
+endif ()
+
+# Headers which import WebKitAdditions fragments have to be run through the
+# replacement script rather than being copied verbatim. The processed copy takes
+# the source header's place in the list, so that the header maps resolve
+# <WebKit/Foo.h> to the copy with the additions spliced in rather than to the
+# source tree. WebKit's own sources are pointed back at the unprocessed headers
+# below.
+set(_webkitadditions_source_headers)
+set(_header_lists WebKit_PUBLIC_FRAMEWORK_HEADERS WebKit_PRIVATE_FRAMEWORK_HEADERS)
+set(_header_dirs WebKit_HEADERS_DIR WebKit_PRIVATE_HEADERS_DIR)
+foreach (_header_list _header_dir IN ZIP_LISTS _header_lists _header_dirs)
+    set(_updated_headers)
+    foreach (_header IN LISTS ${_header_list})
+        # Entries are relative to WEBKIT_DIR unless they are already absolute.
+        set(_src ${WEBKIT_DIR})
+        cmake_path(APPEND _src ${_header})
+        file(READ ${_src} _contents)
+        # Only run headers through the replacement script if they actually contain
+        # a WKA import.
+        if (NOT _contents MATCHES "#import <WebKitAdditions/.*\.h>")
+            list(APPEND _updated_headers ${_header})
+            continue ()
+        endif ()
+
+        cmake_path(GET _src FILENAME _name)
+        set(_dst ${${_header_dir}}/${_name})
+        add_custom_command(
+            OUTPUT ${_dst}
+            COMMAND
+                env ${WEBKITADDITIONS_DEFINITIONS_FOR_HEADER_REPLACEMENT}
+                    ${WEBKIT_DIR}/mac/replace-webkit-additions-includes.py
+                    ${WebKitAdditions_FRAMEWORK_HEADERS_DIR} ${CMAKE_OSX_SYSROOT}
+                    ${_src} ${_dst}
+            MAIN_DEPENDENCY ${_src}
+            DEPENDS ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
+            VERBATIM
+        )
+        list(APPEND _updated_headers ${_dst})
+        list(APPEND WebKit_WEBKITADDITIONS_HEADERS ${_dst})
+        list(APPEND _webkitadditions_source_headers ${_src})
+    endforeach ()
+    set(${_header_list} ${_updated_headers})
+endforeach ()
+
+if (WebKit_WEBKITADDITIONS_HEADERS)
+    # Everything reading these headers through a header map has to wait for the
+    # replacement to run, including targets that only link against WebKit.
+    add_custom_target(WebKit_ReplaceWebKitAdditionsIncludes ALL
+        DEPENDS ${WebKit_WEBKITADDITIONS_HEADERS})
+    list(APPEND WebKit_DEPENDENCIES WebKit_ReplaceWebKitAdditionsIncludes)
+    list(APPEND WebKit_INTERFACE_DEPENDENCIES WebKit_ReplaceWebKitAdditionsIncludes)
+
+    if (USE_HEADER_MAPS)
+        # WebKit's own sources are the exception: they have to keep seeing the
+        # unprocessed headers, the way the Xcode build's project header map points
+        # them at the source tree. A spliced-in fragment declares its API inside one
+        # of WebKit's own categories, while the WebKitAdditions .mm that implements
+        # it declares a category of its own and imports the same fragment into that,
+        # so a translation unit which sees both ends up with duplicate declarations
+        # and with properties whose implementation is in the wrong category.
+        #
+        # The targets built from this directory pick up the header maps through the
+        # directory's include directories, and `include_directories(BEFORE)`
+        # prepends, so the last caller wins. Defer the call to the end of the
+        # directory so this override is searched ahead of WebKit-framework-headers.
+        WEBKIT_WRITE_HEADER_MAP(WebKit
+            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/WebKit-webkitadditions-source-headers.hmap
+            FILES ${_webkitadditions_source_headers}
+            QUOTED BRACKETED
+        )
+        cmake_language(DEFER DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} CALL include_directories BEFORE
+            ${CMAKE_CURRENT_BINARY_DIR}/WebKit-webkitadditions-source-headers.hmap)
+    endif ()
 endif ()
 
 # WebKit.framework/Modules: the module maps, the Swift module and the SwiftUI

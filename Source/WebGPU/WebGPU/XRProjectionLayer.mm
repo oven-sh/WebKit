@@ -78,11 +78,10 @@ SOFT_LINK_FUNCTION_FOR_SOURCE(WebCore, CompositorServices, cp_rasterization_rate
 
 namespace WebGPU::Metal {
 
-// The layer keeps the C API formats, which the XR sub-image textures are created with.
 XRProjectionLayer::XRProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor, Device& device)
     : m_sharedEvent(std::make_pair(nil, 0))
-    , m_colorFormat(toAPI(descriptor.colorFormat))
-    , m_optionalDepthStencilFormat(descriptor.depthStencilFormat ? std::optional { toAPI(*descriptor.depthStencilFormat) } : std::nullopt)
+    , m_colorFormat(descriptor.colorFormat)
+    , m_optionalDepthStencilFormat(descriptor.depthStencilFormat)
     , m_flags(descriptor.textureUsage)
     , m_scale(descriptor.scaleFactor)
     , m_device(device)
@@ -192,7 +191,7 @@ void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& color
 #endif
 }
 
-Ref<XRProjectionLayer> XRBinding::createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor)
+RefPtr<WebGPU::XRProjectionLayer> XRBinding::createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor& descriptor)
 {
     return XRProjectionLayer::create(descriptor, m_device);
 }
@@ -200,18 +199,3 @@ Ref<XRProjectionLayer> XRBinding::createProjectionLayer(const WebGPU::XRProjecti
 } // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void LEGACY_NODELETE wgpuXRProjectionLayerAddRef(WGPUXRProjectionLayer projectionLayer)
-{
-    WebGPU::Metal::fromAPI(projectionLayer).ref();
-}
-
-void wgpuXRProjectionLayerRelease(WGPUXRProjectionLayer projectionLayer)
-{
-    WebGPU::Metal::fromAPI(projectionLayer).deref();
-}
-
-void wgpuXRProjectionLayerStartFrame(WGPUXRProjectionLayer layer, size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples)
-{
-    WebGPU::Metal::fromAPI(layer).startFrame(frameIndex, WTF::move(colorBuffer), WTF::move(depthBuffer), WTF::move(completionSyncEvent), reusableTextureIndex, screenWidth, screenHeight, WTF::move(horizontalSamplesLeft), WTF::move(horizontalSamplesRight), WTF::move(verticalSamples));
-}

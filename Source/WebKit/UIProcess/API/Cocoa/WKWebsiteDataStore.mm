@@ -57,6 +57,7 @@
 #import "_WKWebPushActionInternal.h"
 #import "_WKWebsiteDataStoreConfigurationInternal.h"
 #import "_WKWebsiteDataStoreDelegate.h"
+#import <Network/Network.h>
 #import <WebCore/Credential.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/ResourceResponse.h>
@@ -65,6 +66,7 @@
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebCorePersistentCoders.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
@@ -78,10 +80,6 @@
 #import <wtf/persistence/PersistentDecoder.h>
 #import <wtf/persistence/PersistentEncoder.h>
 #import <wtf/text/CString.h>
-
-#if HAVE(NW_PROXY_CONFIG)
-#import <Network/Network.h>
-#endif
 
 #if PLATFORM(IOS_FAMILY)
 #import "UIKitSPI.h"
@@ -561,7 +559,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     [self _fetchAllIdentifiers:completionHandler];
 }
 
-#if HAVE(NW_PROXY_CONFIG)
 - (void)setProxyConfigurations:(NSArray<nw_proxy_config_t> *)proxyConfigurations
 {
     _proxyConfigurations = adoptNS([proxyConfigurations copy]);
@@ -588,8 +585,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 {
     return _proxyConfigurations.get();
 }
-
-#endif // HAVE(NW_PROXY_CONFIG)
 
 #pragma mark WKObject protocol implementation
 
@@ -629,7 +624,7 @@ struct WKWebsiteData {
         encoder << currentWKWebsiteDataSerializationVersion;
         encoder << dataTypesToEncode;
 
-        for (auto& dataTypeToEncode : dataTypesToEncode) {
+        for (auto& dataTypeToEncode : borrow(dataTypesToEncode)) {
             switch (dataTypeToEncode) {
             case WebKit::WebsiteDataType::LocalStorage:
                 if (!data->localStorage) {
@@ -690,7 +685,7 @@ struct WKWebsiteData {
             completionHandler(nullptr);
     });
 
-    for (auto& encodedDataType : *encodedDataTypes) {
+    for (auto& encodedDataType : borrow(*encodedDataTypes)) {
         switch (encodedDataType) {
         case WebKit::WebsiteDataType::LocalStorage: {
             std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorage;
@@ -842,6 +837,11 @@ struct WKWebsiteData {
 - (void)_setPrivateClickMeasurementDebugModeEnabled:(BOOL)enabled
 {
     protect(*_websiteDataStore)->setPrivateClickMeasurementDebugMode(enabled);
+}
+
+- (void)_setPrivateClickMeasurementPrivateRelayEnforcementEnabled:(BOOL)enabled
+{
+    protect(*_websiteDataStore)->setPrivateClickMeasurementPrivateRelayEnforcement(enabled);
 }
 
 - (BOOL)_storageSiteValidationEnabled
@@ -1304,7 +1304,7 @@ struct WKWebsiteData {
 
     protect(protect(*_websiteDataStore)->networkProcess())->getPendingPushMessages(_websiteDataStore->sessionID(), [completionHandler = makeBlockPtr(completionHandler)] (const Vector<WebKit::WebPushMessage>& messages) {
         auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:messages.size()]);
-        for (auto& message : messages)
+        for (auto& message : borrow(messages))
             [result addObject:message.toDictionary().get()];
 
         RELEASE_LOG(Push, "Giving application %zu pending push messages", messages.size());

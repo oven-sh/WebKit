@@ -305,7 +305,7 @@ private:
     {
     }
 
-    static Ref<AttachmentImageEventsListener> create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentImageEventsListener(attachment)); }
+    static Ref<AttachmentImageEventsListener> LEGACY_NODELETE create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentImageEventsListener(attachment)); }
 
     WeakPtr<HTMLAttachmentElement, WeakPtrImplWithEventTargetData> m_attachment;
 };
@@ -416,7 +416,7 @@ void HTMLAttachmentElement::addSelectionClasses(HighlightState state)
 
 class AttachmentSaveEventListener final : public EventListener {
 public:
-    static Ref<AttachmentSaveEventListener> create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentSaveEventListener(attachment)); }
+    static Ref<AttachmentSaveEventListener> LEGACY_NODELETE create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentSaveEventListener(attachment)); }
 
     void handleEvent(ScriptExecutionContext&, Event& event) final
     {
@@ -611,7 +611,7 @@ public:
         m_stackTrace = 0;
     }
 
-    explicit LEGACY_NODELETE operator bool() const
+    explicit operator bool LEGACY_NODELETE () const
     {
         ASSERT(!m_attachment == !m_stackTrace);
         return !!m_attachment;

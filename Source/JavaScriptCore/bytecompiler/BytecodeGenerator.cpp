@@ -108,6 +108,7 @@ struct VarArgsOp<OpSuperConstruct> {
 template<>
 void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, unsigned location)
 {
+    static_cast<JSC::BytecodeGenerator&>(generator).invalidateLoadedPrivateNames();
     m_location = location;
     
     for (auto offset : m_unresolvedJumps) {
@@ -1006,6 +1007,10 @@ IGNORE_GCC_WARNINGS_END
         static_assert(static_cast<unsigned>(JSGenerator::Field::Frame) == static_cast<unsigned>(JSAsyncGenerator::Field::Frame));
         emitPutInternalField(generatorRegister(), static_cast<unsigned>(JSGenerator::Field::Frame), generatorFrameRegister());
     }
+
+    unsigned privateNameRegisterCount = std::min(functionNode->usedPrivateNameCount(), maxPrivateNameRegisters);
+    for (unsigned i = 0; i < privateNameRegisterCount; ++i)
+        m_privateNameRegisters.append(newBlockScopeVariable());
 
     bool shouldInitializeBlockScopedFunctions = false; // We generate top-level function declarations in ::generate().
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
@@ -2753,6 +2758,20 @@ ResolveType BytecodeGenerator::resolveType()
     return GlobalProperty;
 }
 
+RegisterID* BytecodeGenerator::emitLoadPrivateName(const Variable& variable)
+{
+    size_t index = m_loadedPrivateNames.find(variable.ident().impl());
+    if (index != notFound)
+        return m_privateNameRegisters[index].get();
+
+    RefPtr<RegisterID> scope = emitResolveScope(nullptr, variable);
+    ASSERT(scope); // Private names are always captured.
+    if (m_loadedPrivateNames.size() == m_privateNameRegisters.size())
+        return emitGetFromScope(newTemporary(), scope.get(), variable, DoNotThrowIfNotFound);
+    m_loadedPrivateNames.append(variable.ident().impl());
+    return emitGetFromScope(m_privateNameRegisters[m_loadedPrivateNames.size() - 1].get(), scope.get(), variable, DoNotThrowIfNotFound);
+}
+
 RegisterID* BytecodeGenerator::emitResolveScope(RegisterID* dst, const Variable& variable)
 {
     switch (variable.offset().kind()) {
@@ -3218,7 +3237,6 @@ void BytecodeGenerator::emitCheckPrivateBrand(RegisterID* base, RegisterID* bran
 {
     if (isStatic) {
         Ref<Label> brandCheckOkLabel = newLabel();
-        emitTDZCheck(brand);
         emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), base, brand), brandCheckOkLabel.get());
         emitThrowTypeError("Cannot access static private method or accessor"_s);
         emitLabel(brandCheckOkLabel.get());
@@ -3387,12 +3405,14 @@ void BytecodeGenerator::pushPrivateAccessNames(const PrivateNameEnvironment* env
         return;
 
     m_privateNamesStack.append(*environment);
+    invalidateLoadedPrivateNames();
 }
 
 void BytecodeGenerator::popPrivateAccessNames()
 {
     ASSERT(m_privateNamesStack.size());
     m_privateNamesStack.removeLast();
+    invalidateLoadedPrivateNames();
 }
 
 void BytecodeGenerator::pushTDZVariables(const VariableEnvironment& environment, TDZCheckOptimization optimization, TDZRequirement requirement)

@@ -31,7 +31,6 @@
 #include "FrameInlines.h"
 #include "RenderBox.h"
 #include "RenderBoxModelObject.h"
-#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderObjectDocument.h"
 #include "RenderText.h"
@@ -61,9 +60,9 @@ AccessibilityRegionContext::~AccessibilityRegionContext()
     }
 }
 
-void AccessibilityRegionContext::takeBounds(const RenderInline& renderInline, LayoutRect&& paintRect)
+void AccessibilityRegionContext::takeBoundsForInlineBox(const RenderBoxModelObject& inlineBox, LayoutRect&& paintRect)
 {
-    takeBoundsInternal(renderInline, enclosingIntRect(mapRect(WTF::move(paintRect))));
+    takeBoundsInternal(inlineBox, enclosingIntRect(mapRect(WTF::move(paintRect))));
 }
 
 void AccessibilityRegionContext::takeBounds(const RenderBox& renderBox, LayoutPoint paintOffset)
@@ -106,12 +105,6 @@ void AccessibilityRegionContext::takeBounds(const RenderLineBreak* renderLineBre
         mappedPaintRect.setHeight(2);
     takeBoundsInternal(*renderLineBreak, WTF::move(mappedPaintRect));
 }
-
-void AccessibilityRegionContext::takeBounds(const RenderInline* renderInline, LayoutRect&& paintRect)
-{
-    if (renderInline)
-        takeBounds(*renderInline, WTF::move(paintRect));
-};
 
 void AccessibilityRegionContext::takeBoundsInternal(const RenderBoxModelObject& renderObject, IntRect&& paintRect)
 {

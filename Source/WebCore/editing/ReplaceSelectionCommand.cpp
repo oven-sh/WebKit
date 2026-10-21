@@ -68,7 +68,6 @@
 #include "NodeRenderStyle.h"
 #include "Page.h"
 #include "Position.h"
-#include "RenderInline.h"
 #include "RenderText.h"
 #include "ScriptDisallowedScope.h"
 #include "ScriptElement.h"
@@ -113,7 +112,7 @@ public:
     Node* firstChild() const;
     Node* lastChild() const;
 
-    bool isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
     
     bool LEGACY_NODELETE hasInterchangeNewlineAtStart() const { return m_hasInterchangeNewlineAtStart; }
     bool LEGACY_NODELETE hasInterchangeNewlineAtEnd() const { return m_hasInterchangeNewlineAtEnd; }
@@ -573,7 +572,7 @@ bool ReplaceSelectionCommand::shouldMerge(const VisiblePosition& source, const V
         && !isBlock(*sourceNode) && !isBlock(*destinationNode);
 }
 
-static bool isLightEnoughToTreatAsBackground(double lightness)
+static bool LEGACY_NODELETE isLightEnoughToTreatAsBackground(double lightness)
 {
     return lightness > 0.6;
 }

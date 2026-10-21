@@ -29,13 +29,17 @@
 
 #include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlaceholderRenderingContextIdentifier.h>
+#include <wtf/Forward.h>
+#include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace WebCore {
 
 class ImageBuffer;
+class IntSize;
 struct ImageBufferTransferHandle;
+enum class ContentsFormat : uint8_t;
 
 // Thread-safe interface to submit frames from an OffscreenCanvas to the placeholder rendering context
 // of the canvas element it was transferred from. When the OffscreenCanvas is transferred to another
@@ -52,6 +56,12 @@ public:
     // Called by the offscreen context to submit the frame.
     virtual void setPlaceholderBuffer(ImageBuffer&, bool originClean, bool opaque) = 0;
 
+#if PLATFORM(COCOA)
+    virtual bool setPlaceholderSurface(const MachSendRight&, ContentsFormat, const IntSize&, bool, bool) { return false; }
+#endif
+
+    virtual void setRecommitHandler(Function<void()>&&) { }
+
     // Where a source in another process delivers its frames: straight to the placeholder, on the main
     // thread of the process that owns it. Returns false, leaving the frame's buffer unclaimed, if the
     // placeholder no longer exists or cannot take it.
@@ -61,7 +71,7 @@ public:
     // another process can be routed to it. Process wide rather than through the page, which the
     // placeholder's document has often lost by the time its canvas element is collected.
     using PlaceholderLifetimeHandler = void (*)(PlaceholderRenderingContextIdentifier);
-    WEBCORE_EXPORT static void setPlaceholderLifetimeHandlers(PlaceholderLifetimeHandler created, PlaceholderLifetimeHandler destroyed);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setPlaceholderLifetimeHandlers(PlaceholderLifetimeHandler created, PlaceholderLifetimeHandler destroyed);
 
 protected:
     explicit PlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier& identifier)

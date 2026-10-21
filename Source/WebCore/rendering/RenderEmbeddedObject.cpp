@@ -45,6 +45,7 @@
 #include "LocalFrameView.h"
 #include "LocalizedStrings.h"
 #include "MouseEvent.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "Path.h"
@@ -126,25 +127,11 @@ static RefPtr<SVGSVGElement> embeddedSVGElement(const RenderWidget& renderer)
     return nullptr;
 }
 
-bool RenderEmbeddedObject::shouldRespectZeroIntrinsicWidth() const
+NaturalDimensions RenderEmbeddedObject::zoomedNaturalDimensions() const
 {
-    if (RefPtr svgElement = embeddedSVGElement(*this))
-        return svgElement->hasIntrinsicWidth();
-    return false;
-}
-
-bool RenderEmbeddedObject::shouldRespectZeroIntrinsicHeight() const
-{
-    RefPtr svgElement = embeddedSVGElement(*this);
-    if (!svgElement || !svgElement->hasIntrinsicHeight())
-        return false;
-    // A natural height of 0 is respected unless a natural width together with an
-    // aspect ratio can derive a non-zero height, in which case the derived height
-    // wins. The ratio may come from the SVG's viewBox or the CSS aspect-ratio
-    // property; see https://github.com/w3c/csswg-drafts/issues/11236#issuecomment-2718502765.
-    if (!svgElement->hasIntrinsicWidth())
-        return true;
-    return svgElement->currentViewBoxRect().isEmpty() && !style().aspectRatio().hasRatio();
+    if (RefPtr element = embeddedSVGElement(*this))
+        return element->naturalDimensions().zoomed(style().usedZoom());
+    return RenderWidget::zoomedNaturalDimensions();
 }
 
 ScrollableArea* RenderEmbeddedObject::scrollableArea() const

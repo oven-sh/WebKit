@@ -62,7 +62,6 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -754,8 +753,8 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
     if (positionType == PositionType::Absolute) {
         auto containingBlockForAbsolutePosition = [&] {
             if (renderer.isInlineBox() && renderer.style().position() == PositionType::Relative) {
-                // A relatively positioned RenderInline forwards its absolute positioned descendants to
-                // its nearest non-anonymous containing block (to avoid having positioned objects list in RenderInlines).
+                // A relatively positioned inline box forwards its absolute positioned descendants to
+                // its nearest non-anonymous containing block (to avoid having positioned objects list in inline boxes).
                 return renderer.parent() ? renderer.parent()->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
             }
             CheckedPtr ancestor = renderer.parent();
@@ -897,14 +896,6 @@ LayoutRect RenderObject::subtreePaintRootRect(LayoutRect& topLevelRect, RespectT
     return result;
 }
 
-static inline bool LEGACY_NODELETE canRelyOnAncestorLayerFullRepaint(const RenderObject& rendererToRepaint, const RenderLayer& ancestorLayer)
-{
-    auto* renderElement = dynamicDowncast<RenderElement>(rendererToRepaint);
-    if (!renderElement || !renderElement->hasSelfPaintingLayer())
-        return true;
-    return ancestorLayer.renderer().hasNonVisibleOverflow();
-}
-
 RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
 {
     CheckedPtr<const RenderLayerModelObject> repaintContainer;
@@ -918,12 +909,12 @@ RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
                 auto compLayerStatus = enclosingLayer->enclosingCompositingLayerForRepaint();
                 if (compLayerStatus.layer) {
                     repaintContainer = &compLayerStatus.layer->renderer();
-                    fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled && canRelyOnAncestorLayerFullRepaint(*this, *compLayerStatus.layer);
+                    fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled;
                 }
             }
             if (hasRenderersWithPixelMovingFilter) {
                 if (CheckedPtr pixelMovingFilterLayer = enclosingLayer->enclosingPixelMovingFilterLayer()) {
-                    fullRepaintAlreadyScheduled = enclosingLayer->needsFullRepaint() && canRelyOnAncestorLayerFullRepaint(*this, *enclosingLayer);
+                    fullRepaintAlreadyScheduled = enclosingLayer->scheduledFullRepaintCoversContentPaintedBy(*enclosingLayer);
                     return { fullRepaintAlreadyScheduled, &pixelMovingFilterLayer->renderer() };
                 }
             }
@@ -962,15 +953,14 @@ void RenderObject::propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderL
 
         bool rendererHasOutlineAutoAncestor = renderer->hasOutlineAutoAncestor() || originalRenderer->hasOutlineAutoAncestor();
         ASSERT(rendererHasOutlineAutoAncestor
-            || originalRenderer->outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto);
+            || originalRenderer->style().outlineStyle() == OutlineStyle::Auto);
         if (originalRenderer == &repaintContainer && rendererHasOutlineAutoAncestor)
             repaintRectNeedsConverting = true;
         if (rendererHasOutlineAutoAncestor)
             continue;
         // Issue repaint on the correct repaint container.
         LayoutRect adjustedRepaintRect = repaintRect;
-        CheckedRef outlineStyle = originalRenderer->outlineStyleForRepaint();
-        adjustedRepaintRect.inflate(outlineStyle->usedOutlineSize(outlineStyle->usedZoomForLength(), outlineStyle->deviceScaleFactor()));
+        adjustedRepaintRect.inflate(originalRenderer->usedStyle().outlineSize());
         if (!repaintRectNeedsConverting)
             repaintContainer.repaintRectangle(adjustedRepaintRect);
         else if (CheckedPtr rendererWithOutline = dynamicDowncast<RenderLayerModelObject>(*originalRenderer)) {
@@ -1030,13 +1020,15 @@ void RenderObject::repaintUsingContainer(SingleThreadWeakPtr<const RenderLayerMo
     }
 }
 
-static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
+static inline bool LEGACY_NODELETE fullRepaintIsScheduled(const RenderObject& renderer)
 {
     if (!renderer.view().usesCompositing() && !renderer.document().ownerElement())
         return false;
-    for (auto* ancestorLayer = renderer.enclosingLayer(); ancestorLayer; ancestorLayer = ancestorLayer->paintOrderParent()) {
-        if (ancestorLayer->needsFullRepaint())
-            return canRelyOnAncestorLayerFullRepaint(renderer, *ancestorLayer);
+    for (const RenderLayer* ancestorLayer = renderer.enclosingLayer(), *paintingLayer = nullptr; ancestorLayer; ancestorLayer = ancestorLayer->paintOrderParent()) {
+        if (!paintingLayer && ancestorLayer->isSelfPaintingLayer())
+            paintingLayer = ancestorLayer;
+        if (paintingLayer && ancestorLayer->scheduledFullRepaintCoversContentPaintedBy(*paintingLayer))
+            return true;
     }
     return false;
 }
@@ -1319,8 +1311,8 @@ static std::optional<LayoutRect> computeClippedRectInMainFrameContentCoordinates
     absoluteClippedRect = LayoutRect { enclosingFrameView->contentsToView(*absoluteClippedRect) };
 
     if (RefPtr ownerRenderer = enclosingFrame->ownerRenderer()) {
-        // Adjust for borders and/or padding of the owner renderer box.
-        absoluteClippedRect->moveBy(ownerRenderer->contentBoxLocation());
+        // Adjust for where the owner renderer places the frame.
+        absoluteClippedRect->moveBy(ownerRenderer->widgetContentLocation());
         return computeClippedRectInMainFrameContentCoordinates(*absoluteClippedRect, ownerRenderer.get(), clipRectAdjuster);
     }
 
@@ -1531,8 +1523,8 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     } else if (auto* renderSVGModelObject = dynamicDowncast<RenderSVGModelObject>(*this)) {
         ASSERT(!renderSVGModelObject->isInFlowPositioned());
         stream << " " << renderSVGModelObject->frameRectEquivalent();
-    } else if (auto* renderInline = dynamicDowncast<RenderInline>(*this); renderInline && isInFlowPositioned()) {
-        FloatSize inlineOffset = renderInline->offsetForInFlowPosition();
+    } else if (isInlineBox() && isInFlowPositioned()) {
+        FloatSize inlineOffset = downcast<RenderBoxModelObject>(*this).offsetForInFlowPosition();
         stream << "  (" << inlineOffset.width() << ", " << inlineOffset.height() << ")";
     }
 
@@ -2164,11 +2156,6 @@ PositionWithAffinity RenderObject::createPositionWithAffinity(const Position& po
     return createPositionWithAffinity(0, Affinity::Downstream);
 }
 
-const Style::ComputedStyle& RenderObject::outlineStyleForRepaint() const
-{
-    return style();
-}
-
 CursorDirective RenderObject::getCursor(const LayoutPoint&, Cursor&) const
 {
     return CursorDirective::SetCursorBasedOnStyle;
@@ -2571,7 +2558,7 @@ PointerEvents RenderObject::usedPointerEvents() const
     return style().usedPointerEvents();
 }
 
-static bool intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
+static bool LEGACY_NODELETE intervalsSufficientlyOverlap(int startA, int endA, int startB, int endB)
 {
     if (endA <= startA || endB <= startB)
         return false;

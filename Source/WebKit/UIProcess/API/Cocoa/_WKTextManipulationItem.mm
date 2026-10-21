@@ -26,8 +26,10 @@
 #import "config.h"
 #import "_WKTextManipulationItem.h"
 
+#import "_WKTextManipulationItemInternal.h"
 #import "_WKTextManipulationToken.h"
 #import <wtf/RetainPtr.h>
+#import <wtf/WeakObjCPtr.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
 NSString * const _WKTextManipulationItemErrorDomain = @"WKTextManipulationItemErrorDomain";
@@ -71,6 +73,8 @@ static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRe
     RetainPtr<NSString> _identifier;
     RetainPtr<NSArray<_WKTextManipulationToken *>> _tokens;
     RetainPtr<_WKTextManipulationViewportProximityInfo> _viewportProximityInfo;
+    WeakObjCPtr<WKWebView> _webView;
+    CGRect _mainFrameBoundingRect;
 }
 
 - (instancetype)initWithIdentifier:(NSString *)identifier tokens:(NSArray<_WKTextManipulationToken *> *)tokens
@@ -80,6 +84,7 @@ static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRe
 
     _identifier = identifier;
     _tokens = tokens;
+    _mainFrameBoundingRect = CGRectNull;
     return self;
 }
 
@@ -92,6 +97,7 @@ static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRe
     _tokens = tokens;
     _isSubframe = isSubframe;
     _isCrossSiteSubframe = isCrossSiteSubframe;
+    _mainFrameBoundingRect = CGRectNull;
     return self;
 }
 
@@ -117,6 +123,25 @@ static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRe
 - (_WKTextManipulationViewportProximityInfo *)viewportProximityInfo
 {
     return _viewportProximityInfo.get();
+}
+
+- (CGRect)webViewBoundingRect
+{
+    RetainPtr webView = _webView.get();
+    if (!webView)
+        return CGRectNull;
+
+    return [webView _webViewRectForTextManipulationMainFrameRect:_mainFrameBoundingRect];
+}
+
+- (void)_setWebView:(WKWebView *)webView
+{
+    _webView = webView;
+}
+
+- (void)_setMainFrameBoundingRect:(CGRect)mainFrameBoundingRect
+{
+    _mainFrameBoundingRect = mainFrameBoundingRect;
 }
 
 - (BOOL)isEqual:(id)object
@@ -169,7 +194,8 @@ static ASCIILiteral descriptionForViewportRelation(_WKTextManipulationViewportRe
         [recursiveDescriptions addObject:description.get()];
     }];
     RetainPtr tokenDescription = adoptNS([[NSString alloc] initWithFormat:@"[\n\t%@\n]", retainPtr([recursiveDescriptions componentsJoinedByString:@",\n\t"]).get()]);
-    return [NSString stringWithFormat:@"<%@: %p; identifier = %@ viewportProximityInfo = %@ tokens = %@>", self.class, self, retainPtr(self.identifier).get(), retainPtr(self.viewportProximityInfo).get(), tokenDescription.get()];
+    auto rect = _mainFrameBoundingRect;
+    return [NSString stringWithFormat:@"<%@: %p; identifier = %@ viewportProximityInfo = %@ mainFrameBoundingRect = {{%.1f, %.1f}, {%.1f, %.1f}} tokens = %@>", self.class, self, retainPtr(self.identifier).get(), retainPtr(self.viewportProximityInfo).get(), rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, tokenDescription.get()];
 }
 
 @end

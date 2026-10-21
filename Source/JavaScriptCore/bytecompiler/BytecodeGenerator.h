@@ -924,6 +924,7 @@ namespace JSC {
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
         RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
         bool isLazyModuleFunctionDeclaration(const Variable&) const;
+        RegisterID* emitLoadPrivateName(const Variable&);
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);
 
@@ -1014,6 +1015,7 @@ namespace JSC {
     private:
         static constexpr int CurrentLexicalScopeIndex = -2;
         static constexpr int OutermostLexicalScopeIndex = -1;
+        static constexpr unsigned maxPrivateNameRegisters = 16;
 
         int currentLexicalScopeIndex() const
         {
@@ -1335,6 +1337,7 @@ namespace JSC {
 
         void pushPrivateAccessNames(const PrivateNameEnvironment*);
         void popPrivateAccessNames();
+        void invalidateLoadedPrivateNames() { m_loadedPrivateNames.shrink(0); }
 
         bool needsArguments() const { return m_needsArguments; };
         bool shouldGetArgumentsDotLengthFast(ExpressionNode* node) const
@@ -1378,6 +1381,8 @@ namespace JSC {
         const FixedVector<Identifier>* m_generatorOrAsyncWrapperFunctionParameterNames { nullptr };
         Vector<TDZStackEntry> m_TDZStack;
         Vector<PrivateNameEnvironment> m_privateNamesStack;
+        Vector<RefPtr<RegisterID>> m_privateNameRegisters;
+        Vector<UniquedStringImpl*, maxPrivateNameRegisters> m_loadedPrivateNames;
         std::optional<size_t> m_varScopeLexicalScopeStackIndex;
         void pushTDZVariables(const VariableEnvironment&, TDZCheckOptimization, TDZRequirement);
 

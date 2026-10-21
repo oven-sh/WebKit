@@ -40,7 +40,6 @@
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
 #include "RenderObjectInlines.h"
@@ -476,8 +475,8 @@ static LayoutRect boxBoundingBoxInContainer(const RenderBoxModelObject& box, con
 {
     bool wasFixed = false;
     auto localRect = [&]() -> LayoutRect {
-        if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(&box))
-            return inlineBox->borderBoxRectInContainer();
+        if (box.isInlineBox())
+            return box.borderBoxRectInContainer();
         return box.borderBoundingBox();
     }();
     // FIXME: figure out if OverscrollClamp is still needed.

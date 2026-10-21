@@ -55,7 +55,8 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 @implementation WebVideoFullscreenOverlayLayer
 - (void)layoutSublayers
 {
-    for (CALayer* layer in self.sublayers)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL CALayer* layer in self.sublayers)
         layer.frame = self.bounds;
 }
 @end
@@ -125,7 +126,7 @@ static WebAVPlayerView *allocWebAVPlayerViewInstance() NS_RETURNS_RETAINED
 
 @interface WebVideoFullscreenController () <WebAVPlayerViewDelegate, NSWindowDelegate> {
     RefPtr<WebCore::PlaybackSessionModelMediaElement> _playbackModel;
-    RefPtr<WebCore::PlaybackSessionInterfaceIOS> _playbackInterface;
+    RefPtr<WebCore::PlaybackSessionInterfaceCocoa> _playbackInterface;
     RetainPtr<NSView> _contentOverlay;
     RetainPtr<WebAVPlayerView> _playerView;
     BOOL _isFullScreen;

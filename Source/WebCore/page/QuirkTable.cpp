@@ -64,6 +64,8 @@ static constexpr auto chromeUserAgent152 = "Mozilla/5.0 (Macintosh; Intel Mac OS
 static constexpr auto safari13UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.2 Safari/605.1.15"_s;
 static constexpr auto safari18_6UserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"_s;
 
+static constexpr auto chromeTokenUserAgentScript = "(function() { let userAgent = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent').get.call(navigator); Object.defineProperty(navigator, 'userAgent', { get: () => { return new Error().stack?.includes('/molecules/app/chat-input/') ? userAgent + ' Chrome/152.0.0.0' : userAgent; }, configurable: true }); })();"_s;
+
 static constexpr auto bestBuyLanguageScript = "Object.defineProperty(navigator,'language',{get:function(){return'en-US'}});Object.defineProperty(navigator,'languages',{get:function(){return['en-US','en']}});"_s;
 
 static constexpr auto chromeUserAgentScript = "(function() { let userAgent = navigator.userAgent; Object.defineProperty(navigator, 'userAgent', { get: () => { return userAgent + ' Chrome/130.0.0.0 Android/15.0'; }, configurable: true }); })();"_s;
@@ -134,6 +136,7 @@ using namespace QuirkSelectors;
 using namespace BuildCondition;
 
 static constexpr std::array anyclipPlayerScriptURL { "*://player.anyclip.com/*lre.js"_s, "*://player.anyclip.com/*lre.js?*"_s };
+static constexpr std::array baiduChatInputScriptURL { "*://pss.bdstatic.com/r/www/cache/static/molecules/app/chat-input/*"_s };
 static constexpr std::array ceacBrowserCloseScriptURL {
     "*://*/CheckBrowserClose.js"_s, "*://*/CheckBrowserClose.js?*"_s,
     "*://*/*/CheckBrowserClose.js"_s, "*://*/*/CheckBrowserClose.js?*"_s
@@ -205,6 +208,13 @@ static constexpr Quirk fullTable[] = {
     // configurator.audi.com https://webkit.org/b/327442 rdar://181630431
     { .matches = "*://configurator.audi.com/*"_s,
         .behaviors = { shouldRenderModelElementFallbackContentQuirk } },
+
+    // baidu.com rdar://189631150
+    // The chat input only binds hold-Space voice input when its UA check finds "Safari" without "Chrome".
+    // The Chrome token is only visible to that script; the rest of the page keeps the real user agent.
+    { .matches = "*://www.baidu.com/*"_s,
+        .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(chromeTokenUserAgentScript)).when(secondaryURLMatches(baiduChatInputScriptURL)) },
+        .isAvailable = mac },
 
     // Login issue on bankofamerica.com (rdar://104938789).
     { .matches = "*://*.bankofamerica.com/*"_s,
@@ -882,6 +892,10 @@ static constexpr Quirk fullTable[] = {
         .behaviors = { needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(QuirkParameters::fromScript(chromeUserAgentScript)).when(secondaryURLMatches(anyclipPlayerScriptURL)) },
         .isAvailable = iOSFamily },
 
+    // thetimes.com rdar://190263358
+    { .matches = "*://*.thetimes.com/*"_s,
+        .behaviors = { needsFormControlToBeMouseFocusableQuirk } },
+
     // dev.ti.com rdar://126629168
     { .matches = "*://dev.ti.com/*"_s,
         .behaviors = { needsUserAgentStringOverrideQuirk(QuirkParameters::fromUserAgent(chromeUserAgent152)) } },
@@ -1116,7 +1130,7 @@ consteval bool everyQuirkNamesAURL()
 
 static_assert(everyQuirkNamesAURL(), "A quirk in fullTable has neither matches nor embeddedMatches");
 
-consteval bool everyQuirkCarriesWhatItDeclares()
+consteval bool LEGACY_NODELETE everyQuirkCarriesWhatItDeclares()
 {
     for (auto& quirk : fullTable) {
         for (auto& behavior : quirk.behaviors.span()) {
@@ -1169,7 +1183,7 @@ consteval bool everyQuirkCarriesWhatItDeclares()
 
 static_assert(everyQuirkCarriesWhatItDeclares(), "A quirk in fullTable does not supply the parameters it declares, supplies parameters it does not declare, applies a condition the behavior does not support, or omits a condition the behavior needs");
 
-consteval bool shouldEmit(const Quirk& quirk)
+consteval bool LEGACY_NODELETE shouldEmit(const Quirk& quirk)
 {
     return quirk.isAvailable && !quirk.behaviors.span().empty();
 }
@@ -1179,7 +1193,7 @@ consteval size_t emittedQuirkCount()
     return std::ranges::count_if(fullTable, shouldEmit);
 }
 
-consteval auto emittedQuirkIndices()
+consteval auto LEGACY_NODELETE emittedQuirkIndices()
 {
     std::array<size_t, emittedQuirkCount()> indices { };
     size_t index = 0;
@@ -1192,7 +1206,7 @@ consteval auto emittedQuirkIndices()
     return indices;
 }
 
-template<size_t... indices> consteval auto prunedTable(std::index_sequence<indices...>)
+template<size_t... indices> consteval auto LEGACY_NODELETE prunedTable(std::index_sequence<indices...>)
 {
     constexpr auto emitted = emittedQuirkIndices();
     constexpr auto quirks = std::span { fullTable };
@@ -1248,18 +1262,10 @@ RuntimeQuirk RuntimeQuirk::from(const Quirk& quirk)
     };
 }
 
-static const RuntimeQuirkTable& compiledQuirkTable()
-{
-    static MainThreadNeverDestroyed<RuntimeQuirkTable> table { RuntimeQuirkTable {
-        .quirks = WTF::map(SiteSpecificQuirks::table, RuntimeQuirk::from),
-    } };
-    return table.get();
-}
-
 static QuirksData resolveSiteSpecificQuirks(const URLMatchContext& topContext, const URLMatchContext& documentContext, IsTopDocument documentIsTopDocument)
 {
     QuirksData quirksData;
-    for (auto& quirk : compiledQuirkTable().quirks) {
+    for (auto& quirk : quirkTable().quirks) {
         if (quirk.appliesTo(topContext, documentContext, documentIsTopDocument))
             quirk.apply(quirksData);
     }

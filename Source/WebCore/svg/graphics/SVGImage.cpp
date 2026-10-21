@@ -412,12 +412,11 @@ ImageDrawResult SVGImage::draw(GraphicsContext& context, ConcreteObjectSize conc
 
     // Apply orientation transformation if needed.
     if (orientation != ImageOrientation::Orientation::None) {
-        auto containerSizeForTransform = containerSize();
-        auto orientationTransform = ImageOrientation(orientation).transformFromDefault(FloatSize(containerSizeForTransform));
+        auto orientationTransform = ImageOrientation(orientation).transformFromDefault(FloatSize(m_appliedDocumentState.containerSize));
         context.concatCTM(orientationTransform);
     }
 
-    view->resize(containerSize());
+    view->resize(m_appliedDocumentState.containerSize);
 
     {
         ScriptDisallowedScope::DisableAssertionsInScope disabledScope;
@@ -440,6 +439,11 @@ ImageDrawResult SVGImage::draw(GraphicsContext& context, ConcreteObjectSize conc
         observer->didDraw(*this);
 
     return ImageDrawResult::DidDraw;
+}
+
+bool SVGImage::hasSomethingToDraw() const
+{
+    return embeddedSVGRoot();
 }
 
 RenderReplaced* SVGImage::embeddedSVGRoot() const
@@ -467,20 +471,7 @@ NaturalDimensions SVGImage::unorientedNaturalDimensions() const
     RefPtr rootElement = this->rootElement();
     if (!rootElement)
         return NaturalDimensions::none();
-
-    NaturalDimensions naturalDimensions;
-
-    if (rootElement->hasIntrinsicWidth())
-        naturalDimensions.width = rootElement->intrinsicWidth();
-    if (rootElement->hasIntrinsicHeight())
-        naturalDimensions.height = rootElement->intrinsicHeight();
-
-    if (naturalDimensions.width && naturalDimensions.height)
-        naturalDimensions.aspectRatio = FloatSize { *naturalDimensions.width, *naturalDimensions.height };
-    else if (auto viewBoxSize = rootElement->viewBox().size(); !viewBoxSize.isEmpty())
-        naturalDimensions.aspectRatio = viewBoxSize;
-
-    return naturalDimensions;
+    return rootElement->naturalDimensions();
 }
 
 void SVGImage::startAnimation()
@@ -568,24 +559,25 @@ EncodedDataStatus SVGImage::dataChanged(bool allDataReceived)
         // SVGImage objects, but we're safe now, because SVGImage can only be
         // loaded by a top-level document.
         m_page = Page::create(WTF::move(pageConfiguration));
+        Ref settings = m_page->settings();
 #if ENABLE(VIDEO)
-        m_page->settings().setMediaEnabled(false);
+        settings->setMediaEnabled(false);
 #endif
-        m_page->settings().setScriptEnabled(false);
-        m_page->settings().setAcceleratedCompositingEnabled(false);
-        m_page->settings().setShouldAllowUserInstalledFonts(false);
+        settings->setScriptEnabled(false);
+        settings->setAcceleratedCompositingEnabled(false);
+        settings->setShouldAllowUserInstalledFonts(false);
 
         if (RefPtr observer = imageObserver()) {
             if (RefPtr parentSettings = observer->settings()) {
-                m_page->settings().setLayerBasedSVGEngineEnabled(parentSettings->layerBasedSVGEngineEnabled());
-                m_page->settings().fontGenericFamilies() = parentSettings->fontGenericFamilies();
-                m_page->settings().setCSSDPropertyEnabled(parentSettings->cssDPropertyEnabled());
-                m_page->settings().setDownloadableBinaryFontTrustedTypes(parentSettings->downloadableBinaryFontTrustedTypes());
+                settings->setLayerBasedSVGEngineEnabled(parentSettings->layerBasedSVGEngineEnabled());
+                settings->fontGenericFamilies() = parentSettings->fontGenericFamilies();
+                settings->setCSSDPropertyEnabled(parentSettings->cssDPropertyEnabled());
+                settings->setDownloadableBinaryFontTrustedTypes(parentSettings->downloadableBinaryFontTrustedTypes());
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
                 m_fallbackInvertContent = AXCustomColorModeController::shouldAdjustSVGImages(m_page);
                 m_appliedDocumentState.invertContent = m_fallbackInvertContent;
-                m_page->settings().setAxCustomColorModeEnabled(m_fallbackInvertContent);
-                m_page->settings().setAxCustomColorModeAppearanceDetectionEnabled(false);
+                settings->setAxCustomColorModeEnabled(m_fallbackInvertContent);
+                settings->setAxCustomColorModeAppearanceDetectionEnabled(false);
 #endif
             }
             protect(m_page)->setUseColorAppearance(observer->useSystemDarkAppearance(), false);
