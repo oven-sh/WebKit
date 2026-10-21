@@ -387,7 +387,10 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     unsigned startPosition = 0;
 
     Vector<Range<int32_t>, 16> sourceRanges;
-    Vector<String, 16> replacements;
+    // The results of the replacer calls stay JSString* cells until the splice writes them into the
+    // result buffer. The buffer is created at the first match so that a call with no match does
+    // not pay for its inline storage.
+    std::optional<ReplacementResults> replacements;
 
     // This is either a loop (if global is set) or a one-way (if not).
     if (global && callData.type == CallData::Type::JS) {
@@ -412,6 +415,7 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 cachedCallHolder.emplace(globalObject, func, argCount);
                 RETURN_IF_EXCEPTION(scope, nullptr);
                 cachedCall = &cachedCallHolder.value();
+                replacements.emplace();
             }
             cachedCall->clearArguments();
             JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, groupsStructure ? groupsStructure : globalObject->nullPrototypeObjectStructure()) : nullptr;
@@ -475,8 +479,11 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
 
             JSValue jsResult = cachedCall->call();
             RETURN_IF_EXCEPTION(scope, nullptr);
-            replacements.append(jsResult.toWTFString(globalObject));
+            JSString* replacement = replacementResult(globalObject, jsResult);
             RETURN_IF_EXCEPTION(scope, nullptr);
+            replacements->append(replacement);
+            if (replacements->hasOverflowed()) [[unlikely]]
+                OUT_OF_MEMORY(globalObject, scope);
 
             lastIndex = result.end;
             startPosition = lastIndex;
@@ -504,6 +511,8 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
 
             if (!sourceRanges.tryConstructAndAppend(lastIndex, result.start)) [[unlikely]]
                 OUT_OF_MEMORY(globalObject, scope);
+            if (!replacements)
+                replacements.emplace();
 
             MarkedArgumentBuffer args;
             JSObject* groups = hasNamedCaptures ? constructEmptyObject(vm, groupsStructure ? groupsStructure : globalObject->nullPrototypeObjectStructure()) : nullptr;
@@ -563,12 +572,13 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
                 return nullptr;
             }
 
-            JSValue replacement = call(globalObject, replaceValue, callData, jsUndefined(), args);
+            JSValue replacementValue = call(globalObject, replaceValue, callData, jsUndefined(), args);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            String replacementString = replacement.toWTFString(globalObject);
+            JSString* replacement = replacementResult(globalObject, replacementValue);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            replacements.append(replacementString);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+            replacements->append(replacement);
+            if (replacements->hasOverflowed()) [[unlikely]]
+                OUT_OF_MEMORY(globalObject, scope);
 
             lastIndex = result.end;
             startPosition = lastIndex;
@@ -587,14 +597,14 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
         } while (global);
     }
 
-    if (!lastIndex && replacements.isEmpty())
+    if (!replacements)
         return string;
 
     if (static_cast<unsigned>(lastIndex) < sourceLen) {
         if (!sourceRanges.tryConstructAndAppend(lastIndex, sourceLen)) [[unlikely]]
             OUT_OF_MEMORY(globalObject, scope);
     }
-    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements->data(), replacements->size()));
 }
 
 JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
