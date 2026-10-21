@@ -1541,6 +1541,28 @@ void ALWAYS_INLINE BytecodeGenerator::rewind()
     m_writer.rewind(m_lastInstruction);
 }
 
+// Expression info may already be recorded at the end of the last instruction. A narrower replacement
+// would put the next entry at a smaller offset, and lookups need them sorted.
+template<typename Op, typename... Args>
+void BytecodeGenerator::replaceLastInstruction(Args... args)
+{
+    OpcodeSize replacedSize = m_lastInstruction->width();
+    unsigned replacedEnd = m_writer.position();
+    rewind();
+    switch (replacedSize) {
+    case OpcodeSize::Narrow:
+        Op::template emitWithSmallestSizeRequirement<OpcodeSize::Narrow>(this, args...);
+        break;
+    case OpcodeSize::Wide16:
+        Op::template emitWithSmallestSizeRequirement<OpcodeSize::Wide16>(this, args...);
+        break;
+    case OpcodeSize::Wide32:
+        Op::template emitWithSmallestSizeRequirement<OpcodeSize::Wide32>(this, args...);
+        break;
+    }
+    ASSERT_UNUSED(replacedEnd, m_writer.position() >= replacedEnd);
+}
+
 template<typename BinOp, typename JmpOp>
 bool BytecodeGenerator::fuseCompareAndJump(RegisterID* cond, Label& target, bool swapOperands)
 {
@@ -1790,8 +1812,10 @@ RegisterID* BytecodeGenerator::emitMove(RegisterID* dst, RegisterID* src)
     m_staticPropertyAnalyzer.mov(dst, src);
     if (canDoPeepholeOptimization() && m_lastInstruction->is<OpMov>()) {
         auto op = m_lastInstruction->as<OpMov>();
-        if (op.m_dst == dst->virtualRegister())
-            rewind();
+        if (op.m_dst == dst->virtualRegister()) {
+            replaceLastInstruction<OpMov>(dst, src);
+            return dst;
+        }
     }
     OpMov::emit(this, dst, src);
 
@@ -1816,13 +1840,12 @@ bool BytecodeGenerator::tryEmitTypeofIsUndefinedForStringComparison(RegisterID* 
     if (value != "u"_s)
         return false;
 
-    rewind();
     if constexpr (isNotTypeofUndefined == IsNotTypeofUndefined::Yes) {
         RefPtr<RegisterID> temp = newTemporary();
-        OpTypeofIsUndefined::emit(this, temp.get(), op.m_value);
+        replaceLastInstruction<OpTypeofIsUndefined>(temp.get(), op.m_value);
         emitUnaryOp<OpNot>(dst, temp.get());
     } else
-        OpTypeofIsUndefined::emit(this, dst, op.m_value);
+        replaceLastInstruction<OpTypeofIsUndefined>(dst, op.m_value);
     return true;
 }
 
@@ -1982,47 +2005,39 @@ bool BytecodeGenerator::emitEqualityOpImpl(RegisterID* dst, RegisterID* src1, Re
             && m_codeBlock->constantRegister(src2->virtualRegister()).get().isString()) {
             String value = asString(m_codeBlock->constantRegister(src2->virtualRegister()).get())->tryGetValue();
             if (value == "undefined"_s) {
-                rewind();
-                OpTypeofIsUndefined::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpTypeofIsUndefined>(dst, op.m_value);
                 return true;
             }
             if (value == "boolean"_s) {
-                rewind();
-                OpIsBoolean::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpIsBoolean>(dst, op.m_value);
                 return true;
             }
             if (value == "number"_s) {
-                rewind();
-                OpIsNumber::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpIsNumber>(dst, op.m_value);
                 return true;
             }
             if (value == "string"_s) {
-                rewind();
-                OpIsCellWithType::emit(this, dst, op.m_value, StringType);
+                replaceLastInstruction<OpIsCellWithType>(dst, op.m_value, StringType);
                 return true;
             }
             if (value == "symbol"_s) {
-                rewind();
-                OpIsCellWithType::emit(this, dst, op.m_value, SymbolType);
+                replaceLastInstruction<OpIsCellWithType>(dst, op.m_value, SymbolType);
                 return true;
             }
             if (value == "bigint"_s) {
-                rewind();
 #if USE(BIGINT32)
-                OpIsBigInt::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpIsBigInt>(dst, op.m_value);
 #else
-                OpIsCellWithType::emit(this, dst, op.m_value, HeapBigIntType);
+                replaceLastInstruction<OpIsCellWithType>(dst, op.m_value, HeapBigIntType);
 #endif
                 return true;
             }
             if (value == "object"_s) {
-                rewind();
-                OpTypeofIsObject::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpTypeofIsObject>(dst, op.m_value);
                 return true;
             }
             if (value == "function"_s) {
-                rewind();
-                OpTypeofIsFunction::emit(this, dst, op.m_value);
+                replaceLastInstruction<OpTypeofIsFunction>(dst, op.m_value);
                 return true;
             }
         }
