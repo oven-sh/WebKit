@@ -54,6 +54,8 @@ function Promise(executor)
     var capturedPromise = promise;
 
     try {
+        // JSPromise.cpp (asyncStackTraceLinkForPromiseConstructorFunction) reads capturedPromise from the scope of
+        // the first function. It knows the function by `(resolution)`, and the promise is the one variable of the scope.
         executor(
             (resolution) => {
                 return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
