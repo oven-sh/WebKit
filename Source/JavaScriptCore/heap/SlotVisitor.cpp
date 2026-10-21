@@ -510,8 +510,10 @@ NEVER_INLINE void SlotVisitor::payForMarkerWakeup()
     m_bytesVisitedAtLastPayment = bytesVisited();
     collector().didPayForMarkerWakeup();
 
-    // A donation spends it. Cells that are shared already do not wait for one.
-    if (collector().m_sharedCollectorMarkStack->isEmpty() && collector().m_sharedMutatorMarkStack->isEmpty())
+    // A donation spends it. Cells that are shared already do not wait for one. This looks without the lock, so it
+    // asks for size(), as donateKnownParallel() does: isEmpty() follows the head segment, which a donation or a
+    // steal takes off the stack for a moment.
+    if (!collector().m_sharedCollectorMarkStack->size() && !collector().m_sharedMutatorMarkStack->size())
         return;
     Collector::MarkersToWake markers;
     {
@@ -692,7 +694,8 @@ void SlotVisitor::pollSharedMarkStacks(MonotonicTime timeout)
     MonotonicTime deadline = std::min(timeout, MonotonicTime::now() + Seconds::fromMilliseconds(Options::gcMarkerPollMS()));
     for (;;) {
         for (unsigned i = 0; i < 64; ++i) {
-            if (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty())
+            // size() and not isEmpty(): see payForMarkerWakeup().
+            if (collector().m_sharedCollectorMarkStack->size() || collector().m_sharedMutatorMarkStack->size())
                 return;
             if (!collector().m_numberOfActiveParallelMarkers.load(std::memory_order_relaxed))
                 return;
