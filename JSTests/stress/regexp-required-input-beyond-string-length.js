@@ -189,10 +189,15 @@ for (const [source, flags, subject, expected] of rows) {
         const regExp = new RegExp(text, flags);
         shouldBe(exec(regExp, subject), show(expected), what);
         shouldBe(regExp.test(subject), expected !== null, what + ", test()");
-        // A RegExp with the same text, created after a match, and used for the other call first.
+        // The same text again: RegExpCache gives the RegExp that ran the matches above. An error that a match
+        // left in that RegExp made this creation throw.
         const again = new RegExp(text, flags);
-        shouldBe(again.test(subject), expected !== null, what + ", second RegExp, test()");
-        shouldBe(exec(again, subject), show(expected), what + ", second RegExp");
+        shouldBe(again.test(subject), expected !== null, what + ", created again, test()");
+        shouldBe(exec(again, subject), show(expected), what + ", created again");
+        // The d flag gives another RegExp for the same pattern, one that has not run. Its first call is test().
+        const unused = new RegExp(text, flags + "d");
+        shouldBe(unused.test(subject), expected !== null, what + ", d flag, test() first");
+        shouldBe(exec(unused, subject), show(expected), what + ", d flag");
     }
 }
 
@@ -223,7 +228,8 @@ for (const [source, flags, subject, expected] of rows) {
         shouldBe(exec(regExp, "bc"), bc, what + ", interpreter again");
         shouldBe(exec(regExp, "\u0100ac"), wideAc, what + ", 16-bit");
         shouldBe(exec(regExp, "\u0100c"), wideC, what + ", 16-bit, interpreter");
-        shouldBe(exec(new RegExp(regExp.source, flags), "ac"), ac, what + ", second RegExp");
+        // RegExpCache gives the same RegExp for the same text. With the SyntaxError in it, this creation threw.
+        shouldBe(exec(new RegExp(regExp.source, flags), "ac"), ac, what + ", created again");
     }
 }
 
