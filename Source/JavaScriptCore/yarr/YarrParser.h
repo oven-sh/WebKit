@@ -1376,8 +1376,11 @@ private:
      * Helper for parseTokens() calls directly and indirectly (via parseClassSetEscape)
      * to an instance of CharacterClassParserDelegate, to describe the character class to the
      * delegate.
+     *
+     * Out of line: parseTokens() then has no class set code in it, and a pattern without a
+     * class set does not pay for one.
      */
-    void parseClassSet()
+    NEVER_INLINE void parseClassSet()
     {
         ASSERT(!hasError(m_errorCode));
         ASSERT(peek() == '[');
