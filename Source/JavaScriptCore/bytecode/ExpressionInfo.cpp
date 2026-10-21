@@ -498,6 +498,8 @@ void ExpressionInfo::Encoder::encode(InstPC instPC, unsigned divot, unsigned sta
         m_entry.instPC = absInstPC;
     }
 
+    ASSERT(instPC >= m_entry.instPC);
+
     Diff diff;
     diff.instPC = instPC - m_entry.instPC;
     diff.divot = divot - m_entry.divot;
