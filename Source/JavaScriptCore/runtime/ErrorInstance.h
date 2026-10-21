@@ -185,7 +185,7 @@ protected:
     bool m_catchableFromWasm : 1;
 #endif
 #if USE(BUN_JSC_ADDITIONS)
-    // In place of m_stackTrace, from the collection that finds one of its frames dead.
+    // In place of m_stackTrace, never beside it, from the collection that finds one of its frames dead.
     std::unique_ptr<StackTraceSnapshot> m_stackTraceSnapshot;
 #endif
 };

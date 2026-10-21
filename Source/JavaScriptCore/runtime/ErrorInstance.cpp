@@ -174,6 +174,9 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
         size_t limit = globalObject->stackTraceLimit().value_or(0);
         std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
         vm.interpreter.getStackTrace(this, *stackTrace, framesToSkip, limit);
+#if USE(BUN_JSC_ADDITIONS)
+        m_stackTraceSnapshot = nullptr;
+#endif
 
         if (!m_stackTrace || !append) {
             m_stackTrace = WTF::move(stackTrace);
@@ -291,6 +294,9 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     {
         Locker locker { cellLock() };
         m_stackTrace = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        m_stackTraceSnapshot = nullptr;
+#endif
     }
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
@@ -412,7 +418,9 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     if (auto& takeSnapshot = vm.onSnapshotStackTrace()) {
         if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace)) {
             ASSERT(!m_errorInfoMaterialized);
+            ASSERT(!m_stackTraceSnapshot);
             auto snapshot = takeSnapshot(vm, *m_stackTrace);
+            ASSERT(snapshot);
             Locker locker { cellLock() };
             m_stackTrace = nullptr;
             m_stackTraceSnapshot = WTF::move(snapshot);
