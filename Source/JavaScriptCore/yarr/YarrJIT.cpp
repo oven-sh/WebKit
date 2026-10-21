@@ -6828,8 +6828,7 @@ class YarrGenerator final : public YarrJITInfo {
                 Checked<unsigned, RecordOverflow> checkedOffsetResult(checkedOffset);
                 checkedOffsetResult += lastOp.m_checkAdjust;
 
-                // No string has more than INT_MAX characters to claim, and ^ and \b read at this offset + 1.
-                if (checkedOffsetResult.hasOverflowed() || checkedOffsetResult > static_cast<unsigned>(INT_MAX)) [[unlikely]] {
+                if (checkedOffsetResult.hasOverflowed()) [[unlikely]] {
                     m_failureReason = JITFailureReason::OffsetTooLarge;
                     return;
                 }
@@ -7273,6 +7272,11 @@ class YarrGenerator final : public YarrJITInfo {
     // Called to emit nodes for all terms in an alternative.
     void opCompileAlternative(Checked<unsigned> checkedOffset, PatternAlternative* alternative)
     {
+        // No string has this many characters, so the input check on entry always fails and the terms
+        // are never reached. Compiling them would add to an offset that is already close to UINT_MAX.
+        if (checkedOffset > static_cast<unsigned>(INT_MAX)) [[unlikely]]
+            return;
+
         optimizeAlternative(alternative);
 
         for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
