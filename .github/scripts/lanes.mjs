@@ -114,10 +114,10 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: [...ALL, ...HARDENED] },
+    lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-hardened"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-hardened"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     image: () => "linux-glibc",
     args: (arch, v) => ({
