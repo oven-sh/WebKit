@@ -1541,6 +1541,7 @@ template<typename Op, typename... Args>
 void BytecodeGenerator::replaceLastInstruction(Args... args)
 {
     OpcodeSize replacedSize = m_lastInstruction->width();
+    unsigned replacedEnd = m_writer.position();
     rewind();
     switch (replacedSize) {
     case OpcodeSize::Narrow:
@@ -1553,6 +1554,7 @@ void BytecodeGenerator::replaceLastInstruction(Args... args)
         Op::template emitWithSmallestSizeRequirement<OpcodeSize::Wide32>(this, args...);
         break;
     }
+    ASSERT_UNUSED(replacedEnd, m_writer.position() >= replacedEnd);
 }
 
 template<typename BinOp, typename JmpOp>
