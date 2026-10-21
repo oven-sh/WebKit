@@ -1,0 +1,4 @@
+#!/bin/bash
+# usage: checks.sh <owner/repo> <commit sha>   (check runs of a commit through GraphQL, which has its own quota)
+repo=$1; sha=$2
+gh api graphql -f query='query($owner:String!,$name:String!,$oid:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$oid){... on Commit{statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt} ... on StatusContext{context state}}}}}}}}' -f owner=${repo%/*} -f name=${repo#*/} -f oid=$sha --jq '.data.repository.object.statusCheckRollup | {state, counts: ([.contexts.nodes[] | (.status // .state) + "/" + (.conclusion // "-")] | group_by(.) | map({k: .[0], n: length})), notOk: [.contexts.nodes[] | select((.conclusion // "") != "SUCCESS" and (.conclusion // "") != "SKIPPED" and (.state // "") != "SUCCESS") | (.name // .context) + ": " + (.status // .state) + "/" + (.conclusion // "-")]}'

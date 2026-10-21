@@ -42,3 +42,24 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   runFixpointPhase, lazy pool task, nothing per cell in drain). CI: all lanes build; JSTests jobs timed out (90 min).
 - 2026-10-21: cause found with the preview jsc: SIGSEGV in GCSegmentedArray::isEmpty() from pollSharedMarkStacks (isEmpty follows the head segment,
   which donate/steal take off for a moment). With --gcMarkerPollMS=0 all probes pass. Fix 1dbad083 (size() instead) pushed 18:27 UTC.
+- 2026-10-21 19:00-20:20 UTC (one turn, do NOT end the turn while work is local):
+  - 1dbad083 builds on all lanes; JSTests jobs cancelled at 90 min again. Cause found by running the CI harness locally
+    (bench/run-jsc-tests.sh): stress/array-unshift-moved-cell-barrier.js (requireOptions --minimumGCPauseMS=0 --gcPauseScale=0)
+    hard-times-out in all 12 modes: with a minimum pause of 0 the small-cycle rule in runFixpointPhase drained for 0 ms and never resumed (livelock).
+    Fix in 8a84de25: staysPausedWhileSmall() = isSmallSoFar() && minimumGCPauseMS > 0; m_isSmallSoFar = false at resume.
+  - 8a84de25 also adds the payback rule: a woken marker pays for a wake-up after gcMarkerWakeupPaybackBytes (EXPERIMENT knob, 256 KB) instead of the
+    full price (SlotVisitor::didWakeUpForMarking, m_bytesVisitedAtNextPayment). Plan: final = price / 8, same threshold for the poll re-arm; remove both knobs.
+  - Measured with 1dbad083 (LTO, bun 590035462), 5-7 interleaved runs:
+    repro lru-gc 500: main 191.9 ns/op 3.09 s sys 69,831 vcs; new 74.6 / 0.18 / 850; T0 (no poll) 71.5 / 0.15 / 846; p1m 81.0 / 0.34 / 1,975;
+      p512k 86.7; p4m 68.5 / 0.07 / 346; p0 123.5 / 1.34 / 27,327; one marker 78.2 / 0.07 / 109; node 77.6 / 0.16 / 699.
+    lru 16,384 entries (100 rounds): main 237.6; new 126.6; T0 120.4; p4m 111.8; p8m 100.3; one 114.3; node 136.1.
+    big churn bench-app 20000 8 100 (in-pause % / hf>=.98 % / peak RSS / ns/op / mw): main 12.8-20.5 / 20-27 / 662-672 / 1390-1486 / 0;
+      new 34 / 70 / 797-837 / 1281-1364 / 650-680; T0 38.6 / 89 / 809; T200 27.7 / 60 / 772; R0 30.6 / 55 / 718 (user CPU 3.86 s vs 2.1);
+      p512k 24 / 50 / 749; p128k 36 / 70 / 772; p0 25 / 50 / 763 / 1207.
+    KEY ANALYSIS: MB marked per ms OUTSIDE pauses is the same: main 0.97, new 1.02, p0 1.30. The mutator allocates 2x faster during concurrent
+      phases in new (0.59 MB/ms vs 0.31 on main): main's mutator is slowed by the 7 helpers (lock contention / steal). So new hits the
+      headroom cap more often and peaks higher. Gate 2 "parity with main" is not reachable by faster marking alone on this VM.
+  - jsc quick checks: /root/.bun/build-cache/webkit-preview-pr-838-<sha8>-lto/bin/jsc after a build-arm.sh; stress-run.sh <jsc> <out> [opts] runs every
+    JSTests/stress test (30 s timeout); default mode and collect-continuously mode showed no new timeouts vs main.
+  - CI logs and artifacts are NOT reachable from the container (blob host blocked): reproduce failures locally with run-jsc-tests.sh.
+  - gh: REST quota is often exhausted by other sessions; bench/checks.sh <owner/repo> <sha> reads check runs through GraphQL.
