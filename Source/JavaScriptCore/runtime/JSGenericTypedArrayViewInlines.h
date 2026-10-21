@@ -938,7 +938,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
 
     auto array = originalSpan.data();
     Vector<ElementType, 16> forShared;
-    if (isShared()) {
+    if (canBeWrittenConcurrently()) {
         if (!forShared.tryGrow(length)) [[unlikely]]
             return SortResult::OutOfMemory;
         WTF::copyElements(forShared.mutableSpan(), spanConstCast<const typename Adaptor::Type>(originalSpan.first(length)));
@@ -960,7 +960,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
         break;
     }
 
-    if (isShared())
+    if (canBeWrittenConcurrently())
         WTF::copyElements(originalSpan, forShared.span().first(length));
 
     return SortResult::Success;
@@ -1250,7 +1250,7 @@ inline bool JSGenericTypedArrayView<Adaptor>::radixSortWithCounters(std::span<El
     auto source = elements;
 
     Vector<ElementType, 0> snapshot;
-    if (isShared()) {
+    if (canBeWrittenConcurrently()) {
         if (!snapshot.tryGrow(length)) [[unlikely]]
             return false;
         WTF::copyElements(snapshot.mutableSpan(), spanConstCast<const ElementType>(elements));
