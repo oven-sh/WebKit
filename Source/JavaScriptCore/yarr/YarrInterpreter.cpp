@@ -2396,6 +2396,9 @@ public:
 
         regexBegin(m_pattern.m_numSubpatterns, m_pattern.m_body->m_callFrameSize, m_pattern.m_body->m_alternatives[0]->onceThrough());
         if (auto error = emitDisjunction(m_pattern.m_body, 0, 0)) {
+            // A sum that does not fit fails its path. The OffsetTooLarge exits that are left guard the subtraction
+            // of a term's position from the input checked for it, and the re-add of an amount just subtracted.
+            ASSERT(error.value() != ErrorCode::OffsetTooLarge);
             errorCode = error.value();
             return nullptr;
         }
@@ -2422,6 +2425,14 @@ public:
     void haveCheckedInput(unsigned count)
     {
         m_bodyDisjunction->terms.append(ByteTerm::HaveCheckedInput(count, { }));
+    }
+
+    // For a path that needs more input than there can be. The first check holds only with UINT_MAX code units
+    // behind the position, the second only with UINT_MAX ahead of it: the path fails here on any input.
+    NEVER_INLINE void cannotMatchFromHere()
+    {
+        haveCheckedInput(UINT_MAX);
+        checkInput(UINT_MAX);
     }
 
     void assertionBOL(unsigned inputPosition, OptionSet<Flags> flags)
@@ -2801,6 +2812,9 @@ public:
             unsigned countToCheck = 0;
             unsigned backwardUncheckAmount = 0;
 
+            // The sums below count input that has to be there for this alternative to match. One that does not
+            // fit in 32 bits asks for more than there can be: the alternative fails, and its terms, which could
+            // only run after that, are not emitted.
             if (matchDirection == Forward)
                 countToCheck = minimumSize - parenthesesInputCountAlreadyChecked;
             else {
@@ -2809,8 +2823,10 @@ public:
                 if (minimumSize > minAlreadyChecked) {
                     countToCheck = minimumSize - minAlreadyChecked;
                     auto checkedInput = countToCheck + currentCountAlreadyChecked;
-                    if (checkedInput.hasOverflowed())
-                        return ErrorCode::OffsetTooLarge;
+                    if (checkedInput.hasOverflowed()) [[unlikely]] {
+                        cannotMatchFromHere();
+                        continue;
+                    }
                     haveCheckedInput(checkedInput);
 
                     if (minimumSize > disjunction->m_minimumSize)
@@ -2821,12 +2837,14 @@ public:
             }
 
             if (countToCheck) {
+                currentCountAlreadyChecked += countToCheck;
+                if (currentCountAlreadyChecked.hasOverflowed()) [[unlikely]] {
+                    cannotMatchFromHere();
+                    continue;
+                }
+
                 if (matchDirection == Forward)
                     checkInput(countToCheck);
-
-                currentCountAlreadyChecked += countToCheck;
-                if (currentCountAlreadyChecked.hasOverflowed())
-                    return ErrorCode::OffsetTooLarge;
             }
 
             auto termCount = alternative->m_terms.size();
@@ -2960,8 +2978,13 @@ public:
                         auto minimumSize = term.parentheses.disjunction->m_minimumSize;
                         if (minimumSize) {
                             checkedCountForLookbehind += minimumSize;
-                            if (checkedCountForLookbehind.hasOverflowed())
-                                return ErrorCode::OffsetTooLarge;
+                            if (checkedCountForLookbehind.hasOverflowed()) [[unlikely]] {
+                                // The assertion looks further behind than any input is long, so its body can
+                                // never match. A positive one fails here. A negative one always holds.
+                                if (!term.invert())
+                                    cannotMatchFromHere();
+                                break;
+                            }
                             if (checkedCountForLookbehind > currentCountAlreadyChecked && !term.invert()) {
                                 // Do a quick check for what is required for the lookbehind.
                                 // An inverted lookbehind can "match" without processing any input.
