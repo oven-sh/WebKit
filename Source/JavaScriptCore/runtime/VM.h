@@ -160,6 +160,7 @@ class SourceProvider;
 class SourceProviderCache;
 enum class SourceTaintedOrigin : uint8_t;
 class StackFrame;
+class StackTraceSnapshot;
 class StringSplitCache;
 class Structure;
 class Symbol;
@@ -177,8 +178,10 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
-using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*)>;
+// Runs at the end of a collection: it can neither allocate in the heap nor run script.
+using StackTraceSnapshotFunction = WTF::Function<std::unique_ptr<StackTraceSnapshot>(VM&, const Vector<StackFrame>& stackTrace)>;
+using ErrorInfoFromSnapshotFunction = WTF::Function<JSValue(VM&, StackTraceSnapshot&, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*)>;
 #endif
 
 #if ENABLE(FTL_JIT)
@@ -1198,18 +1201,20 @@ public:
     const StackTraceAppenderFunction& onAppendStackTrace() const { return m_onAppendStackTrace; }
     StackTraceAppenderFunction& onAppendStackTrace() { return m_onAppendStackTrace; }
     
-    const ErrorInfoFunction& onComputeErrorInfo() const { return m_onComputeErrorInfo; }
-    ErrorInfoFunction& onComputeErrorInfo() { return m_onComputeErrorInfo; }
-    
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
+
+    const StackTraceSnapshotFunction& onSnapshotStackTrace() const { return m_onSnapshotStackTrace; }
+    const ErrorInfoFromSnapshotFunction& onComputeErrorInfoFromSnapshot() const { return m_onComputeErrorInfoFromSnapshot; }
     
     const WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() const { return m_computeLineColumnWithSourcemap; }
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() { return m_computeLineColumnWithSourcemap; }
 
     void setOnAppendStackTrace(StackTraceAppenderFunction&& function) { m_onAppendStackTrace = WTF::move(function); }
-    void setOnComputeErrorInfo(ErrorInfoFunction&& function) { m_onComputeErrorInfo = WTF::move(function); }
     void setOnComputeErrorInfoJSValue(ErrorInfoFunctionJSValue&& function) { m_onComputeErrorInfoJSValue = WTF::move(function); }
+    // An embedder that sets one of these three sets all of them.
+    void setOnSnapshotStackTrace(StackTraceSnapshotFunction&& function) { m_onSnapshotStackTrace = WTF::move(function); }
+    void setOnComputeErrorInfoFromSnapshot(ErrorInfoFromSnapshotFunction&& function) { m_onComputeErrorInfoFromSnapshot = WTF::move(function); }
     void setComputeLineColumnWithSourcemap(WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>&& function) { m_computeLineColumnWithSourcemap = WTF::move(function); }
 #endif
     
@@ -1457,8 +1462,9 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
-    ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
+    StackTraceSnapshotFunction m_onSnapshotStackTrace;
+    ErrorInfoFromSnapshotFunction m_onComputeErrorInfoFromSnapshot;
     StackTraceAppenderFunction m_onAppendStackTrace;
     WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)> m_computeLineColumnWithSourcemap;
 #endif

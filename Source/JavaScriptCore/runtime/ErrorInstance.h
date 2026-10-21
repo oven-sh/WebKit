@@ -110,6 +110,7 @@ public:
     unsigned column() const { return m_lineColumn.column; }
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
+    StackTraceSnapshot* stackTraceSnapshot() LIFETIME_BOUND { return m_stackTraceSnapshot.get(); }
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
 
 #endif
@@ -184,8 +185,8 @@ protected:
     bool m_catchableFromWasm : 1;
 #endif
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_stackStringIsFramesOnly : 1;
-    JSValue stackWithHeader(VM&, String&& frames);
+    // In place of m_stackTrace, from the collection that finds one of its frames dead.
+    std::unique_ptr<StackTraceSnapshot> m_stackTraceSnapshot;
 #endif
 };
 

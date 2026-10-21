@@ -134,4 +134,16 @@ private:
     FrameData m_frameData { JSFrameData {} };
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// What the embedder formats a stack trace from once the frames' cells are gone. An ErrorInstance holds those
+// cells weakly, and has this in place of its frames from the collection that finds one of them dead.
+class StackTraceSnapshot {
+public:
+    virtual ~StackTraceSnapshot() = default;
+    virtual size_t sizeInBytes() const = 0;
+    // For the cells that were alive when the snapshot was taken, if it still refers to them.
+    virtual void reconcileWeakReferencesAtGCEnd(VM&) = 0;
+};
+#endif
+
 } // namespace JSC
