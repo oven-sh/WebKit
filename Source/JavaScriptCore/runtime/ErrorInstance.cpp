@@ -415,11 +415,11 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     // The embedder makes more than a string from the frames (call sites for Error.prepareStackTrace), and what it
     // makes is decided when the stack is read.
-    if (auto& takeSnapshot = vm.onSnapshotStackTrace()) {
+    if (auto& snapshotStackTrace = vm.onSnapshotStackTrace()) {
         if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace)) {
             ASSERT(!m_errorInfoMaterialized);
             ASSERT(!m_stackTraceSnapshot);
-            auto snapshot = takeSnapshot(vm, *m_stackTrace);
+            auto snapshot = snapshotStackTrace(vm, *m_stackTrace, globalObject());
             ASSERT(snapshot);
             Locker locker { cellLock() };
             m_stackTrace = nullptr;
@@ -478,7 +478,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
             if (hasFrames)
                 stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
             else
-                stack = vm.onComputeErrorInfoFromSnapshot()(vm, *m_stackTraceSnapshot, m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
+                stack = m_stackTraceSnapshot->computeErrorInfo(vm, m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
         }
 
         {

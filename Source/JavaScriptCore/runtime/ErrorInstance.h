@@ -166,6 +166,10 @@ protected:
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
+#if USE(BUN_JSC_ADDITIONS)
+    // This replaces m_stackTrace when a collection finds one of its frames dead. An error never has both.
+    std::unique_ptr<StackTraceSnapshot> m_stackTraceSnapshot;
+#endif
     // Frames captured by Error.captureStackTrace()
     std::unique_ptr<Vector<StackFrame>> m_capturedStackTrace;
 
@@ -183,10 +187,6 @@ protected:
     bool m_parseError : 1;
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
-#endif
-#if USE(BUN_JSC_ADDITIONS)
-    // In place of m_stackTrace, never beside it, from the collection that finds one of its frames dead.
-    std::unique_ptr<StackTraceSnapshot> m_stackTraceSnapshot;
 #endif
 };
 
