@@ -1784,8 +1784,22 @@ RegisterID* BytecodeGenerator::emitMove(RegisterID* dst, RegisterID* src)
     m_staticPropertyAnalyzer.mov(dst, src);
     if (canDoPeepholeOptimization() && m_lastInstruction->is<OpMov>()) {
         auto op = m_lastInstruction->as<OpMov>();
-        if (op.m_dst == dst->virtualRegister())
+        if (op.m_dst == dst->virtualRegister()) {
+            // Expression info may already be recorded at the end of the replaced mov. A narrower
+            // replacement would put the next entry at a smaller offset, and lookups need them sorted.
+            OpcodeSize replacedSize = m_lastInstruction->width();
             rewind();
+            switch (replacedSize) {
+            case OpcodeSize::Narrow:
+                break;
+            case OpcodeSize::Wide16:
+                OpMov::emitWithSmallestSizeRequirement<OpcodeSize::Wide16>(this, dst, src);
+                return dst;
+            case OpcodeSize::Wide32:
+                OpMov::emitWithSmallestSizeRequirement<OpcodeSize::Wide32>(this, dst, src);
+                return dst;
+            }
+        }
     }
     OpMov::emit(this, dst, src);
 
