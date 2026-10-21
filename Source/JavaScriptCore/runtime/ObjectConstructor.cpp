@@ -1413,7 +1413,9 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
 
     case PropertyNameMode::NonIndexStrings:
     case PropertyNameMode::NonIndexStringsAndSymbols:
-        RELEASE_ASSERT_NOT_REACHED();
+        // inferCachedPropertyNamesKind() did not return for these.
+        ASSERT_NOT_REACHED();
+        break;
     }
 
     return keys;
