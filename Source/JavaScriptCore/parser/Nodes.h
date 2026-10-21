@@ -1434,7 +1434,7 @@ namespace JSC {
 
     class CoalesceNode final : public ExpressionNode {
     public:
-        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool);
+        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool, int optionalChainEndOffset = -1);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1443,6 +1443,7 @@ namespace JSC {
         ExpressionNode* m_expr1;
         ExpressionNode* m_expr2;
         bool m_hasAbsorbedOptionalChain;
+        int m_optionalChainEndOffset;
     };
 
     class OptionalChainNode final : public ExpressionNode {

@@ -353,6 +353,13 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
+    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
+    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
+    inline int startOffsetOfBasicBlock(ExpressionNode* node)
+    {
+        return node->startOffset() - 1;
+    }
+
     class BytecodeGenerator : public BytecodeGeneratorBase<JSGeneratorTraits> {
         WTF_MAKE_TZONE_ALLOCATED(BytecodeGenerator);
         WTF_MAKE_NONCOPYABLE(BytecodeGenerator);
@@ -696,6 +703,15 @@ namespace JSC {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
+        // For what `?.`, a logical assignment or a default value can skip. The text of the test of a `case` is in the basic
+        // block of its clause, where a basic block of its own would mark a part of a clause that did not run as executed.
+        // `&&`, `||`, `??` and `?:` have theirs there.
+        void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
+        {
+            if (!m_isInCaseTest)
+                emitProfileControlFlow(textOffset, textEndOffset);
+        }
+        bool& isInCaseTest() { return m_isInCaseTest; }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -705,6 +721,7 @@ namespace JSC {
             return false;
         }
         int& statementsEndOffset() { return m_statementsEndOffset; }
+        unsigned yieldPoints() const { return m_yieldPoints; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
@@ -1078,12 +1095,12 @@ namespace JSC {
 
         bool hasFinallyScopes() const { return m_currentFinallyContext; }
 
-        void pushOptionalChainTarget();
-        void pushOptionalChainTarget(Label&);
+        void pushOptionalChainTarget(int textEndOffset);
+        void pushOptionalChainTarget(Label&, int textEndOffset);
         void popOptionalChainTarget();
         void popOptionalChainTarget(RegisterID* dst, bool isDelete);
         void discardOptionalChainTarget();
-        void emitOptionalCheck(RegisterID* src);
+        void emitOptionalCheck(RegisterID* src, int textOffset);
 
         void pushForInScope(RegisterID* local, RegisterID* propertyName, RegisterID* propertyOffset, RegisterID* enumerator, RegisterID* mode, std::optional<Variable> base);
         void popForInScope(RegisterID* local);
@@ -1448,10 +1465,16 @@ namespace JSC {
         Vector<TryRange> m_tryRanges;
         SegmentedVector<TryData, 8> m_tryData;
 
-        Vector<Ref<Label>> m_optionalChainTargetStack;
+        struct OptionalChainTarget {
+            Ref<Label> label;
+            int textEndOffset;
+        };
+        Vector<OptionalChainTarget> m_optionalChainTargetStack;
 
         int m_nextConstantOffset { 0 };
         int m_statementsEndOffset { 0 };
+        StatementNode* m_lastStatementWithProfileControlFlowAfter { nullptr };
+        bool m_isInCaseTest { false };
         
         // Constant pool
         IdentifierMap m_identifierMap;
