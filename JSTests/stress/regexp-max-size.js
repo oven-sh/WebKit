@@ -34,8 +34,10 @@ function testTooBigNonBMPRegExp() {
     return "\u{10234}\u{10234}\u{10100}".match(re);
 }
 
-let shouldCompile = [testMaxRegExp, testMaxBMPRegExp, testMaxNonBMPRegExp];
-let shouldntCompile = [testTooBigRegExp, testTooBigBMPRegExp, testTooBigNonBMPRegExp];
+// Bun: a pattern that needs more input than a string can hold compiles and never matches, as in V8. Upstream has the
+// three TooBig functions in shouldntCompile: "SyntaxError: Invalid regular expression: pattern exceeds string length limits".
+let shouldCompile = [testMaxRegExp, testMaxBMPRegExp, testMaxNonBMPRegExp, testTooBigRegExp, testTooBigBMPRegExp, testTooBigNonBMPRegExp];
+let shouldntCompile = [];
 
 function testAll()
 {
