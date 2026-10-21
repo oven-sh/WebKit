@@ -1,3 +1,4 @@
+//@ skip if not $jitTests
 //@ runDefault
 // Only with the JIT: the interpreter rejects some of these patterns.
 
