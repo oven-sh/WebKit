@@ -289,7 +289,7 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
     static constexpr SourceParseMode parseMode = SourceParseMode::ModuleEvaluateMode;
 };
 
-UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
+UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, bool isInGeneratorOrAsyncFunctionBody, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the program's own).
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);

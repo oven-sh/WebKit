@@ -2965,6 +2965,7 @@ public:
         m_usesSloppyEval = symbolTable.m_usesSloppyEval;
         m_nestedLexicalScope = symbolTable.m_nestedLexicalScope;
         m_scopeType = symbolTable.m_scopeType;
+        m_generatorOrAsyncFunctionPart = symbolTable.m_generatorOrAsyncFunctionPart;
         m_arguments.encode(encoder, symbolTable.m_arguments.get());
         m_rareData.encode(encoder, symbolTable.m_rareData.get());
     }
@@ -2982,6 +2983,7 @@ public:
         symbolTable->m_usesSloppyEval = m_usesSloppyEval;
         symbolTable->m_nestedLexicalScope = m_nestedLexicalScope;
         symbolTable->m_scopeType = m_scopeType;
+        symbolTable->m_generatorOrAsyncFunctionPart = m_generatorOrAsyncFunctionPart;
         ScopedArgumentsTable* scopedArgumentsTable = m_arguments.decode(decoder);
         if (scopedArgumentsTable)
             symbolTable->m_arguments.set(decoder.vm(), symbolTable, scopedArgumentsTable);
@@ -3012,7 +3014,8 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1;
     unsigned m_scopeType : 3;
-    unsigned m_unused : 27 { 0 };
+    unsigned m_generatorOrAsyncFunctionPart : 2;
+    unsigned m_unused : 25 { 0 };
     CachedPtr<CachedScopedArgumentsTable> m_arguments;
     CachedPtr<CachedSymbolTableRareData> m_rareData;
 };
@@ -3947,6 +3950,7 @@ public:
         Updatable = 1 << 5, // implies both code block slots
         HasCapturedVariables = 1 << 6,
         IsClass = 1 << 7, // so isClass() never needs the rare data
+        WrapperBindsArguments = 1 << 8, // UnlinkedFunctionExecutable::generatorOrAsyncWrapperFunctionBindsArguments()
         ParseModeShift = 16, // 8 bits
     };
 
@@ -4715,6 +4719,8 @@ uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& e
         header |= HasCapturedVariables;
     if (executable.isClass())
         header |= IsClass;
+    if (executable.generatorOrAsyncWrapperFunctionBindsArguments())
+        header |= WrapperBindsArguments;
     if (!executable.ecmaName().isNull())
         header |= HasName;
     if (executable.m_members.live().parentScopeTDZVariables)
@@ -4990,6 +4996,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_features(0)
     , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
     , m_isClass(false)
+    , m_generatorOrAsyncWrapperFunctionBindsArguments(false)
     , m_nameIsDeferred(false)
     , m_membersAreDeferred(false)
     , m_scalarsAreDeferred(false)
@@ -5004,6 +5011,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_features = scalars.features;
     m_lexicallyScopedFeatures = scalars.lexicallyScopedFeatures;
     m_isClass = !!(v.header & CachedFunctionExecutable::IsClass);
+    m_generatorOrAsyncWrapperFunctionBindsArguments = !!(v.header & CachedFunctionExecutable::WrapperBindsArguments);
     if (defer) {
         m_members.defer(decoder, cachedExecutable);
         m_scalarsAreDeferred = true;
@@ -5320,7 +5328,9 @@ protected:
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 13;
+    // 14: CachedFunctionExecutable::WrapperBindsArguments, and a SymbolTable's generatorOrAsyncFunctionPart() (two of
+    // CachedSymbolTable's unused bits).
+    static constexpr uint32_t cachedTypesFormatRevision = 14;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

@@ -264,6 +264,11 @@ public:
         return &m_members.live().rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
     }
 
+    // For the body function of a generator or async function: the wrapper function binds `arguments`, and the body has
+    // no var of that name.
+    bool generatorOrAsyncWrapperFunctionBindsArguments() const { return m_generatorOrAsyncWrapperFunctionBindsArguments; }
+    void setGeneratorOrAsyncWrapperFunctionBindsArguments() { m_generatorOrAsyncWrapperFunctionBindsArguments = true; }
+
     const PrivateNameEnvironment* parentPrivateNameEnvironment() const
     {
         materializeDeferredMembersIfNeeded();
@@ -410,6 +415,7 @@ private:
     uint8_t m_evalContextType : 2;
     uint8_t m_hasName : 1;
     uint8_t m_isClass : 1;
+    uint8_t m_generatorOrAsyncWrapperFunctionBindsArguments : 1;
     // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
     bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
     bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live

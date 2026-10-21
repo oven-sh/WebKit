@@ -860,6 +860,56 @@ public:
         }
     }
 
+    // A sloppy mode function hoisting candidate that has the name `arguments`, for a parse that builds no tree and so
+    // has no candidates (Parser::parseFunctionDeclaration). The wrapper function of a generator or async function asks
+    // this of the scope of its body, which it parses that way.
+    void noteSloppyModeFunctionHoistingCandidateNamedArguments()
+    {
+        // bubbleSloppyModeFunctionHoistingCandidates() gives the containing scope the candidate with no check.
+        if (m_containingScope)
+            m_containingScope->m_hasSloppyModeFunctionHoistingCandidateNamedArguments = true;
+    }
+
+    bool hasSloppyModeFunctionHoistingCandidateNamedArguments() const { return m_hasSloppyModeFunctionHoistingCandidateNamedArguments; }
+
+    NEVER_INLINE void bubbleSloppyModeFunctionHoistingCandidateNamedArguments(Scope* parentScope)
+    {
+        // A candidate stays in its function.
+        if (m_isFunctionBoundary)
+            return;
+        if (!m_lexicalVariables.contains(m_vm.propertyNames->arguments.impl()) || isSimpleCatchParameterScope())
+            parentScope->m_hasSloppyModeFunctionHoistingCandidateNamedArguments = true;
+    }
+
+    // What finalizeSloppyModeFunctionHoisting() decides for that candidate.
+    bool hoistsSloppyModeFunctionNamedArguments() const
+    {
+        return m_hasSloppyModeFunctionHoistingCandidateNamedArguments && !m_lexicalVariables.contains(m_vm.propertyNames->arguments.impl());
+    }
+
+    bool declaresVarThatIsNotFunction(UniquedStringImpl* impl) const
+    {
+        auto iter = m_declaredVariables.find(impl);
+        return iter != m_declaredVariables.end() && iter->value.isVar() && !iter->value.isFunction();
+    }
+
+    // FunctionDeclarationInstantiation step 28, for the wrapper function of a generator or async function: when the
+    // parameter list is not simple, a var of the body that has the name of a parameter (or `arguments`) is a binding of
+    // its own that starts with the parameter's value. The wrapper makes it, because it is the wrapper that has the
+    // parameters, and the body function then finds it before it finds the parameter.
+    void declareVarsOfGeneratorOrAsyncBody(const Scope& bodyScope, bool bodyDeclaresArguments)
+    {
+        ASSERT(m_hasNonSimpleParameterList);
+        for (auto& entry : bodyScope.m_declaredVariables) {
+            if (!entry.value.isVar() || entry.value.isFunction())
+                continue;
+            if (m_declaredParameters.contains(entry.key.get()))
+                m_declaredVariables.add(entry.key).iterator->value.setIsVar();
+        }
+        if (bodyDeclaresArguments)
+            m_declaredVariables.add(m_vm.propertyNames->arguments.impl()).iterator->value.setIsVar();
+    }
+
     void getCapturedVars(IdentifierSet& capturedVariables)
     {
         if (m_needsFullActivation || m_usesEval) {
@@ -1072,6 +1122,7 @@ private:
     bool m_isClassScope : 1 { false };
     bool m_asyncFunctionBodyDoesNotUseAwait : 1 { false };
     bool m_usesAwait : 1 { false };
+    bool m_hasSloppyModeFunctionHoistingCandidateNamedArguments : 1 { false };
     int m_loopDepth { 0 };
     SuperBinding m_expectedSuperBinding { SuperBinding::NotNeeded };
     ImplementationVisibility m_implementationVisibility;
@@ -1419,6 +1470,8 @@ private:
 
         if (lastScope->hasSloppyModeFunctionHoistingCandidates())
             lastScope->bubbleSloppyModeFunctionHoistingCandidates(parentScope);
+        if (lastScope->hasSloppyModeFunctionHoistingCandidateNamedArguments()) [[unlikely]]
+            lastScope->bubbleSloppyModeFunctionHoistingCandidateNamedArguments(parentScope);
 
         if (lastScope->isArrowFunction())
             lastScope->setInnerArrowFunctionUsesEvalAndUseArgumentsIfNeeded();
@@ -1792,6 +1845,7 @@ private:
     }
 
     template <class TreeBuilder> TreeSourceElements parseSourceElements(TreeBuilder&, SourceElementsMode);
+    template <class TreeBuilder> void bindForGeneratorOrAsyncBody(TreeBuilder&, Scope& bodyScope, bool bodyHasDirectEval);
     template <class TreeBuilder> TreeSourceElements parseGeneratorFunctionSourceElements(TreeBuilder&, const Identifier& name, SourceElementsMode);
     template <class TreeBuilder> TreeSourceElements parseAsyncFunctionSourceElements(TreeBuilder&, const Identifier& calleeName, bool isArrowFunctionBodyExpression, SourceElementsMode);
     template <class TreeBuilder> TreeSourceElements parseAsyncGeneratorFunctionSourceElements(TreeBuilder&, const Identifier& calleeName, bool isArrowFunctionBodyExpression, SourceElementsMode);

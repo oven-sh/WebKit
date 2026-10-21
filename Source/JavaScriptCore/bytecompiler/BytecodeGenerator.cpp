@@ -227,6 +227,9 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 
         {
             bool shouldHoistInEval = m_codeType == EvalCode && !m_ecmaMode.isStrict();
+            // In a generator or async function body, a function that has the name of a parameter, or of `arguments`, goes
+            // to the wrapper's var scope and any other to the body's. So each function resolves its scope.
+            bool shouldResolveScopeForEachFunction = shouldHoistInEval && m_codeBlock->isInGeneratorOrAsyncFunctionBody();
             RefPtr<RegisterID> topLevelScope;
             for (auto functionPair : m_functionsToInitialize) {
                 FunctionMetadataNode* metadata = functionPair.first;
@@ -243,7 +246,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
                 } else if (functionType == TopLevelFunctionVariable) {
                     RefPtr<RegisterID> temp = newTemporary();
                     emitNewFunction(temp.get(), metadata);
-                    if (!topLevelScope) {
+                    if (!topLevelScope || shouldResolveScopeForEachFunction) {
                         // We know this will resolve to the top level scope or global object because our parser/global initialization code 
                         // doesn't allow let/const/class variables to have the same names as functions.
                         // This is a top level function, and it's an error to ever create a top level function
@@ -264,7 +267,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
                             ? emitResolveScopeForHoistingFuncDeclInEval(nullptr, metadata->ident())
                             : emitResolveScope(nullptr, Variable(metadata->ident()));
 
-                        topLevelScope = newBlockScopeVariable();
+                        if (!topLevelScope)
+                            topLevelScope = newBlockScopeVariable();
                         move(topLevelScope.get(), topLevelObjectScope.get());
                     }
                     if (shouldHoistInEval)
@@ -387,7 +391,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     return ParserError(ParserError::ErrorNone);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
+BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, bool, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
@@ -435,7 +439,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
     }
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
+BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
@@ -479,6 +483,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
 
     m_cachedParentTDZ = parentScopeTDZVariables;
     m_generatorOrAsyncWrapperFunctionParameterNames = generatorOrAsyncWrapperFunctionParameterNames;
+    m_generatorOrAsyncWrapperFunctionBindsArguments = generatorOrAsyncWrapperFunctionBindsArguments;
 
     FunctionParameters& parameters = *functionNode->parameters(); 
     // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-functiondeclarationinstantiation
@@ -490,6 +495,13 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     bool isSimpleParameterList = parameters.isSimpleParameterList();
 
     SourceParseMode parseMode = codeBlock->parseMode();
+
+    // A generator, or an async function that has an await, is this wrapper function and a body function.
+    bool hasGeneratorOrAsyncBodyFunction = isGeneratorOrAsyncFunctionWrapperParseMode(parseMode) && !functionNode->isAsyncFunctionWithoutAwait();
+    if (hasGeneratorOrAsyncBodyFunction)
+        functionSymbolTable->setGeneratorOrAsyncFunctionPart(SymbolTable::GeneratorOrAsyncFunctionPart::Wrapper);
+    else if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
+        functionSymbolTable->setGeneratorOrAsyncFunctionPart(SymbolTable::GeneratorOrAsyncFunctionPart::Body);
 
     bool containsArrowOrEvalButNotInArrowBlock = ((functionNode->usesArrowFunction() && functionNode->doAnyInnerArrowFunctionsUseAnyFeature()) || usesEval()) && !m_codeBlock->isArrowFunction();
     bool shouldCaptureSomeOfTheThings = shouldEmitDebugHooks() || functionNode->needsActivation() || containsArrowOrEvalButNotInArrowBlock;
@@ -533,7 +545,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         //
         // For async functions without await, the body is inlined directly - no body function exists.
         // So we don't need to capture parameters for the body function to access them.
-        if (!(isAsyncFunctionWrapperParseMode(parseMode) && functionNode->isAsyncFunctionWithoutAwait())) {
+        if (hasGeneratorOrAsyncBodyFunction) {
             if (m_needsArguments)
                 shouldCaptureSomeOfTheThings = true;
             if (parameters.size()) {
@@ -812,8 +824,18 @@ IGNORE_GCC_WARNINGS_END
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
             continue;
-        if (shouldCreateArgumentsVariableInParameterScope && entry.key.get() == propertyNames().arguments.impl())
-            continue;
+        if (entry.key.get() == propertyNames().arguments.impl()) {
+            if (hasGeneratorOrAsyncBodyFunction) {
+                // The parser declares this var for the body function when the parameter list is not simple
+                // (Scope::declareVarsOfGeneratorOrAsyncBody). It is a binding of its own, which starts with the arguments object.
+                if (!shouldCreateArgumentsVariableInParameterScope)
+                    continue;
+            } else if (shouldCreateArgumentsVariableInParameterScope)
+                continue;
+            // `arguments` of a generator or async function body is the binding of the wrapper function.
+            if (generatorOrAsyncWrapperFunctionBindsArguments)
+                continue;
+        }
         if (generatorOrAsyncWrapperFunctionParameterNames && generatorOrAsyncWrapperFunctionParameterNames->contains(entry.key.get()))
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
@@ -1011,7 +1033,7 @@ IGNORE_GCC_WARNINGS_END
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
+BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, bool, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
@@ -1079,7 +1101,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
 }
 
-BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
+BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, bool, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
     , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
@@ -2463,6 +2485,17 @@ void BytecodeGenerator::hoistSloppyModeFunctionIfNecessary(FunctionMetadataNode*
 
         switch (codeType()) {
         case FunctionCode: {
+            if (m_generatorOrAsyncWrapperFunctionBindsArguments && functionName == propertyNames().arguments) {
+                // The var is the `arguments` of the wrapper function. Resolve it from the scope this body function was
+                // made in, so that no scope of the body (the block of this function, a `with` object) is in the way.
+                RefPtr<RegisterID> functionScope = newTemporary();
+                OpGetScope::emit(this, functionScope.get());
+                unsigned scopeDepth = 0;
+                RefPtr<RegisterID> scope = newTemporary();
+                OpResolveScope::emit(this, scope.get(), functionScope.get(), addConstant(functionName), resolveType(), scopeDepth);
+                OpPutToScope::emit(this, scope.get(), addConstant(functionName), currentValue.get(), GetPutInfo(DoNotThrowIfNotFound, resolveType(), InitializationMode::NotInitialization, ecmaMode()), SymbolTableOrScopeDepth::scopeDepth(scopeDepth), 0);
+                break;
+            }
             ASSERT(m_varScopeLexicalScopeStackIndex);
             ASSERT(*m_varScopeLexicalScopeStackIndex < m_lexicalScopeStack.size());
             LexicalScopeStackEntry varScope = m_lexicalScopeStack[*m_varScopeLexicalScopeStackIndex];

@@ -526,6 +526,30 @@ end:
     return sourceElements;
 }
 
+// A generator, or an async function that has an await, is two functions: a wrapper, which holds the parameters and
+// `arguments`, and a body, which reads them from the wrapper and is parsed alone when it first runs. So the wrapper decides
+// here, while the scope of the body is alive, what it has to bind for the body.
+template <typename LexerType>
+template <class TreeBuilder> void Parser<LexerType>::bindForGeneratorOrAsyncBody(TreeBuilder& context, Scope& bodyScope, bool bodyHasDirectEval)
+{
+    Scope& wrapperScope = *bodyScope.containingScope();
+    ASSERT(wrapperScope.isFunctionBoundary());
+    UniquedStringImpl* arguments = m_vm.propertyNames->arguments.impl();
+
+    // An arrow function has the `arguments` of an enclosing function, and a parameter named `arguments` is the binding.
+    bool wrapperHasArguments = !wrapperScope.isArrowFunctionBoundary() && !wrapperScope.shadowsArguments();
+    bool bodyDeclaresVarArguments = wrapperHasArguments && bodyScope.declaresVarThatIsNotFunction(arguments);
+    if (wrapperHasArguments) {
+        // A free use of `arguments` reaches the wrapper scope when the body scope is popped. These do not: a use of the
+        // body's own `var arguments`, which is the binding of the wrapper, and a use that only a direct eval can have.
+        if ((bodyDeclaresVarArguments && bodyScope.usedVariablesContains(arguments)) || bodyHasDirectEval || (bodyScope.innerArrowFunctionFeatures() & EvalInnerArrowFunctionFeature))
+            context.propagateArgumentsUse();
+    }
+
+    if (wrapperScope.hasNonSimpleParameterList())
+        wrapperScope.declareVarsOfGeneratorOrAsyncBody(bodyScope, bodyDeclaresVarArguments || (wrapperHasArguments && bodyScope.hoistsSloppyModeFunctionNamedArguments()));
+}
+
 template <typename LexerType>
 template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseGeneratorFunctionSourceElements(TreeBuilder& context, const Identifier& name, SourceElementsMode mode)
 {
@@ -553,6 +577,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseGenerato
 
         SyntaxChecker generatorFunctionContext(const_cast<VM&>(m_vm), m_lexer.get());
         failIfFalse(parseSourceElements(generatorFunctionContext, mode), "Cannot parse the body of a generator");
+        bindForGeneratorOrAsyncBody(context, *generatorBodyScope.scope(), generatorFunctionContext.hasDirectEval());
         popScope(generatorBodyScope, TreeBuilder::NeedsFreeVariableInfo);
     }
     info.body = context.createFunctionMetadata(startLocation, tokenLocation(), functionStart, functionNameStart, parametersStart, implementationVisibility(), lexicallyScopedFeatures(), ConstructorKind::None, m_superBinding, info.parameterCount, SourceParseMode::GeneratorBodyMode, false);
@@ -603,6 +628,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseAsyncFun
                 failIfFalse(parseSourceElements(syntaxChecker, mode), "Cannot parse the body of async function");
         }
         bodyUsesAwait = asyncFunctionBodyScope->usesAwait();
+        if (bodyUsesAwait)
+            bindForGeneratorOrAsyncBody(context, *asyncFunctionBodyScope.scope(), syntaxChecker.hasDirectEval());
 
         // When body doesn't use await, we'll inline it directly in the wrapper.
         // In this case, there's no body function, so we don't need to track closed variables
@@ -693,6 +720,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseAsyncGen
             else
                 failIfFalse(parseSourceElements(syntaxChecker, mode), "Cannot parse the body of async function");
         }
+        bindForGeneratorOrAsyncBody(context, *asyncFunctionBodyScope.scope(), syntaxChecker.hasDirectEval());
         popScope(asyncFunctionBodyScope, TreeBuilder::NeedsFreeVariableInfo);
     }
     info.body = context.createFunctionMetadata(startLocation, tokenLocation(), functionStart, functionNameStart, parametersStart, implementationVisibility(), lexicallyScopedFeatures(), ConstructorKind::None, m_superBinding, info.parameterCount, parseMode, isArrowFunctionBodyExpression);
@@ -2942,10 +2970,12 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseFunctionDecla
     }
 
     TreeStatement result = context.createFuncDeclStatement(location, functionInfo);
+    bool isSloppyModeHoistingCandidate = m_statementDepth != 1 && !strictMode() && m_parseMode == SourceParseMode::NormalFunctionMode;
+    if (isSloppyModeHoistingCandidate && isArguments(m_vm, functionInfo.name)) [[unlikely]]
+        functionDeclaration.second->noteSloppyModeFunctionHoistingCandidateNamedArguments();
     if (TreeBuilder::CreatesAST) {
         FunctionMetadataNode* metadata = getMetadata(functionInfo);
         functionDeclaration.second->appendFunction(metadata);
-        bool isSloppyModeHoistingCandidate = m_statementDepth != 1 && !strictMode() && m_parseMode == SourceParseMode::NormalFunctionMode;
         if (isSloppyModeHoistingCandidate) {
             // Functions declared inside a function inside a nested block scope in sloppy mode are subject to this
             // crazy rule defined inside Annex B.3.2 in the ECMA-262 spec. It basically states that we will create
@@ -5176,7 +5206,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::createResolveAndU
 {
     currentScope()->useVariable(ident, isEval);
     m_parserState.lastIdentifier = ident;
-    return context.createResolve(location, *ident, start, lastTokenEndPosition());
+    const bool needToCheckUsesArguments = true;
+    return context.createResolve(location, *ident, start, lastTokenEndPosition(), needToCheckUsesArguments, isEval);
 }
 
 template <typename LexerType>

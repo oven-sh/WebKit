@@ -277,6 +277,25 @@ ALWAYS_INLINE JSObject* JSScope::resolve(JSGlobalObject* globalObject, JSScope* 
     }
 }
 
+// The var scope of a generator or async function body and the var scope of its wrapper function are one variable
+// environment. A parameter, or `arguments`, is a binding of it already, in the wrapper: the declaration goes to that binding.
+static JSValue varScopeOfGeneratorOrAsyncFunctionFor(JSGlobalObject* globalObject, JSScope* bodyVarScope, const Identifier& ident)
+{
+    VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSScope* wrapperVarScope = bodyVarScope->wrapperVarScopeOfGeneratorOrAsyncBody();
+    if (!wrapperVarScope)
+        return bodyVarScope;
+    bool bodyHasBinding = bodyVarScope->hasOwnProperty(globalObject, ident);
+    RETURN_IF_EXCEPTION(throwScope, { });
+    if (bodyHasBinding)
+        return bodyVarScope;
+    bool wrapperHasBinding = wrapperVarScope->hasOwnProperty(globalObject, ident);
+    RETURN_IF_EXCEPTION(throwScope, { });
+    return wrapperHasBinding ? wrapperVarScope : bodyVarScope;
+}
+
 JSValue JSScope::resolveScopeForHoistingFuncDeclInEval(JSGlobalObject* globalObject, JSScope* scope, const Identifier& ident)
 {
     VM& vm = globalObject->vm();
@@ -295,6 +314,8 @@ JSValue JSScope::resolveScopeForHoistingFuncDeclInEval(JSGlobalObject* globalObj
     if (JSScope* scope = dynamicDowncast<JSScope>(object)) {
         if (SymbolTable* scopeSymbolTable = scope->symbolTable()) {
             result = scope->isGlobalObject() || scopeSymbolTable->scopeType() == SymbolTable::ScopeType::VarScope;
+            if (scopeSymbolTable->generatorOrAsyncFunctionPart() == SymbolTable::GeneratorOrAsyncFunctionPart::Body) [[unlikely]]
+                RELEASE_AND_RETURN(throwScope, varScopeOfGeneratorOrAsyncFunctionFor(globalObject, scope, ident));
         }
     }
 
@@ -361,6 +382,20 @@ bool JSScope::isVarScope()
     if (type() != LexicalEnvironmentType)
         return false;
     return uncheckedDowncast<JSLexicalEnvironment>(this)->symbolTable()->scopeType() == SymbolTable::ScopeType::VarScope;
+}
+
+JSScope* JSScope::wrapperVarScopeOfGeneratorOrAsyncBody()
+{
+    using Part = SymbolTable::GeneratorOrAsyncFunctionPart;
+    if (!isVarScope() || uncheckedDowncast<JSLexicalEnvironment>(this)->symbolTable()->generatorOrAsyncFunctionPart() != Part::Body)
+        return nullptr;
+    // The wrapper makes the body function in its var scope, so that scope comes next, if the wrapper has one at all.
+    JSScope* wrapperScope = next();
+    if (!wrapperScope || !wrapperScope->isVarScope())
+        return nullptr;
+    if (uncheckedDowncast<JSLexicalEnvironment>(wrapperScope)->symbolTable()->generatorOrAsyncFunctionPart() != Part::Wrapper)
+        return nullptr;
+    return wrapperScope;
 }
 
 bool JSScope::isLexicalScope()

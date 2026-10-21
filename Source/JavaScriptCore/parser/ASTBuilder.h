@@ -202,7 +202,7 @@ public:
     bool isMetaProperty(ExpressionNode* node) { return node->isMetaProperty(); }
     bool isNewTarget(ExpressionNode* node) { return node->isNewTarget(); }
     bool isImportMeta(ExpressionNode* node) { return node->isImportMeta(); }
-    ExpressionNode* createResolve(const JSTokenLocation& location, const Identifier& ident, const JSTextPosition& start, const JSTextPosition& end, const bool needToCheckUsesArguments = true)
+    ExpressionNode* createResolve(const JSTokenLocation& location, const Identifier& ident, const JSTextPosition& start, const JSTextPosition& end, const bool needToCheckUsesArguments = true, bool = false)
     {
         if (needToCheckUsesArguments && m_vm.propertyNames->arguments == ident)
             usesArguments();

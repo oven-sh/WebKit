@@ -375,10 +375,10 @@ namespace JSC {
     public:
         typedef DeclarationStacks::FunctionStack FunctionStack;
 
-        BytecodeGenerator(VM&, ProgramNode*, UnlinkedProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
-        BytecodeGenerator(VM&, FunctionNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
-        BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
-        BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, ProgramNode*, UnlinkedProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, FunctionNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
 
         ~BytecodeGenerator();
         
@@ -404,14 +404,14 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
+        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, bool generatorOrAsyncWrapperFunctionBindsArguments, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
                 before = MonotonicTime::now();
 
             DeferGC deferGC(vm);
-            auto bytecodeGenerator = makeUnique<BytecodeGenerator>(vm, node, unlinkedCodeBlock, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, privateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
+            auto bytecodeGenerator = makeUnique<BytecodeGenerator>(vm, node, unlinkedCodeBlock, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, generatorOrAsyncWrapperFunctionBindsArguments, privateNameEnvironment, optimize, WTF::move(parentDeclaredNames));
             unsigned size;
             auto result = bytecodeGenerator->generate(size);
 
@@ -1280,10 +1280,15 @@ namespace JSC {
             if (parseMode == SourceParseMode::MethodMode && metadata->constructorKind() != ConstructorKind::None)
                 constructAbility = ConstructAbility::CanConstruct;
 
-            if (isGeneratorOrAsyncFunctionWrapperParseMode(m_codeBlock->parseMode()) && isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
+            bool isGeneratorOrAsyncBodyOfThisFunction = isGeneratorOrAsyncFunctionWrapperParseMode(m_codeBlock->parseMode()) && isGeneratorOrAsyncFunctionBodyParseMode(parseMode);
+            if (isGeneratorOrAsyncBodyOfThisFunction)
                 generatorOrAsyncWrapperFunctionParameterNames = getParameterNames();
 
             auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
+            // A fact of the parse, not of this code generation: a debugger makes every function create `arguments`, and the
+            // body function has to make the same choice whichever mode its own code is generated in.
+            if (isGeneratorOrAsyncBodyOfThisFunction && !isArrowFunctionParseMode(m_codeBlock->parseMode()) && m_scopeNode->usesArguments())
+                executable->setGeneratorOrAsyncWrapperFunctionBindsArguments();
             if (shouldRunBytecodeOptimizer()) [[unlikely]]
                 executable->setParentDeclaredNames(currentDeclaredNames());
             return executable;
@@ -1395,6 +1400,7 @@ namespace JSC {
 
         RefPtr<TDZEnvironmentLink> m_cachedParentTDZ;
         const FixedVector<Identifier>* m_generatorOrAsyncWrapperFunctionParameterNames { nullptr };
+        bool m_generatorOrAsyncWrapperFunctionBindsArguments { false };
         Vector<TDZStackEntry> m_TDZStack;
         Vector<PrivateNameEnvironment> m_privateNamesStack;
         std::optional<size_t> m_varScopeLexicalScopeStackIndex;

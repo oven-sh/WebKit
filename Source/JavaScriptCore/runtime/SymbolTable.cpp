@@ -128,6 +128,7 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOri
     result->m_usesSloppyEval = m_usesSloppyEval;
     result->m_nestedLexicalScope = m_nestedLexicalScope;
     result->m_scopeType = m_scopeType;
+    result->m_generatorOrAsyncFunctionPart = m_generatorOrAsyncFunctionPart;
 
     UncheckedKeyHashMap<VarOffset, uint32_t> varOffsetToArgIndexMap;
 
@@ -215,7 +216,7 @@ SymbolTable* SymbolTable::cloneScopePart(VM& vm, PropagateCloneInvalidationToOri
 
 bool SymbolTable::isCloneOfScopePartOf(SymbolTable& original)
 {
-    if (m_usesSloppyEval != original.m_usesSloppyEval || m_nestedLexicalScope != original.m_nestedLexicalScope || m_scopeType != original.m_scopeType)
+    if (m_usesSloppyEval != original.m_usesSloppyEval || m_nestedLexicalScope != original.m_nestedLexicalScope || m_scopeType != original.m_scopeType || m_generatorOrAsyncFunctionPart != original.m_generatorOrAsyncFunctionPart)
         return false;
     if (m_maxScopeOffset != original.m_maxScopeOffset)
         return false;

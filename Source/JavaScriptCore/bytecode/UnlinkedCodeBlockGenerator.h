@@ -54,6 +54,7 @@ public:
     bool isArrowFunction() { return m_codeBlock->isArrowFunction(); }
     DerivedContextType derivedContextType() const { return m_codeBlock->derivedContextType(); }
     EvalContextType evalContextType() const { return m_codeBlock->evalContextType(); }
+    bool isInGeneratorOrAsyncFunctionBody() const { return m_codeBlock->isInGeneratorOrAsyncFunctionBody(); }
     bool isArrowFunctionContext() const { return m_codeBlock->isArrowFunctionContext(); }
     bool isClassContext() const { return m_codeBlock->isClassContext(); }
     unsigned numCalleeLocals() const { return m_codeBlock->m_numCalleeLocals; }
