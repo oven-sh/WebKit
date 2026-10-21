@@ -1,0 +1,41 @@
+[JSC] A marking thread pays for the wake-up of another one with marking, and an idle helper leaves the collection
+
+Every wake-up in the marking protocol woke every sleeping helper thread:
+each donation of cells to the shared mark stacks, each task of the
+constraint solver, each helper that saw the marking terminate, and the
+start and the end of the cycle. A collection of a linked structure
+donates one or two cells at a time, so it made about 220 thread wake-ups
+for a few MB of marking, and on a virtual machine one wake-up costs the
+waker more than those cells take to mark.
+
+A wake-up is now paid for. Each time a visitor has visited
+minimumBytesMarkedForParallelMarking (now 2 MB), the collection may wake
+one more marker: Collector::didPayForMarkerWakeup. A marker that was
+woken pays after an eighth of that: a wake-up that gave its marker work
+was worth its cost. Collector::choosePaidForMarkersToWake gives the
+markers that are paid for and not woken yet, for a donation, for a task
+of the constraint solver and when the mutator resumes. The one wake-up
+that needs no payment is chooseMarkerToWakeIfNoneIsMarking, for a thread
+that stops marking while the mutator runs. Collector::wakeMarkers wakes
+with m_markingMutex released.
+
+No helper parks in a collection. The helper pool runs the helper task on
+one more thread per request (ParallelHelperClient::setTaskOnRequest,
+requestThread), and hears of a cycle when the cycle first asks for a
+thread. A helper that finds no shared work and no task leaves, so the
+notices that are for the conductor, and the end of the cycle, have no
+helper to wake. Before it parks or leaves, a marker that runs dry while
+another one is at work looks at the shared mark stacks for
+gcMarkerPollMS: that one shares cells within a round or two.
+
+A collection is small until a visitor has visited
+minimumBytesMarkedForParallelMarking. Collector::runFixpointPhase keeps
+the mutator stopped that long, for every scheduler, unless
+minimumGCPauseMS is 0. A collection of collectContinuously is never
+small: that option is there to have the marking overlap the mutator.
+
+SlotVisitor::drain gets nothing per cell. It reads the clock, looks at
+what the visitor owes and counts the cells that were visited again once
+per round, and once per minimumNumberOfScansBetweenRebalance cells in a
+chain, where every round has one cell and read the clock. The two checks
+of donateKnownParallel that need no lock are as they were.

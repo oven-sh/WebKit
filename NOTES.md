@@ -82,3 +82,32 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   TODO after CI of 6e7c8ca9: build arm "final" (build-arm.sh final autobuild-preview-pr-838-6e7c8ca9), re-measure the tables for the PR bodies
   (repro, lru sizes, big churn, eden, shapes, records 3/25/101 MB), objdump gate 1 again, sizes; update bun branch pin + tests; open bun PR
   (base robobun/6d0d11d3/lazy-parallel-markers); update WebKit#838 title/body; issue comment; pushback self-review if the session allows.
+- 2026-10-21 22:10 UTC: FINAL WebKit commit is now e54eb6aff4 (preview autobuild-preview-pr-838-e54eb6af). Changes since 6e7c8ca9:
+  collectContinuously cycles are never "small" (keeps race tests and JSTests collect-continuously mode concurrent); the poll re-arms after ANY marking
+  (a marker polls each time it runs dry until it has marked nothing since its last poll): fixes a tree-shaped 100 MB full GC (51 ms -> 31 ms, main 37-45).
+  496e0878 (before the re-arm change) had ALL 49 CI checks green, JSTests included.
+  bun branch robobun/c4a0b0aa/marker-wakeups: tests commit + pin commit (pin = autobuild-preview-pr-838-e54eb6af), pushed, NO PR yet.
+  Tests in the bun branch: gc-controller-cadence 'marking helper threads' (5 tests; 2 new LRU tests at 4096 and 131072 entries), and
+  dynamic-import-evaluation-error-gc sets BUN_JSC_minimumBytesMarkedForParallelMarking=0. With 496e0878: all pass; on main 4 of 5 fail.
+  FINAL TABLES measured with 496e0878 ("final" arm) on a QUIET machine (load 1-3), LTO, bun 590035462:
+   A repro (5 runs): main 194.8 ns/op 3.07 s sys 70,080 vcs; wk800 175.9 / 2.63 / 64,771; final 71.3 / 0.15 / 920; final one marker 76.7 / 0.07 / 109;
+     main one marker 76.3 / 0.07 / 99; node 72.6 / 0.19 / 671. (a later quiet run: final 64.2 / 0.12 / 710, one 71.7)
+   B LRU ns/op (vcs): 16,384: main 175.4 (42,873) final 105.3 (1,327) one 104.7 (152) node 119.6; 65,536: 295.7 (23,521) / 236.0 (1,412) / 220.9 (598) / 292.5;
+     131,072: 376.0 (18,156) / 348.0 (1,346) / 332.1 (627) / 411.9. Peak RSS final = main (80/170/210 MB), one marker 105/269/371.
+   C records churn ns/record (vcs) [peak RSS], 7 runs: 3 MB live: main 1766 (37,415) [64] wk800 1736 (35,282) final 800 (1,174) [64] one 724 (96) node 689 (726);
+     25 MB: 917 (11,108) [205] / 1048 (10,845) [208] / 825 (1,376) [222] / 865 (288) [214] / 1798 [351];
+     101 MB: 615 (5,815) [577, 504-632] / 628 (6,034) [559] / 580 (1,741) [658, 592-668] / 911 (859) [609] / 1826 [671].
+   D big churn bench-app 20000 8 100 (9 runs, GC log on): in-pause share main 16.0% wk800 14.7% final 39.0% one 99.2%; headroom used up (hf>=.98 at last stop)
+     22% / 33% / 78% / 100%; peak RSS 678 / 693 / 801 / 734; ns/record 1221 / 1210 / 1020 / 1152; vcs 7,195 / 6,725 / 2,543 / 1,485. Without GC log (7 runs):
+     ns/record 949.5 / 1120 / 985.7 / 1060.7; peak RSS 701 (652-761) / 681 / 781 (765-857) / 748.
+     Rates: MB marked per ms outside pauses: main 1.22, final 1.25. Mutator allocation per ms of concurrent phase: main 0.39 MB, final 0.78 MB.
+     => marking is as fast; the mutator runs 2x faster during concurrent marking (on main it waits for m_markingMutex, which helpers hold across futex wakes).
+   E wide eden pause ms/MB (total ms): 2 MB: main 4.61 (244) wk800 3.92 (175) final 3.29 (152) one 2.52 (139); 8 MB: 1.41 (369) / 1.53 (382) / 1.05 (267) / 1.20 (267);
+     32 MB: 0.66 (802) / 0.68 (791) / 0.56 (653) / 0.89 (945). helpers used (of 7): final 1 / 3 / 6, main 5 / 7 / 7.
+   F 100 MB heaps full GC ms (Bun.gc(true), median of 7, 5 runs): tree main 44.7 wk800 47.2 final(496e) 54.2 one 100.9 -> with the re-arm change 31.1 (new2 R=1);
+     map 51.4 / 51.4 / 54.5 / 78.2; list 83.3 / 188.4 / 83.2 / 81.5; wide 12.8 / 12.8 / 13.1 / 54.2; records 23.9 / 24.7 / 25.6 / 86.7. list 2M nodes: main 52.7, wk800 115.3, final 51.3.
+   workers (new2): 4 workers ns/op main 431.9 (6,436 vcs) new2 307.6 (667) one 330.6; 12 workers 782.4 / 703.8 / 749.9.
+   weak-heavy edens total pause ms (new2): 143k EventTargets: main 1175 new2 896 one 775; 200k old WeakMaps: main 540 / 430 / 394.
+   sizes: bun text +4.4 KB (106,754,509 -> 106,758,925).
+  TODO: wait preview e54eb6af + CI; build-arm.sh final2 autobuild-preview-pr-838-e54eb6af; rerun bun tests + tables A, D, E, F (and objdump gate 1);
+  then open bun PR (base robobun/6d0d11d3/lazy-parallel-markers), update WebKit#838 title/body, issue comment, status comment, wrap-up.
