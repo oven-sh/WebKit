@@ -185,6 +185,9 @@ function testUncompilable(input) {
 noInline(testUncompilable);
 
 for (var i = 0; i < testLoopCount; ++i) {
-    shouldThrow(() => testUncompilable(nonConstantString("x")), compilationFailure);
-    shouldThrow(() => test(RegExp(`(?:a{2147483648}|)a{2147483648}|b${i}`), nonConstantString("x")), compilationFailure);
+    // Bun: the alternative that needs more input than a string can hold compiles as one that fails, as in V8.
+    // Upstream expects shouldThrow(() => ..., compilationFailure) for both lines. A RegExp that its first match
+    // refuses is in regexp-required-input-beyond-string-length.js.
+    shouldBe(testUncompilable(nonConstantString("x")), false);
+    shouldBe(test(RegExp(`(?:a{2147483648}|)a{2147483648}|b${i}`), nonConstantString("x")), false);
 }
