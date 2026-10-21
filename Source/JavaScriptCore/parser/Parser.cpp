@@ -5644,16 +5644,33 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                     failIfFalse(arguments, "Cannot parse call arguments");
                     base = context.createNewExpr(location, base, arguments, expressionStart, expressionEnd, lastTokenEndPosition());
                 } else {
-                    size_t usedVariablesSize = currentScope()->currentUsedVariablesSize();
+                    // `async (` is a call of `async` or the parameters of an async arrow function, and only the token
+                    // after the ")" says which. Parameters are not uses of this scope, so what the parentheses read
+                    // goes to a set of its own, as for a "(" in parseAssignmentExpression(): dropped for an arrow
+                    // function, merged for a call. baseIsAsyncKeyword stays set for the links after `async`
+                    // (`async.each(...)`), which are calls: there the base is no longer the name itself.
+                    // A scope always has one set, so 0 means that none was pushed.
+                    size_t usedVariablesSize = 0;
+                    if (baseIsAsyncKeyword) [[unlikely]] {
+                        if (context.isResolve(base)) {
+                            usedVariablesSize = currentScope()->currentUsedVariablesSize();
+                            currentScope()->pushUsedVariableSet();
+                        }
+                    }
                     JSTextPosition expressionEnd = lastTokenEndPosition();
                     std::optional<CallOrApplyDepthScope> callOrApplyDepthScope;
                     recordCallOrApplyDepth<TreeBuilder>(this, m_vm, callOrApplyDepthScope, base);
 
                     TreeArguments arguments = parseArguments(context);
 
-                    if (baseIsAsyncKeyword && (!arguments || match(ARROWFUNCTION))) [[unlikely]] {
-                        currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
-                        failDueToUnexpectedToken();
+                    if (baseIsAsyncKeyword) [[unlikely]] {
+                        if (!arguments || match(ARROWFUNCTION)) {
+                            if (usedVariablesSize)
+                                currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
+                            failDueToUnexpectedToken();
+                        }
+                        if (usedVariablesSize)
+                            currentScope()->mergeIntoPreviousUsedVariables(usedVariablesSize);
                     }
 
                     failIfFalse(arguments, "Cannot parse call arguments");
