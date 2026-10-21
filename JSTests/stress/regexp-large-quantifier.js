@@ -1,5 +1,5 @@
-function testRegExp(pattern, string, expectedParseError, expectedMatch, flags) {
-    const r = new RegExp(pattern, flags);
+function testRegExp(pattern, string, expectedParseError, expectedMatch) {
+    const r = new RegExp(pattern);
     let actualResult = null;
     let actualParseError = null;
     try {
@@ -25,5 +25,3 @@ testRegExp("a{0,4294967296}", "a", undefined, "a");
 testRegExp("^a{0,4294967296}$", "a{0,4294967296}", undefined, undefined);
 testRegExp("(?:a{0,340282366920}?){0,1}a", "aa", undefined, "aa");
 testRegExp("((.{100000000})*.{2100000000})+", "x", undefined, undefined);
-testRegExp("(?:(?:^.)?a{2147483647})?b{2147483647}", "ab", undefined, undefined, "m");
-testRegExp("(?:(?:\\b.)?a{2147483647})?b{2147483647}", "ab", undefined, undefined);

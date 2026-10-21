@@ -6828,7 +6828,7 @@ class YarrGenerator final : public YarrJITInfo {
                 Checked<unsigned, RecordOverflow> checkedOffsetResult(checkedOffset);
                 checkedOffsetResult += lastOp.m_checkAdjust;
 
-                // The limit containsUnsignedLengthPattern() puts on one alternative, for the sum over nested ones.
+                // No string has more than INT_MAX characters to claim, and ^ and \b read at this offset + 1.
                 if (checkedOffsetResult.hasOverflowed() || checkedOffsetResult > static_cast<unsigned>(INT_MAX)) [[unlikely]] {
                     m_failureReason = JITFailureReason::OffsetTooLarge;
                     return;
