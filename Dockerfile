@@ -11,6 +11,8 @@ ARG ENABLE_ASSERTS="AUTO"
 # JavaScriptCore compiled with -fsanitize-coverage=trace-pc-guard, and a jsc that Fuzzilli can drive. A CMake option and
 # not a flag in CFLAGS: those also build ICU, whose tools run during the build and have no coverage callbacks.
 ARG ENABLE_FUZZILLI="OFF"
+# Added to the flags ICU and WebKit are compiled with.
+ARG HARDENING_FLAGS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 # What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
@@ -296,12 +298,15 @@ ARG DEFAULT_CFLAGS
 ARG ENABLE_SANITIZERS
 ARG ENABLE_ASSERTS
 ARG ENABLE_FUZZILLI
+ARG HARDENING_FLAGS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG LINUX_ARCH
 ARG ICU_VERSION
 
 ENV LTO_FLAG="${LTO_FLAG}"
+ENV CFLAGS="$CFLAGS ${HARDENING_FLAGS}"
+ENV CXXFLAGS="$CXXFLAGS ${HARDENING_FLAGS}"
 
 # Download and build ICU.
 #
@@ -382,6 +387,9 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 #
 # With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
 #
+# With HARDENING_FLAGS jsc must import what the stack protector and _FORTIFY_SOURCE call. It is read off jsc because the
+# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet.
+#
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
@@ -443,6 +451,11 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
             llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \
             ! llvm-nm --defined-only $WEBKIT_OUT_DIR/lib/*.a | grep -w $callback || { echo "error: a library defines $callback, which is for whoever links it to do" >&2; exit 1; }; \
         done; \
+    fi && \
+    if [ -n "$HARDENING_FLAGS" ]; then \
+        llvm-readelf --dyn-syms $WEBKIT_OUT_DIR/bin/jsc | grep -o '__[a-z_]*_chk[a-z_]*' | sort -u > /tmp/chk && cat /tmp/chk && \
+        grep -qx __stack_chk_fail /tmp/chk || { echo "error: jsc has no stack protector" >&2; exit 1; }; \
+        grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
     fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \

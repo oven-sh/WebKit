@@ -1434,7 +1434,7 @@ namespace JSC {
 
     class CoalesceNode final : public ExpressionNode {
     public:
-        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool);
+        CoalesceNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool, int optionalChainEndOffset = -1);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1443,6 +1443,7 @@ namespace JSC {
         ExpressionNode* m_expr1;
         ExpressionNode* m_expr2;
         bool m_hasAbsorbedOptionalChain;
+        int m_optionalChainEndOffset;
     };
 
     class OptionalChainNode final : public ExpressionNode {
@@ -1638,7 +1639,7 @@ namespace JSC {
         bool hasCompletionValue() const;
         bool hasEarlyBreakOrContinue() const;
 
-        void emitBytecode(BytecodeGenerator&, RegisterID* destination);
+        void emitBytecode(BytecodeGenerator&, RegisterID* destination, int endOffset);
         bool analyzeModule(ModuleAnalyzer&);
 
     private:
@@ -2669,11 +2670,13 @@ namespace JSC {
 
         void emitBytecode(BytecodeGenerator&, RegisterID* destination);
         void setStartOffset(int offset) { m_startOffset = offset; }
+        void setEndOffset(int offset) { m_endOffset = offset; }
 
     private:
         ExpressionNode* m_expr;
         SourceElements* m_statements;
         int m_startOffset;
+        int m_endOffset;
     };
 
     class ClauseListNode final : public ParserArenaFreeable {
