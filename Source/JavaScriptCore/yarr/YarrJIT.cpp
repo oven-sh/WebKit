@@ -7213,9 +7213,14 @@ class YarrGenerator final : public YarrJITInfo {
         // the same line. The Begin op has already placed the index register at the
         // assertion point in every case.
         MatchDirection enclosingDirection = m_direction;
+        unsigned enclosingFrameStart = m_frameStart;
         m_direction = bodyDirection;
         if (bodyDirection == Backward)
             checkedOffset = 0;
+        // A forward body in a lookbehind claims rightwards from the assertion point, not on top of
+        // what the lookbehind has claimed leftwards.
+        if (bodyDirection == Backward || enclosingDirection == Backward)
+            m_frameStart = checkedOffset;
 
         appendOp(YarrOpCode::SimpleNestedAlternativeBegin);
         m_ops.last().m_previousOp = notFound;
@@ -7255,6 +7260,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         // The End op is back in the enclosing direction.
         m_direction = enclosingDirection;
+        m_frameStart = enclosingFrameStart;
 
         size_t parenEnd = m_ops.size();
         appendOp(YarrOpCode::ParentheticalAssertionEnd);
@@ -7272,9 +7278,9 @@ class YarrGenerator final : public YarrJITInfo {
     // Called to emit nodes for all terms in an alternative.
     void opCompileAlternative(Checked<unsigned> checkedOffset, PatternAlternative* alternative)
     {
-        // No string has this many characters, so the input check on entry always fails and the terms
-        // are never reached. Compiling them would add to an offset that is already close to UINT_MAX.
-        if (checkedOffset > static_cast<unsigned>(INT_MAX)) [[unlikely]]
+        // No string has this many characters in one direction, so the input check on entry always fails
+        // and the terms are never reached. Compiling them would add to an offset close to UINT_MAX.
+        if (checkedOffset - m_frameStart > static_cast<unsigned>(INT_MAX)) [[unlikely]]
             return;
 
         optimizeAlternative(alternative);
@@ -10109,6 +10115,8 @@ private:
     // that the direction-aware primitives (input checks, character addressing,
     // end-of-input) emit the leftward variants inside lookbehind bodies.
     MatchDirection m_direction { Forward };
+    // The checked offset that claims in m_direction count from, while compiling ops.
+    unsigned m_frameStart { 0 };
 
     // Owns the mirrored (term-reversed) copies of lookbehind bodies. The original
     // YarrPattern is left untouched so the bytecode fallback remains valid.
