@@ -56,6 +56,10 @@ namespace WTF {
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(Vector, WTF_EXPORT_PRIVATE);
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(VectorBuffer, WTF_EXPORT_PRIVATE);
 
+#if USE(BUN_JSC_ADDITIONS)
+WTF_EXPORT_PRIVATE NEVER_INLINE NO_RETURN_DUE_TO_CRASH void crashDueToBorrowedVector();
+#endif
+
 enum class NulloptBehavior : bool { Ignore, Abort };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -344,7 +348,15 @@ protected:
 
     void crashIfBorrowed() const
     {
+#if USE(BUN_JSC_ADDITIONS) && !ASSERT_ENABLED
+        // RELEASE_ASSERT's crash takes __FILE__ and __PRETTY_FUNCTION__ on Darwin: a string for every instantiation of
+        // this template and a register setup wherever this is inlined, about 1 MB of a release build. The check stays,
+        // and every instantiation shares one crash.
+        if (m_isBorrowed) [[unlikely]]
+            crashDueToBorrowedVector();
+#else
         RELEASE_ASSERT(!m_isBorrowed);
+#endif
     }
 };
 
