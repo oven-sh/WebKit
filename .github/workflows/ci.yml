@@ -1,11 +1,12 @@
 name: CI
 
-# Builds every lane of bun-webkit, publishes them as one GitHub release, and tests the lanes that are marked as tested.
+# Builds every lane of bun-webkit, tests the lanes that are marked as tested, and publishes them all as one GitHub
+# release when every lane built and every test passed.
 # A push to main and a pull request run exactly the same jobs; they differ in the commit that is built (env.REF), in
 # the name of the release (the `plan` job's `tag`), and in that a pull request gets a comment linking its release.
 #
-#   plan ──> image ──> build, build-tested ──> release
-#                           └────────> test
+#   plan ──> image ──> build ───────────────────> release
+#                  └──> build-tested ──> test ──┘
 #        ──> prune (main only)
 #
 # A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
@@ -307,11 +308,11 @@ jobs:
   # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
   # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
   #
-  # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
-  # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
-  # the job fails.
+  # `release` waits for this job: when any test fails, on any tested lane, the draft is deleted and nothing is
+  # published, on main as on a pull request. A test that fails once in a while is a failing test: nothing is run a
+  # second time. --no-fail-fast below means every test runs and every failure is reported before the job fails.
   test:
-    name: Test ${{ matrix.label }}
+    name: Test ${{ matrix.label }} #${{ matrix.repeat }}
     # It runs the branch's code, and only needs to check it out: the jsc shell is an artifact of this run.
     permissions:
       contents: read
@@ -490,7 +491,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: jsc-test-results-${{ matrix.label }}
+          name: jsc-test-results-${{ matrix.label }}-${{ matrix.repeat }}
           path: |
             ${{ runner.temp }}/jsc-results.json
             ${{ runner.temp }}/jsc-failures.log
@@ -500,8 +501,9 @@ jobs:
 
   release:
     name: release
-    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
-    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    # Runs whatever happened to the builds and the tests (also when the run was cancelled), so the draft never outlives
+    # the run: it is published when every build job succeeded, every test leg passed and every listed asset is on it,
+    # and deleted otherwise.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -509,6 +511,7 @@ jobs:
       - plan
       - build
       - build-tested
+      - test
     steps:
       # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
       - name: Publish or delete the draft
@@ -526,6 +529,9 @@ jobs:
           if [ -n "$failed" ]; then
             echo "jobs that did not succeed:"; echo "$failed"; ok=false
           else
+            # `plan` made the draft. It is gone if this is a re-run of only the jobs that failed, after this job deleted
+            # it in the earlier attempt (a failed test leaves every lane built, so nothing before here notices).
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .id >/dev/null 2>&1 || { echo "::error::no release for $TAG (id $RELEASE_ID): an earlier attempt of this run deleted the draft. Use 'Re-run all jobs' so that plan creates it again."; exit 1; }
             jq -r '.[]' <<< "$LABELS" | sort > expected.txt
             gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq '.assets[].name' | sed 's/\.tar\.gz$//' | sort > uploaded.txt
             missing=$(comm -23 expected.txt uploaded.txt)
