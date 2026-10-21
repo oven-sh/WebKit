@@ -141,13 +141,18 @@ void Watchdog::startTimer(Seconds timeLimit)
         return; // Wait for the current active timer to expire before starting a new one.
 
     // Else, the current active timer won't fire soon enough. So, start a new timer.
+    // The OS refused the queue's thread (pthread_create EAGAIN under a thread or pid limit): the limit is not
+    // enforced until a later start can create it.
+    WorkQueue* queue = VMTraps::tryQueue();
+    if (!queue)
+        return;
     m_deadline = deadline;
 
     // We need to ensure that the Watchdog outlives the timer.
     // For the same reason, the timer may also outlive the VM that the Watchdog operates on.
     // So, we always need to null check m_vm before using it. The VM will notify the Watchdog
     // via willDestroyVM() before it goes away.
-    VMTraps::queue().dispatchAfter(timeLimit, [protectedThis = Ref { *this }] {
+    queue->dispatchAfter(timeLimit, [protectedThis = Ref { *this }] {
         Locker locker { protectedThis->m_lock };
         if (protectedThis->m_vm)
             protectedThis->m_vm->notifyNeedWatchdogCheck();

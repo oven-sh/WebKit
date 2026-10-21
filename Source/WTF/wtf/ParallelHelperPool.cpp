@@ -131,7 +131,9 @@ Ref<ParallelHelperPool> ParallelHelperPool::create(ASCIILiteral threadName)
 
 ParallelHelperPool::ParallelHelperPool(ASCIILiteral threadName)
     : m_lock(Box<Lock>::create())
-    , m_workAvailableCondition(AutomaticThreadCondition::create())
+    // A helper the OS refuses to create (pthread_create EAGAIN under a thread or pid limit) is not
+    // fatal: the client runs the task on its own thread and the helpers retry on the next task.
+    , m_workAvailableCondition(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
     , m_threadName(threadName)
 {
 }
@@ -144,6 +146,9 @@ ParallelHelperPool::~ParallelHelperPool()
         Locker locker { *m_lock };
         m_isDying = true;
         m_workAvailableCondition->notifyAll(locker);
+        // A helper that never got an underlying thread has nothing to join.
+        for (RefPtr<AutomaticThread>& thread : m_threads)
+            thread->tryStop(locker);
     }
 
     for (RefPtr<AutomaticThread>& thread : m_threads)

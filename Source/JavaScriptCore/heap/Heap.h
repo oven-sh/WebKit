@@ -654,8 +654,9 @@ public:
     // already be called for you at the right times.
     inline void stopIfNecessary();
     
-    // This gives the conn to the collector.
-    void relinquishConn();
+    // This gives the conn to the collector. Returns false when the mutator had to keep it because the
+    // OS refused to create the collector thread.
+    bool relinquishConn();
     
     bool mayNeedToStop() { return m_worldState.loadRelaxed() != hasAccessBit; }
 
@@ -783,8 +784,7 @@ private:
     bool handleNeedCollectionEpilogue(unsigned);
     void handleNeedCollectionEpilogue();
     
-    bool relinquishConn(unsigned);
-    void finishRelinquishingConn();
+    bool finishRelinquishingConn();
     
     void setNeedCollectionEpilogue();
     void waitWhileNeedCollectionEpilogue();

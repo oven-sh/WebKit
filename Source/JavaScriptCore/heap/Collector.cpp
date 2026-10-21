@@ -124,7 +124,9 @@ Collector::Collector()
     , m_helperClient(&heapHelperPool())
     , m_constraintSet(makeUnique<MarkingConstraintSet>())
     , m_threadLock(Box<Lock>::create())
-    , m_threadCondition(AutomaticThreadCondition::create())
+    // If the OS refuses to create the collector thread (pthread_create EAGAIN under a thread or pid
+    // limit), a mutator finishes the collection itself. See notifyThreadWithLock().
+    , m_threadCondition(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 {
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
@@ -237,8 +239,32 @@ GCRequest::Ticket Collector::requestCollection(Heap& requester, GCRequest reques
     m_lastGrantedTicket++;
     // A mutator that has the conn serves the request at its next poll, and otherwise the collector thread does.
     if (!anyMutatorHasConnWithLock())
-        m_threadCondition->notifyOne(locker);
+        notifyThreadWithLock(locker, &requester);
     return m_lastGrantedTicket;
+}
+
+// Wakes or starts the collector thread. Returns false when the OS refused to create it (pthread_create EAGAIN:
+// RLIMIT_NPROC, a cgroup pids limit). Nothing else can serve the pending work then, so the mutator of `requester`
+// takes the conn and runs the collection itself at its stopIfNecessary() polls, the same way it does after
+// stealing the conn in requestCollection(); runConcurrentPhase() does the collector's marking on that mutator.
+// A stop request that Heap::releaseAccessSlow() left for the collector is withdrawn for the same reason: the
+// collector that would have resumed the mutator does not exist.
+bool Collector::notifyThreadWithLock(const AbstractLocker& locker, Heap* requester)
+{
+    if (m_threadCondition->notifyOne(locker)) {
+        m_threadCouldNotStart.store(false, std::memory_order_relaxed);
+        return true;
+    }
+    m_threadCouldNotStart.store(true, std::memory_order_relaxed);
+    if (!requester || !hasHeap(*requester))
+        return false;
+    dataLogLnIf(CollectorInternal::verbose, "Taking the conn: the collector thread could not start.");
+    for (;;) {
+        unsigned oldState = requester->m_worldState.load();
+        unsigned newState = (oldState | Heap::mutatorHasConnBit) & ~Heap::stoppedBit;
+        if (requester->m_worldState.compareExchangeWeak(oldState, newState))
+            return false;
+    }
 }
 
 bool Collector::shouldCollectInCollectorThread()
@@ -580,6 +606,16 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
 
     switch (conn) {
     case GCConductor::Mutator: {
+        // No collector thread can be created, so nobody would do its share of the marking and the
+        // collection would never end: do it here, on the mutator, until marking terminates.
+        if (m_threadCouldNotStart.load(std::memory_order_relaxed)) [[unlikely]] {
+            {
+                ParallelModeEnabler enabler(visitor);
+                visitor.drainInParallel();
+            }
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
+
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
@@ -822,10 +858,11 @@ auto Collector::requestMembershipChange(MembershipChange&& change) -> Membership
         ++m_lastAppliedMembershipChange;
         return ticket;
     }
+    Heap* heap = change.heap;
     m_membershipChanges.append(WTF::move(change));
     // A mutator that has the conn applies the change at its next poll, and otherwise the collector thread does.
     if (!anyMutatorHasConnWithLock())
-        m_threadCondition->notifyOne(locker);
+        notifyThreadWithLock(locker, heap);
     return ticket;
 }
 

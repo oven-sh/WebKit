@@ -43,6 +43,7 @@
 #include "WaiterListManager.h"
 #include "Watchdog.h"
 #include <wtf/Condition.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
 #include <wtf/Scope.h>
 #include <wtf/ThreadMessage.h>
@@ -268,8 +269,14 @@ public:
     {
         if (m_scheduled)
             return;
+        // No thread for the sender: the trap still fires at the next stack check because
+        // m_stack.requestStop() lowered the limit. Optimized code with no calls runs on until
+        // a later fireTrap() on this VM retries the queue (updateThreadStopRequestIfNeeded).
+        WorkQueue* queue = VMTraps::tryQueue();
+        if (!queue)
+            return;
         m_scheduled = true;
-        VMTraps::queue().dispatch([protectedThis = Ref { *this }] {
+        queue->dispatch([protectedThis = Ref { *this }] {
             protectedThis->work();
         });
     }
@@ -350,14 +357,21 @@ private:
 
 #endif // ENABLE(SIGNAL_BASED_VM_TRAPS)
 
+WorkQueue* VMTraps::tryQueue()
+{
+    static NeverDestroyed<RefPtr<WorkQueue>> workQueue;
+    static Lock lock;
+    Locker locker { lock };
+    if (!workQueue.get())
+        workQueue.get() = WorkQueue::tryCreate("JSC VMTraps Signal Sender"_s);
+    return workQueue.get().get();
+}
+
 WorkQueue& VMTraps::queue()
 {
-    static LazyNeverDestroyed<Ref<WorkQueue>> workQueue;
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        workQueue.construct(WorkQueue::create("JSC VMTraps Signal Sender"_s));
-    });
-    return workQueue.get();
+    WorkQueue* queue = tryQueue();
+    RELEASE_ASSERT(queue);
+    return *queue;
 }
 
 void VMTraps::initializeSignals()
@@ -429,8 +443,15 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
 
     bool shouldStop = needHandling(AsyncEvents);
 
-    if (shouldStop == m_threadStopRequested)
-        return; // State already matches, nothing to do.
+    if (shouldStop == m_threadStopRequested) {
+#if ENABLE(SIGNAL_BASED_VM_TRAPS)
+        // The state matches. If the signal sender could not be scheduled when the stop was requested
+        // (the OS refused its thread), this request retries it.
+        if (shouldStop && m_signalSender && !Options::usePollingTraps())
+            m_signalSender->notify(locker);
+#endif
+        return;
+    }
 
     if (shouldStop)
         requestThreadStopIfNeeded(locker);

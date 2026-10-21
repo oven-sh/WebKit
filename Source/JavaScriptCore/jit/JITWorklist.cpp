@@ -43,7 +43,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(JITWorklist);
 
 JITWorklist::JITWorklist()
     : m_lock(Box<Lock>::create())
-    , m_planEnqueued(AutomaticThreadCondition::create())
+    // A compiler thread the OS refuses to create (pthread_create EAGAIN under a thread or pid limit)
+    // is not fatal: enqueue() compiles the plan on the calling thread instead.
+    , m_planEnqueued(AutomaticThreadCondition::create(AutomaticThreadCondition::StartFailure::Retry))
 {
     m_maximumNumberOfConcurrentCompilationsPerTier = {
         Options::numberOfBaselineCompilerThreads(),
@@ -142,7 +144,10 @@ void JITWorklist::wakeThreads(const AbstractLocker& locker, unsigned enqueuedTie
         targetNumThreads = std::min(targetNumThreads, maxThreads);
     }
     while (m_numberOfActiveThreads < targetNumThreads) {
-        m_planEnqueued->notifyOne(locker);
+        // False means the OS refused to create a thread: an active-thread count that never came to
+        // life must not be recorded. enqueue() compiles on the calling thread when none is active.
+        if (!m_planEnqueued->notifyOne(locker))
+            return;
         m_numberOfActiveThreads++;
     }
     ASSERT(m_numberOfActiveThreads >= 1);
@@ -175,9 +180,26 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
     ASSERT(m_plans.find(plan->key()) == m_plans.end());
     m_plans.add(plan->key(), plan.copyRef());
     m_totalLoad += planLoad(plan);
-    m_queues[tier].append(WTF::move(plan));
+    m_queues[tier].append(plan.copyRef());
     wakeThreads(locker, tier);
-    return CompilationResult::CompilationDeferred;
+    if (m_numberOfActiveThreads)
+        return CompilationResult::CompilationDeferred;
+
+    // The OS refused to create a compiler thread (pthread_create EAGAIN under a thread or pid limit) and none is
+    // awake to take the queue, so the plan would never be compiled. Compile it here instead, as without a
+    // concurrent JIT. Nothing ran between the append and here: the plan is still last in its queue.
+    RELEASE_ASSERT(m_queues[tier].last() == plan.ptr());
+    m_queues[tier].removeLast();
+    m_plans.remove(plan->key());
+    m_totalLoad -= planLoad(plan);
+    locker.unlockEarly();
+#if USE(PROTECTED_JIT)
+    ArenaLifetime saLifetime;
+#endif
+    plan->compileInThread(nullptr);
+    if (plan->stage() != JITPlanStage::Canceled)
+        plan->endSignpost();
+    return plan->finalize();
 }
 
 size_t JITWorklist::queueLength() const

@@ -2038,6 +2038,7 @@ NEVER_INLINE void Heap::collectInMutatorThread()
 template<typename Func>
 void Heap::waitForCollector(NOESCAPE const Func& func)
 {
+    bool collectorThreadCouldNotStart = false;
     for (;;) {
         bool done;
         {
@@ -2061,11 +2062,22 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        relinquishConn();
+        // Once the OS has refused the collector thread, this thread stops offering the conn for the
+        // rest of this wait: each offer would retry the thread.
+        if (!collectorThreadCouldNotStart && !relinquishConn())
+            collectorThreadCouldNotStart = true;
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
             return;
+        }
+
+        // We still have the conn if the collector thread could not be created. Nobody else can finish
+        // this collection: the next stopIfNecessarySlow() above runs it to the end on this thread
+        // (Collector::runConcurrentPhase drains on the mutator when no collector thread can start).
+        if (collectorThreadCouldNotStart) {
+            RELEASE_ASSERT(m_worldState.load() & mutatorHasConnBit);
+            continue;
         }
         
         // If mutatorWaitingBit is still set then we want to wait.
@@ -2135,38 +2147,41 @@ void Heap::releaseAccessSlow()
     }
 }
 
-bool Heap::relinquishConn(unsigned oldState)
-{
-    RELEASE_ASSERT(oldState & hasAccessBit);
-    RELEASE_ASSERT(!(oldState & stoppedBit));
-    
-    if (!(oldState & mutatorHasConnBit))
-        return false; // Done.
-    
-    if (!m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
-        return true; // Loop around.
-    
-    finishRelinquishingConn();
-    return true;
-}
-
-void Heap::finishRelinquishingConn()
+// Returns false when the conn came back because the OS refused to create the collector thread.
+bool Heap::finishRelinquishingConn()
 {
     dataLogLnIf(HeapInternal::verbose, "Relinquished the conn.");
     
     sanitizeStackForVM(vm());
     
     Locker locker { *m_collector->m_threadLock };
+    bool handedOff = true;
     if (m_collector->hasWorkWithLock()) {
         RELEASE_ASSERT(!m_collector->m_threadShouldStop);
-        m_collector->m_threadCondition->notifyOne(locker);
+        handedOff = m_collector->notifyThreadWithLock(locker, this);
     }
     ParkingLot::unparkAll(&m_worldState);
+    return handedOff;
 }
 
-void Heap::relinquishConn()
+bool Heap::relinquishConn()
 {
-    while (relinquishConn(m_worldState.load())) { }
+    for (;;) {
+        unsigned oldState = m_worldState.load();
+        RELEASE_ASSERT(oldState & hasAccessBit);
+        RELEASE_ASSERT(!(oldState & stoppedBit));
+
+        if (!(oldState & mutatorHasConnBit))
+            return true; // Done.
+
+        if (!m_worldState.compareExchangeWeak(oldState, oldState & ~mutatorHasConnBit))
+            continue;
+
+        // If the conn came back because the collector thread could not be created, we are done: looping
+        // around would relinquish it again and retry the thread on every iteration.
+        if (!finishRelinquishingConn())
+            return false;
+    }
 }
 
 NEVER_INLINE bool Heap::handleNeedCollectionEpilogue(unsigned oldState)

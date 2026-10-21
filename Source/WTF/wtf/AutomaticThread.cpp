@@ -26,6 +26,8 @@
 #include "config.h"
 #include <wtf/AutomaticThread.h>
 
+#include <atomic>
+
 #include <wtf/DataLog.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
@@ -45,21 +47,29 @@ static constexpr Seconds idleReleaseDelay = 100_ms;
 
 Ref<AutomaticThreadCondition> AutomaticThreadCondition::create()
 {
-    return adoptRef(*new AutomaticThreadCondition);
+    return create(StartFailure::Crash);
 }
 
-AutomaticThreadCondition::AutomaticThreadCondition() = default;
+Ref<AutomaticThreadCondition> AutomaticThreadCondition::create(StartFailure startFailure)
+{
+    return adoptRef(*new AutomaticThreadCondition(startFailure));
+}
+
+AutomaticThreadCondition::AutomaticThreadCondition(StartFailure startFailure)
+    : m_startFailure(startFailure)
+{
+}
 
 AutomaticThreadCondition::~AutomaticThreadCondition() = default;
 
-void AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
+bool AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
 {
 #if USE(MIMALLOC)
     // A thread that is releasing its free memory only sees the notification when it is done with that.
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker) && !thread->m_isReleasingFreeMemory) {
             thread->notify(locker);
-            return;
+            return true;
         }
     }
 #endif
@@ -67,30 +77,33 @@ void AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker)) {
             thread->notify(locker);
-            return;
+            return true;
         }
     }
 
     for (auto& thread : m_threads) {
         if (!thread->hasUnderlyingThread(locker)) {
-            thread->start(locker);
-            return;
+            // If this one fails, the others would fail for the same reason: do not try them.
+            return thread->start(locker);
         }
     }
 
     m_condition.notifyOne();
+    return true;
 }
 
-void AutomaticThreadCondition::notifyAll(const AbstractLocker& locker)
+bool AutomaticThreadCondition::notifyAll(const AbstractLocker& locker)
 {
     m_condition.notifyAll();
 
+    bool startedAll = true;
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker))
             thread->notify(locker);
-        else if (!thread->hasUnderlyingThread(locker))
-            thread->start(locker);
+        else if (startedAll && !thread->hasUnderlyingThread(locker))
+            startedAll = thread->start(locker);
     }
+    return startedAll;
 }
 
 void AutomaticThreadCondition::wait(Lock& lock)
@@ -182,13 +195,28 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
-void AutomaticThread::start(const AbstractLocker&)
+// The OS refuses threads per uid or per cgroup, not per condition. After one refusal every StartFailure::Retry
+// start in this window fails without a pthread_create, which bounds the syscalls a process makes at the limit
+// (some users retry on every allocation).
+static constexpr Seconds startRetryDelay = 100_ms;
+static std::atomic<double> lastRefusedStartSeconds { -1 };
+
+bool AutomaticThread::start(const AbstractLocker&)
 {
     RELEASE_ASSERT(m_isRunning);
     
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
+
+    bool retryOnFailure = m_condition->startFailure() == AutomaticThreadCondition::StartFailure::Retry;
+    if (retryOnFailure) {
+        double lastRefused = lastRefusedStartSeconds.load(std::memory_order_relaxed);
+        if (lastRefused >= 0 && MonotonicTime::now().secondsSinceEpoch().seconds() - lastRefused < startRetryDelay.seconds()) {
+            m_hasUnderlyingThread = false;
+            return false;
+        }
+    }
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -202,7 +230,7 @@ void AutomaticThread::start(const AbstractLocker&)
         break;
     }
 
-    Thread::create(
+    RefPtr<Thread> thread = Thread::tryCreate(
         name(),
         [=, this] () {
             if (verbose)
@@ -306,7 +334,20 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 RELEASE_ASSERT(result == WorkResult::Continue);
             }
-        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec)->detach();
+        }, m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec);
+
+    if (!thread) {
+        // The entry point (and its ref to this) was destroyed without running.
+        m_hasUnderlyingThread = false;
+        RELEASE_ASSERT_WITH_MESSAGE(retryOnFailure, "Could not create the underlying thread for %s", name().characters());
+        lastRefusedStartSeconds.store(MonotonicTime::now().secondsSinceEpoch().seconds(), std::memory_order_relaxed);
+        if (verbose)
+            dataLog(RawPointer(this), ": Could not create the underlying thread; will retry on the next notify.\n");
+        return false;
+    }
+
+    thread->detach();
+    return true;
 }
 
 void AutomaticThread::threadDidStart()
