@@ -20,6 +20,7 @@ let neverMatches = [
     [`(?<=b{${max}}(?:a{${max}}(?:.\\b)?)?)`, "", "ab"],
     [`(?:(?:foo|barbaz|quxxxx|zipzap)a{${max - 3}})?b{${max}}`, "", "ab"],
     [`a{${max}}(?=(?:foo|barbaz|quxxxx|zipzap)b{${max - 3}})`, "", "ab"],
+    [`(?<=(?=(?:foo|barbaz|quxxxx|zipzap)a{${max - 3}})b{${max}})`, "", "ab"],
 ];
 
 for (let [source, flags, input] of neverMatches) {

@@ -8262,6 +8262,13 @@ class YarrGenerator final : public YarrJITInfo {
         info->firstCharacterOffset = checkedOffset - groupStart;
         if (info->firstCharacterOffset.hasOverflowed())
             return nullptr;
+        // emitInlineLiteralAlternative claims the rest of an alternative on top of checkedOffset.
+        for (auto& alternative : alternatives) {
+            Checked<unsigned, RecordOverflow> alternativeCheckedOffset(checkedOffset);
+            alternativeCheckedOffset += alternative->m_minimumSize - disjunction->m_minimumSize;
+            if (alternativeCheckedOffset.hasOverflowed())
+                return nullptr;
+        }
         info->frameLocation = term->frameLocation;
         info->disjunction = disjunction;
         info->enclosingCheckedOffset = checkedOffset;
