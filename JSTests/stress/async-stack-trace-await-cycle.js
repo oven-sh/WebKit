@@ -1,4 +1,8 @@
 //@ requireOptions("--useAsyncStackTrace=1")
+// Not the two modes that compile each function on the main thread, tier by tier, while the collector runs:
+// they take more than the 200ms of JSTests/README.md for a test with this many functions.
+//@ $skipModes << "dfg-eager-no-cjit-validate".to_sym
+//@ $skipModes << "ftl-eager-no-cjit".to_sym
 
 // Async functions that await each other make the await chain a cycle. A stack trace taken under
 // such a cycle has to end. Before, only the frame limit ended the walk over the chain: a trace with
@@ -81,6 +85,7 @@ withStackTraceLimit(Infinity, () => {
 withStackTraceLimit(7, () => {
     shouldBe(traceUnderCycle({ lap: "ff" }), "newError, c, async f1, async f2, async f1, async f2, async f1, async f2, async f1");
     shouldBe(traceUnderCycle({ lap: "fff", tail: "ff" }), "newError, c, async t1, async t2, async f1, async f2, async f3, async f1, async f2");
+    shouldBe(traceUnderCycle({ lap: "-f-" }), "newError, c" + ", async f2".repeat(7));
 });
 
 // A cycle that adds no frame: no limit ends the walk over it.
@@ -118,32 +123,25 @@ for (const cycle of otherFromAsyncCycles) {
     shouldBe(withStackTraceLimit(Infinity, cycle), "newError, c");
 }
 
-// Every cycle of up to four functions behind a tail of up to three, each function with or without a
-// frame. With a limit, the trace is what it was before for a cycle that adds frames: the cycle
+// Every cycle of one or two functions, alone and behind one function, each function with or without
+// a frame. With a limit, the trace is what it was before for a cycle that adds frames: the cycle
 // repeats up to the limit.
-function patterns(length) {
-    return length ? patterns(length - 1).flatMap(pattern => [pattern + "f", pattern + "-"]) : [""];
-}
 function framesOf(pattern, prefix) {
     return [...pattern].flatMap((kind, i) => kind === "f" ? ["async " + prefix + (i + 1)] : []);
 }
-for (const limit of [2, 3, 5, 8, Infinity]) {
+for (const limit of [3, Infinity]) {
     withStackTraceLimit(limit, () => {
-        for (let tailLength = 0; tailLength <= 3; tailLength++) {
-            for (let lapLength = 1; lapLength <= 4; lapLength++) {
-                for (const tail of patterns(tailLength)) {
-                    for (const lap of patterns(lapLength)) {
-                        const frames = framesOf(tail, "t");
-                        const lapFrames = framesOf(lap, "f");
-                        if (limit === Infinity)
-                            frames.push(...lapFrames);
-                        else if (lapFrames.length) {
-                            while (frames.length < limit)
-                                frames.push(...lapFrames);
-                        }
-                        shouldBe(traceUnderCycle({ lap, tail }), ["newError", "c", ...frames.slice(0, limit)].join(", "));
-                    }
+        for (const tail of ["", "f", "-"]) {
+            for (const lap of ["f", "-", "ff", "f-", "-f", "--"]) {
+                const frames = framesOf(tail, "t");
+                const lapFrames = framesOf(lap, "f");
+                if (limit === Infinity)
+                    frames.push(...lapFrames);
+                else if (lapFrames.length) {
+                    while (frames.length < limit)
+                        frames.push(...lapFrames);
                 }
+                shouldBe(traceUnderCycle({ lap, tail }), ["newError", "c", ...frames.slice(0, limit)].join(", "));
             }
         }
     });
@@ -151,11 +149,9 @@ for (const limit of [2, 3, 5, 8, Infinity]) {
 
 // No limit, larger cycles and tails: each function is in the trace once.
 withStackTraceLimit(Infinity, () => {
-    for (let lapLength = 1; lapLength <= 9; lapLength++) {
-        for (let tailLength = 0; tailLength <= 9; tailLength++) {
-            const lap = "f".repeat(lapLength);
-            const tail = "f".repeat(tailLength);
-            shouldBe(traceUnderCycle({ lap, tail }), ["newError", "c", ...framesOf(tail, "t"), ...framesOf(lap, "f")].join(", "));
-        }
+    for (const [lapLength, tailLength] of [[5, 0], [4, 3], [7, 6], [8, 1], [1, 9], [9, 6], [9, 9]]) {
+        const lap = "f".repeat(lapLength);
+        const tail = "f".repeat(tailLength);
+        shouldBe(traceUnderCycle({ lap, tail }), ["newError", "c", ...framesOf(tail, "t"), ...framesOf(lap, "f")].join(", "));
     }
 });

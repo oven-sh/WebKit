@@ -543,10 +543,12 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     walkAwaitChain(owner, results, getParentGenerator(generator), maxStackSize, getParentGenerator);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 void Interpreter::appendAsyncStackFrames(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const ScopedLambda<JSAsyncFunctionGenerator*(JSAsyncFunctionGenerator*)>& getParentGenerator)
 {
     walkAwaitChain(owner, results, firstGenerator, maxStackSize, getParentGenerator);
 }
+#endif
 
 template<typename GetParentGenerator>
 void Interpreter::walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* currentGenerator, size_t maxStackSize, const GetParentGenerator& getParentGenerator)
