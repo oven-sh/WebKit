@@ -197,6 +197,7 @@ public:
     void isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&&);
 
     void setPrivateClickMeasurementDebugMode(bool);
+    void setPrivateClickMeasurementPrivateRelayEnforcement(bool);
     void storePrivateClickMeasurement(const WebCore::PrivateClickMeasurement&);
     void simulatePrivateClickMeasurementConversion(int priority, int triggerData, const URL& sourceURL, const URL& destinationURL);
 
@@ -308,6 +309,7 @@ public:
     void setThirdPartyCookieBlockingMode(WebCore::ThirdPartyCookieBlockingMode, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsShouldEnbleSameSiteStrictEnforcementForTesting(bool enabled, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(bool enabled, CompletionHandler<void()>&&);
+    void setExemptAllowlistedCookiesFromITP(bool);
     void setResourceLoadStatisticsToSameSiteStrictCookiesForTesting(const URL&, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsFirstPartyHostCNAMEDomainForTesting(const URL& firstPartyURL, const URL& cnameURL, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsThirdPartyCNAMEDomainForTesting(const URL&, CompletionHandler<void()>&&);
@@ -507,7 +509,7 @@ public:
     void saveRecentSearches(const String& name, const Vector<WebCore::RecentSearch>&);
     void loadRecentSearches(const String& name, CompletionHandler<void(Vector<WebCore::RecentSearch>&&)>&&);
 
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     void clearProxyConfigData();
     void setProxyConfigData(Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>&&);
 #endif
@@ -723,9 +725,6 @@ private:
 
 #if PLATFORM(COCOA)
     const RefPtr<EnhancedSecuritySitesHolder> m_enhancedSecuritySites;
-#endif
-
-#if HAVE(NW_PROXY_CONFIG)
     std::optional<Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>> m_proxyConfigData;
 #endif
     bool m_storageSiteValidationEnabled { true };

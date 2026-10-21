@@ -50,6 +50,9 @@
 #include "JSDOMBindingSecurity.h"
 #include "JSDOMWindow.h"
 #include "JSExecState.h"
+#include "LocalFrameInlines.h"
+#include "Node.h"
+#include "NodeDocument.h"
 #include "PageInspectorController.h"
 #include "Settings.h"
 #include "WebInjectedScriptHost.h"
@@ -180,15 +183,12 @@ void FrameInspectorController::createLazyAgents()
 
     m_didCreateLazyAgents = true;
 
-    RefPtr frame = m_frame.get();
-    if (!frame)
-        return;
-
+    Ref frame = m_frame;
     if (!frame->settings().siteIsolationEnabled())
         return;
 
     // Create debugger before agents that depend on it.
-    lazyInitialize(m_debugger, makeUnique<FrameDebugger>(*frame));
+    lazyInitialize(m_debugger, makeUnique<FrameDebugger>(frame.get()));
 
     if (CheckedPtr scriptProfilerAgent = m_instrumentingAgents->persistentScriptProfilerAgent())
         scriptProfilerAgent->installProfilingClientIfTracking(*m_debugger);
@@ -230,6 +230,20 @@ void FrameInspectorController::connectFrontend(Inspector::FrontendChannel& front
         m_injectedScriptManager->addClient();
         m_agents.didCreateFrontendAndBackend();
     }
+
+    // The node may belong to a document the frame has since navigated away from.
+    if (RefPtr node = std::exchange(m_pendingNodeToInspect, nullptr); node && m_domAgent && &node->document() == m_frame->document())
+        CheckedRef { *m_domAgent }->inspect(*node);
+}
+
+void FrameInspectorController::inspect(Node& node)
+{
+    if (m_frontendRouter->hasFrontends() && m_domAgent) {
+        CheckedRef { *m_domAgent }->inspect(node);
+        return;
+    }
+
+    m_pendingNodeToInspect = WeakPtr<Node, WeakPtrImplWithEventTargetData> { node };
 }
 
 void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& frontendChannel)
@@ -239,6 +253,7 @@ void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& fr
 
     bool disconnectedLastFrontend = !m_frontendRouter->hasFrontends();
     if (disconnectedLastFrontend) {
+        m_pendingNodeToInspect = nullptr;
         m_agents.willDestroyFrontendAndBackend(DisconnectReason::InspectorDestroyed);
         m_injectedScriptManager->removeClient();
         InspectorInstrumentation::unregisterInstrumentingAgents(m_instrumentingAgents.get());
@@ -247,6 +262,8 @@ void FrameInspectorController::disconnectFrontend(Inspector::FrontendChannel& fr
 
 void FrameInspectorController::inspectedFrameDestroyed()
 {
+    m_pendingNodeToInspect = nullptr;
+
     if (!m_frontendRouter->hasFrontends())
         return;
 

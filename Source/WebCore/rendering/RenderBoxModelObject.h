@@ -68,8 +68,15 @@ class RenderBoxModelObject : public RenderLayerModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderBoxModelObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderBoxModelObject);
 public:
+    // An inline box is a RenderBoxModelObject of its own. Boxes and line breaks use the protected constructors.
+    RenderBoxModelObject(Type, Element&, Style::ComputedStyle&&);
+    RenderBoxModelObject(Type, Document&, Style::ComputedStyle&&);
     virtual ~RenderBoxModelObject();
-    
+
+    ASCIILiteral renderName() const override;
+    bool canHaveChildren() const override { return isInlineBox(); }
+    void paint(PaintInfo&, const LayoutPoint&) override { ASSERT_NOT_REACHED(); }
+
     LayoutSize relativePositionOffset() const;
 
     FloatRect constrainingRectForStickyPosition() const;
@@ -198,12 +205,14 @@ public:
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const override;
 
+    void imageChanged(WrappedImagePtr, const IntRect* = nullptr) override;
+
     bool LEGACY_NODELETE fixedBackgroundPaintsInLocalCoordinates() const;
     DecodingMode decodingModeForImageDraw(const Image&, const PaintInfo&) const;
 
     void paintMaskForTextFillBox(GraphicsContext&, const FloatRect&, const InlineIterator::InlineBoxIterator&, const LayoutRect&);
 
-    // For RenderBlocks and RenderInlines with m_style->pseudoElementType() == PseudoElementType::FirstLetter, this tracks their remaining text fragments
+    // For RenderBlocks and inline boxes with m_style->pseudoElementType() == PseudoElementType::FirstLetter, this tracks their remaining text fragments
     RenderTextFragment* LEGACY_NODELETE firstLetterRemainingText() const;
     void setFirstLetterRemainingText(RenderTextFragment&);
     void clearFirstLetterRemainingText();
@@ -241,8 +250,8 @@ private:
     RenderBlock* containingBlockForAutoHeightDetectionGeneric(const auto& logicalHeight) const;
 };
 
-bool isEmptyInline(const RenderBoxModelObject&);
-RenderObject* firstContentfulChild(RenderBoxModelObject&);
+bool LEGACY_NODELETE isEmptyInline(const RenderBoxModelObject&);
+RenderObject* LEGACY_NODELETE firstContentfulChild(RenderBoxModelObject&);
 
 WEBCORE_EXPORT LayoutUnit borderLeft(const RenderBoxModelObject&);
 WEBCORE_EXPORT LayoutUnit borderTop(const RenderBoxModelObject&);

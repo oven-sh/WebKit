@@ -1347,7 +1347,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ImplementationVisibility.h
     runtime/ImportMap.h
     runtime/IndexingHeader.h
-    runtime/IndexingHeaderInlines.h
     runtime/IndexingType.h
     runtime/IndexingTypeInlines.h
     runtime/IndirectEvalExecutable.h

@@ -113,7 +113,7 @@ public:
 
     virtual RenderingMode renderingMode() const { return RenderingMode::Unaccelerated; }
     virtual size_t memoryCost() const { return calculateMemoryCost(m_backendSize, bytesPerRow()); }
-    WEBCORE_EXPORT AffineTransform baseTransform() const;
+    WEBCORE_EXPORT AffineTransform LEGACY_NODELETE baseTransform() const;
 
     virtual GraphicsContext& context() = 0;
     virtual void flushContext() { }
@@ -163,7 +163,8 @@ public:
 
     virtual bool isNullImageBufferBackend() const { return false; }
 
-    virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const { return nullptr; }
+    virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() { return nullptr; }
+    virtual void releaseLayerContentsDisplayDelegate() { }
 
     virtual void prepareForDisplay() { }
 

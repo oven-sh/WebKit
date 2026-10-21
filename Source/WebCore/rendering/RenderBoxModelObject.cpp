@@ -56,7 +56,6 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderFragmentContainer.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerCompositor.h"
@@ -125,15 +124,15 @@ static FirstLetterRemainingTextMap& LEGACY_NODELETE firstLetterRemainingTextMap(
     return map;
 }
 
-static RenderObject* firstContentfulChild(const RenderBoxModelObject& renderer)
+static RenderObject* LEGACY_NODELETE firstContentfulChild(const RenderBoxModelObject& renderer)
 {
     for (auto& current : childrenOfType<RenderObject>(renderer)) {
         if (current.isFloatingOrOutOfFlowPositioned())
             continue;
         if (auto* text = dynamicDowncast<RenderText>(current); text && text->containsOnlyCollapsibleWhitespace())
             continue;
-        if (auto* renderInline = dynamicDowncast<RenderInline>(current)) {
-            if (auto* nested = firstContentfulChild(*renderInline))
+        if (current.isInlineBox()) {
+            if (auto* nested = firstContentfulChild(downcast<RenderBoxModelObject>(current)))
                 return nested;
             continue;
         }
@@ -187,7 +186,7 @@ void RenderBoxModelObject::setSelectionState(HighlightState state)
     else
         RenderLayerModelObject::setSelectionState(state);
 
-    // FIXME: We should consider whether it is OK propagating to ancestor RenderInlines.
+    // FIXME: We should consider whether it is OK propagating to ancestor inline boxes.
     // This is a workaround for http://webkit.org/b/32123
     // The containing block can be null in case of an orphaned tree.
     RenderBlock* containingBlock = this->containingBlock();
@@ -199,17 +198,45 @@ RenderBoxModelObject::RenderBoxModelObject(Type type, Element& element, Style::C
     : RenderLayerModelObject(type, element, WTF::move(style), baseTypeFlags | TypeFlag::IsBoxModelObject, typeSpecificFlags)
 {
     ASSERT(isRenderBoxModelObject());
+    setChildrenInline(isInlineBox());
 }
 
 RenderBoxModelObject::RenderBoxModelObject(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
     : RenderLayerModelObject(type, document, WTF::move(style), baseTypeFlags | TypeFlag::IsBoxModelObject, typeSpecificFlags)
 {
     ASSERT(isRenderBoxModelObject());
+    setChildrenInline(isInlineBox());
+}
+
+RenderBoxModelObject::RenderBoxModelObject(Type type, Element& element, Style::ComputedStyle&& style)
+    : RenderBoxModelObject(type, element, WTF::move(style), TypeFlag::IsInlineBox, { })
+{
+}
+
+RenderBoxModelObject::RenderBoxModelObject(Type type, Document& document, Style::ComputedStyle&& style)
+    : RenderBoxModelObject(type, document, WTF::move(style), TypeFlag::IsInlineBox, { })
+{
 }
 
 RenderBoxModelObject::~RenderBoxModelObject()
 {
     // Do not add any code here. Add it to willBeDestroyed() instead.
+}
+
+ASCIILiteral RenderBoxModelObject::renderName() const
+{
+    if (isInlineBox()) {
+        // FIXME: Inline boxes still report the RenderInline name to keep render tree dump based test results unchanged.
+        if (isRelativelyPositioned())
+            return "RenderInline (relative positioned)"_s;
+        if (isStickilyPositioned())
+            return "RenderInline (sticky positioned)"_s;
+        if (isPseudoElement() || isAnonymous())
+            return "RenderInline (generated)"_s;
+        return "RenderInline"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return { };
 }
 
 void RenderBoxModelObject::willBeDestroyed()
@@ -772,10 +799,10 @@ void RenderBoxModelObject::paintMaskForTextFillBox(GraphicsContext& context, con
     if (inlineBox) {
         auto paintOffset = scrolledPaintRect.location() - toLayoutSize(LayoutPoint(inlineBox->visualRectIgnoringBlockDirection().location()));
 
-        for (auto box = inlineBox->firstLeafBox(), end = inlineBox->endLeafBox(); box != end; box.traverseLineRightwardOnLine()) {
-            if (!box->isText())
+        for (auto& box : inlineBox->leafDescendants()) {
+            if (!box.isText())
                 continue;
-            TextBoxPainter { box->inlineContent(), box->displayBox(), box->displayBox().style(), maskInfo, paintOffset }.paint();
+            TextBoxPainter { box.inlineContent(), box.displayBox(), box.displayBox().style(), maskInfo, paintOffset }.paint();
         }
         return;
     }
@@ -805,6 +832,21 @@ LayoutSize RenderBoxModelObject::calculateImageIntrinsicDimensions(const Style::
     auto concreteObjectSize = sizing.resolve(naturalDimensions).size();
 
     return { LayoutUnit::fromFloatRound(concreteObjectSize.width()), LayoutUnit::fromFloatRound(concreteObjectSize.height()) };
+}
+
+void RenderBoxModelObject::imageChanged(WrappedImagePtr image, const IntRect*)
+{
+    if (!parent())
+        return;
+
+    bool isNonEmpty;
+    RefPtr styleImage = Style::findLayerUsedImage(style().backgroundLayers(), image, isNonEmpty);
+    if (styleImage && isNonEmpty) {
+        if (auto styleable = Styleable::fromRenderer(*this))
+            protect(document())->didLoadImage(protect(styleable->element).get(), protect(styleImage->cachedImage()));
+    }
+    // FIXME: We can do better.
+    repaint();
 }
 
 bool RenderBoxModelObject::fixedBackgroundPaintsInLocalCoordinates() const
@@ -926,13 +968,13 @@ bool RenderBoxModelObject::hasRunningAcceleratedAnimations() const
 void RenderBoxModelObject::applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect&, OptionSet<Style::TransformResolverOption>) const
 {
     // applyTransform() is only used through RenderLayer*, which only invokes this for RenderBox derived renderers, thus not for
-    // RenderInline/RenderLineBreak - the other two renderers that inherit from RenderBoxModelObject.
+    // inline boxes or RenderLineBreak.
     ASSERT_NOT_REACHED();
 }
 
 bool RenderBoxModelObject::requiresLayer() const
 {
-    return isPositioned() || createsGroup() || requiresRenderingConsolidationForViewTransition() || hasRunningAcceleratedAnimations();
+    return isPositioned() || createsGroup() || requiresRenderingConsolidationForViewTransition() || hasRunningAcceleratedAnimations() || style().willChange().canCreateStackingContext();
 }
 
 void RenderBoxModelObject::removeOutOfFlowBoxesIfNeededOnStyleChange(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
@@ -1052,22 +1094,22 @@ LayoutUnit RenderBoxModelObject::paddingBoxLogicalWidth() const
     if (!LayoutIntegration::LineLayout::containing(*this))
         return { };
 
-    auto inlineBox = InlineIterator::lineLeftmostInlineBoxFor(*this);
-    if (!inlineBox)
+    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*this);
+    if (!firstInlineBox)
         return { };
+
+    auto lastInlineBox = firstInlineBox;
+    while (auto next = std::ranges::next(lastInlineBox))
+        lastInlineBox = next;
 
     auto firstInlineBoxPaddingBoxLeft = LayoutUnit { };
     auto lastInlineBoxPaddingBoxRight = LayoutUnit { };
     if (writingMode().isBidiLTR()) {
-        firstInlineBoxPaddingBoxLeft = inlineBox->logicalLeftIgnoringInlineDirection() + borderStart();
-        for (; inlineBox->nextInlineBoxLineRightward(); inlineBox.traverseInlineBoxLineRightward()) { }
-        ASSERT(inlineBox);
-        lastInlineBoxPaddingBoxRight = inlineBox->logicalRightIgnoringInlineDirection() - borderEnd();
+        firstInlineBoxPaddingBoxLeft = firstInlineBox->logicalLeftIgnoringInlineDirection() + borderStart();
+        lastInlineBoxPaddingBoxRight = lastInlineBox->logicalRightIgnoringInlineDirection() - borderEnd();
     } else {
-        lastInlineBoxPaddingBoxRight = inlineBox->logicalRightIgnoringInlineDirection() - borderStart();
-        for (; inlineBox->nextInlineBoxLineRightward(); inlineBox.traverseInlineBoxLineRightward()) { }
-        ASSERT(inlineBox);
-        firstInlineBoxPaddingBoxLeft = inlineBox->logicalLeftIgnoringInlineDirection() + borderEnd();
+        lastInlineBoxPaddingBoxRight = firstInlineBox->logicalRightIgnoringInlineDirection() - borderStart();
+        firstInlineBoxPaddingBoxLeft = lastInlineBox->logicalLeftIgnoringInlineDirection() + borderEnd();
     }
     return std::max(0_lu, lastInlineBoxPaddingBoxRight - firstInlineBoxPaddingBoxLeft);
 }
@@ -1182,8 +1224,8 @@ LayoutRect RenderBoxModelObject::borderBoxRectInContainer() const
                 // FIXME: Always build the bounding box like this. LineLayouyt::enclosingBorderBoxRectFor does not include
                 // any post-layout box adjustments.
                 FloatRect result;
-                for (auto box = InlineIterator::lineLeftmostInlineBoxFor(*this); box; box.traverseInlineBoxLineRightward())
-                    result.unite(box->visualRectIgnoringBlockDirection());
+                for (auto& box : InlineIterator::inlineBoxesFor(*this))
+                    result.unite(box.visualRectIgnoringBlockDirection());
                 return enclosingIntRect(result);
             }
             return enclosingIntRect(layout->enclosingBorderBoxRectFor(*this));
@@ -1216,7 +1258,7 @@ auto RenderBoxModelObject::localRectsForRepaint(RepaintOutlineBounds) const -> R
         return { };
 
     auto repaintRect = visualOverflowRect();
-    repaintRect.inflate(LayoutUnit { style().usedOutlineSize(style().usedZoomForLength(), style().deviceScaleFactor()) });
+    repaintRect.inflate(LayoutUnit { usedStyle().outlineSize() });
     return { repaintRect };
 }
 

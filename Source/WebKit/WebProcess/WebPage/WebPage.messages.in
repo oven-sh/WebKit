@@ -209,7 +209,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     ScrollBy(enum:uint8_t WebCore::ScrollDirection scrollDirection, enum:uint8_t WebCore::ScrollGranularity scrollGranularity)
     CenterSelectionInVisibleArea()
 
-    GoToBackForwardItem(struct WebKit::GoToBackForwardItemParameters parameters)
+    GoToBackForwardItem(struct WebKit::GoToBackForwardItemParameters parameters) -> (enum:uint8_t WebKit::FrameTraversalResult result)
     GoToBackForwardItemWaitingForProcessLaunch(struct WebKit::GoToBackForwardItemParameters parameters, WebKit::WebPageProxyIdentifier pageID)
     TryRestoreScrollPosition()
 
@@ -235,6 +235,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     AllTopDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData> documentSyncData)
 
     FrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier frameID, struct WebCore::FrameTreeSyncSerializationData frameTreeSyncData)
+    FrameGeometryChangedInAnotherProcess(Vector<WebCore::FrameGeometryUpdate> updates)
     AllFrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier frameID, Ref<WebCore::FrameTreeSyncData> frameTreeSyncData)
 
     UpdateUserActivationState(Vector<WebCore::FrameIdentifier> frameIDs, MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
@@ -251,7 +252,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     Reload(WebCore::NavigationIdentifier navigationID, OptionSet<WebCore::ReloadOption> reloadOptions, WebKit::SandboxExtensionHandle sandboxExtensionHandle)
     StopLoading()
-    StopLoadingDueToProcessSwap()
+    StopLoadingDueToProcessSwap(WebCore::NavigationIdentifier navigationID)
     KeepBlobURLAliveForNewWindowNavigation(URL blobURL, std::optional<WebCore::SecurityOriginData> topOrigin) AllowedWhenWaitingForSyncReply
     ReleaseKeptBlobURLForNewWindowNavigation()
 
@@ -299,7 +300,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
 #if PLATFORM(COCOA)
     # Dictionary support.
-    PerformDictionaryLookupAtLocation(WebCore::FloatPoint point)
+    PerformDictionaryLookupAtLocation(WebCore::FrameIdentifier frameID, WebCore::FloatPoint point) -> (struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
 #endif
 
 #if ENABLE(DATA_DETECTION)
@@ -534,8 +535,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if PLATFORM(COCOA)
     DrawRectToImage(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (std::optional<WebCore::ShareableBitmapHandle> image) ReplyCanDispatchOutOfOrder
     DrawRectToImageDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (std::optional<WebCore::ShareableBitmapHandle> image) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
-    DrawPagesToPDF(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data)
-    DrawPagesToPDFDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
+    DrawPagesToPDF(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data) ReplyCanDispatchOutOfOrder
+    DrawPagesToPDFDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, uint32_t first, uint32_t count) -> (RefPtr<WebCore::SharedBuffer> data) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC ReplyCanDispatchOutOfOrder
 
     DrawPrintingRectToSnapshot(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (bool success) ReplyCanDispatchOutOfOrder
     DrawPrintingRectToSnapshotDuringDOMPrintOperation(WebKit::RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, WebCore::IntRect rect, WebCore::IntSize imageSize) -> (bool success) AllowedWhenWaitingForSyncReplyDuringUnboundedIPC
@@ -588,6 +589,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if PLATFORM(MAC)
     PerformAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier frameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
     ContinueAccessibilitySearchInParentFrame(WebCore::FrameIdentifier childFrameID, struct WebCore::AccessibilitySearchCriteriaIPC criteria) -> (Vector<WebCore::AccessibilityRemoteToken> results)
+    PostAccessibilitySelectedTextChangeFromRemoteFrame(struct WebCore::AXRemoteFrameSelectedTextChange change)
 #endif
 
 #if PLATFORM(MAC)
@@ -761,6 +763,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SetIsSuspended(bool suspended) -> (std::optional<bool> didSuspend)
     SuspendWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID) -> (bool success)
     RestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID, std::optional<std::pair<URL, WebCore::SecurityOriginData>> mainFrameURLAndOrigin) -> (bool success)
+    PrepareToRestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID)
+    CancelRestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID)
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     InsertAttachment(String identifier, std::optional<uint64_t> fileSize, String fileName, String contentType) -> ()
@@ -897,7 +901,6 @@ messages -> WebPage WantsAsyncDispatchMessage {
     DispatchLoadEventToFrameOwnerElement(WebCore::FrameIdentifier frameID)
     AddResourceTimingFromSubframe(WebCore::FrameIdentifier parentFrameID, WebCore::ResourceTiming resourceTiming)
 
-    ElementWasFocusedInAnotherProcess(WebCore::FrameIdentifier frameID, struct WebCore::FocusOptions options)
     FrameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier> frameID)
 
     RemotePostMessage(WebCore::FrameIdentifier source, WebCore::SecurityOriginData sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, struct WebCore::MessageWithMessagePorts message, struct std::optional<WebCore::UserGestureTokenData> userGestureToken)

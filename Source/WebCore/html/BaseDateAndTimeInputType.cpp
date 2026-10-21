@@ -58,6 +58,7 @@
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "StepRange.h"
+#include "StyleColorOptions.h"
 #include "Text.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include "UserAgentParts.h"
@@ -423,7 +424,7 @@ void BaseDateAndTimeInputType::updateInnerTextValue()
         return;
     }
 
-    DateTimeEditElement::LayoutParameters layoutParameters(input->locale());
+    DateTimeEditElement::LayoutParameters layoutParameters(protect(input->locale()));
 
     auto date = parseToDateComponents(input->value().get());
     if (date)
@@ -689,7 +690,7 @@ bool BaseDateAndTimeInputType::setupDateTimeChooserParameters(DateTimeChooserPar
 
     CheckedRef computedStyle = *element->computedStyle();
     parameters.isAnchorElementRTL = computedStyle->writingMode().computedTextDirection() == TextDirection::RTL;
-    parameters.useDarkAppearance = document->useDarkAppearance(computedStyle.ptr());
+    parameters.useDarkAppearance = document->styleColorOptions(computedStyle.ptr(), StyleColorOptionsPurpose::Rendering).contains(StyleColorOptions::UseDarkAppearance);
     auto date = valueOrDefault(parseToDateComponents(element->value().get()));
     parameters.hasSecondField = shouldHaveSecondField(date);
     parameters.hasMillisecondField = shouldHaveMillisecondField(date);

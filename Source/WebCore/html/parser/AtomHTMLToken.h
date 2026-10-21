@@ -73,19 +73,25 @@ public:
 
     std::span<const char16_t> characters() const;
     bool charactersIsAll8BitData() const;
+    bool isReplacedNullCharacter() const;
 
     // Comment
 
     const String& comment() const LIFETIME_BOUND;
     String& comment() LIFETIME_BOUND;
 
+    // Processing instruction
+
+    const AtomString& processingInstructionTarget() const LIFETIME_BOUND;
+    const String& processingInstructionData() const LIFETIME_BOUND;
+
     bool hasDuplicateAttribute() const { return m_hasDuplicateAttribute; }
 
 private:
     void initializeAttributes(const HTMLToken::AttributeList& attributes);
 
-    AtomString m_name; // StartTag, EndTag, DOCTYPE.
-    String m_data; // Comment
+    AtomString m_name; // StartTag, EndTag, DOCTYPE, ProcessingInstruction.
+    String m_data; // Comment, ProcessingInstruction.
     std::unique_ptr<DoctypeData> m_doctypeData; // DOCTYPE.
     Vector<Attribute> m_attributes; // StartTag, EndTag.
 
@@ -97,6 +103,7 @@ private:
     Type m_type;
     TagName m_tagName; // StartTag, EndTag.
     bool m_externalCharactersIsAll8BitData; // Character
+    bool m_isReplacedNullCharacter { false }; // Character
     bool m_selfClosing { false }; // StartTag, EndTag.
     bool m_hasDuplicateAttribute { false };
 };
@@ -171,6 +178,12 @@ inline bool AtomHTMLToken::charactersIsAll8BitData() const
     return m_externalCharactersIsAll8BitData;
 }
 
+inline bool AtomHTMLToken::isReplacedNullCharacter() const
+{
+    ASSERT(m_type == Type::Character);
+    return m_isReplacedNullCharacter;
+}
+
 inline const String& AtomHTMLToken::comment() const
 {
     ASSERT(m_type == Type::Comment);
@@ -180,6 +193,18 @@ inline const String& AtomHTMLToken::comment() const
 inline String& AtomHTMLToken::comment()
 {
     ASSERT(m_type == Type::Comment);
+    return m_data;
+}
+
+inline const AtomString& AtomHTMLToken::processingInstructionTarget() const
+{
+    ASSERT(m_type == Type::ProcessingInstruction);
+    return m_name;
+}
+
+inline const String& AtomHTMLToken::processingInstructionData() const
+{
+    ASSERT(m_type == Type::ProcessingInstruction);
     return m_data;
 }
 
@@ -276,9 +301,14 @@ inline AtomHTMLToken::AtomHTMLToken(HTMLToken& token)
             m_data = token.comment().span();
         return;
     }
+    case Type::ProcessingInstruction:
+        m_name = AtomString(token.processingInstructionTarget().span());
+        m_data = AtomString(token.processingInstructionData().span()).releaseString();
+        return;
     case Type::Character:
         m_externalCharacters = token.characters().span();
         m_externalCharactersIsAll8BitData = token.charactersIsAll8BitData();
+        m_isReplacedNullCharacter = token.isReplacedNullCharacter();
         return;
     }
     ASSERT_NOT_REACHED();

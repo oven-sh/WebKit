@@ -132,8 +132,8 @@ public:
     bool backgroundLayerPaintsFixedRootBackground() const { return m_backgroundLayerPaintsFixedRootBackground; }
 
     bool hasSVGPaintOrderSegments() const { return !m_svgPaintOrderSegments.isEmpty(); }
-    GraphicsLayer* svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
-    std::optional<WTF::Range<unsigned>> svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
+    GraphicsLayer* LEGACY_NODELETE svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
+    std::optional<WTF::Range<unsigned>> LEGACY_NODELETE svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
 
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
     GraphicsLayer* systemPreviewBadgeLayer() const { return m_systemPreviewBadgeLayer.get(); }
@@ -480,6 +480,7 @@ private:
     bool hasVisibleNonCompositedDescendants() const;
 
     bool shouldClipCompositedBounds() const;
+    static IntOutsets intersectClipsSampledByFilters(const RenderLayer&, const RenderLayer& rootLayer, LayoutRect& clipRect);
 
     bool hasTiledBackingFlatteningLayer() const { return (m_childContainmentLayer && m_isFrameLayerWithTiledBacking); }
     GraphicsLayer* tileCacheFlatteningLayer() const { return m_isFrameLayerWithTiledBacking ? m_childContainmentLayer.get() : nullptr; }
@@ -493,7 +494,7 @@ private:
     static AnimatedProperty LEGACY_NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
 
     bool canIssueSetNeedsDisplay() const { return !paintsIntoWindow() && !paintsIntoCompositedAncestor(); }
-    float pixelSnappingScaleFactor() const;
+    float LEGACY_NODELETE pixelSnappingScaleFactor() const;
     LayoutRect computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const;
     LayoutRect computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const;
 

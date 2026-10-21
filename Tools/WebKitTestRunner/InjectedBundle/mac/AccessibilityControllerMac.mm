@@ -33,6 +33,7 @@
 #import "AccessibilityCommonCocoa.h"
 #import "AccessibilityNotificationHandler.h"
 #import "AccessibilityUIElementClientMac.h"
+#import "DictionaryFunctions.h"
 #import "InjectedBundle.h"
 #import "InjectedBundlePage.h"
 #import "JSBasics.h"
@@ -46,6 +47,7 @@
 #import <WebKit/WKBundlePrivate.h>
 
 #import <pal/spi/mac/HIServicesSPI.h>
+#import <wtf/MonotonicTime.h>
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 #import <pal/spi/cocoa/AccessibilitySupportSPI.h>
@@ -142,7 +144,42 @@ bool AccessibilityController::removeClientNotificationListener()
     return true;
 }
 
-void AccessibilityController::clientNotificationReceived(uint64_t elementToken, JSStringRef notificationName)
+// The inverse of TestController::axValueToWK: element tokens become client elements.
+static JSValueRef clientValueToJS(JSContextRef context, WKTypeRef value)
+{
+    auto typeID = WKGetTypeID(value);
+    if (typeID == WKStringGetTypeID())
+        return JSValueMakeString(context, toJS(static_cast<WKStringRef>(value)).get());
+    if (typeID == WKBooleanGetTypeID())
+        return JSValueMakeBoolean(context, WKBooleanGetValue(static_cast<WKBooleanRef>(value)));
+    if (typeID == WKDoubleGetTypeID())
+        return JSValueMakeNumber(context, WKDoubleGetValue(static_cast<WKDoubleRef>(value)));
+    if (typeID == WKUInt64GetTypeID())
+        return JSValueMakeNumber(context, WKUInt64GetValue(static_cast<WKUInt64Ref>(value)));
+    if (typeID == WKArrayGetTypeID()) {
+        auto array = static_cast<WKArrayRef>(value);
+        Vector<JSValueRef> items;
+        for (size_t i = 0; i < WKArrayGetSize(array); ++i)
+            items.append(clientValueToJS(context, WKArrayGetItemAtIndex(array, i)));
+        return JSObjectMakeArray(context, items.size(), items.span().data(), nullptr);
+    }
+    if (typeID == WKDictionaryGetTypeID()) {
+        auto dictionary = static_cast<WKDictionaryRef>(value);
+        if (auto token = WKDictionaryGetItemForKey(dictionary, toWK("AXUIElementToken").get()); token && WKGetTypeID(token) == WKUInt64GetTypeID())
+            return toJS(context, AccessibilityUIElementClientMac::create(WKUInt64GetValue(static_cast<WKUInt64Ref>(token))).ptr());
+
+        JSObjectRef object = JSObjectMake(context, nullptr, nullptr);
+        WKRetainPtr keys = adoptWK(WKDictionaryCopyKeys(dictionary));
+        for (size_t i = 0; i < WKArrayGetSize(keys.get()); ++i) {
+            auto key = static_cast<WKStringRef>(WKArrayGetItemAtIndex(keys.get(), i));
+            JSObjectSetProperty(context, object, toJS(key).get(), clientValueToJS(context, WKDictionaryGetItemForKey(dictionary, key)), kJSPropertyAttributeNone, nullptr);
+        }
+        return object;
+    }
+    return JSValueMakeUndefined(context);
+}
+
+void AccessibilityController::clientNotificationReceived(uint64_t elementToken, JSStringRef notificationName, WKTypeRef userInfo)
 {
     if (!m_clientNotificationCallback)
         return;
@@ -152,8 +189,33 @@ void AccessibilityController::clientNotificationReceived(uint64_t elementToken, 
     JSValueRef arguments[3];
     arguments[0] = toJS(context, AccessibilityUIElementClientMac::create(elementToken).ptr());
     arguments[1] = JSValueMakeString(context, notificationName);
-    arguments[2] = JSValueMakeUndefined(context);
+    arguments[2] = userInfo ? clientValueToJS(context, userInfo) : JSValueMakeUndefined(context);
     JSObjectCallAsFunction(context, const_cast<JSObjectRef>(m_clientNotificationCallback), 0, 3, arguments, 0);
+}
+
+WKRetainPtr<WKTypeRef> AccessibilityController::sendClientAccessibilityRequest(const char* name, WKTypeRef body)
+{
+    auto requestID = m_nextClientAccessibilityRequestID++;
+    WKRetainPtr request = adoptWK(WKMutableDictionaryCreate());
+    setValue(request, "requestID", requestID);
+    setValue(request, "name", name);
+    if (body)
+        WKDictionarySetItem(request.get(), toWK("body").get(), body);
+    postPageMessage("AXAsyncRequest", request);
+
+    // Spin rather than block: serving the request can need this process's main thread, e.g. for a
+    // hit test, or for a search that reaches a remote frame.
+    auto timeout = MonotonicTime::now() + 10_s;
+    while (!m_clientAccessibilityReplies.contains(requestID) && MonotonicTime::now() < timeout)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, .001, false);
+
+    return m_clientAccessibilityReplies.take(requestID);
+}
+
+void AccessibilityController::clientAccessibilityReplyReceived(uint64_t requestID, WKTypeRef result)
+{
+    if (requestID < m_nextClientAccessibilityRequestID)
+        m_clientAccessibilityReplies.set(requestID, result);
 }
 
 void AccessibilityController::resetToConsistentState()

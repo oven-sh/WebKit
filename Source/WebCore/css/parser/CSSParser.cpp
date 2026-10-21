@@ -190,7 +190,7 @@ static Ref<ImmutableStyleProperties> createStyleProperties(ParsedPropertyVector&
 
 Ref<ImmutableStyleProperties> CSSParser::parseInlineStyleDeclaration(StringView string, const Element& element)
 {
-    CSSParserContext context(element.document());
+    CSSParserContext context(protect(element.document()));
     context.mode = strictToCSSParserMode(element.isHTMLElement() && !element.document().inQuirksMode());
 
     CSSParser parser(context, string);
@@ -1091,7 +1091,7 @@ RefPtr<StyleRuleCounterStyle> CSSParser::consumeCounterStyleRule(CSSParserTokenR
     auto descriptors = CSSCounterStyleDescriptors::create(name, createStyleProperties(declarations, m_context.mode));
     if (!descriptors.isValid())
         return nullptr;
-    return StyleRuleCounterStyle::create(name, WTF::move(descriptors));
+    return StyleRuleCounterStyle::create(WTF::move(descriptors));
 }
 
 RefPtr<StyleRuleViewTransition> CSSParser::consumeViewTransitionRule(CSSParserTokenRange prelude, CSSParserTokenRange block)

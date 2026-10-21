@@ -735,18 +735,23 @@ private:
 
     void escapeAllocation(Node* identifier)
     {
-        Allocation& allocation = getAllocation(identifier);
-        if (allocation.isEscapedAllocation())
-            return;
+        Vector<Node*, 16> worklist;
+        worklist.append(identifier);
 
-        Allocation unescaped = WTF::move(allocation);
-        allocation = Allocation(unescaped.identifier(), Allocation::Kind::Escaped);
+        while (!worklist.isEmpty()) {
+            Allocation& allocation = getAllocation(worklist.takeLast());
+            if (allocation.isEscapedAllocation())
+                continue;
 
-        for (const auto& entry : unescaped.fields())
-            escapeAllocation(entry.value);
+            Allocation unescaped = WTF::move(allocation);
+            allocation = Allocation(unescaped.identifier(), Allocation::Kind::Escaped);
 
-        if (m_wantEscapees)
-            m_escapees.add(unescaped.identifier(), WTF::move(unescaped));
+            for (const auto& entry : unescaped.fields())
+                worklist.append(entry.value);
+
+            if (m_wantEscapees)
+                m_escapees.add(unescaped.identifier(), WTF::move(unescaped));
+        }
     }
 
     void prune()
@@ -813,8 +818,39 @@ public:
     }
 
 private:
+    bool hasAllocationToSink()
+    {
+        for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            for (Node* node : *block) {
+                switch (node->op()) {
+                case NewObject:
+                case NewFunction:
+                case NewGeneratorFunction:
+                case NewAsyncGeneratorFunction:
+                case NewAsyncFunction:
+                case NewInternalFieldObject:
+                case NewRegExp:
+                case NewPromise:
+                case CreateActivation:
+                    return true;
+                case NewButterflyWithSize:
+                case NewArrayWithButterfly:
+                    if (Options::useArrayAllocationSinking())
+                        return true;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        return false;
+    }
+
     bool performSinking()
     {
+        if (!hasAllocationToSink())
+            return false;
+
         m_graph.computeRefCounts();
         m_graph.initializeNodeOwners();
         m_graph.ensureSSADominators();

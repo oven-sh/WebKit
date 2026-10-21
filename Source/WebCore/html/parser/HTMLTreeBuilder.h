@@ -125,6 +125,7 @@ private:
     void processStartTag(AtomHTMLToken&&);
     void processEndTag(AtomHTMLToken&&);
     void processComment(AtomHTMLToken&&);
+    void processProcessingInstruction(AtomHTMLToken&&);
     void processCharacter(AtomHTMLToken&&);
     void processEndOfFile(AtomHTMLToken&&);
 
@@ -200,7 +201,7 @@ private:
         DocumentFragment* fragment() const;
         Element& LEGACY_NODELETE contextElement();
         HTMLStackItem& LEGACY_NODELETE contextElementStackItem() LIFETIME_BOUND;
-        bool contextElementIsTemplate() const;
+        bool LEGACY_NODELETE contextElementIsTemplate() const;
 
     private:
         WeakPtr<DocumentFragment, WeakPtrImplWithEventTargetData> m_fragment;

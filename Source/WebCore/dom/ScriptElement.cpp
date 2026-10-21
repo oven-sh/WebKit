@@ -84,7 +84,7 @@ namespace WebCore {
 static const auto maxUserGesturePropagationTime = 1_s;
 
 ScriptElement::ScriptElement(Element& element, bool parserInserted, bool alreadyStarted)
-    : ActiveDOMObject(element.document())
+    : ActiveDOMObject(protect(element.document()))
     , m_element(element)
     , m_parserInserted(parserInserted ? ParserInserted::Yes : ParserInserted::No)
     , m_alreadyStarted(alreadyStarted)
@@ -423,7 +423,7 @@ bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosi
     auto nonce = element->nonce();
     auto crossOriginMode = element->attributeWithoutSynchronization(HTMLNames::crossoriginAttr);
     if (crossOriginMode.isNull())
-        crossOriginMode = ScriptElementCachedScriptFetcher::defaultCrossOriginModeForModule;
+        crossOriginMode = CachedScriptFetcher::defaultCrossOriginModeForModule;
 
     if (hasSourceAttribute()) {
         ASSERT(element->isConnected());
@@ -447,7 +447,7 @@ bool ScriptElement::requestModuleScript(const String& sourceText, const TextPosi
         m_isExternalScript = true;
         AtomString integrity = element->attributeWithoutSynchronization(HTMLNames::integrityAttr);
         if (integrity.isNull())
-            integrity = AtomString { document->globalObject()->importMap().integrityForURL(moduleScriptRootURL) };
+            integrity = AtomString { protect(document->globalObject()->importMap())->integrityForURL(moduleScriptRootURL) };
         Ref script = LoadableModuleScript::create(LoadableModuleScript::IsInline::No, nonce, integrity, referrerPolicy(), fetchPriority(), crossOriginMode,
             scriptCharset(), element->localName(), element->isInUserAgentShadowTree());
 
@@ -492,7 +492,7 @@ static void markSourceAsPrevalentDomainTaintedIfNeeded(Document& document, const
     if (!script || !script->response().isFromPrevalentDomain())
         return;
 
-    if (RegistrableDomain { script->response().url() }.matches(protect(document.topOrigin())->data()))
+    if (RegistrableDomain { script->response().url() }.matches(document.topOrigin().data()))
         return;
 
     JSC::markSourceAsPrevalentDomainTainted(document.vm(), sourceCode.provider());

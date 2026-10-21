@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <array>
 #include <ranges>
+#include <wtf/Borrow.h>
 #include <wtf/RunLoop.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -149,10 +150,11 @@ void AuxiliaryProcessProxy::populateOverrideLanguagesLaunchOptions(ProcessLaunch
     }
     if (!overrideLanguages.isEmpty()) {
         StringBuilder languageString;
-        for (size_t i = 0; i < overrideLanguages.size(); ++i) {
+        Borrow borrowedLanguages = overrideLanguages;
+        for (size_t i = 0; i < borrowedLanguages->size(); ++i) {
             if (i)
                 languageString.append(',');
-            languageString.append(overrideLanguages[i]);
+            languageString.append(borrowedLanguages[i]);
         }
         LOG_WITH_STREAM(Language, stream << "Setting WebProcess's launch OverrideLanguages to " << languageString);
         launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("OverrideLanguages"_s, languageString.toString());
@@ -569,7 +571,11 @@ void AuxiliaryProcessProxy::connectionWillOpen(IPC::Connection&)
 
 void AuxiliaryProcessProxy::logInvalidMessage(IPC::Connection& connection, IPC::MessageName messageName)
 {
-    RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process with PID %d", description(messageName), processID());
+    RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from %s process with PID %d", description(messageName), processName(), processID());
+#if ASAN_ENABLED
+    // Also log to stderr so test harnesses can attribute the resulting termination.
+    WTFLogAlways("Killing %s for invalid message %s with PID %d", processName().characters(), IPC::description(messageName).characters(), processID());
+#endif
 }
 
 bool AuxiliaryProcessProxy::platformIsBeingDebugged() const
@@ -743,7 +749,7 @@ void AuxiliaryProcessProxy::didChangeThrottleState(ProcessThrottleState state)
         // Send messages in the order that they were enqueued after coalescing.
         std::ranges::sort(indexMessagePairs, { }, &PairType::first);
 
-        for (auto& indexMessagePair : indexMessagePairs) {
+        for (auto& indexMessagePair : borrow(indexMessagePairs)) {
             auto& encoder = indexMessagePair.second;
             LOG(ProcessSuspension, "%p - AuxiliaryProcessProxy::didChangeThrottleState: sending deferred message %s to destination %" PRIu64 " in pid %i because it resumed", this, description(encoder->messageName()).characters(), encoder->destinationID(), processID());
             sendMessage(makeUniqueRefFromNonNullUniquePtr(WTF::move(encoder)), { });

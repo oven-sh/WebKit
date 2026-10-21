@@ -27,7 +27,6 @@
 #include "RenderTreeBuilderRuby.h"
 
 #include "RenderBlock.h"
-#include "RenderInline.h"
 #include "RenderObjectInlines.h"
 #include "RenderTreeBuilder.h"
 #include "RenderTreeBuilderBlock.h"
@@ -59,7 +58,7 @@ Style::ComputedStyle createAnonymousStyleForRuby(const Style::ComputedStyle& par
 static RenderPtr<RenderElement> createAnonymousRendererForRuby(RenderElement& parent, Style::Display display)
 {
     auto style = createAnonymousStyleForRuby(parent.style(), display);
-    auto ruby = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(parent.document()), WTF::move(style));
+    auto ruby = createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(parent.document()), WTF::move(style));
     ruby->initializeStyle();
     return ruby;
 }
@@ -113,7 +112,7 @@ CheckedRef<RenderElement> RenderTreeBuilder::Ruby::findOrCreateParentForStyleBas
     auto rubyBase = createAnonymousRendererForRuby(beforeChildAncestor, Style::DisplayType::RubyBase);
     rubyBase->initializeStyle();
     WeakPtr newParent = rubyBase.get();
-    m_builder.inlineBuilder().attach(downcast<RenderInline>(parent), WTF::move(rubyBase), beforeChild);
+    m_builder.inlineBuilder().attach(downcast<RenderBoxModelObject>(parent), WTF::move(rubyBase), beforeChild);
     beforeChild = nullptr;
     return *newParent;
 }

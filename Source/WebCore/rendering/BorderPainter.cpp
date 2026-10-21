@@ -43,7 +43,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderListBox.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGModelObject.h"
@@ -157,7 +156,7 @@ std::optional<Path> BorderPainter::pathForBorderArea(const LayoutRect& rect, con
     return borderShape.pathForBorderArea(deviceScaleFactor);
 }
 
-static LayoutRect calculateSideRect(const LayoutRect& outerBorderRect, const BorderEdges& edges, BoxSide side)
+static LayoutRect LEGACY_NODELETE calculateSideRect(const LayoutRect& outerBorderRect, const BorderEdges& edges, BoxSide side)
 {
     auto sideRect = outerBorderRect;
     float width = edges.at(side).widthForPainting();

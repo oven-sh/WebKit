@@ -50,7 +50,6 @@
 #include "RenderBoxInlines.h"
 #include "RenderElementInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerModelObject.h"
 #include "RenderObjectInlines.h"
@@ -481,15 +480,15 @@ LayoutRect ViewTransition::captureOverflowRect(RenderLayerModelObject& renderer)
 
     CheckedPtr layer = renderer.layer();
     auto bounds = layer->calculateLayerBounds(layer, LayoutSize(), { RenderLayer::IncludeFilterOutsets, RenderLayer::ExcludeHiddenDescendants, RenderLayer::IncludeCompositedDescendants, RenderLayer::PreserveAncestorFlags, RenderLayer::ExcludeViewTransitionCapturedDescendants });
-    return LayoutRect(encloseRectToDevicePixels(bounds, protect(renderer.document())->deviceScaleFactor()));
+    return LayoutRect(encloseRectToDevicePixels(bounds, renderer.document().deviceScaleFactor()));
 }
 
 // The computed local-to-absolute transform, and layer bounds don't include the position
-// of a RenderInline. Manually add an extra offset to adjust for it.
+// of an inline box. Manually add an extra offset to adjust for it.
 static LayoutPoint layerToLayoutOffset(const RenderLayerModelObject& renderer)
 {
-    if (const auto* renderInline = dynamicDowncast<RenderInline>(renderer)) {
-        auto boundingBox = renderInline->borderBoxRectInContainer();
+    if (renderer.isInlineBox()) {
+        auto boundingBox = downcast<RenderBoxModelObject>(renderer).borderBoxRectInContainer();
         return LayoutPoint { boundingBox.x(), boundingBox.y() };
     }
     return { };
@@ -1008,7 +1007,7 @@ void ViewTransition::copyElementBaseProperties(RenderLayerModelObject& renderer,
             output.subpixelOffset = { };
         } else {
             transform.translate(transformState.accumulatedOffset().width(), transformState.accumulatedOffset().height());
-            output.subpixelOffset = snapTransformationTranslationToDevicePixels(transform, protect(renderer.document())->deviceScaleFactor());
+            output.subpixelOffset = snapTransformationTranslationToDevicePixels(transform, renderer.document().deviceScaleFactor());
         }
 
         output.layerToLayoutOffset = layerToLayoutOffset(renderer);

@@ -215,9 +215,9 @@ void Chrome::takeFocus(FocusDirection direction)
     m_client->takeFocus(direction);
 }
 
-void Chrome::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions options, BroadcastFocusedElement broadcast)
+void Chrome::focusedElementChanged(Element* element, LocalFrame* frame, FocusOptions options)
 {
-    m_client->focusedElementChanged(element, frame, options, broadcast);
+    m_client->focusedElementChanged(element, frame, options);
 }
 
 void Chrome::focusedFrameChanged(Frame* frame)
@@ -568,7 +568,7 @@ RefPtr<GraphicsContextGL> Chrome::createGraphicsContextGL(const GraphicsContextG
 }
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-RefPtr<WebGPU::GPU> Chrome::createGPUForWebGPU() const
+RefPtr<WebGPUIntegration> Chrome::createGPUForWebGPU() const
 {
     return m_client->createGPUForWebGPU();
 }
@@ -598,6 +598,13 @@ PlatformDisplayID Chrome::displayID() const
 {
     return m_page->displayID();
 }
+
+#if HAVE(IOSURFACE)
+bool Chrome::useIOSurfaceWebKitBehavior() const
+{
+    return m_client->useIOSurfaceWebKitBehavior();
+}
+#endif
 
 void Chrome::windowScreenDidChange(PlatformDisplayID displayID, std::optional<FramesPerSecond> nominalFrameInterval)
 {

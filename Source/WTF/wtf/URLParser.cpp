@@ -747,7 +747,7 @@ ALWAYS_INLINE void URLParser::advance(CodePointIterator<CharacterType>& iterator
 }
 
 template<typename CharacterType>
-bool URLParser::takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType> iterator)
+bool LEGACY_NODELETE URLParser::takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType> iterator)
 {
     if (iterator.atEnd())
         return false;
@@ -1459,7 +1459,7 @@ void URLParser::failure()
 }
 
 template<typename CharacterType>
-bool URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterator, char32_t codePoint)
+bool LEGACY_NODELETE URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterator, char32_t codePoint)
 {
     if (iterator.atEnd() || toASCIILower(*iterator) != codePoint)
         return false;
@@ -1468,7 +1468,7 @@ bool URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterat
 }
 
 template<typename CharacterType>
-bool URLParser::isAtLocalhost(CodePointIterator<CharacterType> iterator)
+bool LEGACY_NODELETE URLParser::isAtLocalhost(CodePointIterator<CharacterType> iterator)
 {
     if (!checkLocalhostCodePoint(iterator, 'l'))
         return false;
@@ -3193,7 +3193,7 @@ std::expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::pa
 }
 
 template<typename CharacterType>
-std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const CharacterType>& remaining)
+std::optional<uint32_t> LEGACY_NODELETE URLParser::parseIPv4PieceInsideIPv6(std::span<const CharacterType>& remaining)
 {
     auto* p = remaining.data();
     auto* end = p + remaining.size();
@@ -3225,7 +3225,7 @@ std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const Char
 }
 
 template<typename CharacterType>
-std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(std::span<const CharacterType> remaining)
+std::optional<URLParser::IPv4Address> LEGACY_NODELETE URLParser::parseIPv4AddressInsideIPv6(std::span<const CharacterType> remaining)
 {
     IPv4Address address = 0;
     for (size_t i = 0; i < 4; ++i) {

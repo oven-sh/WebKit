@@ -25,7 +25,6 @@
 #include "FontCascadeInlines.h"
 #include "RenderBlockFlow.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderObjectStyle.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
@@ -81,8 +80,8 @@ static inline InlineIterator::InlineBoxIterator inlineBoxForRenderer(RenderObjec
         return InlineIterator::firstRootInlineBoxFor(*renderBlock);
     }
 
-    if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(*renderer))
-        return InlineIterator::lineLeftmostInlineBoxFor(*renderInline);
+    if (renderer->isInlineBox())
+        return InlineIterator::lineLeftmostInlineBoxFor(downcast<RenderBoxModelObject>(*renderer));
 
     ASSERT_NOT_REACHED();
     return { };
@@ -99,18 +98,18 @@ void SVGTextQuery::collectTextBoxesInInlineBox(InlineIterator::InlineBoxIterator
         return;
 
     auto descendants = parent->descendants();
-    for (auto box = descendants.begin(), end = descendants.end(); box != end;) {
-        if (auto* flowBox = dynamicDowncast<InlineIterator::InlineBox>(*box)) {
+    for (auto box = descendants.begin(); box;) {
+        if (box->isInlineBox()) {
             // Skip generated content.
-            if (!flowBox->renderer().element())
+            if (!downcast<InlineIterator::InlineBox>(*box).renderer().element())
                 box.traverseLineRightwardOnLineSkippingChildren();
             else
                 box.traverseLineRightwardOnLine();
             continue;
         }
 
-        if (auto* inlineTextBox = dynamicDowncast<InlineIterator::SVGTextBoxIterator>(box))
-            m_textBoxes.append(*inlineTextBox);
+        if (box->isSVGText())
+            m_textBoxes.append(*box);
 
         box.traverseLineRightwardOnLine();
     }

@@ -40,6 +40,7 @@
 #include "ElementInlines.h"
 #include "EventNames.h"
 #include "HTMLBodyElement.h"
+#include "HTMLCanvasElement.h"
 #include "HTMLDialogElement.h"
 #include "HTMLDivElement.h"
 #include "HTMLInputElement.h"
@@ -101,8 +102,8 @@
 #else
 namespace WebCore {
 namespace Style {
-static inline void adjustForManipulationSurfaceQuirk(ComputedStyle&) { }
-static inline void adjustForBoxAnnotationQuirk(ComputedStyle&) { }
+static inline void LEGACY_NODELETE adjustForManipulationSurfaceQuirk(ComputedStyle&) { }
+static inline void LEGACY_NODELETE adjustForBoxAnnotationQuirk(ComputedStyle&) { }
 } // namespace Style
 } // namespace WebCore
 #endif
@@ -606,6 +607,7 @@ void Adjuster::adjust(Style::ComputedStyle& style) const
     if (hasAutoSpecifiedZIndex) {
         if ((m_element && m_document->documentElement() == m_element.get())
             || (m_element && m_element->isCanvasDrawable())
+            || (is<HTMLCanvasElement>(m_element.get()) && downcast<HTMLCanvasElement>(*m_element).hasDrawableContent())
             || hasTransformRelatedProperty(style, m_element.get(), m_parentStyle)
             || shouldTreatAutoZIndexAsZero(style)
             || isInTopLayerOrBackdrop(style, m_element.get()))
@@ -1260,7 +1262,7 @@ void Adjuster::adjustForSiteSpecificQuirks(Style::ComputedStyle& style) const
         static MainThreadNeverDestroyed<const AtomString> class1("eNjKGZ"_s);
         if (is<HTMLLabelElement>(*m_element)
             && m_element->hasClassName(class1)
-            && style.backgroundColor() == Color { WebCore::Color::white })
+            && style.backgroundColorResolvingCurrentColor() == WebCore::Color::white)
             style.setBackgroundColor({ WebCore::Color::transparentBlack });
     }
 #endif
@@ -1398,7 +1400,7 @@ auto Adjuster::adjustmentForTextAutosizing(const Style::ComputedStyle& style, co
     AdjustmentForTextAutosizing adjustmentForTextAutosizing;
 
     Ref document = element.document();
-    if (!document->settings().textAutosizingEnabled()
+    if (!document->textAutosizingEnabled()
         || !document->settings().textAutosizingUsesIdempotentMode()
         || document->settings().idempotentModeAutosizingOnlyHonorsPercentages())
         return adjustmentForTextAutosizing;

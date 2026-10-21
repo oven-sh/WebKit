@@ -184,6 +184,8 @@ public:
     WebGLCanvas canvas();
 
     int LEGACY_NODELETE drawingBufferWidth() const;
+    // For testing.
+    WEBCORE_EXPORT IntSize LEGACY_NODELETE defaultFramebufferAllocatedSize() const;
     int LEGACY_NODELETE drawingBufferHeight() const;
 
     PredefinedColorSpace drawingBufferColorSpace() const { return m_drawingBufferColorSpace; }
@@ -748,7 +750,7 @@ protected:
         void clear();
         size_t memoryCost() const;
     };
-    ReadSurfaceBuffer& readSurfaceBuffer(SurfaceBuffer);
+    ReadSurfaceBuffer& LEGACY_NODELETE readSurfaceBuffer(SurfaceBuffer);
 
     ReadSurfaceBuffer m_readDrawingBuffer;
     ReadSurfaceBuffer m_readDisplayBuffer;
@@ -865,6 +867,7 @@ protected:
         SourceImageData,
         SourceHTMLImageElement,
         SourceHTMLCanvasElement,
+        SourceElementImage,
 #if ENABLE(VIDEO)
         SourceHTMLVideoElement,
 #endif
@@ -1067,7 +1070,7 @@ protected:
     void synthesizeLostContextGLError(GCGLenum, ASCIILiteral functionName, ASCIILiteral description);
 
     // Clamp the width and height to GL_MAX_VIEWPORT_DIMS.
-    IntSize clampedCanvasSize();
+    IntSize LEGACY_NODELETE clampedCanvasSize();
 
     void setFramebuffer(const AbstractLocker&, GCGLenum, WebGLFramebuffer*);
 
@@ -1095,6 +1098,7 @@ private:
     ExceptionOr<void> texImageSource(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, ImageData& source);
     ExceptionOr<void> texImageSource(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, HTMLImageElement& source);
     ExceptionOr<void> texImageSource(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, HTMLCanvasElement& source);
+    ExceptionOr<void> texElementSnapshot2D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, const CanvasElementSnapshot&, std::optional<WebGLCopyElementImageConfig>);
 #if ENABLE(VIDEO)
     ExceptionOr<void> texImageSource(TexImageFunctionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, HTMLVideoElement& source);
 #endif

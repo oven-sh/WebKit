@@ -176,11 +176,13 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     SetThirdPartyCookieBlockingMode(PAL::SessionID sessionID, enum:uint8_t WebCore::ThirdPartyCookieBlockingMode blockingMode) -> ()
     SetShouldEnbleSameSiteStrictEnforcementForTesting(PAL::SessionID sessionID, enum:bool WebCore::SameSiteStrictEnforcementEnabled enabled) -> ()
     SetFirstPartyWebsiteDataRemovalModeForTesting(PAL::SessionID sessionID, enum:uint8_t WebCore::FirstPartyWebsiteDataRemovalMode mode) -> ()
+    SetExemptAllowlistedCookiesFromITP(PAL::SessionID sessionID, bool exempt) -> ()
     SetToSameSiteStrictCookiesForTesting(PAL::SessionID sessionID, WebCore::RegistrableDomain domain) -> ()
     SetFirstPartyHostCNAMEDomainForTesting(PAL::SessionID sessionID, String firstPartyHost, WebCore::RegistrableDomain cnameDomain) -> ()
     SetThirdPartyCNAMEDomainForTesting(PAL::SessionID sessionID, WebCore::RegistrableDomain domain) -> ()
 
     SetPrivateClickMeasurementDebugMode(PAL::SessionID sessionID, bool debugMode)
+    SetPrivateClickMeasurementPrivateRelayEnforcement(PAL::SessionID sessionID, bool enabled)
 
     SetShouldSendPrivateTokenIPCForTesting(PAL::SessionID sessionID, bool enabled)
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
@@ -282,7 +284,7 @@ messages -> NetworkProcess : AuxiliaryProcess WantsAsyncDispatchMessage {
     SetEmulatedConditions(PAL::SessionID sessionID, std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency)
 #endif
 
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     ClearProxyConfigData(PAL::SessionID sessionID)
     SetProxyConfigData(PAL::SessionID sessionID, Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>> proxyConfigurations)
 #endif

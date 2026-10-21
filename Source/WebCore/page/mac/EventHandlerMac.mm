@@ -497,7 +497,7 @@ bool EventHandler::passWheelEventToWidget(const PlatformWheelEvent& wheelEvent, 
         RefPtr frameView = dynamicDowncast<LocalFrameView>(widget);
         if (!frameView)
             return false;
-        auto [result, _] = frameView->frame().eventHandler().handleWheelEvent(wheelEvent, processingSteps);
+        auto [result, _] = protect(frameView->frame().eventHandler())->handleWheelEvent(wheelEvent, processingSteps);
         return result.wasHandled();
     }
 
@@ -692,7 +692,7 @@ void EventHandler::passMouseMovedEventToScrollbars(NSEvent *event, NSEvent* corr
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
-static bool frameHasPlatformWidget(const LocalFrame& frame)
+static bool LEGACY_NODELETE frameHasPlatformWidget(const LocalFrame& frame)
 {
     if (auto* frameView = frame.view()) {
         if (frameView->platformWidget())
@@ -821,7 +821,7 @@ static WeakPtr<ScrollableArea> LEGACY_NODELETE scrollableAreaForEventTarget(Elem
     return dynamicDowncast<ScrollView>(EventHandler::widgetForEventTarget(eventTarget));
 }
     
-static bool eventTargetIsPlatformWidget(Element* eventTarget)
+static bool LEGACY_NODELETE eventTargetIsPlatformWidget(Element* eventTarget)
 {
     auto* widget = EventHandler::widgetForEventTarget(eventTarget);
     return widget && widget->platformWidget();
@@ -863,7 +863,7 @@ void EventHandler::determineWheelEventTarget(const PlatformWheelEvent& wheelEven
     LOG_WITH_STREAM(ScrollLatching, stream << "EventHandler::determineWheelEventTarget() - event " << wheelEvent << " found scrollableArea " << ValueOrNull(scrollableArea.get()) << ", latching state is " << page->scrollLatchingController());
 
     if (scrollableArea && page->isMonitoringWheelEvents())
-        scrollableArea->scrollAnimator().setWheelEventTestMonitor(page->wheelEventTestMonitor());
+        protect(scrollableArea)->scrollAnimator().setWheelEventTestMonitor(page->wheelEventTestMonitor());
 
     if (wheelEvent.shouldResetLatching() || wheelEvent.isNonGestureEvent())
         return;

@@ -32,7 +32,6 @@
 #include "LegacyRenderSVGResourceSolidColor.h"
 #include "OutlinePainter.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
@@ -236,8 +235,8 @@ void SVGTextBoxPainter::paint()
 
     // Finally, paint the outline if any.
     if (renderer().style().hasOutline()) {
-        if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(parentRenderer))
-            OutlinePainter { m_paintInfo }.paintOutline(*renderInline, m_paintOffset);
+        if (parentRenderer.isInlineBox())
+            OutlinePainter { m_paintInfo }.paintOutline(parentRenderer, m_paintOffset);
     }
 
     ASSERT(!m_legacyPaintingResource);

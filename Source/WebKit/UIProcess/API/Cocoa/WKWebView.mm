@@ -158,6 +158,7 @@
 #import "_WKTextManipulationDelegate.h"
 #import "_WKTextManipulationExclusionRule.h"
 #import "_WKTextManipulationItem.h"
+#import "_WKTextManipulationItemInternal.h"
 #import "_WKTextManipulationToken.h"
 #import "_WKTextPreview.h"
 #import "_WKTextRunInternal.h"
@@ -202,6 +203,7 @@
 #import <WebCore/WebViewVisualIdentificationOverlay.h>
 #import <WebCore/WritingMode.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/Box.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/HashMap.h>
@@ -662,6 +664,7 @@ static void addBrowsingContextControllerMethodStubsIfNeeded()
     [self _setupPageConfiguration:pageConfiguration withPool:processPool.get()];
 
     _usePlatformFindUI = YES;
+    _enabledSystemBackgroundColorExtensionEdges = _WKRectEdgeLeft | _WKRectEdgeRight;
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     _adjustedColorExtensionsForBannerViewOverlaysEnablement = WebKit::AdjustedColorExtensionsForBannerViewOverlaysEnablement::EnabledIfHorizontalBannerViewPresent;
@@ -2763,7 +2766,7 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
 
     _page->willBeginWritingToolsSession(webSession, WTF::move(preservedNodeIdentifiers), [completion = makeBlockPtr(completion)](const auto& contextData) {
         auto contexts = [NSMutableArray arrayWithCapacity:contextData.size()];
-        for (auto& context : contextData) {
+        for (auto& context : borrow(contextData)) {
             auto platformContext = WebKit::convertToPlatformContext(context);
             [contexts addObject:platformContext.get()];
         }
@@ -3658,7 +3661,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     auto createSystemBackgroundExtensionViewIfNeeded = [&](WebCore::BoxSide side) {
-        if (_systemBackgroundColorExtensionViews.at(side))
+        if (_systemBackgroundColorExtensionViews.at(side) || ![self _isSystemBackgroundColorExtensionEnabledForSide:side])
             return;
 
         RetainPtr view = adoptNS([[WKColorExtensionView alloc] initWithFrame:CGRectZero delegate:self]);
@@ -3717,7 +3720,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
     auto leftExtensionFrame = [&] {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays]) {
+        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays] && [self _isSystemBackgroundColorExtensionEnabledForSide:WebCore::BoxSide::Left]) {
             auto distanceFromLeftEdge = [self _webContentDistanceFromLeftEdge];
             auto colorExtensionWidth = std::clamp<CGFloat>(insets.left() - distanceFromLeftEdge, 0, insets.left());
             auto xPosition = insets.left() - colorExtensionWidth;
@@ -3729,7 +3732,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 
     auto rightExtensionFrame = [&] {
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
-        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays]) {
+        if ([self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays] && [self _isSystemBackgroundColorExtensionEnabledForSide:WebCore::BoxSide::Right]) {
             auto distanceFromRightEdge = [self _webContentDistanceFromRightEdge];
             auto colorExtensionWidth = std::clamp<CGFloat>(insets.right() - distanceFromRightEdge, 0, insets.right());
             auto xPosition = bounds.width() - insets.right();
@@ -3889,6 +3892,21 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
 #endif
 }
 
+- (BOOL)_isSystemBackgroundColorExtensionEnabledForSide:(WebCore::BoxSide)side
+{
+    switch (side) {
+    case WebCore::BoxSide::Left:
+        return !!(_enabledSystemBackgroundColorExtensionEdges & _WKRectEdgeLeft);
+    case WebCore::BoxSide::Right:
+        return !!(_enabledSystemBackgroundColorExtensionEdges & _WKRectEdgeRight);
+    case WebCore::BoxSide::Top:
+    case WebCore::BoxSide::Bottom:
+        return NO;
+    }
+    ASSERT_NOT_REACHED();
+    return NO;
+}
+
 - (void)_updateAppearanceForSystemBackgroundColorExtensionViews
 {
     if (![self _shouldAdjustColorExtensionsForHorizontalBannerViewOverlays])
@@ -3900,7 +3918,7 @@ WebCore::CocoaColor *sampledFixedPositionContentColor(const WebCore::FixedContai
         if (!view)
             return;
 
-        if (inset <= 0) {
+        if (inset <= 0 || ![self _isSystemBackgroundColorExtensionEnabledForSide:side]) {
             [view fadeOut];
             return;
         }
@@ -4101,7 +4119,7 @@ struct WKWebViewData {
         encoder << currentWKWebViewDataSerializationVersion;
         encoder << dataTypesToEncode;
 
-        for (auto& dataTypeToEncode : dataTypesToEncode) {
+        for (auto& dataTypeToEncode : borrow(dataTypesToEncode)) {
             switch (dataTypeToEncode) {
             case WebKit::WebViewDataType::SessionStorage:
                 if (!data->sessionStorage) {
@@ -4162,7 +4180,7 @@ struct WKWebViewData {
             completionHandler(nullptr);
     });
 
-    for (auto& encodedDataType : *encodedDataTypes) {
+    for (auto& encodedDataType : borrow(*encodedDataTypes)) {
         switch (encodedDataType) {
         case WebKit::WebViewDataType::SessionStorage: {
             std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> sessionStorage;
@@ -4506,7 +4524,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(FORWARD_ACTION_TO_WKCONTENTVIEW)
 {
     _page->getAllFrameTreesForSiteIsolationTesting([completionHandler = makeBlockPtr(completionHandler), page = protect(*_page)] (Vector<WebKit::FrameTreeNodeData>&& vector) {
         auto set = adoptNS([[NSMutableSet alloc] initWithCapacity:vector.size()]);
-        for (auto& data : vector)
+        for (auto& data : borrow(vector))
             [set addObject:wrapper(API::FrameTreeNode::create(WTF::move(data), page.get())).get()];
         completionHandler(set.get());
     });
@@ -4639,6 +4657,24 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
     return adoptNS([[_WKTextManipulationViewportProximityInfo alloc] initWithRelation:createViewportRelation(info->relation) viewportSizedDistance:info->viewportSizedDistance viewportCoverage:info->viewportCoverage]);
 }
 
+static CGRect webViewRectForMainFrameRect(WebKit::WebPageProxy& page, const std::optional<WebCore::FloatRect>& mainFrameBoundingRect)
+{
+    if (!mainFrameBoundingRect)
+        return CGRectNull;
+
+    RefPtr pageClient = page.pageClient();
+    if (!pageClient)
+        return CGRectNull;
+
+    auto rectInRootView = *mainFrameBoundingRect;
+#if PLATFORM(MAC)
+    rectInRootView.moveBy(-page.mainFrameScrollPosition());
+    auto& obscuredContentInsets = page.obscuredContentInsets();
+    rectInRootView.move(obscuredContentInsets.left(), obscuredContentInsets.top());
+#endif
+    return pageClient->rootViewToWebView(rectInRootView);
+}
+
 - (void)_startTextManipulationsWithConfiguration:(_WKTextManipulationConfiguration *)configuration completion:(void(^)())completionHandler
 {
     THROW_IF_SUSPENDED;
@@ -4679,7 +4715,7 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
         if (!delegate)
             return;
 
-        auto createWKItem = [] (const WebCore::TextManipulationItem& item) {
+        auto createWKItem = [retainedSelf](const WebCore::TextManipulationItem& item) {
             auto tokens = createNSArray(item.tokens, [] (auto& token) {
                 auto wkToken = adoptNS([[_WKTextManipulationToken alloc] init]);
                 [wkToken setIdentifier:String::number(token.identifier.toUInt64()).createNSString().get()];
@@ -4689,13 +4725,16 @@ static RetainPtr<_WKTextManipulationViewportProximityInfo> createViewportProximi
                 return wkToken;
             });
             auto identifier = makeString(item.frameID ? item.frameID->toUInt64() : 0, '-', item.identifier ? item.identifier->toUInt64() : 0);
-            return adoptNS([[_WKTextManipulationItem alloc] initWithIdentifier:identifier.createNSString().get() tokens:tokens.get() isSubframe:item.isSubframe isCrossSiteSubframe:item.isCrossSiteSubframe viewportProximityInfo:createViewportProximityInfo(item.viewportProximityInfo).get()]);
+            RetainPtr wkItem = adoptNS([[_WKTextManipulationItem alloc] initWithIdentifier:identifier.createNSString() tokens:tokens isSubframe:item.isSubframe isCrossSiteSubframe:item.isCrossSiteSubframe viewportProximityInfo:createViewportProximityInfo(item.viewportProximityInfo)]);
+            [wkItem _setWebView:retainedSelf];
+            [wkItem _setMainFrameBoundingRect:item.mainFrameBoundingRect ? static_cast<CGRect>(*item.mainFrameBoundingRect) : CGRectNull];
+            return wkItem;
         };
 
         if ([delegate respondsToSelector:@selector(_webView:didFindTextManipulationItems:)])
             [delegate _webView:retainedSelf.get() didFindTextManipulationItems:createNSArray(itemReferences, createWKItem).get()];
         else {
-            for (auto& item : itemReferences)
+            for (auto& item : borrow(itemReferences))
                 [delegate _webView:retainedSelf.get() didFindTextManipulationItem:createWKItem(item).get()];
         }
     }, [capturedCompletionBlock = makeBlockPtr(completionHandler)] () {
@@ -5384,7 +5423,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
             return completionHandler(nil, error.get());
         }
 
-        auto metadata = result.value();
+        const Vector metadata = result.value();
         RetainPtr valueMap = adoptNS([[NSMutableDictionary alloc] initWithCapacity:metadata.size()]);
 
         for (const auto& pair : metadata)
@@ -6071,7 +6110,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
 - (void)_saveResources:(NSURL *)directory suggestedFileName:(NSString *)name completionHandler:(void (^)(NSError *error))completionHandler
 {
     THROW_IF_SUSPENDED;
-    _page->saveResources(protect(_page->mainFrame()), { }, directory.path, name, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
+    _page->saveResources(protect(_page->mainFrame()), { }, directory.path, name, { }, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
         if (!result)
             return completionHandler(adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{ NSLocalizedDescriptionKey: WebCore::errorDescription(result.error()).createNSString().get() }]).get());
 
@@ -6101,7 +6140,7 @@ static inline OptionSet<WebCore::LayoutMilestone> LEGACY_NODELETE layoutMileston
         markupExclusionRules.append(WebCore::MarkupExclusionRule { AtomString { rule.elementLocalName }, WTF::move(attibutes) });
     }
 
-    _page->saveResources(protect(_page->mainFrame()), WTF::move(markupExclusionRules), configuration.directory.path, configuration.suggestedFileName, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
+    _page->saveResources(protect(_page->mainFrame()), WTF::move(markupExclusionRules), configuration.directory.path, configuration.suggestedFileName, configuration.originalURLsFileName, [completionHandler = makeBlockPtr(completionHandler)](auto result) mutable {
         if (!result)
             return completionHandler(adoptNS([[NSError alloc] initWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:@{ NSLocalizedDescriptionKey: WebCore::errorDescription(result.error()).createNSString().get() }]).get());
 
@@ -6564,7 +6603,7 @@ static inline OptionSet<WebKit::FindOptions> LEGACY_NODELETE toFindOptions(_WKFi
             }
 
             auto valueMap = adoptNS([[NSMutableDictionary alloc] initWithCapacity:textFieldValues.size()]);
-            for (const auto& pair : textFieldValues)
+            for (const auto& pair : borrow(textFieldValues))
                 [valueMap setObject:pair.second.createNSString().get() forKey:pair.first.createNSString().get()];
 
             auto checker = [&] {
@@ -7218,6 +7257,27 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 #endif
 }
 
+- (_WKRectEdge)_systemBackgroundColorExtensionEnabledEdges
+{
+    return _enabledSystemBackgroundColorExtensionEdges;
+}
+
+- (void)_setSystemBackgroundColorExtensionEnabledEdges:(_WKRectEdge)edges
+{
+    // System background color extensions are only supported on the left and right edges.
+    edges &= _WKRectEdgeLeft | _WKRectEdgeRight;
+    if (_enabledSystemBackgroundColorExtensionEdges == edges)
+        return;
+
+    _enabledSystemBackgroundColorExtensionEdges = edges;
+
+#if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
+    [self _doAfterAdjustingColorForTopContentInsetFromUIDelegate:[strongSelf = RetainPtr { self }] {
+        [strongSelf _updateFixedColorExtensionViews];
+    }];
+#endif
+}
+
 - (BOOL)_shouldSuppressFormValidationBubble
 {
     return _shouldSuppressFormValidationBubble;
@@ -7422,6 +7482,18 @@ static Vector<Ref<API::TargetedElementInfo>> elementsFromWKElements(NSArray<_WKT
 #else
     completionHandler(string);
 #endif // ENABLE(TEXT_EXTRACTION_FILTER)
+}
+
+@end
+
+@implementation WKWebView (WKTextManipulationInternal)
+
+- (CGRect)_webViewRectForTextManipulationMainFrameRect:(CGRect)mainFrameBoundingRect
+{
+    if (!_page || CGRectIsNull(mainFrameBoundingRect))
+        return CGRectNull;
+
+    return webViewRectForMainFrameRect(*_page, mainFrameBoundingRect);
 }
 
 @end

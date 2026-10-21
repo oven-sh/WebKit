@@ -806,7 +806,7 @@ ExceptionOr<void> Node::normalize()
 Ref<Node> Node::cloneNode(CloneSubtree subtree) const
 {
     ASSERT(!isShadowRoot());
-    RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*this, protect(treeScope()));
+    RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*this, treeScope());
     return cloneNodeInternal(protect(document()), subtree == CloneSubtree::Yes ? CloningOperation::Everything : CloningOperation::SelfOnly, registry.get());
 }
 
@@ -1516,7 +1516,7 @@ void Node::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemo
     updateShadowIncludingRoot();
 
     if (removalType.disconnectedFromDocument) {
-        if (CheckedPtr cache = protect(oldParentOfRemovedTree.document())->existingAXObjectCache())
+        if (CheckedPtr cache = oldParentOfRemovedTree.document().existingAXObjectCache())
             cache->remove(*this);
     }
 }
@@ -2174,7 +2174,7 @@ static unsigned traverseSubtreeToUpdateTreeScope(Node& root, NOESCAPE const Move
     return count;
 }
 
-static ALWAYS_INLINE bool isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
+static ALWAYS_INLINE bool LEGACY_NODELETE isDocumentEligibleForFastAdoption(Document& oldDocument, Document& newDocument)
 {
     return !oldDocument.hasNodeIterators()
         && !oldDocument.hasRanges()
@@ -2308,7 +2308,7 @@ void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDoc
     if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
         clearUsesNullCustomElementRegistry();
 
-    if (RefPtr newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
+    if (auto* newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
         adoptCustomElementRegistryIntoScopedRegistryDocument();
 
     if (!hasTypeFlag(TypeFlag::HasDidMoveToNewDocument) && !hasEventTargetFlag(EventTargetFlag::HasLangAttr) && !hasEventTargetFlag(EventTargetFlag::HasXMLLangAttr)
@@ -2329,7 +2329,7 @@ void Node::moveNodeToNewDocumentSlowCase(Document& oldDocument, Document& newDoc
     if (usesNullCustomElementRegistry() && !newDocument.usesNullCustomElementRegistry()) [[unlikely]]
         clearUsesNullCustomElementRegistry();
 
-    if (RefPtr newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
+    if (auto* newRegistry = newDocument.customElementRegistry(); newRegistry && newRegistry->isScoped()) [[unlikely]]
         adoptCustomElementRegistryIntoScopedRegistryDocument();
 
     if (hasRareData()) {
@@ -3062,7 +3062,7 @@ struct AncestorAndChildren {
     const Node* distinctAncestorB;
 };
 
-template<TreeType treeType> AncestorAndChildren commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
+template<TreeType treeType> AncestorAndChildren LEGACY_NODELETE commonInclusiveAncestorAndChildren(const Node& a, const Node& b)
 {
     // This check isn't needed for correctness, but it is cheap and likely to be
     // common enough to be worth optimizing so we don't have to walk to the root.
@@ -3092,7 +3092,7 @@ template<TreeType treeType> AncestorAndChildren commonInclusiveAncestorAndChildr
     return { x, distinctAncestorA, distinctAncestorB };
 }
 
-template<TreeType treeType> Node* commonInclusiveAncestor(const Node& a, const Node& b)
+template<TreeType treeType> Node* LEGACY_NODELETE commonInclusiveAncestor(const Node& a, const Node& b)
 {
     return const_cast<Node*>(commonInclusiveAncestorAndChildren<treeType>(a, b).commonAncestor);
 }
@@ -3134,7 +3134,7 @@ template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node&
     return false;
 }
 
-template<TreeType treeType> std::partial_ordering treeOrder(const Node& a, const Node& b)
+template<TreeType treeType> std::partial_ordering LEGACY_NODELETE treeOrder(const Node& a, const Node& b)
 {
     if (&a == &b)
         return std::partial_ordering::equivalent;

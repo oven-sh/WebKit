@@ -217,6 +217,7 @@ public:
     LValue load(TypedPointer, LType);
     LValue store(LValue, TypedPointer);
     B3::FenceValue* fence(const AbstractHeap* read, const AbstractHeap* write);
+    void memoryMove(LValue destination, LValue source, LValue byteCount, const AbstractHeap* read, const AbstractHeap* write);
 
     LValue load8SignExt32(TypedPointer);
     LValue load8ZeroExt32(TypedPointer);
@@ -405,7 +406,7 @@ public:
     requires (std::is_convertible_v<Args, LValue> && ...)
     LValue callWithoutSideEffects(B3::Type type, Function function, LValue arg1, Args... args)
     {
-        static_assert(!std::is_same<Function, LValue>::value);
+        static_assert(!std::same_as<Function, LValue>);
         return m_block->appendNew<B3::CCallValue>(m_proc, type, origin(), B3::Effects::none(),
             constIntPtr(tagCFunctionPtr<void*, OperationPtrTag>(function)), arg1, args...);
     }

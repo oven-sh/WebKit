@@ -1143,7 +1143,7 @@ public:
     }
 
 private:
-    void updateBoundingBox(FloatPoint point)
+    void LEGACY_NODELETE updateBoundingBox(FloatPoint point)
     {
         if (!m_boundingBox) {
             m_boundingBox = FloatRect(point, FloatSize());
@@ -1362,7 +1362,7 @@ static void populateEmptyGlyphCharString(Vector<char, 17>& o, unsigned unitsPerE
 }
 
 // <glyph> and <missing-glyph> have no element class of their own. They are created as SVGUnknownElement, so match them by tag name.
-static const SVGElement* firstMissingGlyphElement(const SVGFontElement& fontElement)
+static const SVGElement* LEGACY_NODELETE firstMissingGlyphElement(const SVGFontElement& fontElement)
 {
     for (auto& child : childrenOfType<SVGElement>(fontElement)) {
         if (child.hasTagName(SVGNames::missing_glyphTag))

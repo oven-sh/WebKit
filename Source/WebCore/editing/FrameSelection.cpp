@@ -82,7 +82,6 @@
 #include "PseudoClassChangeInvalidation.h"
 #include "Range.h"
 #include "RenderBoxModelObject.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderObjectStyle.h"
@@ -154,7 +153,20 @@ IntRect DragCaretController::caretRectInRootViewCoordinates() const
     return { };
 }
 
-IntRect DragCaretController::editableElementRectInRootViewCoordinates() const
+IntRect DragCaretController::caretRectInMainFrameViewCoordinates() const
+{
+    if (!hasCaret())
+        return { };
+
+    if (RefPtr document = m_position.deepEquivalent().document()) {
+        if (RefPtr documentView = document->view())
+            return documentView->contentsToMainFrameView(m_position.absoluteCaretBounds());
+    }
+
+    return { };
+}
+
+IntRect DragCaretController::editableElementRectInMainFrameViewCoordinates() const
 {
     if (!hasCaret())
         return { };
@@ -173,7 +185,7 @@ IntRect DragCaretController::editableElementRectInRootViewCoordinates() const
         return { };
 
     if (RefPtr view = editableContainer->document().view())
-        return view->contentsToRootView(renderer->absoluteBoundingBoxRect()); // FIXME: Wrong for elements with visible layout overflow.
+        return view->contentsToMainFrameView(renderer->absoluteBoundingBoxRect()); // FIXME: Wrong for elements with visible layout overflow.
 
     return { };
 }
@@ -589,7 +601,7 @@ void FrameSelection::updateDataDetectorsForSelection()
 #endif
 }
 
-static bool removingNodeRemovesPosition(Node& node, const Position& position)
+static bool LEGACY_NODELETE removingNodeRemovesPosition(Node& node, const Position& position)
 {
     if (!position.anchorNode())
         return false;
@@ -1875,7 +1887,7 @@ IntRect FrameSelection::absoluteCaretBounds(bool* insideFixed)
     return m_absCaretBounds;
 }
 
-static LayoutBoxExtent computeOutsetFromInnerOuterRect(const LayoutRect& innerRect, const LayoutRect& outerRect)
+static LayoutBoxExtent LEGACY_NODELETE computeOutsetFromInnerOuterRect(const LayoutRect& innerRect, const LayoutRect& outerRect)
 {
     LayoutBoxExtent result;
     result.setLeft(std::max<LayoutUnit>(0, innerRect.x() - outerRect.x()));
@@ -2025,14 +2037,14 @@ static bool inlineBackgroundCoversCaret(const RenderBoxModelObject& inlineBox, c
     auto logicalCaretRect = isHorizontal ? caretRect : caretRect.transposedRect();
     auto caretMiddleAlongBlockAxis = logicalCaretRect.y() + logicalCaretRect.height() / 2;
 
-    for (auto box = InlineIterator::lineLeftmostInlineBoxFor(inlineBox); box; box.traverseInlineBoxLineRightward()) {
-        auto lineRect = LayoutRect { LineSelection::logicalRect(*box->lineBox()) };
+    for (auto& box : InlineIterator::inlineBoxesFor(inlineBox)) {
+        auto lineRect = LayoutRect { LineSelection::logicalRect(box.lineBox()) };
         lineRect.move(logicalOffset);
         if (caretMiddleAlongBlockAxis < lineRect.y())
             break;
         if (caretMiddleAlongBlockAxis >= lineRect.maxY())
             continue;
-        auto boxRect = LayoutRect { box->logicalRectIgnoringInlineDirection() };
+        auto boxRect = LayoutRect { box.logicalRectIgnoringInlineDirection() };
         boxRect.move(logicalOffset);
         if (logicalCaretRect.x() >= boxRect.x() && logicalCaretRect.maxX() <= boxRect.maxX())
             return true;
@@ -2086,12 +2098,12 @@ Color CaretBase::computeCaretColor(const Style::ComputedStyle& elementStyle, con
     Color surface;
     for (CheckedPtr renderer = firstRenderer; renderer && !surface.isOpaque(); renderer = renderer->parent()) {
         auto background = protect(renderer->style())->visitedDependentUsedBackgroundColorApplyingColorFilter();
-        if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(renderer.get())) {
+        if (renderer->isInlineBox()) {
             if (!background.isVisible())
                 continue;
             if (!caretPainter || !caretRectInPainterSpace)
                 continue;
-            if (!inlineBackgroundCoversCaret(*inlineBox, *caretPainter, *caretRectInPainterSpace))
+            if (!inlineBackgroundCoversCaret(downcast<RenderBoxModelObject>(*renderer), *caretPainter, *caretRectInPainterSpace))
                 continue;
         }
         surface = blendSourceOver(background, surface);
@@ -2642,7 +2654,7 @@ void FrameSelection::setFocusedElementIfNeeded(OptionSet<SetSelectionOption> opt
                 FocusOptions focusOptions;
                 if (options & SetSelectionOption::ForBindings)
                     focusOptions.trigger = FocusTrigger::Bindings;
-                document->page()->focusController().setFocusedElement(target.get(), protect(document->frame()), focusOptions);
+                protect(document->page()->focusController())->setFocusedElement(target.get(), protect(document->frame()), focusOptions);
                 return;
             }
             target = target->parentOrShadowHostElement();
@@ -2651,7 +2663,7 @@ void FrameSelection::setFocusedElementIfNeeded(OptionSet<SetSelectionOption> opt
     }
 
     if (caretBrowsing)
-        document->page()->focusController().setFocusedElement(nullptr, protect(document->frame()));
+        protect(document->page()->focusController())->setFocusedElement(nullptr, protect(document->frame()));
 }
 
 void DragCaretController::paintDragCaret(LocalFrame* frame, GraphicsContext& p, const LayoutPoint& paintOffset) const

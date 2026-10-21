@@ -95,19 +95,18 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
 
 set(WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS
     "-Werror ExistentialAny"
+    "-Werror NoUsage"
+    "-Werror NoUseUnstructuredThrowingTask"
+    "-Werror UnusedImportAccess"
+    "-Werror VariableNeverMutated"
     ${WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS}
 )
-
-if (CMAKE_Swift_LANGUAGE_VERSION VERSION_GREATER_EQUAL 6.4)
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUsage")
-    list(APPEND WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS "-Werror NoUseUnstructuredThrowingTask")
-endif ()
 
 set(WEBKIT_SWIFT_CLANG_IMPORTER_FLAGS
     "-Xcc -fvisibility=hidden"
 )
 
-# Avoid failing due to a nested process sandbox (e.g. when building from an agent session). 
+# Avoid failing due to a nested process sandbox (e.g. when building from an agent session).
 # Xcode does not do this by default.
 set(WEBKIT_SWIFT_MACRO_FLAGS
     -disable-sandbox
@@ -152,6 +151,12 @@ webkit_add_swift_options(
 )
 set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
     ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
+
+# Ninja tricks compilers into turning off color support. See the matching clang
+# flags in WebKitCompilerFlags.cmake.
+if (CMAKE_GENERATOR STREQUAL "Ninja")
+    webkit_add_swift_options(-color-diagnostics)
+endif ()
 
 if (APPLE)
     webkit_add_swift_options(

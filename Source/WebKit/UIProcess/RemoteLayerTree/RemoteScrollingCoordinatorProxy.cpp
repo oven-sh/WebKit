@@ -44,6 +44,7 @@
 #include <WebCore/ScrollingTreeOverflowScrollProxyNode.h>
 #include <WebCore/ScrollingTreeOverflowScrollingNode.h>
 #include <WebCore/ScrollingTreePositionedNode.h>
+#include <wtf/Borrow.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -214,7 +215,7 @@ void RemoteScrollingCoordinatorProxy::adjustMainFrameDelegatedScrollPosition(Scr
         }
     };
 
-    for (auto& request : requestData)
+    for (auto& request : borrow(requestData))
         handleOneRequest(request);
 }
 
@@ -284,7 +285,7 @@ void RemoteScrollingCoordinatorProxy::applyScrollingTreeLayerPositionsAfterCommi
 
 void RemoteScrollingCoordinatorProxy::currentSnapPointIndicesDidChange(WebCore::ScrollingNodeID nodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical)
 {
-    protect(protect(webPageProxy())->legacyMainFrameProcess())->send(Messages::RemoteScrollingCoordinator::CurrentSnapPointIndicesChangedForNode(nodeID, horizontal, vertical), m_webPageProxy->webPageIDInMainFrameProcess());
+    protect(webPageProxy())->sendToProcessContainingFrame(m_scrollingTree->frameIDForScrollingNodeID(nodeID), Messages::RemoteScrollingCoordinator::CurrentSnapPointIndicesChangedForNode(nodeID, horizontal, vertical));
 }
 
 void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
@@ -296,7 +297,7 @@ void RemoteScrollingCoordinatorProxy::sendScrollingTreeNodeUpdate()
     bool mainFrameScrollPositionChanged = false;
     auto rootNodeID = rootScrollingNodeID();
 
-    auto scrollUpdates = m_scrollingTree->takePendingScrollUpdates();
+    const Vector scrollUpdates = m_scrollingTree->takePendingScrollUpdates();
     for (unsigned i = 0; i < scrollUpdates.size(); ++i) {
         const auto& update = scrollUpdates[i];
         bool isLastUpdate = i == scrollUpdates.size() - 1;
@@ -523,7 +524,9 @@ void RemoteScrollingCoordinatorProxy::sendUIStateChangedIfNecessary()
     if (!m_uiState.changes())
         return;
 
-    protect(protect(webPageProxy())->legacyMainFrameProcess())->send(Messages::RemoteScrollingCoordinator::ScrollingStateInUIProcessChanged(m_uiState), m_webPageProxy->webPageIDInMainFrameProcess());
+    protect(webPageProxy())->forEachWebContentProcess([&](auto& process, auto pageID) {
+        process.send(Messages::RemoteScrollingCoordinator::ScrollingStateInUIProcessChanged(m_uiState), pageID);
+    });
     m_uiState.clearChanges();
 }
 

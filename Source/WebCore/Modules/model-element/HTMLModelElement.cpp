@@ -39,6 +39,7 @@
 #include "DiagnosticLoggingClient.h"
 #include "DocumentEventLoop.h"
 #include "DocumentPage.h"
+#include "DocumentQuirks.h"
 #include "DocumentResourceLoader.h"
 #include "DocumentView.h"
 #include "ElementChildIteratorInlines.h"
@@ -245,7 +246,7 @@ RefPtr<Model> HTMLModelElement::model() const
     return m_model;
 }
 
-static bool isSupportedModelType(const AtomString& type)
+static bool LEGACY_NODELETE isSupportedModelType(const AtomString& type)
 {
     return type.isEmpty() || MIMETypeRegistry::isSupportedModelMIMEType(type);
 }
@@ -2458,6 +2459,12 @@ RefPtr<ModelPlayer> HTMLModelElement::liveModelPlayer() const
     if (!modelPlayer || modelPlayer->isPlaceholder())
         return nullptr;
     return modelPlayer;
+}
+
+void HTMLModelElement::exitVolumetricPresentation()
+{
+    if (RefPtr modelPlayer = m_modelPlayer)
+        modelPlayer->exitVolumetricPresentation();
 }
 #endif
 

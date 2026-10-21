@@ -1330,7 +1330,29 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
                         timeout=3600,
                         log_environ=False,
                         env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --debug --cmake --architecture "arm64" -hideShellScriptEnvironment WK_VALIDATE_DEPENDENCIES=YES WK_ENABLE_SLOW_BUILD_VERIFICATION=YES 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --debug --cmake --architecture "arm64" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='Compiled WebKit')
+        return self.run_step()
+
+    def test_success_cmake_mac_build_only(self):
+        self.setup_step(CompileWebKit())
+        self.setProperty('platform', 'mac')
+        self.setProperty('fullPlatform', 'mac-tahoe')
+        self.setProperty('configuration', 'release')
+        self.setProperty('architecture', 'arm64')
+        self.setProperty('buildOnly', True)
+        self.setProperty('deployment_target', '15.0')
+        self.setProperty('additionalArguments', ['--cmake'])
+        self.setProperty('builddir', 'BuildDir')
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        timeout=3600,
+                        log_environ=False,
+                        env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --release --cmake --architecture "arm64" --dsym --cmakeargs="-DCMAKE_C_FLAGS=-gline-tables-only -DCMAKE_CXX_FLAGS=-gline-tables-only -DCMAKE_OBJC_FLAGS=-gline-tables-only -DCMAKE_OBJCXX_FLAGS=-gline-tables-only -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
                         )
             .exit(0),
         )
@@ -4240,6 +4262,61 @@ class TestRunWebKitTestsRedTree(BuildStepMixinAdditions, unittest.TestCase):
         self.assertFalse(RunWebKitTestsWithoutChangeRedTree() in next_steps)
         self.assertTrue(AnalyzeLayoutTestsResultsRedTree() in next_steps)
 
+    def test_failures_all_pre_existing_in_results_db_then_pass_without_repeating(self):
+        self.configureStep()
+        pre_existing = ['fast/css/pre-existing1.html', 'fast/css/pre-existing2.html']
+        self.setProperty('first_run_failures', pre_existing)
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', pre_existing)
+        step = self.get_nth_step(0)
+        step.pre_existing_failures_in_results_db = pre_existing
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
+        self.assertEqual(step.evaluateCommand(FAILURE), WARNINGS)
+        self.assertFalse(RunWebKitTestsRepeatFailuresRedTree() in next_steps)
+        self.assertFalse(AnalyzeLayoutTestsResultsRedTree() in next_steps)
+        self.assertFalse(RunWebKitTestsWithoutChangeRedTree() in next_steps)
+        self.assertTrue(ArchiveTestResults() in next_steps)
+        self.assertEqual(self.getProperty('build_summary'), 'Ignored pre-existing failures: fast/css/pre-existing1.html, fast/css/pre-existing2.html')
+        self.assertTrue(self.getProperty('force_build_success'))
+
+    def test_failures_all_pre_existing_in_results_db_keep_stress_mode_failure(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['fast/css/pre-existing.html'])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', ['fast/css/pre-existing.html'])
+        self.setProperty('build_summary', RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+        step = self.get_nth_step(0)
+        step.pre_existing_failures_in_results_db = ['fast/css/pre-existing.html']
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: None)
+        self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
+        step.evaluateCommand(FAILURE)
+        self.assertEqual(self.getProperty('build_summary'), RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE)
+
+    def test_failures_all_pre_existing_in_results_db_with_flakies_then_go_to_analyze_results(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['fast/css/pre-existing.html'])
+        self.setProperty('first_run_flakies', ['fast/css/flaky1.html'])
+        self.setProperty('results-db_first_run_pre_existing', ['fast/css/pre-existing.html'])
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
+        self.get_nth_step(0).evaluateCommand(FAILURE)
+        self.assertFalse(RunWebKitTestsRepeatFailuresRedTree() in next_steps)
+        self.assertTrue(AnalyzeLayoutTestsResultsRedTree() in next_steps)
+
+    def test_failures_partly_pre_existing_in_results_db_then_repeat_failures(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['fast/css/pre-existing.html', 'fast/css/test1.html'])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', ['fast/css/pre-existing.html'])
+        next_steps = []
+        self.patch(self.build, 'addStepsAfterCurrentStep', lambda s: next_steps.extend(s))
+        self.patch(RunWebKitTestsRedTree, 'evaluateResult', lambda s, r: r)
+        self.assertEqual(self.get_nth_step(0).evaluateCommand(FAILURE), FAILURE)
+        self.assertTrue(RunWebKitTestsRepeatFailuresRedTree() in next_steps)
+
 
 class TestReportToResultsDB(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
@@ -4808,7 +4885,7 @@ class TestReRunAPITestsExcusesKnownFlakes(BuildStepMixinAdditions, unittest.Test
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output=api_test_results.json --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output=api_test_results.json --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': 'api_test_results.json'},
                         timeout=20 * 60,
                         )
@@ -5298,6 +5375,24 @@ class TestRunWebKitTestsRepeatFailuresRedTree(BuildStepMixinAdditions, unittest.
         self.expect_outcome(result=SUCCESS, state_string='layout-tests')
         return self.run_step()
 
+    def test_skips_failures_pre_existing_in_results_db(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['fast/css/test1.html', 'fast/css/pre-existing.html', 'fast/svg/test3.svg'])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', ['fast/css/pre-existing.html'])
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        max_time=18000,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --wpe --results-directory layout-test-results --debug-rwt-logging --skip-failing-tests --fully-parallel --repeat-each=10 fast/css/test1.html fast/svg/test3.svg 2>&1 | Tools/Scripts/filter-test-logs layout']
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        return self.run_step()
+
     def test_success_tests_names_with_shell_conflictive_chars(self):
         self.configureStep()
         first_run_failures = ['imported/w3c/web-platform-tests/html/dom/idlharness.https.html?exclude=(Document|Window|HTML.*)',
@@ -5451,6 +5546,25 @@ class TestRunWebKitTestsRepeatFailuresWithoutChangeRedTree(BuildStepMixinAdditio
         self.expect_outcome(result=SUCCESS, state_string='layout-tests')
         return self.run_step()
 
+    def test_step_with_change_did_timeout_skips_failures_pre_existing_in_results_db(self):
+        self.configureStep()
+        self.setProperty('first_run_failures', ['fast/css/test1.html', 'fast/css/pre-existing.html'])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', ['fast/css/pre-existing.html'])
+        self.setProperty('with_change_repeat_failures_timedout', True)
+        self.expectRemoteCommands(
+            ExpectShell(workdir='wkdir',
+                        logfiles={'json': self.jsonFileName},
+                        log_environ=False,
+                        max_time=10800,
+                        timeout=19800,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'python3 Tools/Scripts/run-webkit-tests --no-build --no-show-results --no-new-test-results --clobber-old-results --release --wpe --results-directory layout-test-results --debug-rwt-logging --skip-failing-tests --fully-parallel --repeat-each=10 --skipped=always fast/css/test1.html 2>&1 | Tools/Scripts/filter-test-logs layout']
+                        )
+            .exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='layout-tests')
+        return self.run_step()
+
     @defer.inlineCallbacks
     def test_set_properties_when_executed_scope_this_class(self):
         self.configureStep()
@@ -5595,6 +5709,19 @@ class TestAnalyzeLayoutTestsResultsRedTree(BuildStepMixinAdditions, unittest.Tes
         self.assertTrue('Subject: Info about 3 flaky failures' in self._emails_list[0])
         for flaky_test in ["test/pre-existent/flaky1.html", "test/pre-existent/flaky2.html", "test/pre-existent/flaky3.html"]:
             self.assertTrue(f'Test name: <a href="https://github.com/WebKit/WebKit/blob/main/LayoutTests/{flaky_test}">{flaky_test}</a>' in self._emails_list[0])
+        return step_result
+
+    def test_failures_pre_existing_in_results_db_with_only_flakies(self):
+        self.configureStep()
+        self.configureCommonProperties()
+        self.setProperty('first_run_failures', ['test/pre-existent/failure.html'])
+        self.setProperty('first_run_flakies', ['test/flaky1.html'])
+        self.setProperty('results-db_first_run_pre_existing', ['test/pre-existent/failure.html'])
+        self.expect_outcome(result=SUCCESS, state_string='Passed layout tests')
+        step_result = self.run_step()
+        self.assertEqual(len(self._emails_list), 1)
+        self.assertTrue('Subject: Info about 1 flaky failure ' in self._emails_list[0])
+        self.assertFalse('test/pre-existent/failure.html' in self._emails_list[0])
         return step_result
 
     def test_first_step_gives_unexpected_failure_and_clean_tree_pass_last_try(self):
@@ -5764,6 +5891,18 @@ class TestAnalyzeLayoutTestsResultsRedTree(BuildStepMixinAdditions, unittest.Tes
         for failed_test in ['test/failure1.html', 'test/failure2.html']:
             self.assertTrue(failed_test in self._emails_list[1])
         return step_result
+
+    def test_step_retry_with_change_timeouts_skips_failures_pre_existing_in_results_db(self):
+        self.configureStep()
+        self.configureCommonProperties()
+        self.setProperty('first_run_failures', ["test/failure1.html", "test/pre-existent/failure.html"])
+        self.setProperty('first_run_flakies', [])
+        self.setProperty('results-db_first_run_pre_existing', ["test/pre-existent/failure.html"])
+        self.setProperty('with_change_repeat_failures_timedout', True)
+        self.setProperty('without_change_repeat_failures_results_nonflaky_failures', [])
+        self.setProperty('without_change_repeat_failures_results_flakies', [])
+        self.expect_outcome(result=FAILURE, state_string='Found 1 new test failure: test/failure1.html (failure)')
+        return self.run_step()
 
     def test_step_retry_with_change_unexpected_error(self):
         self.configureStep()
@@ -7447,7 +7586,7 @@ class TestRunAPITests(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7476,7 +7615,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --ios-simulator --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --ios-simulator --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7573,7 +7712,7 @@ Ran 1316 tests of 1318 with 1316 successful
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7616,7 +7755,7 @@ Testing completed, Exit status: 3
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7673,7 +7812,7 @@ Testing completed, Exit status: 3
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7692,7 +7831,7 @@ Testing completed, Exit status: 3
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7722,7 +7861,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7755,7 +7894,7 @@ Expected failures (not blocking):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --exit-after-n-failures 60 --skip-failing-tests 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7803,7 +7942,7 @@ class TestRunAPITestsWithoutChange(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} suite.test1 suite.test2 suite.test3 suite.test4 suite.test5 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --skip-failing-tests suite.test1 suite.test2 suite.test3 suite.test4 suite.test5 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7837,7 +7976,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} \'suite.test1(foo:)\' suite.test2 suite.test3 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --skip-failing-tests \'suite.test1(foo:)\' suite.test2 suite.test3 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -7871,7 +8010,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} suite.test-one-failure1 suite.test-one-failure2 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --skip-failing-tests suite.test-one-failure1 suite.test-one-failure2 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -8262,7 +8401,7 @@ class TestRunAPITestsParallelSafety(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --skip-failing-tests --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -8287,7 +8426,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --ios-simulator --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --skip-failing-tests --ios-simulator --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -8312,7 +8451,7 @@ All tests successfully passed!
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --release --verbose --json-output={self.jsonFileName} --skip-failing-tests --test-parallel-safety TestWebKitAPI.TestName 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -8344,7 +8483,7 @@ Testing completed, Exit status: 3
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         log_environ=False,
-                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --test-parallel-safety TestWebKitAPI.Test1 --test-parallel-safety TestWebKitAPI.Test2 2>&1 | Tools/Scripts/filter-test-logs api'],
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'python3 Tools/Scripts/run-api-tests --timestamps --no-build --debug --verbose --json-output={self.jsonFileName} --skip-failing-tests --test-parallel-safety TestWebKitAPI.Test1 --test-parallel-safety TestWebKitAPI.Test2 2>&1 | Tools/Scripts/filter-test-logs api'],
                         logfiles={'json': self.jsonFileName},
                         timeout=20 * 60
                         )
@@ -9111,7 +9250,7 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'api-gtk', 'state': 'SUCCESS'},
                         {'context': 'api-ios', 'state': 'SUCCESS'},
                         {'context': 'api-mac', 'state': 'SUCCESS'},
-                        {'context': 'api-mac-debug', 'state': 'SUCCESS'},
+                        {'context': 'api-mac-cmake-debug', 'state': 'SUCCESS'},
                         {'context': 'bindings', 'state': 'SUCCESS'},
                         {'context': 'gtk', 'state': 'SUCCESS'},
                         {'context': 'gtk-wk2', 'state': 'SUCCESS'},
@@ -9124,8 +9263,8 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                         {'context': 'jsc-i386', 'state': 'SUCCESS'},
                         {'context': 'mac', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug-wk2', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug-wk2', 'state': 'SUCCESS'},
                         {'context': 'mac-wk1', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2-stress', 'state': 'SUCCESS'},
@@ -9174,7 +9313,7 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                         {'context': 'jsc-i386', 'state': 'SUCCESS'},
                         {'context': 'mac', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
                         {'context': 'mac-wk1', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2-stress', 'state': 'SUCCESS'},
@@ -9197,7 +9336,7 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'jsc-arm64', 'state': 'SUCCESS'},
                         {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                         {'context': 'jsc-i386', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
                         {'context': 'services', 'state': 'SUCCESS'},
                         {'context': 'style', 'state': 'SUCCESS'},
                         {'context': 'tv', 'state': 'SUCCESS'},
@@ -9236,8 +9375,8 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                             {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                             {'context': 'jsc-i386', 'state': 'SUCCESS'},
                             {'context': 'mac', 'state': 'SUCCESS'},
-                            {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
-                            {'context': 'mac-AS-debug-wk2', 'state': 'SUCCESS'},
+                            {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
+                            {'context': 'mac-cmake-debug-wk2', 'state': 'SUCCESS'},
                             {'context': 'mac-wk1', 'state': 'SUCCESS'},
                             {'context': 'mac-wk2', 'state': 'SUCCESS'},
                             {'context': 'mac-wk2-stress', 'state': 'SUCCESS'},
@@ -9284,7 +9423,7 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                         {'context': 'jsc-i386', 'state': 'SUCCESS'},
                         {'context': 'mac', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
                         {'context': 'mac-wk1', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2', 'state': 'SUCCESS'},
                         {'context': 'mac-wk2-stress', 'state': 'SUCCESS'},
@@ -9307,7 +9446,7 @@ class TestRetrievePRDataFromLabel(BuildStepMixinAdditions, unittest.TestCase):
                         {'context': 'jsc-arm64', 'state': 'SUCCESS'},
                         {'context': 'jsc-armv7', 'state': 'SUCCESS'},
                         {'context': 'jsc-i386', 'state': 'SUCCESS'},
-                        {'context': 'mac-AS-debug', 'state': 'SUCCESS'},
+                        {'context': 'mac-cmake-debug', 'state': 'SUCCESS'},
                         {'context': 'services', 'state': 'SUCCESS'},
                         {'context': 'style', 'state': 'SUCCESS'},
                         {'context': 'tv', 'state': 'SUCCESS'},

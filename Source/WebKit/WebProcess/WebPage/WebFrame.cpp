@@ -305,21 +305,15 @@ FrameInfoData WebFrame::info() const
     RefPtr loadingFrame = m_provisionalFrame ? m_provisionalFrame : coreLocalFrame;
 
     WebFrameMetrics metrics;
-    FrameType frameType = FrameType::Local;
-    if (coreFrame) {
-        if (RefPtr coreView = coreFrame->virtualView()) {
-            IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
-            IntSize contentSize { coreView->contentsWidth(), coreView->contentsHeight() };
-            auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
-            auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
-            metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
-        }
-        if (coreFrame->frameType() == WebCore::Frame::FrameType::Remote)
-            frameType = FrameType::Remote;
+    if (RefPtr coreView = coreFrame ? coreFrame->virtualView() : nullptr) {
+        IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
+        IntSize contentSize { coreView->contentsWidth(), coreView->contentsHeight() };
+        auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
+        auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
+        metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
     }
 
     return {
-        frameType,
         // FIXME: This should use the full request.
         ResourceRequest(url()),
         coreFrame ? SecurityOriginData::fromFrame(*coreFrame) : SecurityOriginData { },
@@ -554,6 +548,16 @@ void WebFrame::destroyProvisionalFrame()
     }
 }
 
+// The navigation's response moved to another process. Unlike loadDidCommitInAnotherProcess(), this runs before it commits
+// there, so the frame keeps its document and only drops the provisional load, without reporting it as failed.
+void WebFrame::stopLoadingDueToProcessSwap(WebCore::NavigationIdentifier navigationID)
+{
+    RefPtr localFrame = coreLocalFrame() ? coreLocalFrame() : m_provisionalFrame.get();
+    RefPtr documentLoader = localFrame ? localFrame->loader().provisionalDocumentLoader() : nullptr;
+    if (documentLoader && documentLoader->navigationID() == navigationID)
+        documentLoader->cancelMainResourceLoad({ }, LoadWillContinueInAnotherProcess::Yes);
+}
+
 void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
 {
     if (RefPtr localFrame = coreLocalFrame())
@@ -651,14 +655,12 @@ void WebFrame::removeFromTree()
 
     if (is<RemoteFrame>(*coreFrame))
         coreFrame->disconnectOwnerElement();
+
+    destroyProvisionalFrame();
+
     if (RefPtr parent = coreFrame->tree().parent())
         parent->tree().removeChild(*coreFrame);
     coreFrame->disconnectView();
-
-    RefPtr localFrame = dynamicDowncast<LocalFrame>(*coreFrame);
-    bool detachFromPageWillRemoveRootFrame = localFrame && corePage->rootFrames().contains(*localFrame);
-    if (RefPtr drawingArea = webPage->drawingArea(); drawingArea && !detachFromPageWillRemoveRootFrame && drawingArea->hasRootFrame(frameID()))
-        drawingArea->removeRootFrame(frameID());
 }
 
 void WebFrame::didFinishLoadInAnotherProcess()

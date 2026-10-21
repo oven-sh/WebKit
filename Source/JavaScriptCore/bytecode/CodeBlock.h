@@ -632,10 +632,7 @@ public:
     // Functions for controlling when JITting kicks in, in a mixed mode
     // execution world.
 
-    bool checkIfJITThresholdReached()
-    {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
-    }
+    bool checkIfJITThresholdReached();
 
     void dontJITAnytimeSoon()
     {

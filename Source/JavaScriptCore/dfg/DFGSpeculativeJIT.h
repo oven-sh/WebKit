@@ -107,7 +107,7 @@ public:
         explicit TrustedImmPtr(T* value)
             : m_value(value)
         {
-            static_assert(!std::is_base_of<JSCell, T>::value, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
+            static_assert(!std::derived_from<T, JSCell>, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
         }
 
         explicit TrustedImmPtr(RegisteredStructure structure)
@@ -1347,6 +1347,7 @@ public:
 
     void compileSameValue(Node*);
     
+    void compileAllocatePropertyStorageWithIndexingHeader(Node*);
     void compileAllocatePropertyStorage(Node*);
     void compileReallocatePropertyStorage(Node*);
     void compileNukeStructureAndSetButterfly(Node*);
@@ -1433,6 +1434,7 @@ public:
     void compileGetTypedArrayLengthAsInt52(Node*);
 #endif
     void compileDataViewGetByteLength(Node*);
+    void compileTypedArraySet(Node*);
 #if USE(LARGE_TYPED_ARRAYS)
     void compileDataViewGetByteLengthAsInt52(Node*);
 #endif
@@ -1494,6 +1496,7 @@ public:
     void compileArithF16Round(Node*);
     void compileValueMod(Node*);
     void compileArithMod(Node*);
+    bool compileArithModDoubleByPowerOfTwo(Node*);
     void compileArithPow(Node*);
     void compileValuePow(Node*);
     void compileArithRounding(Node*);
