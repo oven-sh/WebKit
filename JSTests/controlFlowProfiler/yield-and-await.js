@@ -90,7 +90,7 @@ checkBasicBlock(testRejection, "foo(1)", ShouldNotHaveExecuted);
 checkBasicBlock(testRejection, "foo(2)", ShouldHaveExecuted);
 checkBasicBlock(testRejection, "foo(3)", ShouldHaveExecuted);
 
-// Wherever it is in the statement.
+// The `await` can be anywhere in the statement.
 async function testInAnExpression(x, o) {
     let a = x ? await never : 1;
     foo(1);
@@ -125,7 +125,7 @@ drainMicrotasks();
 for (let i = 1; i <= 4; ++i)
     assert(basicBlockExecutionCount(testKindsOfStatement, "foo(" + i + ")") === 1, "foo(" + i + ") ran once");
 
-// A statement that other statements are a part of has one basic block after it.
+// A compound statement emits the basic block after it only once.
 async function testInAStatementOfAStatement(x) {
     if (x) {
         await 1;
@@ -169,8 +169,8 @@ async function testInALoop(list) {
 }
 testInALoop([1, 2, never, 3]);
 drainMicrotasks();
-assert(basicBlockExecutionCount(testInALoop, "foo(1)") === 3, "three turns start");
-assert(basicBlockExecutionCount(testInALoop, "foo(2)") === 2, "two turns end");
+assert(basicBlockExecutionCount(testInALoop, "foo(1)") === 3, "three iterations start");
+assert(basicBlockExecutionCount(testInALoop, "foo(2)") === 2, "two iterations finish");
 checkBasicBlock(testInALoop, "foo(3)", ShouldNotHaveExecuted);
 
 async function* testAsyncGenerator() {

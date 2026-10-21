@@ -71,7 +71,7 @@ checkBasicBlock(testForOfAndCatch, "foo(2)", ShouldHaveExecuted);
 checkBasicBlock(testForOfAndCatch, "foo(3)", ShouldNotHaveExecuted);
 checkBasicBlock(testForOfAndCatch, "foo(4)", ShouldHaveExecuted);
 
-// The basic block of the arrow function is not the one of the default value.
+// An arrow function as the default value does not share a basic block with its own body.
 function testArrowFunction(a = () => foo()) {
     return a;
 }
@@ -90,7 +90,7 @@ arrowFunction();
 arrowFunction();
 assert(basicBlockExecutionCount(testArrowFunctionInAPattern, "foo()") === 2, "the arrow function ran twice");
 
-// Not in the test of a `case`.
+// No basic block in the test of a `case`: its text belongs to the clause.
 function testCaseTest(o) {
     let a;
     switch (2) {

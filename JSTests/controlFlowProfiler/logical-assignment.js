@@ -84,7 +84,7 @@ checkBasicBlock(testChain, "foo(1)", ShouldNotHaveExecuted);
 checkBasicBlock(testChain, "foo(2)", ShouldNotHaveExecuted);
 checkBasicBlock(testChain, "return x", ShouldHaveExecuted);
 
-// The basic block of the arrow function is not the one of the right side.
+// An arrow function as the right side does not share a basic block with its own body.
 function testArrowFunction(x) {
     x ||= () => foo();
     return x;
@@ -95,7 +95,7 @@ arrowFunction();
 arrowFunction();
 assert(basicBlockExecutionCount(testArrowFunction, "foo()") === 2, "the arrow function ran twice");
 
-// Not in the test of a `case`.
+// No basic block in the test of a `case`: its text belongs to the clause.
 function testCaseTest(x) {
     switch (2) {
     case x ||= foo(1): foo(2);

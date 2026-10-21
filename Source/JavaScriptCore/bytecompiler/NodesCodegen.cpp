@@ -1417,10 +1417,11 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
 
 // ------------------------------ FunctionCallValueNode ----------------------------------
 
-// The divot of an optional call is after its `?.`.
-static int startOffsetOfOptionalCall(const JSTextPosition& divot)
+// makeFunctionCallNode() takes the callee apart, so there is no node with its end offset.
+// The divot of an optional call is the end of its `?.`.
+static int startOffsetOfQuestionDot(const JSTextPosition& optionalCallDivot)
 {
-    return divot.offset - 2;
+    return optionalCallDivot.offset - 2;
 }
 
 RegisterID* FunctionCallValueNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
@@ -1482,7 +1483,7 @@ RegisterID* FunctionCallValueNode::emitBytecode(BytecodeGenerator& generator, Re
     func = generator.emitNode(func.get(), m_expr);
     RefPtr<RegisterID> returnValue = generator.finalDestination(dst, func.get());
     if (isOptionalCall())
-        generator.emitOptionalCheck(func.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(func.get(), startOffsetOfQuestionDot(divot()));
 
     CallArguments callArguments(generator, m_args);
     generator.emitLoad(callArguments.thisRegister(), jsUndefined());
@@ -1552,7 +1553,7 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
 
     RefPtr<RegisterID> returnValue = generator.finalDestination(dst, func.get());
     if (isOptionalCall())
-        generator.emitOptionalCheck(func.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(func.get(), startOffsetOfQuestionDot(divot()));
 
     RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), func.get(), expectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
     generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
@@ -2299,7 +2300,7 @@ RegisterID* FunctionCallBracketNode::emitBytecode(BytecodeGenerator& generator, 
             generator.emitGetByVal(function.get(), base.get(), property.get());
     }
     if (isOptionalCall())
-        generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
 
     CallArguments callArguments(generator, m_args);
     if (baseIsSuper) {
@@ -2342,7 +2343,7 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
     }
 
     if (isOptionalCall())
-        generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
 
     RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), function.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
     generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
@@ -2370,7 +2371,7 @@ RegisterID* CallFunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, 
             function = generator.emitGetById(generator.tempDestination(dst), base.get(), generator.propertyNames().builtinNames().callPublicName());
 
         if (isOptionalCall())
-            generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+            generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
     };
 
     bool emitCallCheck = !generator.isBuiltinFunction();
@@ -2441,7 +2442,7 @@ RegisterID* HasOwnPropertyFunctionCallDotNode::emitBytecode(BytecodeGenerator& g
 
     RefPtr<RegisterID> function = generator.emitGetById(generator.newTemporary(), base.get(), generator.propertyNames().hasOwnProperty);
     if (isOptionalCall())
-        generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
 
     RELEASE_ASSERT(m_args->m_listNode && m_args->m_listNode->m_expr && !m_args->m_listNode->m_next);  
     ExpressionNode* argument = m_args->m_listNode->m_expr;
@@ -2526,7 +2527,7 @@ RegisterID* ApplyFunctionCallDotNode::emitBytecode(BytecodeGenerator& generator,
             function = generator.emitGetById(generator.tempDestination(dst), base.get(), generator.propertyNames().builtinNames().applyPublicName());
 
         if (isOptionalCall())
-            generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+            generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
     };
 
     bool emitCallCheck = !generator.isBuiltinFunction();
@@ -2642,7 +2643,7 @@ RegisterID* ReflectConstructFunctionCallDotNode::emitBytecode(BytecodeGenerator&
     generator.emitExpressionInfo(subexpressionDivot(), subexpressionStart(), subexpressionEnd());
     generator.emitGetById(function.get(), callArguments.thisRegister(), generator.propertyNames().construct);
     if (isOptionalCall())
-        generator.emitOptionalCheck(function.get(), startOffsetOfOptionalCall(divot()));
+        generator.emitOptionalCheck(function.get(), startOffsetOfQuestionDot(divot()));
 
     RegisterID* target = callArguments.argumentRegister(0);
     RegisterID* argumentsList = callArguments.argumentRegister(1);
@@ -4372,9 +4373,8 @@ inline void SourceElements::emitBytecode(BytecodeGenerator& generator, RegisterI
         } else
             generator.emitNodeInTailPosition(generator.ignoredResult(), statement);
 
-        // A generator that is not resumed leaves the statement at a `yield` or an `await`.
-        // A second op with the range of the one the statement has emitted would count twice.
-        if (generator.yieldPoints() != yieldPointsBefore && !generator.hasProfileControlFlowAfter(statement))
+        // A generator may never be resumed after a `yield` or an `await`, so what follows the statement needs its own basic block.
+        if (generator.yieldPoints() != yieldPointsBefore)
             generator.emitProfileControlFlowAfter(statement);
     }
 }

@@ -1,6 +1,6 @@
 load("./driver/driver.js");
 
-// What is after a statement of a module with an `await` has a basic block, also when the statement is an `export`.
+// Must not crash: the basic block after a statement with an `await` starts at the end offset of the statement, which an `export` needs too.
 var module;
 import("./resources/top-level-await.js").then(result => { module = result; });
 drainMicrotasks();

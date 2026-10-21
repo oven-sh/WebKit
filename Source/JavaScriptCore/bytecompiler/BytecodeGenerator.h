@@ -353,8 +353,8 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
-    // An operator, a parenthesis or white space is before the expression. From the expression itself, the basic block
-    // of an expression that is an arrow function would have the range of the one the function has for its own code.
+    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
+    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
     inline int startOffsetOfBasicBlock(ExpressionNode* node)
     {
         return node->startOffset() - 1;
@@ -703,8 +703,9 @@ namespace JSC {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
-        // For what `?.`, a logical assignment or a default value can skip. In the test of a `case`, on one line with
-        // the clause, it would make a clause that did not run read as run.
+        // For what `?.`, a logical assignment or a default value can skip. The text of the test of a `case` is in the basic
+        // block of its clause, where a basic block of its own would mark a part of a clause that did not run as executed.
+        // `&&`, `||`, `??` and `?:` have theirs there.
         void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
         {
             if (!m_isInCaseTest)
@@ -720,7 +721,6 @@ namespace JSC {
             return false;
         }
         int& statementsEndOffset() { return m_statementsEndOffset; }
-        bool hasProfileControlFlowAfter(StatementNode* statement) const { return m_lastStatementWithProfileControlFlowAfter == statement; }
         unsigned yieldPoints() const { return m_yieldPoints; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);

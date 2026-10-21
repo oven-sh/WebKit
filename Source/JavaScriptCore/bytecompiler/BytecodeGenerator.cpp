@@ -2110,6 +2110,9 @@ void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOf
 
 bool BytecodeGenerator::emitProfileControlFlowAfterSlow(StatementNode* statement)
 {
+    // SourceElements::emitBytecode() asks again for a statement with a `yield` or an `await`, and two ops with the same range share a counter.
+    if (m_lastStatementWithProfileControlFlowAfter == statement)
+        return false;
     m_lastStatementWithProfileControlFlowAfter = statement;
 
     // A function declaration does not run where it is.

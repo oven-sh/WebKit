@@ -91,7 +91,7 @@ checkBasicBlock(testCallAndApply, "foo(1)", ShouldHaveExecuted);
 checkBasicBlock(testCallAndApply, "foo(2)", ShouldHaveExecuted);
 checkBasicBlock(testCallAndApply, "foo(3)", ShouldNotHaveExecuted);
 
-// Calls that have bytecode of their own.
+// Calls with their own node types.
 function testKindsOfCall(x, o, Reflect, skipped1, skipped2) {
     x?.hasOwnProperty(skipped1);
     o.hasOwnProperty?.(skipped2);
@@ -99,7 +99,7 @@ function testKindsOfCall(x, o, Reflect, skipped1, skipped2) {
     o.apply?.(x, [foo(2)]);
     (0, x)?.(foo(3));
     Reflect?.construct(Object, [foo(4)]);
-    o.Reflect = Reflect = { };
+    Reflect = { };
     Reflect.construct?.(Object, [foo(5)]);
     x?.["method"](foo(6));
     return x;
@@ -196,7 +196,7 @@ testCount(object);
 assert(basicBlockExecutionCount(testCount, "x?.") === 5, "the base runs each time");
 assert(basicBlockExecutionCount(testCount, "foo()") === 3, "the rest runs when the base is an object");
 
-// Not in the test of a `case`.
+// No basic block in the test of a `case`: its text belongs to the clause.
 function testCaseTest(x) {
     switch (2) {
     case x?.[foo(1)]: foo(2);
