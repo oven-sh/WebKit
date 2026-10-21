@@ -232,6 +232,7 @@ private:
     // pays for the wake-up of one marker (Collector::didPayForMarkerWakeup()).
     void payForMarkerWakeupIfNeeded();
     void payForMarkerWakeup();
+    void didWakeUpForMarking();
     void pollSharedMarkStacks(MonotonicTime timeout);
 #endif
 
@@ -252,7 +253,7 @@ private:
     size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
 #if USE(BUN_JSC_ADDITIONS)
     size_t m_bytesVisitedAgain { 0 };
-    size_t m_bytesVisitedAtLastPayment { 0 }; // bytesVisited() at the last payForMarkerWakeup().
+    size_t m_bytesVisitedAtNextPayment { 0 }; // This visitor calls payForMarkerWakeup() when bytesVisited() gets here.
 #endif
 
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.

@@ -540,7 +540,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
         MonotonicTime timeToResume = m_scheduler->timeToResume();
         // A cycle that is small so far does not resume (below), whatever the scheduler says. It marks for a minimum
         // pause more.
-        if (isSmallSoFar())
+        if (staysPausedWhileSmall())
             timeToResume = std::max(timeToResume, MonotonicTime::now() + Seconds::fromMilliseconds(Options::minimumGCPauseMS()));
         visitor.drainInParallel(timeToResume);
 #else
@@ -566,7 +566,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
     // A cycle that is small so far has asked no other thread to mark, and it finishes sooner in this pause than in
     // a later one: a resume would have a helper woken to do the marking meanwhile, and the mutator allocate into
     // the cycle's headroom.
-    if (isSmallSoFar())
+    if (staysPausedWhileSmall())
         return true;
 #endif
 
@@ -584,6 +584,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
     // Marking goes on while the mutator runs, and when the mutator has the conn nothing but the helpers can do it.
     // They get the cells that this thread has left: every marker that the marking so far has paid for, and one
     // marker if it has paid for none.
+    m_isSmallSoFar.store(false, std::memory_order_relaxed);
     MarkersToWake markers;
     {
         Locker locker { m_markingMutex };
@@ -1034,6 +1035,11 @@ void Collector::endSignpost()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Collector::staysPausedWhileSmall() const
+{
+    return isSmallSoFar() && Options::minimumGCPauseMS() > 0;
+}
+
 void Collector::didPayForMarkerWakeup()
 {
     m_numberOfMarkerWakeupsPaidFor.fetch_add(1, std::memory_order_relaxed);
@@ -1136,6 +1142,7 @@ void Collector::runMarkingHelper()
             m_numberOfRequestedParallelMarkers--;
         m_numberOfParallelMarkersInCycle++;
     }
+    visitor->didWakeUpForMarking();
 #endif
 
     {

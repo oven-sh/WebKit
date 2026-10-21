@@ -97,9 +97,9 @@ public:
     void runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>>);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // True until a visitor of the current cycle has visited Options::minimumBytesMarkedForParallelMarking. A
-    // collection that small is done sooner on its conductor's thread, in one pause, than with another thread woken
-    // for it or with the mutator resumed.
+    // True until a visitor of the current cycle has visited Options::minimumBytesMarkedForParallelMarking, or the
+    // mutator has resumed. A collection that small is done sooner on its conductor's thread, in one pause, than
+    // with another thread woken for it or with the mutator resumed.
     bool isSmallSoFar() const { return m_isSmallSoFar.load(std::memory_order_relaxed); }
 #endif
 
@@ -217,6 +217,9 @@ private:
         unsigned m_numberOfHelpers { 0 };
     };
     enum class MarkerWork : uint8_t { SharedCells, BonusVisitorTask };
+    // Whether runFixpointPhase() keeps the mutator stopped when the scheduler would resume it. The cycle then marks
+    // for Options::minimumGCPauseMS more, so with that at 0 it would not mark at all: then the scheduler decides.
+    bool staysPausedWhileSmall() const;
     void didPayForMarkerWakeup();
     MarkersToWake choosePaidForMarkersToWake(const AbstractLocker&, MarkerWork) WTF_REQUIRES_LOCK(m_markingMutex);
     MarkersToWake chooseMarkerToWakeIfNoneIsMarking(const AbstractLocker&) WTF_REQUIRES_LOCK(m_markingMutex);

@@ -111,6 +111,9 @@ void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVers
     ASSERT(!m_currentCell);
     Base::didStartMarking(scope, isAnalyzingHeap);
     m_markingVersion = markingVersion;
+#if USE(BUN_JSC_ADDITIONS)
+    m_bytesVisitedAtNextPayment = Options::minimumBytesMarkedForParallelMarking();
+#endif
 }
 
 void SlotVisitor::reset()
@@ -123,7 +126,7 @@ void SlotVisitor::reset()
     m_flushedBytesMarked = 0;
 #if USE(BUN_JSC_ADDITIONS)
     m_bytesVisitedAgain = 0;
-    m_bytesVisitedAtLastPayment = 0;
+    m_bytesVisitedAtNextPayment = 0;
 #endif
     m_extraMemoryHeap = nullptr;
     RELEASE_ASSERT(!m_currentCell);
@@ -500,14 +503,13 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
 ALWAYS_INLINE void SlotVisitor::payForMarkerWakeupIfNeeded()
 {
     // With the option at 0 no wake-up needs paying for.
-    size_t bytesPerMarkerWakeup = Options::minimumBytesMarkedForParallelMarking();
-    if (bytesPerMarkerWakeup && bytesVisited() - m_bytesVisitedAtLastPayment >= bytesPerMarkerWakeup) [[unlikely]]
+    if (Options::minimumBytesMarkedForParallelMarking() && bytesVisited() >= m_bytesVisitedAtNextPayment) [[unlikely]]
         payForMarkerWakeup();
 }
 
 NEVER_INLINE void SlotVisitor::payForMarkerWakeup()
 {
-    m_bytesVisitedAtLastPayment = bytesVisited();
+    m_bytesVisitedAtNextPayment = bytesVisited() + Options::minimumBytesMarkedForParallelMarking();
     collector().didPayForMarkerWakeup();
 
     // A donation spends it. Cells that are shared already do not wait for one. This looks without the lock, so it
@@ -521,6 +523,14 @@ NEVER_INLINE void SlotVisitor::payForMarkerWakeup()
         markers = collector().choosePaidForMarkersToWake(locker, Collector::MarkerWork::SharedCells);
     }
     collector().wakeMarkers(markers);
+}
+
+// A wake-up that gives its marker work was worth its cost, and the marker pays for it with that work: the collection
+// can then wake one more. A wake-up that gives its marker next to nothing (in a linked list) is paid for by the
+// marking of the others, at the full rate.
+void SlotVisitor::didWakeUpForMarking()
+{
+    m_bytesVisitedAtNextPayment = std::min<size_t>(m_bytesVisitedAtNextPayment, bytesVisited() + Options::gcMarkerWakeupPaybackBytes());
 }
 #endif
 
@@ -772,7 +782,9 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
 
                     collector().m_threadInMainDrainIsParked = true;
                     collector().m_markingConditionVariable.waitUntil(collector().m_markingMutex, timeout);
-                    collector().m_threadInMainDrainIsParked = false;
+                    // A wake-up for this thread cleared it (Collector::chooseMarkersToWake()).
+                    if (!std::exchange(collector().m_threadInMainDrainIsParked, false))
+                        didWakeUpForMarking();
                 }
             } else {
                 ASSERT(sharedDrainMode == HelperDrain);
