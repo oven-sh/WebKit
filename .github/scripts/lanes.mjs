@@ -49,6 +49,11 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 
 const SANITIZERS = "address,undefined";
 
+// All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
+// function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
+const HARDENING =
+  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096";
+
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
@@ -79,10 +84,14 @@ const variants = {
   "assertions": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
+  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed. Same ABI as those two.
+  "hardened": { buildType: "Release", mimalloc: true, hardened: true },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
 };
 const NO_ASAN = ["release", "lto", "debug"];
 const ALL = [...NO_ASAN, "asan", "debug-asan"];
 const FUZZING = ["assertions", "coverage", "assertions-coverage"];
+const HARDENED = ["hardened", "lto-hardened"];
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
@@ -95,9 +104,9 @@ const FUZZING = ["assertions", "coverage", "assertions-coverage"];
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
 //                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
-//                   where there is no lto lane) is what bun ships. The asan lanes are not tested: the tests take 65 to
-//                   100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick` is --quick, for
-//                   a runner with few cores.
+//                   where there is no lto lane) is what bun ships, and nothing else runs "lto-hardened". The asan lanes
+//                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
+//                   on Windows. `quick` is --quick, for a runner with few cores.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -105,10 +114,10 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: [...ALL, ...FUZZING], arm64: ALL },
+    lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: [...ALL, ...HARDENED] },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["lto"] },
-      arm64: { on: "linux-arm64-gh", variants: ["lto"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-hardened"] },
+      arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-hardened"] },
     },
     image: () => "linux-glibc",
     args: (arch, v) => ({
@@ -118,6 +127,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
+      HARDENING_FLAGS: v.hardened ? HARDENING : "",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:
