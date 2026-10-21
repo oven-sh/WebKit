@@ -754,16 +754,18 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    RETURN_IF_EXCEPTION(scope, {});
-#if USE(BUN_JSC_ADDITIONS)
-    if (propertyName == vm.propertyNames->stack) {
-        bool result = Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow);
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        thisObject->materializeErrorInfoIfNeeded(vm);
         RETURN_IF_EXCEPTION(scope, {});
-        thisObject->discardStackToComposeIfReplaced(vm);
-        return result;
-    }
+#if USE(BUN_JSC_ADDITIONS)
+        if (propertyName == vm.propertyNames->stack) {
+            bool result = Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow);
+            RETURN_IF_EXCEPTION(scope, {});
+            thisObject->discardStackToComposeIfReplaced(vm);
+            return result;
+        }
 #endif
+    }
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
 
@@ -772,18 +774,20 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (materializedProperties)
-        slot.disableCaching();
-#if USE(BUN_JSC_ADDITIONS)
-    if (propertyName == vm.propertyNames->stack) {
-        bool result = Base::put(thisObject, globalObject, propertyName, value, slot);
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm);
         RETURN_IF_EXCEPTION(scope, {});
-        thisObject->discardStackToComposeIfReplaced(vm);
-        return result;
-    }
+        if (materializedProperties)
+            slot.disableCaching();
+#if USE(BUN_JSC_ADDITIONS)
+        if (propertyName == vm.propertyNames->stack) {
+            bool result = Base::put(thisObject, globalObject, propertyName, value, slot);
+            RETURN_IF_EXCEPTION(scope, {});
+            thisObject->discardStackToComposeIfReplaced(vm);
+            return result;
+        }
 #endif
+    }
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
 
@@ -791,15 +795,19 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    if (materializedProperties)
-        slot.disableCaching();
-    bool result = Base::deleteProperty(thisObject, globalObject, propertyName, slot);
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm);
+        if (materializedProperties)
+            slot.disableCaching();
 #if USE(BUN_JSC_ADDITIONS)
-    if (propertyName == vm.propertyNames->stack)
-        thisObject->discardStackToComposeIfReplaced(vm);
+        if (propertyName == vm.propertyNames->stack) {
+            bool result = Base::deleteProperty(thisObject, globalObject, propertyName, slot);
+            thisObject->discardStackToComposeIfReplaced(vm);
+            return result;
+        }
 #endif
-    return result;
+    }
+    return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -809,10 +817,10 @@ void ErrorInstance::discardStackToComposeIfReplaced(VM& vm)
     if (hasStackToCompose() && !stackIsHostAccessor(vm))
         discardStackToCompose();
 }
-
-#if CPU(ADDRESS64)
-static_assert(sizeof(ErrorInstance) == 72, "The state of a lazy stack is bits beside the others: an error stays the size it was");
 #endif
+
+#if USE(BUN_JSC_ADDITIONS) && CPU(ADDRESS64)
+static_assert(sizeof(ErrorInstance) == 72, "The state of a lazy stack is bits beside the others: an error stays the size it was");
 #endif
 
 } // namespace JSC
