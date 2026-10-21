@@ -1099,6 +1099,11 @@ public:
         node->setStartOffset(offset);
     }
 
+    void setEndOffset(CaseClauseNode* node, int offset)
+    {
+        node->setEndOffset(offset);
+    }
+
     void setStartOffset(Node* node, int offset)
     {
         node->setStartOffset(offset);
@@ -1229,7 +1234,9 @@ ExpressionNode* ASTBuilder::makeDeleteNode(const JSTokenLocation& location, Expr
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr);
         if (optionalChain->expr()->isLocation()) {
             ASSERT(!optionalChain->expr()->isResolveNode());
+            int endOffset = optionalChain->expr()->endOffset();
             optionalChain->setExpr(makeDeleteNode(location, optionalChain->expr(), start, divot, end));
+            optionalChain->expr()->setEndOffset(endOffset);
             return optionalChain;
         }
     }
@@ -1411,7 +1418,10 @@ ExpressionNode* ASTBuilder::makeCoalesceNode(const JSTokenLocation& location, Ex
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr1);
         if (!optionalChain->expr()->isDeleteNode()) {
             constexpr bool hasAbsorbedOptionalChain = true;
-            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain);
+            // The operand ends after any parentheses around the chain. What the chain skips ends with the chain.
+            int optionalChainEndOffset = optionalChain->expr()->endOffset();
+            optionalChain->expr()->setEndOffset(optionalChain->endOffset());
+            return new (m_parserArena) CoalesceNode(location, optionalChain->expr(), expr2, hasAbsorbedOptionalChain, optionalChainEndOffset);
         }
     }
     constexpr bool hasAbsorbedOptionalChain = false;
@@ -1498,6 +1508,9 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
 
 ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int token, std::pair<ExpressionNode*, BinaryOpInfo> lhs, std::pair<ExpressionNode*, BinaryOpInfo> rhs)
 {
+    lhs.first->setEndOffset(lhs.second.end.offset);
+    rhs.first->setEndOffset(rhs.second.end.offset);
+
     switch (token) {
     case COALESCE:
         return makeCoalesceNode(location, lhs.first, rhs.first);
