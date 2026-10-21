@@ -6828,7 +6828,8 @@ class YarrGenerator final : public YarrJITInfo {
                 Checked<unsigned, RecordOverflow> checkedOffsetResult(checkedOffset);
                 checkedOffsetResult += lastOp.m_checkAdjust;
 
-                if (checkedOffsetResult.hasOverflowed()) [[unlikely]] {
+                // The limit containsUnsignedLengthPattern() puts on one alternative, for the sum over nested ones.
+                if (checkedOffsetResult.hasOverflowed() || checkedOffsetResult > static_cast<unsigned>(INT_MAX)) [[unlikely]] {
                     m_failureReason = JITFailureReason::OffsetTooLarge;
                     return;
                 }
