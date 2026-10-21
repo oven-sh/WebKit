@@ -30,6 +30,14 @@
 
 namespace WTF {
 
+// CharacterType is the type of the buffer the returned capacity is for.
+template<typename CharacterType> unsigned StringBuilder::expandedCapacity(unsigned capacity, unsigned requiredCapacity)
+{
+    static constexpr unsigned minimumCapacity = 16;
+    static constexpr unsigned maxCapacity = StringImpl::maxValidLength<CharacterType>();
+    return std::max(requiredCapacity, std::max(minimumCapacity, std::min(capacity * 2, maxCapacity)));
+}
+
 // Allocate a new buffer, copying in currentCharacters (these may come from either m_string or m_buffer.
 template<typename AllocationCharacterType, typename CurrentCharacterType> void StringBuilder::allocateBuffer(std::span<const CurrentCharacterType> currentCharactersToCopy, unsigned requiredCapacity)
 {
@@ -85,7 +93,7 @@ template<typename CharacterType> std::span<CharacterType> StringBuilder::extendB
 {
     if (!requiredLength || hasOverflowed())
         return { };
-    reallocateBuffer(expandedCapacity(capacity(), requiredLength));
+    reallocateBuffer(expandedCapacity<CharacterType>(capacity(), requiredLength));
     if (hasOverflowed()) [[unlikely]]
         return { };
     return spanConstCast<CharacterType>(m_buffer->span<CharacterType>().subspan(std::exchange(m_length, requiredLength)));
