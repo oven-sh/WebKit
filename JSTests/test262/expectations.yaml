@@ -63,22 +63,6 @@ test/intl402/Locale/prototype/getHourCycles/subdivision-region.js:
   strict mode: 3
 test/language/destructuring/binding/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js:
   default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-lex-bind-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-lex-bind-arrow-func-declare-arguments-assign.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-var-bind-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-body-cntns-arguments-var-bind-arrow-func-declare-arguments-assign.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-present-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js:
-  default: 3
-test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-present-arrow-func-declare-arguments-assign.js:
-  default: 3
 test/language/expressions/delete/super-property-uninitialized-this.js:
   default: 3
   strict mode: 3
@@ -157,8 +141,6 @@ test/staging/sm/RegExp/unicode-class-braced.js:
 test/staging/sm/class/superPropOrdering.js:
   default: 3
   strict mode: 3
-test/staging/sm/eval/redeclared-arguments-in-param-expression-eval.js:
-  default: 3
 test/staging/sm/expressions/object-literal-computed-property-evaluation.js:
   default: 3
   strict mode: 3

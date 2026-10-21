@@ -959,7 +959,8 @@ IGNORE_GCC_WARNINGS_END
 
     if (needsToUpdateArrowFunctionContext() && !codeBlock->isArrowFunction()) {
         bool canReuseLexicalEnvironment = isSimpleParameterList;
-        initializeArrowFunctionContextScopeIfNeeded(functionSymbolTable, canReuseLexicalEnvironment);
+        ScopeType scopeType = evalInParametersDeclaresVars(parameters) ? ScopeType::FunctionEvalVarScope : ScopeType::LetConstScope;
+        initializeArrowFunctionContextScopeIfNeeded(functionSymbolTable, canReuseLexicalEnvironment, scopeType);
         emitPutThisToArrowFunctionContextScope();
         emitPutNewTargetToArrowFunctionContextScope();
         emitPutDerivedConstructorToArrowFunctionContextScope();
@@ -1280,6 +1281,13 @@ void BytecodeGenerator::initializeDefaultParameterValuesAndSetupFunctionScopeSta
     Vector<std::pair<Identifier, RefPtr<RegisterID>>> valuesToMoveIntoVars;
     ASSERT(!(isSimpleParameterList && shouldCreateArgumentsVariableInParameterScope));
     if (!isSimpleParameterList) {
+        // A sloppy direct eval in a parameter expression declares its vars in the function's own environment, which
+        // is outside the environment of the parameters (FunctionDeclarationInstantiation, step 20). The "var"
+        // environment of the body is not it: it is inside the parameters, and it does not exist yet. The scope that
+        // holds |this| for arrow functions is it (ScopeType::FunctionEvalVarScope). An arrow function has no such scope.
+        if (evalInParametersDeclaresVars(parameters) && !hasVarScopeForSloppyEval())
+            pushVarScopeForEvalInParameters();
+
         // Refer to the ES6 spec section 9.2.12: http://www.ecma-international.org/ecma-262/6.0/index.html#sec-functiondeclarationinstantiation
         // This implements step 21.
         VariableEnvironment environment;
@@ -1369,7 +1377,36 @@ bool BytecodeGenerator::needsDerivedConstructorInArrowFunctionLexicalEnvironment
     return m_codeBlock->isClassContext() && isSuperUsedInInnerArrowFunction();
 }
 
-void BytecodeGenerator::initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable, bool canReuseLexicalEnvironment)
+bool BytecodeGenerator::hasVarScopeForSloppyEval() const
+{
+    for (auto& entry : m_lexicalScopeStack) {
+        if (entry.m_scope && !entry.m_isWithScope && entry.m_symbolTable->scopeType() == SymbolTable::ScopeType::VarScope)
+            return true;
+    }
+    return false;
+}
+
+void BytecodeGenerator::pushVarScopeForEvalInParameters()
+{
+    SymbolTable* symbolTable = SymbolTable::create(m_vm);
+    ASSERT(symbolTable->scopeType() == SymbolTable::ScopeType::VarScope);
+    // A name that resolves through this scope can be one that an eval declares here later.
+    symbolTable->setUsesSloppyEval(true);
+    int symbolTableConstantIndex = addConstantValue(symbolTable)->index();
+
+    // Not addVar(): the parameter expressions that come next take temporaries.
+    RegisterID* scope = newBlockScopeVariable();
+    scope->ref();
+    OpCreateLexicalEnvironment::emit(this, scope, scopeRegister(), VirtualRegister { symbolTableConstantIndex }, addConstantValue(jsUndefined()));
+    move(scopeRegister(), scope);
+    pushLocalControlFlowScope();
+
+    bool isWithScope = false;
+    m_lexicalScopeStack.append({ symbolTable, scope, isWithScope, symbolTableConstantIndex });
+    declaredNamesScopesChanged();
+}
+
+void BytecodeGenerator::initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable, bool canReuseLexicalEnvironment, ScopeType scopeType)
 {
     ASSERT(!m_arrowFunctionContextLexicalEnvironmentRegister);
 
@@ -1421,7 +1458,7 @@ void BytecodeGenerator::initializeArrowFunctionContextScopeIfNeeded(SymbolTable*
 
     if (environment.size() > 0) {
         size_t size = m_lexicalScopeStack.size();
-        pushLexicalScopeInternal(environment, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, TDZRequirement::UnderTDZ, ScopeType::LetConstScope, ScopeRegisterType::Block);
+        pushLexicalScopeInternal(environment, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, TDZRequirement::UnderTDZ, scopeType, ScopeRegisterType::Block);
 
         ASSERT_UNUSED(size, m_lexicalScopeStack.size() == size + 1);
 
@@ -2346,6 +2383,11 @@ void BytecodeGenerator::pushLexicalScopeInternal(VariableEnvironment& environmen
         break;
     case ScopeType::FunctionNameScope:
         symbolTable->setScopeType(SymbolTable::ScopeType::FunctionNameScope);
+        break;
+    case ScopeType::FunctionEvalVarScope:
+        ASSERT(symbolTable->scopeType() == SymbolTable::ScopeType::VarScope);
+        // A name that resolves through this scope can be one that an eval declares here later.
+        symbolTable->setUsesSloppyEval(true);
         break;
     }
 
@@ -3940,6 +3982,8 @@ RegisterID* BytecodeGenerator::emitCallInTailPosition(RegisterID* dst, RegisterI
 
 RegisterID* BytecodeGenerator::emitCallDirectEval(RegisterID* dst, RegisterID* func, CallArguments& callArguments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall debuggableCall)
 {
+    // Without a VarScope of this function on the scope chain, the eval would declare its vars in the code around the function.
+    ASSERT(m_codeType != FunctionCode || !m_usesSloppyEval || hasVarScopeForSloppyEval());
     return emitCall<OpCallDirectEval>(dst, func, NoExpectedFunction, callArguments, divot, divotStart, divotEnd, debuggableCall);
 }
 
