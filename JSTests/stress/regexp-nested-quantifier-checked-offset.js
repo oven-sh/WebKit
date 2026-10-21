@@ -34,6 +34,7 @@ let matches = [
     [`(?:(?<!b{${max}})a{${max}})?cc`, "", "cc", "cc"],
     [`(?<!(?:a{${max}})+)bb`, "", "bb", "bb"],
     [`(?:(?<=b{1500000000})a{1500000000})?c{1500000000}|x`, "", "x", "x"],
+    [`(?:(?:b{${max}})*c{${max}})*aa`, "", "aa", "aa"],
 ];
 
 for (let [source, flags, input, expected] of matches) {
