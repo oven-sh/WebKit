@@ -55,6 +55,8 @@ extern "C" {
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PlatformRegisters.h>
+#include <wtf/Scope.h>
+#include <wtf/StackBounds.h>
 #include <wtf/ThreadGroup.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFConfig.h>
@@ -481,6 +483,34 @@ void addSignalHandler(Signal signal, SignalHandler&& handler)
     g_wtfConfig.signalHandlers.add(signal, WTF::move(handler));
 }
 
+#if USE(BUN_JSC_ADDITIONS) && !OS(DARWIN) && HAVE(MACHINE_CONTEXT)
+static thread_local PlatformRegisters* interruptedRegisters;
+
+static void* stackPointerOf(const PlatformRegisters& registers)
+{
+#if OS(FREEBSD) && CPU(X86_64)
+    return reinterpret_cast<void*>(registers.machineContext.mc_rsp);
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(registers.machineContext.mc_gpregs.gp_sp);
+#elif OS(LINUX) && CPU(X86_64)
+    return reinterpret_cast<void*>(registers.machineContext.gregs[REG_RSP]);
+#elif OS(LINUX) && CPU(ARM64)
+    return reinterpret_cast<void*>(registers.machineContext.sp);
+#else
+    UNUSED_PARAM(registers);
+    return nullptr;
+#endif
+}
+
+PlatformRegisters* registersInterruptedBySignalHandler(const StackBounds& stack)
+{
+    PlatformRegisters* registers = interruptedRegisters;
+    if (registers && stack.contains(stackPointerOf(*registers)))
+        return registers;
+    return nullptr;
+}
+#endif
+
 static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
 {
     Signal signal = fromSystemSignal(sig);
@@ -510,6 +540,20 @@ static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
     PlatformRegisters& registers = registersFromUContext(reinterpret_cast<ucontext_t*>(ucontext));
 #else
     PlatformRegisters registers { };
+#endif
+
+#if USE(BUN_JSC_ADDITIONS) && !OS(DARWIN) && HAVE(MACHINE_CONTEXT)
+    // With SA_ONSTACK this handler runs on the alternate signal stack, where a suspension of this
+    // thread cannot read the state of the thread's own stack (Thread::signalHandlerSuspendResume()).
+    // The registers of the outermost invocation are that state: a fault inside a handler
+    // interrupted code on the alternate stack.
+    bool isOutermost = !interruptedRegisters;
+    if (isOutermost)
+        interruptedRegisters = &registers;
+    auto forgetInterruptedRegisters = makeScopeExit([&] {
+        if (isOutermost)
+            interruptedRegisters = nullptr;
+    });
 #endif
 
     bool didHandle = false;
@@ -594,7 +638,16 @@ void SignalHandlers::finalize()
             RELEASE_ASSERT(g_wtfConfig.isThreadSuspendResumeSignalConfigured);
             result = sigdelset(&action.sa_mask, g_wtfConfig.sigThreadSuspendResume);
             RELEASE_ASSERT(!result);
+#if USE(BUN_JSC_ADDITIONS) && !ASAN_ENABLED
+            // On a thread that has an alternate signal stack, the handler runs on that stack. After a
+            // stack overflow the thread's own stack has no room for the signal frame: without this flag
+            // the kernel ends the process before this handler, or the one it chains to, can run.
+            // Not under ASan: the alternate stack that ASan gives every thread is small and has no
+            // guard page, and the VMTraps handler of an ASan build overflows it.
+            action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+#else
             action.sa_flags = SA_SIGINFO;
+#endif
             auto systemSignals = toSystemSignal(signal);
             result = sigaction(std::get<0>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(std::get<0>(systemSignals))]);
             if (std::get<1>(systemSignals))
