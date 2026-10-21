@@ -130,7 +130,7 @@ public:
         void* cellAlign(void*);
             
         bool isEmpty();
-        void setIsDestructible(bool);
+        void noteNeedsDestruction();
 
         void lastChanceToFinalize();
 
@@ -243,6 +243,8 @@ public:
         
         static void poisonDecommittedPages(void*, size_t);
         void unpoisonDecommittedPages();
+
+        JS_EXPORT_PRIVATE void noteNeedsDestructionSlow();
 
         template<bool, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, typename DestroyFunc>
         void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, NOESCAPE const DestroyFunc&);
