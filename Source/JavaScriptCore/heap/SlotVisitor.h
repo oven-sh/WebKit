@@ -224,6 +224,9 @@ private:
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
+#if USE(BUN_JSC_ADDITIONS)
+    void donateKnownParallelSlow(MarkStackArray& from, MarkStackArray& to);
+#endif
 
     void donateAll(const AbstractLocker&);
 

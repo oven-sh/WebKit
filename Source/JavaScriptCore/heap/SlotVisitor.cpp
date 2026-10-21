@@ -476,8 +476,10 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // In a collection that is small so far this visitor marks alone, and what it shares comes back to it.
     if (collector().isSmallSoFar())
         return;
-#endif
 
+    // The rest is out of line, so that drain() gets the checks above for what they cost upstream.
+    donateKnownParallelSlow(from, to);
+#else
     // If we're contending on the lock, be conservative and assume that another
     // thread is already donating.
     if (!collector().m_markingMutex.tryLock())
@@ -487,17 +489,30 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
+    collector().m_markingConditionVariable.notifyAll();
+#endif
+}
+
 #if USE(BUN_JSC_ADDITIONS)
+NEVER_INLINE void SlotVisitor::donateKnownParallelSlow(MarkStackArray& from, MarkStackArray& to)
+{
+    // If we're contending on the lock, be conservative and assume that another
+    // thread is already donating.
+    if (!collector().m_markingMutex.tryLock())
+        return;
+    Locker locker { AdoptLock, collector().m_markingMutex };
+
+    // Otherwise, assume that a thread will go idle soon, and donate.
+    from.donateSomeCellsTo(to);
+
     // To wake a thread costs more than to mark a few cells, and in a graph like a linked list a few cells are all
     // that a donation has. So a donation wakes a marker only if the marking of this cycle has paid for one. The
     // markers that are in the cycle take the cells without that.
     auto markers = collector().choosePaidForMarkersToWake(locker, Collector::MarkerWork::SharedCells);
     locker.unlockEarly();
     collector().wakeMarkers(markers);
-#else
-    collector().m_markingConditionVariable.notifyAll();
-#endif
 }
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
 ALWAYS_INLINE void SlotVisitor::payForMarkerWakeupIfNeeded()
