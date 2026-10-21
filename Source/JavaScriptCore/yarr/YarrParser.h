@@ -396,16 +396,14 @@ private:
     private:
         struct NestingState {
         public:
-            NestingState(CharacterClassSetOp setOp, bool mayContainStrings, bool hasJuxtaposedOperands, bool inverted)
+            NestingState(CharacterClassSetOp setOp, bool mayContainStrings, bool inverted)
                 : m_setOp(setOp)
                 , m_mayContainStrings(mayContainStrings)
-                , m_hasJuxtaposedOperands(hasJuxtaposedOperands)
                 , m_inverted(inverted)
             { }
 
             CharacterClassSetOp m_setOp;
             bool m_mayContainStrings;
-            bool m_hasJuxtaposedOperands;
             bool m_inverted;
         };
 
@@ -416,8 +414,6 @@ private:
             , m_state(ClassSetConstructionState::Empty)
             , m_setOp(CharacterClassSetOp::Default)
             , m_mayContainStrings(false)
-            , m_hasOperand(false)
-            , m_hasJuxtaposedOperands(false)
             , m_inverted(false)
             , m_character(0)
         {
@@ -436,21 +432,26 @@ private:
 
         void nestedClassBegin(bool invert)
         {
+            // A nested class is an operand of the class around it, and a class of its own inside.
+            if (!canTakeSetOperand()) {
+                m_errorCode = ErrorCode::InvalidClassSetOperation;
+                return;
+            }
             flushCachedCharacterIfNeeded();
-            noteOperand();
 
             m_delegate.atomCharacterClassPushNested(invert);
-            nestedParseState.append(NestingState(m_setOp, m_mayContainStrings, m_hasJuxtaposedOperands, m_inverted));
+            nestedParseState.append(NestingState(m_setOp, m_mayContainStrings, m_inverted));
+            m_state = ClassSetConstructionState::Empty;
             m_setOp = CharacterClassSetOp::Default;
             m_mayContainStrings = false;
-            m_hasOperand = false;
-            m_hasJuxtaposedOperands = false;
             m_inverted = invert;
         }
 
         bool nestedClassEnd()
         {
             flushCachedCharacterIfNeeded();
+            if (m_state == ClassSetConstructionState::AfterSetOperator)
+                m_errorCode = ErrorCode::InvalidClassSetCharacter;
 
             if (m_inverted && m_mayContainStrings)
                 m_errorCode = ErrorCode::NegatedClassSetMayContainStrings;
@@ -466,8 +467,6 @@ private:
             m_setOp = lastState.m_setOp;
             m_inverted = lastState.m_inverted;
             m_mayContainStrings = lastState.m_mayContainStrings;
-            m_hasOperand = true;
-            m_hasJuxtaposedOperands = lastState.m_hasJuxtaposedOperands;
 
             m_delegate.atomCharacterClassPopNested(m_inverted);
             m_state = ClassSetConstructionState::AfterSetOperand;
@@ -487,12 +486,12 @@ private:
             m_delegate.atomCharacterClassSetOp(m_setOp);
         }
 
+        // The class has a range, or two operands with no operator between them: it is a ClassUnion, which has no
+        // && or --. The delegate is not told: for it a class is a union until it gets another operator.
         void switchFromDefaultOpToUnionOpIfNeeded()
         {
-            if (m_setOp == CharacterClassSetOp::Default) {
+            if (m_setOp == CharacterClassSetOp::Default)
                 m_setOp = CharacterClassSetOp::Union;
-                m_delegate.atomCharacterClassSetOp(m_setOp);
-            }
         }
 
         void setSubtractOp()
@@ -539,19 +538,6 @@ private:
             }
         }
 
-        // Called for each operand of the class. Operands with no operator between them are a ClassUnion, and the
-        // grammar has no && or -- after one. This parser accepts some (an escape, \q{} or a nested class next to
-        // another operand leaves m_setOp at Default). Until it refuses them, the class remembers that it has such
-        // operands: see processCharacter in atomPatternCharacter(). A check of the grammar replaces all of this.
-        void noteOperand()
-        {
-            if (m_setOp != CharacterClassSetOp::Default)
-                return;
-            if (m_hasOperand)
-                m_hasJuxtaposedOperands = true;
-            m_hasOperand = true;
-        }
-
         void flushCachedCharacterIfNeeded()
         {
             if (m_state == ClassSetConstructionState::CachedCharacter) {
@@ -564,10 +550,11 @@ private:
         void afterSetOperand()
         {
             flushCachedCharacterIfNeeded();
-            noteOperand();
             m_state = ClassSetConstructionState::AfterSetOperand;
         }
 
+        // Called before an escape is parsed and before a nested class begins. An operand right after an operand
+        // makes the class a ClassUnion, or the class is not in the grammar.
         bool canTakeSetOperand()
         {
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
@@ -582,13 +569,20 @@ private:
                     return false;
 
                 flushCachedCharacterIfNeeded();
+                switchFromDefaultOpToUnionOpIfNeeded();
+                return true;
+
+            case ClassSetConstructionState::AfterCharacterClass:
+            case ClassSetConstructionState::AfterSetRange:
+            case ClassSetConstructionState::AfterSetOperand:
+                if (!unionOpActive)
+                    return false;
+
+                switchFromDefaultOpToUnionOpIfNeeded();
                 return true;
 
             case ClassSetConstructionState::CachedCharacterHyphen:
             case ClassSetConstructionState::AfterCharacterClassHyphen:
-            case ClassSetConstructionState::AfterCharacterClass:
-            case ClassSetConstructionState::AfterSetRange:
-            case ClassSetConstructionState::AfterSetOperand:
                 return unionOpActive;
             }
 
@@ -609,12 +603,8 @@ private:
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
 
             auto processCharacter = [&] () {
-                noteOperand();
                 // MayContainStrings of a ClassSetCharacter is false, which under && makes it false for the class.
-                // Not after juxtaposed operands: the grammar has no such class, and a negated one that holds strings
-                // stays a SyntaxError.
-                if (!m_hasJuxtaposedOperands)
-                    computeMayContainStrings(false);
+                computeMayContainStrings(false);
                 m_character = ch;
                 m_state = ClassSetConstructionState::CachedCharacter;
                 return;
@@ -633,6 +623,11 @@ private:
                 if (hyphenIsRange && unionOpActive && ch == '-') {
                     m_delegate.atomCharacterClassAtom('-');
                     m_state = ClassSetConstructionState::AfterCharacterClassHyphen;
+                    return;
+                }
+                // A character right after an operand of && or --.
+                if (!unionOpActive) {
+                    m_errorCode = ErrorCode::InvalidClassSetOperation;
                     return;
                 }
                 // Otherwise just fall through - cached character so treat this as ClassSetConstructionState::Empty.
@@ -715,7 +710,6 @@ private:
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
 
             auto processBuiltInCharacterClass = [&] () {
-                noteOperand();
                 computeMayContainStrings(characterClassMayContainStrings(classID));
 
                 m_delegate.atomCharacterClassBuiltIn(classID, invert);
@@ -766,9 +760,6 @@ private:
                 return;
 
             case ClassSetConstructionState::AfterSetOperand:
-                if (!unionOpActive)
-                    m_errorCode = ErrorCode::InvalidClassSetOperation;
-
                 processBuiltInCharacterClass();
                 return;
             }
@@ -783,7 +774,7 @@ private:
         {
             if (m_state == ClassSetConstructionState::CachedCharacter)
                 m_delegate.atomCharacterClassAtom(m_character);
-            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen || m_state == ClassSetConstructionState::AfterSetOperator)
+            else if (m_state == ClassSetConstructionState::CachedCharacterHyphen || m_state == ClassSetConstructionState::AfterCharacterClassHyphen)
                 m_errorCode = ErrorCode::InvalidClassSetCharacter;
 
             // The delegate is not told about the end of a class this refuses: YarrPatternConstructor asserts that its
@@ -823,8 +814,6 @@ private:
         ClassSetConstructionState m_state;
         CharacterClassSetOp m_setOp;
         bool m_mayContainStrings;
-        bool m_hasOperand;
-        bool m_hasJuxtaposedOperands;
         bool m_inverted;
         char32_t m_character;
         Vector<NestingState> nestedParseState;
