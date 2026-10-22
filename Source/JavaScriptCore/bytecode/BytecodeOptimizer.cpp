@@ -1923,7 +1923,6 @@ struct BytecodeOptimizerAccess::Mapper {
     BytecodeOptimizerAccess& optimizer;
     Insn* insn { nullptr };
     unsigned targetCursor { 0 };
-    bool* usedPlaceholder { nullptr };
 
     VirtualRegister logical(BytecodeOperandName name, VirtualRegister r)
     {
@@ -1958,14 +1957,14 @@ struct BytecodeOptimizerAccess::Mapper {
         RELEASE_ASSERT(target != noTarget);
         target = optimizer.nextLiveInsn(target);
         auto& targetInsn = optimizer.m_insns[target];
+        RELEASE_ASSERT(&targetInsn != insn); // A zero delta means "out of line", so a jump to itself has no encoding.
         int from = static_cast<int>(insn->newOffset);
         int to = static_cast<int>(targetInsn.newOffset == UINT_MAX ? targetInsn.oldOffset : targetInsn.newOffset);
         int delta = to - from;
         if (!delta) {
-            // Zero would mean "out of line". A forward target's offset is the previous pass's, so the delta can be
-            // zero while the layout still moves. In the pass emit() keeps it would be a jump to itself.
+            // A forward target still has the previous pass's offset, so this happens while offsets move. emit()
+            // discards such a pass.
             delta = 1;
-            *usedPlaceholder = true;
         }
         return BoundLabel(delta);
     }
@@ -2004,9 +2003,9 @@ struct BytecodeOptimizerAccess::Mapper {
 void BytecodeOptimizerAccess::emit()
 {
     // Relaxation: instruction sizes depend on jump distances which depend on sizes. Sizes only grow across
-    // iterations (minimumSize ratchets), so this terminates. A pass whose offsets match the previous pass's
-    // computed every jump from exact offsets (forward targets read the previous pass, backward targets this
-    // one), so its stream is the result.
+    // iterations (minimumSize ratchets), so this terminates. When a pass repeats the previous pass's offsets, every
+    // jump in it was computed from final offsets (a forward target has the previous pass's offset, a backward
+    // target this pass's), so its stream is the result.
     JSInstructionStreamWriter newWriter;
     for (unsigned iteration = 0; ; ++iteration) {
         if (iteration == 16) {
@@ -2021,7 +2020,6 @@ void BytecodeOptimizerAccess::emit()
         JSInstructionStreamWriter writer;
         m_codeBlock->metadata().restartForReemit();
         bool offsetsChanged = false;
-        bool usedPlaceholder = false;
         m_generator.withWriter(writer, [&] {
             for (unsigned i = 0; i < m_insns.size(); ++i) {
                 auto& insn = m_insns[i];
@@ -2031,7 +2029,7 @@ void BytecodeOptimizerAccess::emit()
                 if (insn.newOffset != offset)
                     offsetsChanged = true;
                 insn.newOffset = offset;
-                Mapper mapper { *this, &insn, 0, &usedPlaceholder };
+                Mapper mapper { *this, &insn };
                 switch (insn.kind) {
                 case Insn::Original:
                     reemitInstruction(insn.instruction, &m_generator, insn.minimumSize, mapper);
@@ -2076,7 +2074,6 @@ void BytecodeOptimizerAccess::emit()
             }
         });
         if (!offsetsChanged) {
-            RELEASE_ASSERT(!usedPlaceholder);
             newWriter.swap(writer);
             break;
         }
