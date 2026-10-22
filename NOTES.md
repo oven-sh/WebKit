@@ -241,3 +241,17 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     for this lane. WebKit working tree still has the change applied (uncommitted).
   * diag v4 = bun commit 326db49d43 ([skip tests]): instrumented copies of the test file (step times png/encode1/recode, optional 20 ms heartbeat for JS-thread
     gaps), 6 concurrent runs per batch: default x2, heartbeat|original, upstream|one marker, minimumGCPauseMS=0|GC timer off, MIMALLOC_SCAVENGER=0|useDFGJIT=0.
+- 2026-10-22 06:10 UTC: NEW HYPOTHESIS for the slow mode on the SDE lane (to be confirmed by diag v5 = bun commit 80cca09eb0, build 130739; v4 was cancelled by it):
+  mimalloc's idle sweep of the JS thread, WINDOWS ONLY. src/jsc/bindings/BunJSCEventLoop.cpp Bun__JSC_onBeforeWait: with the libuv loop the JS thread itself
+  calls mi_on_thread_idle() before it waits (rate limit 100 ms), and up to 3 follow-up sweeps 100 ms apart while mi_on_thread_idle_pending() (a large page that
+  was allocated from in the current hole-purge epoch or the one before). vendor/mimalloc/src/page.c: every 64th sweep of a thread (tld->holes_sweep_seq,
+  purge_holes_full_every=64) walks the free list of EVERY page (mi_page_purge_holes_walk); the epoch is process-wide and any thread's idle sweep moves it
+  (_mi_page_purge_holes_epoch_advance). WTF::AutomaticThread (WebKit fork, USE(MIMALLOC)) calls mi_on_thread_idle() 100 ms after a thread went idle:
+  upstream's 7 GC helpers do that after every collection, so they move the epoch; with the new protocol no helper thread exists in a small heap, the JS thread
+  needs its own follow-up sweeps, its sweep count grows faster, and the 64th (full) sweep comes within the 25 s of the emulated run: about 1.5 s under SDE,
+  anywhere in the run (mostly in the startup: file totals 21.9 s without it, 23.3 s with it), in flat grey in 1 run of 7.
+  v5 arms: mimalloc statistics (Bun.unsafe.mimallocDump) before/after flat grey, MIMALLOC_PURGE_HOLES_FULL_EVERY=0 and =4, MIMALLOC_PURGE_HOLES=0, upstream,
+  one marker, GC timer off, heartbeat, original file. 6 runs at a time.
+  If confirmed: not a GC regression; the lane's 5 s per test is the native default on an 80x slower emulated run (main: flat grey up to 4.6 s, gradient failed
+  once at 5.1 s in 108 builds). Fix for the lane = --timeout for the emulated run in scripts/verify-baseline.ts, with the evidence in the PR body.
+  The pause-limit patch (maximumSmallGCPauseMS) is DROPPED from the WebKit tree (kept in bench/wk-pause-limit.patch): the data does not ask for it.
