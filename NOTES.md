@@ -285,3 +285,20 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   * diag v7 = bun commit 86f944ce50: reportCompileTimes in every run, and a PowerShell sampler (thread-sampler.ps1, written by the harness) that prints every
     150 ms the threads of each bun-profile process that used 30 ms of CPU or more, with their names (GetThreadDescription) and the threads that came and went.
     Arms: default x4, no DFG, upstream, slots rotated. Timelines for slow runs (png > 4300) and the first 5 runs.
+- 2026-10-22 07:10 UTC: diag v7 result (build 130769, bench/results/vb-diag-v7.log; 18 batches x 6; every run with BUN_JSC_reportCompileTimes=1 and the
+  PowerShell thread sampler attached).
+  * HEISENBERG: with the compile log on, flat grey is 1.84..1.99 s in ALL 108 runs (png 1.02..1.10 s), in every arm (default, upstream, no DFG);
+    gradient 4.0..4.6 s. No slow run at all. Without the log: png 3.1..3.6 s (v6), 2.6..3.4 s (v5).
+    In v7 no DFG compile completes inside flat grey (compiles = 10 Baseline before/inside, the DFG ones in gradient); "Baseline of png" takes 340..380 ms
+    on a worklist thread, crc32 436 ms, next/arrayIteratorNextHelper 135 ms.
+  * So under SDE the length of this test is set by WHEN the JIT worklist threads compile and install code for png()'s loop and helpers:
+    0.7 s JIT off, 1.0 s with the compile log, 3.1..3.6 s normally, 4.8..5.2 s in the slow runs. Native: 5 ms in both builds (150 runs each:
+    main p50 5.5 / p90 11.4 / max 166 ms; PR p50 5.4 / p90 10.3 / max 29 ms; whole file main 57 ms, PR 54 ms).
+  * The sampler works (thread ids, CPU deltas, new/gone) but GetThreadDescription gave no names under SDE.
+  * Working explanation (not proven): Pin translates new code for one thread at a time; a thread that runs code for the first time (a JIT tier's compiler
+    on a worklist thread, a GC helper, an image worker) slows every other thread that needs new code. With the PR no helper thread competes and small
+    cycles are one pause, so the JIT's threads finish at other moments: in about 1 run of 6 DFG code for the loop is ready inside png().
+  * diag v8 = bun commit cba49506ac (on top of d20afca6a2): arms default x2, DFG sooner (thresholdForOptimize*=100), DFG later (20000), upstream,
+    upstream + DFG sooner; v5-style steps file, no compile log, no sampler, slots rotated, cleanup in finally. LAST diagnostic round.
+  * DECISION (unless v8 shows something else): the lane gets `--timeout 30000` for the emulated SIMD run in scripts/verify-baseline.ts; no WebKit change.
+    Main already runs these tests at 2.3..4.6 s of 5 s (one failure in 108 builds).
