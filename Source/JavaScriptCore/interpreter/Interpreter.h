@@ -83,6 +83,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ModuleProgramExecutable;
     class Register;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -189,7 +190,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         bool isExceptionCaughtByUserCatchClause();
 
     private:
-        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise* start, size_t maxStackSize);
         template<typename GetParentGenerator> void walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const GetParentGenerator&);
         enum ExecutionFlag { Normal, InitializeAndReturn };
 

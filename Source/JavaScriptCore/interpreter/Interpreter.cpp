@@ -483,12 +483,37 @@ bool Interpreter::isOpcode(Opcode opcode)
 #endif // ASSERT_ENABLED
 
 
-void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
+// Where the body of an async function or of a module is suspended: its state is the index of the await in the last switch table.
+static ALWAYS_INLINE BytecodeIndex bytecodeIndexOfSuspendedBody(CodeBlock* codeBlock, JSValue stateValue)
+{
+    BytecodeIndex bytecodeIndex(0);
+    if (stateValue.isInt32()) {
+        int32_t state = stateValue.asInt32();
+        size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+        if (state > 0 && numberOfJumpTables > 0) {
+            size_t lastTableIndex = numberOfJumpTables - 1;
+            const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+            int32_t offset = jumpTable.offsetForValue(state);
+            if (offset)
+                bytecodeIndex = BytecodeIndex(offset);
+        }
+    }
+    return bytecodeIndex;
+}
+
+// The async frames of what waits for the promise to settle: the async functions, and the module whose top-level
+// await ends the chain.
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise* start, size_t maxStackSize)
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
-    ASSERT(generator);
+    ASSERT(start);
 
     AssertNoGC assertNoGC;
+
+    VM& vm = this->vm();
+
+    // The module whose top-level await is the end of the chain.
+    JSModuleRecord* awaitingModule = nullptr;
 
     auto getContextValueFromPromise = [&](JSPromise* promise) -> JSValue {
         if (!promise)
@@ -505,10 +530,16 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return context;
     };
 
-    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) -> JSAsyncFunctionGenerator* {
-        JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
-        ASSERT(generatorContext);
-        JSPromise* awaitedPromise = dynamicDowncast<JSPromise>(generatorContext);
+    // The context of a reaction that is not the await of an async function: a module that awaits at its top level
+    // ends the chain.
+    auto noteAwaitingModule = [&](JSValue context) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
+        if (auto* module = dynamicDowncast<JSModuleRecord>(context))
+            awaitingModule = module;
+        return nullptr;
+    };
+
+    // The async function that awaits the promise, directly or through one combinator.
+    auto awaitingGenerator = [&](JSPromise* awaitedPromise) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
         JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
 
         if (!promiseContext)
@@ -526,8 +557,10 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                 if (JSValue promiseContext = getContextValueFromPromise(promise)) {
                     if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
                         return generator;
+                    return noteAwaitingModule(promiseContext);
                 }
             }
+            return nullptr;
         }
 
         // handle and `Promise.race`
@@ -535,13 +568,36 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
             if (JSValue parentContext = getContextValueFromPromise(contextPromise)) {
                 if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(parentContext))
                     return generator;
+                return noteAwaitingModule(parentContext);
             }
+            return nullptr;
         }
 
-        return nullptr;
+        return noteAwaitingModule(promiseContext);
     };
 
-    walkAwaitChain(owner, results, getParentGenerator(generator), maxStackSize, getParentGenerator);
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
+        // What waits for the promise of the async function.
+        JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
+        ASSERT(generatorContext);
+        return awaitingGenerator(dynamicDowncast<JSPromise>(generatorContext));
+    };
+
+    walkAwaitChain(owner, results, awaitingGenerator(start), maxStackSize, getParentGenerator);
+
+    if (!awaitingModule || results.size() >= maxStackSize)
+        return;
+
+    JSValue stateValue = awaitingModule->internalField(JSModuleRecord::Field::State).get();
+    if (!stateValue.isInt32() || stateValue.asInt32() <= 0)
+        return;
+    // A collection takes the code of a module that waits for long. The frame then has the file and no position,
+    // like the frame of an async function without a CodeBlock.
+    ModuleProgramExecutable* executable = awaitingModule->executableIfExists();
+    if (CodeBlock* codeBlock = executable ? executable->codeBlock() : nullptr)
+        results.append(StackFrame(vm, owner, awaitingModule, codeBlock, bytecodeIndexOfSuspendedBody(codeBlock, stateValue), /* isAsyncFrame */ true));
+    else
+        results.append(StackFrame(vm, owner, awaitingModule, /* isAsyncFrame */ true));
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -557,23 +613,6 @@ void Interpreter::walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSA
     AssertNoGC assertNoGC;
 
     VM& vm = this->vm();
-
-    auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
-        BytecodeIndex bytecodeIndex(0);
-        JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
 
     // Async functions that await each other make the chain a cycle, and then only maxStackSize ends the walk.
     // Two walks never reach it: one with no limit (SIZE_MAX from a caller, UINT_MAX from Error.stackTraceLimit = Infinity),
@@ -614,7 +653,7 @@ void Interpreter::walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSA
             if (FunctionExecutable* executable = asyncFunction->jsExecutable()) {
                 // If a CodeBlock doesn't already exist, the stack trace will only show the filename and won't show line column
                 if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
-                    BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
+                    BytecodeIndex bytecodeIndex = bytecodeIndexOfSuspendedBody(codeBlock, currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get());
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
@@ -705,24 +744,45 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     }
 
     bool foundCaller = !caller;
-    JSAsyncFunctionGenerator* asyncStackTraceOriginGenerator = nullptr;
-    size_t asyncStackTraceInsertPos = 0;
-    EntryFrame* previousEntryFrame = nullptr;
-    size_t previousEntryFrameStackTraceInsertPos = 0;
-    auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
+    // The VM entries on the stack that run a job. The context of such an entry says what the job settles: it is the
+    // generator of a resumed async function, or the promise that the job of a then(), catch() or finally() handler
+    // settles. The async frames of a job go where the frames of its entry end. More than one job is on the stack
+    // only when a job drains the microtask queue: asyncStackTraceOrigin is the innermost one.
+    struct AsyncStackTraceOrigin {
+        JSCell* context { nullptr };
+        size_t insertPosition { 0 };
+    };
+    AsyncStackTraceOrigin asyncStackTraceOrigin;
+    Vector<AsyncStackTraceOrigin> outerAsyncStackTraceOrigins;
+    // The VM entry of the frame that was visited last. The entry of the top frame counts also when framesToSkip
+    // takes all of its frames: the handler of a job can be the Error constructor, or call it in a tail call.
+    EntryFrame* previousEntryFrame = vm.topEntryFrame;
+    auto noteAsyncStackTraceOrigin = [&]() ALWAYS_INLINE_LAMBDA -> void {
         ASSERT(Options::useAsyncStackTrace());
-        auto* record = vmEntryRecord(previousEntryFrame);
-        if (record->m_context) {
-            if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(record->m_context)) {
-                asyncStackTraceOriginGenerator = generator;
-                asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
-            }
-        }
+        // Not an entry above the caller: its frames are not in the trace.
+        if (!foundCaller)
+            return;
+        // Any other context says nothing about a job.
+        JSCell* context = vmEntryRecord(previousEntryFrame)->m_context;
+        if (!context || !(context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSPromise>()))
+            return;
+        if (!asyncStackTraceOrigin.context) [[likely]]
+            asyncStackTraceOrigin = { context, results.size() };
+        else
+            outerAsyncStackTraceOrigins.append({ context, results.size() });
     };
 
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
+
+        // Before the frames that are skipped, and also for a frame that is not shown: their VM entry counts.
+        auto* currentEntryFrame = visitor->entryFrame();
+        if (currentEntryFrame != previousEntryFrame) {
+            if (Options::useAsyncStackTrace() && previousEntryFrame)
+                noteAsyncStackTraceOrigin();
+            previousEntryFrame = currentEntryFrame;
+        }
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;
@@ -734,12 +794,6 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 foundCaller = true;
             skippedFrames++;
             return IterationStatus::Continue;
-        }
-
-        auto* currentEntryFrame = visitor->entryFrame();
-        if (Options::useAsyncStackTrace()) {
-            if (currentEntryFrame != previousEntryFrame && previousEntryFrame)
-                updateAsyncStackTraceOriginGenerator();
         }
 
         if (!visitor->isImplementationVisibilityPrivate()) {
@@ -762,12 +816,14 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
             else
                 results.append(StackFrame(vm, owner, visitor->callee().asCell()));
-
-            previousEntryFrame = currentEntryFrame;
-            previousEntryFrameStackTraceInsertPos = results.size();
         }
+
         return IterationStatus::Continue;
     });
+
+    // The last VM entry (e.g. TLA).
+    if (Options::useAsyncStackTrace() && previousEntryFrame)
+        noteAsyncStackTraceOrigin();
 
 #if USE(BUN_JSC_ADDITIONS)
     // Add the single async frame if it exists and we have space
@@ -778,21 +834,40 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     }
 #endif
 
-    if (Options::useAsyncStackTrace()) {
-        // Check if the last entry frame had a generator context
-        // that wasn't captured during stack traversal (e.g. TLA)
-        if (!asyncStackTraceOriginGenerator && previousEntryFrame)
-            updateAsyncStackTraceOriginGenerator();
-        if (asyncStackTraceOriginGenerator) {
-            Vector<StackFrame> asyncFrames;
+    if (!asyncStackTraceOrigin.context)
+        return;
+
 #if USE(BUN_JSC_ADDITIONS)
-            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, std::min(maxStackSize, maxAsyncStackSize));
+    size_t remainingAsyncStackSize = std::min(maxStackSize, maxAsyncStackSize);
 #else
-            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
+    size_t remainingAsyncStackSize = maxStackSize;
 #endif
-            if (!asyncFrames.isEmpty())
-                results.insertVector(asyncStackTraceInsertPos, asyncFrames);
+    // No limit is no limit for each job: walkAwaitChain ends such a walk at a cycle of awaits.
+    bool hasAsyncStackSizeLimit = remainingAsyncStackSize < std::numeric_limits<unsigned>::max();
+    size_t insertedFrames = 0;
+    const AsyncStackTraceOrigin* origin = &asyncStackTraceOrigin;
+    for (unsigned nextOuterOrigin = 0; remainingAsyncStackSize;) {
+        // The walk starts at what the job settles. The resumption of an async function settles its promise.
+        JSPromise* start;
+        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(origin->context)) {
+            JSValue promiseValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
+            ASSERT(promiseValue);
+            start = dynamicDowncast<JSPromise>(promiseValue);
+        } else
+            start = uncheckedDowncast<JSPromise>(origin->context);
+        if (start) {
+            Vector<StackFrame> asyncFrames;
+            getAsyncStackTrace(owner, asyncFrames, start, remainingAsyncStackSize);
+            if (!asyncFrames.isEmpty()) {
+                results.insertVector(origin->insertPosition + insertedFrames, asyncFrames);
+                insertedFrames += asyncFrames.size();
+                if (hasAsyncStackSizeLimit)
+                    remainingAsyncStackSize -= asyncFrames.size();
+            }
         }
+        if (nextOuterOrigin == outerAsyncStackTraceOrigins.size()) [[likely]]
+            break;
+        origin = &outerAsyncStackTraceOrigins[nextOuterOrigin++];
     }
 }
 
@@ -908,9 +983,22 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     // it takes the value of the exception, rejects the function's promise with it, and drops the Exception.
     // The call of the body of an async generator (asyncGeneratorBodyCall) does the same with the request that
     // the body works on, and its context is the generator.
+    // The job that calls a handler of then(), catch() or finally() does the same with the promise that the
+    // call returned, which is its context.
     if (leavesVMEntry) {
-        if (JSCell* context = vmEntryRecord(vm.topEntryFrame)->m_context)
-            return context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSAsyncGenerator>();
+        EntryFrame* entryFrame = vm.topEntryFrame;
+        JSCell* context = vmEntryRecord(entryFrame)->m_context;
+        if (!context) {
+            // A bound function that is the handler of a job enters the VM again for its target, with no context.
+            // Its frame is the only frame of the VM entry of the job, and the throw goes through it to the job.
+            CallFrame* boundFunctionFrame = vmEntryRecord(entryFrame)->prevTopCallFrame();
+            EntryFrame* jobEntryFrame = vmEntryRecord(entryFrame)->prevTopEntryFrame();
+            if (boundFunctionFrame && jobEntryFrame && boundFunctionFrame->callerFrameOrEntryFrame() == jobEntryFrame
+                && !boundFunctionFrame->isNativeCalleeFrame() && boundFunctionFrame->jsCallee()->inherits<JSBoundFunction>())
+                context = vmEntryRecord(jobEntryFrame)->m_context;
+        }
+        if (context)
+            return context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSAsyncGenerator>() || context->inherits<JSPromise>();
     }
     return result;
 }
