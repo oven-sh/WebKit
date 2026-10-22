@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "ParseInt.h"
 #include "StackFrame.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include <wtf/text/MakeString.h>
 
