@@ -26,6 +26,7 @@
 #pragma once
 
 #include "BytecodeIndex.h"
+#include "DebuggerPrimitives.h"
 #include "Heap.h"
 #include "LineColumn.h"
 #include "SlotVisitorMacros.h"
@@ -135,17 +136,17 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-// What VM::onComputeErrorInfo() keeps of a frame beside the line it writes for it in the string it returns.
+// VM::onComputeErrorInfo() fills one for a frame whose line it writes in the string it returns.
 struct CollectedStackFrame {
-    // Where the line has them. The length is 0 when the line has a placeholder instead.
+    // Where the line has them. The length is 0 when the line has a placeholder or nothing.
     unsigned functionNameOffset { 0 };
     unsigned functionNameLength { 0 };
     unsigned sourceURLOffset { 0 };
     unsigned sourceURLLength { 0 };
     // The line is 0 when the frame has no position.
     LineColumn lineColumn;
-    SourceID sourceID { 0 };
-    // The embedder's.
+    SourceID sourceID { noSourceID };
+    // JSC does not read these: they are the embedder's.
     unsigned flags { 0 };
 };
 #endif

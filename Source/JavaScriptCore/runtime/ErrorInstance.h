@@ -111,6 +111,12 @@ public:
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
+    // The stack is then the error's name and message followed by m_stackString, with no call to VM::onComputeCollectedErrorInfoJSValue().
+    void clearCollectedStackFrames()
+    {
+        Locker locker { cellLock() };
+        m_collectedStackFrames = nullptr;
+    }
 
 #endif
 
@@ -172,7 +178,7 @@ protected:
     String m_sourceURL;
     String m_stackString;
 #if USE(BUN_JSC_ADDITIONS)
-    // Goes with m_stackString when a collection made it of m_stackTrace.
+    // One for each frame VM::onComputeErrorInfo() wrote in m_stackString.
     std::unique_ptr<Vector<CollectedStackFrame>> m_collectedStackFrames;
 #endif
     RuntimeType m_runtimeTypeForCause { TypeNothing };

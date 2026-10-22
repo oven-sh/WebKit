@@ -1206,7 +1206,7 @@ public:
     
     const ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() const { return m_onComputeErrorInfoJSValue; }
     ErrorInfoFunctionJSValue& onComputeErrorInfoJSValue() { return m_onComputeErrorInfoJSValue; }
-
+    
     const CollectedErrorInfoFunctionJSValue& onComputeCollectedErrorInfoJSValue() const { return m_onComputeCollectedErrorInfoJSValue; }
 
     const WTF::Function<void(VM&, SourceProvider*, LineColumn&, String&)>& computeLineColumnWithSourcemap() const { return m_computeLineColumnWithSourcemap; }

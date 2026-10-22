@@ -295,6 +295,9 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     {
         Locker locker { cellLock() };
         m_stackTrace = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        m_collectedStackFrames = nullptr;
+#endif
     }
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
@@ -542,12 +545,12 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 collectedStackFrames = WTF::move(m_collectedStackFrames);
 #endif
             }
-            // The value is made before the scope opens: stackWithHeader() reads this error's name and message.
+            // The value is made before allowMaterialization opens: the hook runs script, and stackWithHeader() reads this error's name and message.
             JSValue stackValue;
 #if USE(BUN_JSC_ADDITIONS)
             if (m_stackStringIsFramesOnly) {
                 if (auto& fn = vm.onComputeCollectedErrorInfoJSValue(); fn && collectedStackFrames) {
-                    // The hook can run script, as the one for frames that are alive, which runs with this set too.
+                    // The hook can run script that reads this stack again, so this is set first, as for onComputeErrorInfoJSValue().
                     m_errorInfoMaterialized = true;
                     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                     stackValue = fn(vm, stackString, *collectedStackFrames, this);
@@ -592,6 +595,9 @@ bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vect
         Locker locker { cellLock() };
         m_capturedStackTrace = WTF::move(capturedStackTrace);
         m_stackString = String();
+#if USE(BUN_JSC_ADDITIONS)
+        m_collectedStackFrames = nullptr;
+#endif
     }
     if (needsPlaceholder)
         putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceMaterializingStackGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
