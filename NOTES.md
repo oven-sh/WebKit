@@ -326,3 +326,10 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     Thread answered and resolved. PR body Notes updated.
   * Open thread on bun#46432: only the webkit.ts pin (on purpose).
   * CI for 57701c02e6 running (build after 130791). Pushback run 49c2ef2e6e00 still in "Survey".
+- 2026-10-22 09:10 UTC: "CI failed" wake for build 130797 (head 57701c02e6). Scraped: 179 script jobs passed, NO red test. The event = two
+  ":darwin: any x64 - test-bun" jobs EXPIRED without an agent (09:05:25) and were scheduled again by Buildkite; the build is still "running".
+  Windows x64 verify-baseline PASSED again (second pass with --timeout 30000). Yellow (passed on retry / alone), all unrelated:
+  structured-clone-fastpath (RSS delta 1.25 MB against 1 MB on ubuntu aarch64; standalone A/B of the test body, 30 runs each: over 1 MB in 27 runs
+  on main2 and 14 on new2, so not worse with the PR), nth-anplusb-ident, spawn-stdin-readable-stream, process.hrtime, filesink,
+  test-cluster-shared-leak (Windows timeout), node-net (mimalloc page count).
+  No push, no retrigger (still unused): a retrigger would throw away 179 passed jobs while the build only waits for macOS x64 agents.
