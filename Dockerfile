@@ -20,13 +20,13 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG LINUX_ARCH="x86_64"
 
 # The arm64 ubuntu:20.04, only ever copied from (see the aarch64 sysroot in `base`): nothing of it is run.
-FROM --platform=linux/arm64 ubuntu:20.04 as rootfs-arm64
+FROM --platform=linux/arm64 ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 as rootfs-arm64
 
 # `base` is the toolchain and nothing else: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
 # it is the same for every lane of an architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to
 # the lanes as `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the
 # `image` job). Without that, it is built here like any other stage. Lane settings belong in `lane` below.
-FROM ubuntu:20.04 as base
+FROM ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 as base
 
 ARG LLVM_VERSION
 
@@ -62,25 +62,39 @@ RUN ( apt-get update || \
 # Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
 # (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
-RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
+        -o /tmp/zstd.tar.gz \
+    && echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/zstd.tar.gz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
     && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \
-    && rm -rf /tmp/zstd-${ZSTD_VERSION} \
+    && rm -rf /tmp/zstd-${ZSTD_VERSION} /tmp/zstd.tar.gz \
     && zstd --version
 
 # Install Node (for icu/compress-data.ts; needs >=23.6 for default type stripping)
-ARG NODE_VERSION=24.16.0
-RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-    | tar -xJ -C /usr/local --strip-components=1 \
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        -o /tmp/node.tar.xz \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
     && node --version
 
 # Install modern CMake for Ubuntu
-RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
-    && apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
-    && apt-get update \
-    && apt-get install -y cmake \
-    && rm -rf /var/lib/apt/lists/*
+ARG CMAKE_VERSION=4.4.4
+ARG CMAKE_SHA256=e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+        -o /tmp/cmake.tar.gz \
+    && echo "${CMAKE_SHA256}  /tmp/cmake.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/cmake.tar.gz \
+    && cmake --version
 
 # Install GCC 13 toolchain
 # Mirrored from ppa:ubuntu-toolchain-r/test to a GitHub release so this image
