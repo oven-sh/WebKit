@@ -2213,6 +2213,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
 static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionOwnNonIndexKeys);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
@@ -3277,6 +3278,41 @@ JSC_DEFINE_HOST_FUNCTION(functionHasImmutableProperties, (JSGlobalObject*, CallF
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
     return JSValue::encode(jsBoolean(object && object->hasImmutableProperties()));
+}
+
+// Returns what the object's getOwnPropertyNames() gives a PropertyNameArrayBuilder in a NonIndexStrings mode: its own keys
+// without a key for each element, character or mapped argument it holds. `symbols` false leaves the symbol keys out, and
+// `dontEnum` false the keys that are not enumerable.
+// Usage: $vm.ownNonIndexKeys(object, symbols = true, dontEnum = true)
+JSC_DEFINE_HOST_FUNCTION(functionOwnNonIndexKeys, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "ownNonIndexKeys expects an object"_s);
+    auto optionalFlag = [&](unsigned index) {
+        JSValue value = callFrame->argument(index);
+        return value.isUndefined() || value.toBoolean(globalObject);
+    };
+    auto propertyNameMode = optionalFlag(1) ? PropertyNameMode::NonIndexStringsAndSymbols : PropertyNameMode::NonIndexStrings;
+    auto dontEnumPropertiesMode = optionalFlag(2) ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
+
+    PropertyNameArrayBuilder names(vm, propertyNameMode, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, dontEnumPropertiesMode);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSArray* keys = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& name : names) {
+        if (name.isSymbol())
+            keys->push(globalObject, Symbol::create(vm, static_cast<SymbolImpl&>(*name.impl())));
+        else
+            keys->push(globalObject, jsOwnedString(vm, name.string()));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(keys);
 }
 
 // Calls the specified test function after adjusting the stack to have the specified
@@ -5964,6 +6000,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
+    addFunction(vm, alwaysAllow, "ownNonIndexKeys"_s, functionOwnNonIndexKeys, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
 
