@@ -4563,7 +4563,7 @@ void DoWhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     generator.emitNodeInTailPosition(dst, m_statement);
 
     generator.emitLabel(*scope->continueTarget());
-    generator.emitProfileControlFlow(m_statement->endOffset(), endOffset());
+    generator.emitProfileControlFlowOfStatementHead(m_statement->endOffset(), endOffset());
     generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
 
     generator.emitLabel(scope->breakTarget());
