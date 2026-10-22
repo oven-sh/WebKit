@@ -302,3 +302,18 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     upstream + DFG sooner; v5-style steps file, no compile log, no sampler, slots rotated, cleanup in finally. LAST diagnostic round.
   * DECISION (unless v8 shows something else): the lane gets `--timeout 30000` for the emulated SIMD run in scripts/verify-baseline.ts; no WebKit change.
     Main already runs these tests at 2.3..4.6 s of 5 s (one failure in 108 builds).
+- 2026-10-22 07:40 UTC: diag v8 result (build 130777, bench/results/vb-diag-v8.log; 16 batches x 6) AND FINAL STATE OF THE LANE QUESTION.
+  * png() per arm: default (32 runs) median 2580 ms, 2 slow (4387, 4423: flat grey 5229, 5265); upstream (16) 2260..2845, 0 slow;
+    DFG LATER (thresholdForOptimizeAfterWarmUp/AfterLongWarmUp/Soon = 20000; 16 runs) median 4046 ms, 9 SLOW (4026..4449), gradient 2.4 s;
+    DFG sooner (100; 16) median 2588, 1 slow, encode1 slower; upstream + DFG sooner (16) png normal, encode1 1.4 s and gradient 4.8 s.
+    A long startup (first test after >= 16 s) goes with a fast png (1263..2228): the DFG tier's first use happened earlier.
+  * CONCLUSION: a slow run = the loop of png() runs without its DFG code. Under SDE Baseline code costs about 2 s more there; JIT off 0.7 s.
+    Native 5 ms both builds. Not a GC regression. Likely link to the PR (not proven): compiler threads are suspended for the whole one-pause cycle
+    (220 ms under SDE) about 0.8 s before the test, so the compile queue is later.
+  * DONE: bun branch = d20afca6a2 + be97bcb973 "ci: an emulated SIMD test gets 30 s in verify-baseline" (--timeout 30000 in phase 1 of
+    scripts/verify-baseline.ts; verified locally under qemu-x86_64: PASS). No [skip tests]. CI build 130791 running.
+    PR body updated (bench/bun-pr-body.md, 250 visible words, lane paragraph in Notes = bench/lane-note.md). All review threads answered; resolved
+    except the webkit.ts pin thread (open on purpose until the pin is a merged commit). Chat update sent.
+  * WebKit tree: unchanged (head 0b2110fe90). The pause-limit patch stays dropped.
+  * TODO: CI result of 130791; pushback result (run 49c2ef2e6e00) -> address, "Self-reviewed" bullet; WebKit#838 body: ASAN probes of the head, then
+    mark it ready; wrap-up update; delete scratch + wip branches at the very end.

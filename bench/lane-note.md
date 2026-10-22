@@ -1,0 +1,9 @@
+**The Windows baseline lane.** `scripts/verify-baseline.ts` runs `simd-baseline.test.ts` under Intel SDE, with the 5 s that `bun test` gives a test. The file takes 20 s there and 0.06 s natively. On main the first JPEG test takes 2.3 to 4.6 s in that lane (108 builds, and the second JPEG test failed once at 5.1 s). With this PR the first JPEG test took more than 5 s in 5 of 31 runs. A temporary block in the script ran the file about 400 times under SDE to find out why. It is not in the PR any more. What it showed:
+
+- The GC log of a slow run is the same as that of a normal run: 7 eden collections, all on the JS thread, with pauses of 973, 12, 220, 9, 121, 68 and 7 ms.
+- The extra 2 s are inside `png()`, a synchronous helper of the test that builds the input image in a loop of 2,880 calls. No collection runs in it.
+- That helper takes 0.7 s with `BUN_JSC_useJIT=0`, 2.1 to 3.4 s with the JIT, and 4.0 to 5.2 s in a slow run.
+- A slow run is one in which that loop runs without its DFG code. With the DFG thresholds at 20,000 (`BUN_JSC_thresholdForOptimizeAfterWarmUp` and the two options next to it), 9 runs of 16 are slow in the same way. With `BUN_JSC_reportCompileTimes=1`, which changes when the compiles end, the helper takes 1.0 s in 108 runs of 108.
+- Natively the test takes 5 ms with and without this PR (150 runs each: median 5.5 and 5.4 ms, 90th percentile 11.4 and 10.3 ms).
+
+So under the emulator the length of this test depends on the JIT tier that the loop is in, and this PR moves the moment at which the compiles end. The likely link, which I did not prove: a collection of a small heap is one pause now, and the JIT's threads are suspended for all of it (220 ms under SDE, 1 to 3 ms natively), so their queue is that much later when the test starts. The lane checks instructions, not time. The emulated run now has `--timeout 30000`.

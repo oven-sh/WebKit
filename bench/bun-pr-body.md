@@ -1,20 +1,21 @@
 Fixes #44893
 
 ### Problem
-- A single-threaded LRU churn (a `Map` over a linked list) makes 60,056 voluntary context switches and spends 2.53 s in the kernel, at 163 ns/op. With one GC marker: 107 switches, 0.06 s, 79 ns/op. Node: 76 ns/op.
-- Its collections mark 1 to 10 MB. Each time a marking thread shares a cell (`SlotVisitor::donateKnownParallel`), it wakes every parked helper thread under the marking lock. #45568 covers collections under 1 MB.
+- A single-threaded LRU churn (a `Map` over a linked list) makes 60,056 voluntary context switches (2.53 s in the kernel), at 163 ns/op. One GC marker: 107, 0.06 s, 79 ns/op. Node: 76 ns/op.
+- Its collections mark 1 to 10 MB. When a marking thread shares a cell (`SlotVisitor::donateKnownParallel`), it wakes every parked helper under the marking lock.
 
 ### Fix
 - oven-sh/WebKit#838: marking pays for each helper wake-up (2 MB visited for one), and an idle helper leaves the collection. This PR pins it.
 - Result: 821 switches, 0.15 s, 67 ns/op.
-- Verified: `test/js/bun/gc/gc-controller-cadence.test.ts`, two new tests. On the current pin they fail: 78 to 94 and 118 to 148 context switches per collection, limits 20 and 50. Also the GC race tests.
+- Verified: two new tests in `test/js/bun/gc/gc-controller-cadence.test.ts` (the current pin fails them: 78 to 148 context switches per collection, limits 20 and 50) and the GC race tests.
+- `scripts/verify-baseline.ts` gives an emulated test 30 s: under Intel SDE a JPEG test exceeded 5 s in 5 of 31 runs, without GC work in the extra time.
 
 ### Background
-- JSC marks with one collector visitor and up to 7 helper threads that take cells from shared mark stacks. `BUN_JSC_logGC=1` now prints `mw=`, the wake-ups of a collection. The tests read it.
+- JSC marks with one collector visitor and up to 7 helper threads on shared mark stacks. `BUN_JSC_logGC=1` now prints `mw=`, the wake-ups of a collection.
 - Considered a higher threshold in #45568: wide 10 MB collections then mark on one thread.
 
 ### Downsides
-- Peak RSS grows 10 to 20% in a GC-bound churn (798 MB against 706, 125 MB live). The JS thread allocates 1.5 times faster while a cycle marks.
+- Peak RSS grows 10 to 20% in a churn (798 MB against 706, 125 MB live). The JS thread allocates 1.5 times faster while a cycle marks.
 - Wide collections get fewer helpers: 1 of 7 at 3 MB marked, 6 at 54 MB.
 - Measured on one busy KVM guest. `BUN_JSC_minimumBytesMarkedForParallelMarking=0` restores the old protocol. Do not merge before oven-sh/WebKit#838: the pin is its preview build.
 
@@ -59,6 +60,17 @@ The same churn with 125 MB live, 7 runs: peak RSS 706 MB (651 to 851) on the cur
 
 **Tests that set the option to 0.** A collection that marks under 2 MB is one pause on the JS thread now. A test that needs a marking thread that is not the JS thread, or a collection that ends at a later safepoint than it began, does not get that from a small heap any more. With the option at 0 the collector runs the upstream protocol, where every helper joins every collection at its start. These tests set it: the three that force 8 markers (since #45568), `dynamic-import-evaluation-error-gc.test.ts` and two tests in `sourcetextmodule-link-gc.test.ts`. `BUN_JSC_collectContinuously` selects the upstream protocol by itself, so the 24 test files that use it run as before. `bun -e` runs with one marker, so a test that spawns it has no helper thread before or after. A test that runs its collections in the test process cannot set the option.
 
-**Not done.** No measurement on macOS, on Windows, or on a machine without a hypervisor.
+**The Windows baseline lane.** `scripts/verify-baseline.ts` runs `simd-baseline.test.ts` under Intel SDE, with the 5 s that `bun test` gives a test. The file takes 20 s there and 0.06 s natively. On main the first JPEG test takes 2.3 to 4.6 s in that lane (108 builds, and the second JPEG test failed once at 5.1 s). With this PR the first JPEG test took more than 5 s in 5 of 31 runs. A temporary block in the script ran the file about 400 times under SDE to find out why. It is not in the PR any more. What it showed:
+
+- The GC log of a slow run is the same as that of a normal run: 7 eden collections, all on the JS thread, with pauses of 973, 12, 220, 9, 121, 68 and 7 ms.
+- The extra 2 s are inside `png()`, a synchronous helper of the test that builds the input image in a loop of 2,880 calls. No collection runs in it.
+- That helper takes 0.7 s with `BUN_JSC_useJIT=0`, 2.1 to 3.4 s with the JIT, and 4.0 to 5.2 s in a slow run.
+- A slow run is one in which that loop runs without its DFG code. With the DFG thresholds at 20,000 (`BUN_JSC_thresholdForOptimizeAfterWarmUp` and the two options next to it), 9 runs of 16 are slow in the same way. With `BUN_JSC_reportCompileTimes=1`, which changes when the compiles end, the helper takes 1.0 s in 108 runs of 108.
+- Natively the test takes 5 ms with and without this PR (150 runs each: median 5.5 and 5.4 ms, 90th percentile 11.4 and 10.3 ms).
+
+So under the emulator the length of this test depends on the JIT tier that the loop is in, and this PR moves the moment at which the compiles end. The likely link, which I did not prove: a collection of a small heap is one pause now, and the JIT's threads are suspended for all of it (220 ms under SDE, 1 to 3 ms natively), so their queue is that much later when the test starts. The lane checks instructions, not time. The emulated run now has `--timeout 30000`.
+
+**Not done.** No measurement on macOS, on native Windows, or on a machine without a hypervisor.
 
 </details>
+
