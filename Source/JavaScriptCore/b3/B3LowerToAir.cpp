@@ -3175,7 +3175,7 @@ private:
     {
         // Each of the at most maxCompareChainSize + 1 leaves can carry a ZExt32, so this bounds both the
         // node count and the recursion depth on long left-deep BitOr chains.
-        static constexpr unsigned maxNodes = 3 * (maxCompareChainSize + 1);
+        static constexpr unsigned maxNodes = 3 * (Limits::maxCompareChainSize + 1);
         if (internals.size() >= maxNodes)
             return false;
         if (!value->type().isInt() || !canBeInternal(value))
@@ -3183,7 +3183,7 @@ private:
         internals.append(value);
         switch (value->opcode()) {
         case BitXor:
-            if (leaves.size() > maxCompareChainSize)
+            if (leaves.size() > Limits::maxCompareChainSize)
                 return false;
             leaves.append(value);
             return true;

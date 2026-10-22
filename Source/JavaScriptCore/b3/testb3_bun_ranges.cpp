@@ -477,7 +477,7 @@ struct ExtendedOperand {
     bool isKnownNonNegative;
 };
 
-static int64_t extend(const ExtendedOperand& operand, int32_t word)
+static int64_t extendWord(const ExtendedOperand& operand, int32_t word)
 {
     return operand.extension == SExt32 ? static_cast<int64_t>(word) : static_cast<int64_t>(static_cast<uint32_t>(word));
 }
@@ -518,7 +518,7 @@ static void checkComparisonOfExtensions(B3::Opcode opcode, ExtendedOperand left,
             if ((left.isKnownNonNegative && leftInput < 0) || (right.isKnownNonNegative && rightInput < 0))
                 continue;
             int32_t memory[2] = { leftInput, rightInput };
-            CHECK_EQ(invoke<int64_t>(*code, memory), static_cast<int64_t>(holds(opcode, extend(left, leftInput), extend(right, rightInput))));
+            CHECK_EQ(invoke<int64_t>(*code, memory), static_cast<int64_t>(holds(opcode, extendWord(left, leftInput), extendWord(right, rightInput))));
         }
     }
 }
