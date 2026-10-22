@@ -277,6 +277,8 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
             catchScope.clearExceptionExceptTermination();
             return errorInstance;
         }
+        // Nothing below catches what the host's formatter throws, so a stack that a collection formatted stays that string.
+        errorInstance->clearCollectedStackFrames();
 #endif
 
         errorInstance->materializeErrorInfoIfNeeded(vm);
