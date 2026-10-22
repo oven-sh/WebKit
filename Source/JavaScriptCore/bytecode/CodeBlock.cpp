@@ -4058,6 +4058,7 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
             inner = std::ranges::upper_bound(inner, ranges.end(), inner->endOffset, { }, &Range::startOffset);
         }
         basicBlockLocation->insertGaps(gaps);
+        basicBlockLocation->setIsStatementHead(bytecodeAt(i).m_isStatementHead);
 
         metadata.m_basicBlockLocation = basicBlockLocation;
     }

@@ -4575,7 +4575,7 @@ void DoWhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 // A loop emits its test twice. Two ops with the same range share a counter.
 static void emitLoopTest(BytecodeGenerator& generator, ExpressionNode* test, Label& trueTarget, Label& falseTarget, FallThroughMode fallThroughMode)
 {
-    generator.emitProfileControlFlow(test);
+    generator.emitProfileControlFlowOfStatementHead(test);
     generator.emitNodeInConditionContext(test, trueTarget, falseTarget, fallThroughMode);
 }
 
@@ -4637,7 +4637,7 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
             generator.emitLabel(*scope->continueTarget());
             generator.prepareLexicalScopeForNextForLoopIteration(this, forLoopSymbolTable);
             if (m_expr3) {
-                generator.emitProfileControlFlow(m_expr3);
+                generator.emitProfileControlFlowOfStatementHead(m_expr3);
                 generator.emitNodeInIgnoreResultPosition(m_expr3);
             }
 
@@ -4805,7 +4805,7 @@ void ForInNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
         // What is assigned to, up to `in`. The initializer of `for (var x = 1 in o)` ran once, before the loop.
         if (!m_lexpr->isAssignResolveNode())
-            generator.emitProfileControlFlow(divotStart().offset, divot().offset);
+            generator.emitProfileControlFlowOfStatementHead(divotStart().offset, divot().offset);
         this->emitLoopHeader(generator, propertyName.get());
 
         generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
@@ -4844,7 +4844,7 @@ void ForOfNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     {
         auto emitBody = [&](BytecodeGenerator& generator) {
             // What is assigned to, up to `of`.
-            generator.emitProfileControlFlow(divotStart().offset, divot().offset);
+            generator.emitProfileControlFlowOfStatementHead(divotStart().offset, divot().offset);
             if (m_lexpr->isResolveNode()) {
                 const Identifier& ident = static_cast<ResolveNode*>(m_lexpr)->identifier();
                 Variable var = generator.variable(ident);
@@ -5140,7 +5140,7 @@ void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterI
             for (; list; list = list->getNext()) {
                 ExpressionNode* test = list->getClause()->expr();
                 if (generator.shouldEmitControlFlowProfilerHooks() && !isConstantOrName(test))
-                    generator.emitProfileControlFlow(test);
+                    generator.emitProfileControlFlowOfStatementHead(test);
                 RefPtr<RegisterID> clauseVal = generator.emitNode(test);
                 Ref<Label> clauseLabel = generator.newLabel();
                 labelVector.append(clauseLabel);

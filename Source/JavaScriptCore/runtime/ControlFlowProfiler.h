@@ -90,7 +90,9 @@ public:
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
     // With its gaps, a basic block has the text of the basic blocks and of the functions that are in it.
     enum class Gaps : bool { Without, With };
-    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without) const;
+    // V8 has no basic block for the test or the update of a loop, for what a for-in or a for-of assigns to, or for the test of a case.
+    enum class StatementHeads : bool { With, Without };
+    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without, StatementHeads = StatementHeads::With) const;
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 

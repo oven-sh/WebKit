@@ -704,6 +704,13 @@ namespace JSC {
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
         void emitProfileControlFlow(ExpressionNode* node) { emitProfileControlFlow(startOffsetOfBasicBlock(node), node->endOffset()); }
+        // The test or the update of a loop, what a for-in or a for-of assigns to, or the test of a case.
+        void emitProfileControlFlowOfStatementHead(int textOffset, int textEndOffset)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileControlFlowSlow(textOffset, textEndOffset, true);
+        }
+        void emitProfileControlFlowOfStatementHead(ExpressionNode* node) { emitProfileControlFlowOfStatementHead(startOffsetOfBasicBlock(node), node->endOffset()); }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -1122,7 +1129,7 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
-        void emitProfileControlFlowSlow(int textOffset, int textEndOffset);
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isStatementHead = false);
         bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
