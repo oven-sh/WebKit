@@ -594,6 +594,10 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyNa
 
 bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vector<StackFrame>& stackTrace)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Whatever this returns, the stack is the caller's trace from here on.
+    clearCollectedStackFrames();
+#endif
     bool needsPlaceholder = !m_capturedStackTrace;
     if (needsPlaceholder && (isValidOffset(getDirectOffset(vm, vm.propertyNames->stack)) || !isStructureExtensible()))
         return false;
@@ -602,9 +606,6 @@ bool ErrorInstance::trySaveCapturedStackTraceForLazyMaterialization(VM& vm, Vect
         Locker locker { cellLock() };
         m_capturedStackTrace = WTF::move(capturedStackTrace);
         m_stackString = String();
-#if USE(BUN_JSC_ADDITIONS)
-        m_collectedStackFrames = nullptr;
-#endif
     }
     if (needsPlaceholder)
         putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceMaterializingStackGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
