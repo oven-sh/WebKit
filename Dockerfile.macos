@@ -18,19 +18,21 @@ ARG MACOS_ARCH="arm64"
 # deployment target — not the SDK — controls the oldest macOS the artifacts
 # run on, so this tracks the newest SDK Apple serves. Apple's catalog is a
 # rolling window: when this release stops being served, run `list` and bump
-# both pins.
+# the pins. The sha256 is of the .pkg that `download` leaves in the cache.
 ARG MACOS_SDK_VERSION="26.5"
 ARG MACOS_SDK_CLT_RELEASE="26.5"
+ARG MACOS_SDK_PKG_SHA256="5f044578cd78a3a9b9c965a42d56bad609ee5d252e1d4e6aa7c42fc3f35fee7b"
 ARG MACOS_DEPLOYMENT_TARGET="13.0"
-# Bun runs the vendored xmac tool that fetches the SDK from Apple. Same R2
-# mirror .github/actions/setup-bun uses.
-ARG BUN_DOWNLOAD_URL="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest"
+# Bun runs the vendored xmac tool that fetches the SDK from Apple.
+ARG BUN_VERSION="1.4.4"
+ARG BUN_SHA256="bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c"
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG MARCH_FLAG="-mcpu=apple-m1"
 ARG LLVM_VERSION="23"
 ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b351011"
 ARG BOOTSTRAP_CMDS_TAG="bootstrap_cmds-138"
+ARG BOOTSTRAP_CMDS_COMMIT="c71d2d72f48995baaea76148f61002e5299841de"
 # What every variant is compiled with. Cross-only additions live in the build stage.
 ARG DEFAULT_CFLAGS="-fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -O3 -g -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -faddrsig "
 # Per-variant extras (CPP_FLAGS in .github/scripts/lanes.mjs), e.g.
@@ -49,7 +51,7 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG COMPILER_RT_DARWIN_TAG="compiler-rt-darwin-23.1.1"
 ARG COMPILER_RT_DARWIN_SHA256="35241a2d4cff6119b78279ace69cf89c9a190bd5ec7d2baa8d9d7f2a45d9957b"
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
@@ -57,8 +59,10 @@ ARG LLVM_DEBS_SHA256
 ARG MACOS_ARCH
 ARG MACOS_SDK_VERSION
 ARG MACOS_SDK_CLT_RELEASE
+ARG MACOS_SDK_PKG_SHA256
 ARG MACOS_DEPLOYMENT_TARGET
-ARG BUN_DOWNLOAD_URL
+ARG BUN_VERSION
+ARG BUN_SHA256
 ARG COMPILER_RT_DARWIN_TAG
 ARG COMPILER_RT_DARWIN_SHA256
 
@@ -88,11 +92,11 @@ ENV AR=llvm-ar-${LLVM_VERSION}
 ENV RANLIB=llvm-ranlib-${LLVM_VERSION}
 
 # Bun — only used to run the vendored xmac tool below.
-RUN case "$(uname -m)" in arm64|aarch64) arch=aarch64;; *) arch=x64;; esac && \
-    wget -q "${BUN_DOWNLOAD_URL}/bun-linux-${arch}.zip" -O /tmp/bun.zip && \
+RUN wget -q "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" -O /tmp/bun.zip && \
+    echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - && \
     unzip -q /tmp/bun.zip -d /tmp && \
-    install -m 0755 /tmp/bun-linux-${arch}/bun /usr/local/bin/bun && \
-    rm -rf /tmp/bun.zip /tmp/bun-linux-${arch} && \
+    install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun && \
+    rm -rf /tmp/bun.zip /tmp/bun-linux-x64 && \
     bun --version
 
 # macOS SDK — headers, libc++, framework headers, and the .tbd linker stubs
@@ -103,7 +107,11 @@ RUN case "$(uname -m)" in arm64|aarch64) arch=aarch64;; *) arch=x64;; esac && \
 # Apple itself, nothing is redistributed. Integrity is verified against the
 # SHA-1 checksums in the package's signed xar table of contents.
 COPY macos-cross/xmac.mjs /xmac.mjs
-RUN bun /xmac.mjs splat --accept-license --sdk-only \
+RUN bun /xmac.mjs download --accept-license \
+      --release "${MACOS_SDK_CLT_RELEASE}" --sdk "${MACOS_SDK_VERSION}" \
+      --cache-dir /tmp/xmac-cache && \
+    echo "${MACOS_SDK_PKG_SHA256}  $(echo /tmp/xmac-cache/dl/*/*.pkg)" | sha256sum -c - && \
+    bun /xmac.mjs splat --offline --accept-license --sdk-only \
       --release "${MACOS_SDK_CLT_RELEASE}" --sdk "${MACOS_SDK_VERSION}" \
       --output /tmp/xmac-out --cache-dir /tmp/xmac-cache && \
     mkdir -p /opt && \
@@ -143,9 +151,11 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # ───────────────────────────────────────────────────────────────────────────
 # Part of `base`: it is the same for every lane.
 ARG BOOTSTRAP_CMDS_TAG
+ARG BOOTSTRAP_CMDS_COMMIT
 COPY macos-cross/ /macos-cross/
 RUN git clone --depth=1 --branch ${BOOTSTRAP_CMDS_TAG} \
       https://github.com/apple-oss-distributions/bootstrap_cmds.git /bootstrap_cmds && \
+    test "$(git -C /bootstrap_cmds rev-parse HEAD)" = "${BOOTSTRAP_CMDS_COMMIT}" && \
     cd /bootstrap_cmds/migcom.tproj && \
     flex -o lexxer.c lexxer.l && \
     bison -d -o parser.c parser.y && \
