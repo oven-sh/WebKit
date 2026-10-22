@@ -56,6 +56,7 @@
 #include "JITCode.h"
 #include "JSArrayInlines.h"
 #include "JSAsyncFunctionGenerator.h"
+#include "JSAsyncGenerator.h"
 #include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
@@ -880,6 +881,7 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
     bool result = false;
+    bool leavesVMEntry = false;
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Done;
@@ -896,8 +898,20 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
             return IterationStatus::Continue;
         // Native code reaches JS only through a VM entry, so stopping there means a host frame is
         // only ever visited as the thrower, never as a caller that could catch the throw.
-        return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+        if (!visitor->callerIsEntryFrame())
+            return IterationStatus::Continue;
+        leavesVMEntry = true;
+        return IterationStatus::Done;
     });
+    // No frame of this VM entry handles the throw. The microtask job that resumes an async function
+    // (asyncFunctionGeneratorBodyCall) made the entry with the function's generator as its context:
+    // it takes the value of the exception, rejects the function's promise with it, and drops the Exception.
+    // The call of the body of an async generator (asyncGeneratorBodyCall) does the same with the request that
+    // the body works on, and its context is the generator.
+    if (leavesVMEntry) {
+        if (JSCell* context = vmEntryRecord(vm.topEntryFrame)->m_context)
+            return context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSAsyncGenerator>();
+    }
     return result;
 }
 
