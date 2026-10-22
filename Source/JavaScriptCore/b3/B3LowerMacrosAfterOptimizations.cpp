@@ -30,6 +30,7 @@
 
 #include "AirArg.h"
 #include "B3BlockInsertionSet.h"
+#include "B3BulkMemoryValue.h"
 #include "B3CCallValue.h"
 #include "B3ConstDoubleValue.h"
 #include "B3ConstFloatValue.h"
@@ -58,7 +59,7 @@ constexpr bool isLoweredByLowerMacrosAfterOptimizations(Opcode opcode)
     case PurifyNaN:
     case RotL:
     case PopCount:
-    case MemoryCopy:
+    case MemoryMove:
     case MemoryFill:
         return true;
     default:
@@ -249,8 +250,9 @@ private:
                 break;
             }
 
-            case MemoryCopy: {
-                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::MemoryCopy, m_origin));
+            case MemoryMove: {
+                RuntimeFunction function = m_value->as<BulkMemoryValue>()->isGCSafe() ? RuntimeFunction::GCSafeMemoryMove : RuntimeFunction::MemoryMove;
+                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, function, m_origin));
                 Value* result = m_insertionSet.insert<CCallValue>(
                     m_index,
                     m_value->type(),

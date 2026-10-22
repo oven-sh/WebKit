@@ -170,7 +170,7 @@ private:
             case Branch:
                 if (block->successorBlock(0) == block->successorBlock(1))
                     continue;
-                addOverride(branch->child(0), Override::nonZero(block->successorBlock(0)));
+                addOverride(branch->child(0), branch->child(0)->returnsBool() ? Override::constant(block->successorBlock(0), 1) : Override::nonZero(block->successorBlock(0)));
                 addOverride(branch->child(0), Override::constant(block->successorBlock(1), 0));
                 addDecidedComparison(block, branch->child(0));
                 break;

@@ -56,6 +56,10 @@ namespace WTF {
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(Vector, WTF_EXPORT_PRIVATE);
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER_AND_EXPORT(VectorBuffer, WTF_EXPORT_PRIVATE);
 
+#if USE(BUN_JSC_ADDITIONS)
+WTF_EXPORT_PRIVATE NEVER_INLINE NO_RETURN_DUE_TO_CRASH void crashDueToBorrowedVector();
+#endif
+
 enum class NulloptBehavior : bool { Ignore, Abort };
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -344,8 +348,15 @@ protected:
 
     void crashIfBorrowed() const
     {
-        // FIXME: Switch to RELEASE_ASSERT once we have more experience and stability.
-        ASSERT(!m_isBorrowed);
+#if USE(BUN_JSC_ADDITIONS) && !ASSERT_ENABLED
+        // RELEASE_ASSERT's crash takes __FILE__ and __PRETTY_FUNCTION__ on Darwin: a string for every instantiation of
+        // this template and a register setup wherever this is inlined, about 1 MB of a release build. The check stays,
+        // and every instantiation shares one crash.
+        if (m_isBorrowed) [[unlikely]]
+            crashDueToBorrowedVector();
+#else
+        RELEASE_ASSERT(!m_isBorrowed);
+#endif
     }
 };
 
@@ -1599,7 +1610,7 @@ bool Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::appendSlow
     static_assert(action == FailureAction::Crash || action == FailureAction::Report);
     ASSERT_WITH_SECURITY_IMPLICATION(size() == capacity());
 
-    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(addressOfArgument(value));
     ptr = expandCapacity<action>(size() + 1, ptr);
     if constexpr (action == FailureAction::Report) {
         if (!ptr) [[unlikely]]
@@ -1706,7 +1717,7 @@ template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t min
 template<typename U>
 inline void Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>::insert(size_t position, U&& value)
 {
-    auto ptr = const_cast<std::remove_cvref_t<U>*>(std::addressof(value));
+    auto ptr = const_cast<std::remove_cvref_t<U>*>(addressOfArgument(value));
     if (size() == capacity()) {
         ptr = expandCapacity<FailureAction::Crash>(size() + 1, ptr);
         ASSERT(begin());

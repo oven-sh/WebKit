@@ -173,7 +173,7 @@ SelectorDataList::SelectorDataList(const CSSSelectorList& selectorList)
 
 inline bool SelectorDataList::selectorMatches(const SelectorData& selectorData, Element& element, const ContainerNode& rootNode, Style::SelectorMatchingState* selectorMatchingState) const
 {
-    SelectorChecker selectorChecker(element.document());
+    SelectorChecker selectorChecker(protect(element.document()));
     SelectorChecker::CheckingContext selectorCheckingContext(SelectorChecker::Mode::QueryingRules);
     selectorCheckingContext.scope = rootNode.isDocumentNode() ? nullptr : &rootNode;
     // Providing SelectorMatchingState allows cross-element optimizations like caching for :has() matches.
@@ -310,7 +310,7 @@ template<typename OutputType>
 static inline void elementsForLocalName(const ContainerNode& rootNode, const AtomString& localName, const AtomString& lowercaseLocalName, OutputType& output)
 {
     if (auto* rootDocument = dynamicDowncast<Document>(rootNode); rootDocument && lowercaseLocalName == HTMLNames::baseTag->localName()) {
-        RefPtr firstBaseElement = rootDocument->firstBaseElement();
+        auto* firstBaseElement = rootDocument->firstBaseElement();
         if (!firstBaseElement)
             return;
         if constexpr (std::is_same_v<OutputType, Element*>) {

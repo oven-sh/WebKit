@@ -5966,7 +5966,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
-    case DataViewSet: {
+    case DataViewSet:
+    case TypedArraySet: {
         break;
     }
 

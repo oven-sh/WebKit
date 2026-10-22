@@ -75,6 +75,8 @@ public:
     WEBCORE_EXPORT int selectedIndex() const;
     HTMLOptionElement* selectedOption();
     WEBCORE_EXPORT void setSelectedIndex(int);
+    int selectedIndexForBindings() const { return selectedIndex(); }
+    void setSelectedIndexForBindings(int);
 
     WEBCORE_EXPORT void optionSelectedByUser(int index, bool dispatchChangeEvent, bool allowMultipleSelection = false);
     void pickOrToggleOption(HTMLOptionElement&);
@@ -203,12 +205,14 @@ public:
 
     bool isDevolvableWidget() const override { return true; }
 
-    void updateSelectedContent(HTMLOptionElement* = nullptr) const;
-    void updateSelectedContent(HTMLSelectedContentElement&) const;
-    void queueSelectedContentUpdate();
+    void updateSelectedContent(HTMLOptionElement* = nullptr);
+    void updateSelectedContent(HTMLSelectedContentElement&);
+    void updateSelectedContentIfEnabled(HTMLOptionElement* = nullptr);
+    void queueSelectedContentUpdate(const HTMLOptionElement&);
     RefPtr<HTMLOptionElement> selectedOptionForSelectedContent() const;
     void resetSelectedness(HTMLOptionElement* oldSelectedOption);
-    bool updatesSelectedContent() const;
+    bool hasPendingSelectedContentUpdate() const { return !m_multiple && m_hasQueuedSelectedContentUpdate; }
+    bool LEGACY_NODELETE updatesSelectedContent() const;
 
     void LEGACY_NODELETE registerSelectedContentElement();
     void LEGACY_NODELETE unregisterSelectedContentElement();
@@ -225,7 +229,7 @@ public:
     void openPickerForUserInteraction(std::optional<bool> focusVisible = std::nullopt);
     void hidePickerPopoverElement();
     void clearPickerOpeningMouseLocation() { m_pickerOpeningMouseLocation = { }; }
-    bool consumePickerOpeningPress(const MouseEvent&);
+    bool LEGACY_NODELETE consumePickerOpeningPress(const MouseEvent&);
     void closePickerIfNoLongerBaseAppearance();
 
     struct NavigationKeyIdentifiers {
@@ -300,6 +304,7 @@ private:
         DispatchChangeEvent = 1 << 1,
         UserDriven = 1 << 2,
         SkipSelectedContentUpdate = 1 << 3,
+        MakeOptionDirty = 1 << 4,
     };
     void selectOption(int optionIndex, OptionSet<SelectOptionFlag> = { });
     void deselectItemsWithoutValidation(HTMLElement* elementToExclude = nullptr);
@@ -309,10 +314,9 @@ private:
     void updateSelectedState(int listIndex, bool multi, bool shift);
     void menuListDefaultEventHandler(Event&);
     void baseAppearanceListBoxDefaultEventHandler(Event&);
-    void updateSelectedContentIfEnabled(HTMLOptionElement* = nullptr) const;
     Vector<Ref<HTMLSelectedContentElement>> selectedContentElements() const;
-    void cloneOptionsIntoSelectedContent() const;
-    void cloneOptionsIntoSelectedContent(HTMLSelectedContentElement&) const;
+    void cloneOptionsIntoSelectedContent();
+    void cloneOptionsIntoSelectedContent(HTMLSelectedContentElement&);
     RefPtr<HTMLOptionElement> firstSelectedOption() const;
     String selectedOptionsText(ForAccessibility, HTMLOptionElement* selectedOption, int optionIndex) const;
     void setSizeAndMultiple(unsigned size, bool multiple);
@@ -372,6 +376,7 @@ private:
     mutable bool m_shouldRecalcListItems;
     unsigned m_selectedContentDescendantCount { 0 };
     bool m_hasQueuedSelectedContentUpdate { false };
+    bool m_selectedContentShowsOption { false };
 
     std::optional<int> m_lastActiveIndex;
 

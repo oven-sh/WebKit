@@ -50,7 +50,7 @@ GCAwareJITStubRoutine::GCAwareJITStubRoutine(Type type, const MacroAssemblerCode
 
 void GCAwareJITStubRoutine::makeGCAware(VM& vm)
 {
-    vm.heap.m_jitStubRoutines->add(this);
+    vm.heap.addGCAwareJITStubRoutine(this);
     m_isGCAware = true;
 }
 

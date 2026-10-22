@@ -137,7 +137,7 @@ static void distributeSpaceAmongFlexibleTracks(LayoutUnit& spaceToDistribute, co
 
 // https://drafts.csswg.org/css-grid-1/#extra-space
 // 2.4: whether this track should be affected when distributing extra space beyond limits.
-static bool shouldTrackGrowBeyondGrowthLimits(const UnsizedTrack& track, AffectedTrackSizingFunction affectedTrackSizingFunction)
+static bool LEGACY_NODELETE shouldTrackGrowBeyondGrowthLimits(const UnsizedTrack& track, AffectedTrackSizingFunction affectedTrackSizingFunction)
 {
     auto& maxTrackSizingFunction = track.trackSizingFunction.max;
     switch (affectedTrackSizingFunction) {
@@ -224,7 +224,7 @@ TrackIndexes ExtraSpaceDistributor::distributeExtraSpace(ExtraSpaceDistributionT
         LayoutUnit spannedSizes;
         for (size_t trackIndex = itemSpan.begin(); trackIndex < itemSpan.end(); ++trackIndex)
             spannedSizes += unsizedTracks[trackIndex].affectedSize(spaceDistributionTarget);
-        auto spannedGutters = GridLayoutUtils::totalGuttersSize(itemSpan.distance(), gapSize);
+        auto spannedGutters = GridLayoutUtils::totalGuttersSize(itemSpan.distance(), { }, gapSize);
         auto spaceToDistribute = std::max(0_lu, sizeContributions[contributionIndex] - spannedSizes - spannedGutters);
         if (!spaceToDistribute)
             continue;

@@ -1,91 +1,26 @@
-[ macOS ] InternalSettingsGenerated.cpp
 StyleChangedAnimatablePropertiesGenerated.cpp
-[ macOS ] animation/KeyframeEffect.cpp
-[ macOS ] animation/KeyframeEffectStack.cpp
-[ macOS ] animation/StyleOriginatedAnimation.cpp
-[ macOS ] animation/WebAnimation.cpp
-[ macOS ] bindings/js/IDBBindingUtilities.cpp
-[ macOS ] bindings/js/JSCustomElementInterface.cpp
-[ macOS ] bindings/js/JSDOMAsyncIterator.h
-[ macOS ] bindings/js/JSDOMGuardedObject.cpp
-[ macOS ] bindings/js/JSFetchEventCustom.cpp
-[ macOS ] bindings/js/JSIDBCursorWithValueCustom.cpp
-[ macOS ] bindings/js/JSIntersectionObserverCustom.cpp
-[ macOS ] bindings/js/JSMutationObserverCustom.cpp
-[ macOS ] bindings/js/JSResizeObserverCustom.cpp
-[ macOS ] bindings/js/JSServiceWorkerGlobalScopeCustom.cpp
-[ macOS ] bindings/js/JSWebCodecsAudioDecoderCustom.cpp
-[ macOS ] bindings/js/JSWebCodecsAudioEncoderCustom.cpp
-[ macOS ] bindings/js/JSWebCodecsVideoDecoderCustom.cpp
-[ macOS ] bindings/js/JSWebCodecsVideoEncoderCustom.cpp
-[ macOS ] bindings/js/ScriptController.cpp
-[ macOS ] bindings/js/WindowProxy.cpp
-[ macOS ] css/CSSCounterStyleDescriptors.cpp
-[ macOS ] css/CSSStyleProperties.cpp
-[ macOS ] css/CSSValue.cpp
-[ macOS ] css/FontFace.cpp
-[ macOS ] css/MediaList.cpp
-[ macOS ] css/MediaQueryMatcher.cpp
-[ macOS ] css/PropertySetCSSDescriptors.cpp
-[ macOS ] css/ShorthandSerializer.cpp
-[ macOS ] css/StyleRule.cpp
-[ macOS ] css/parser/CSSParser.cpp
-[ macOS ] css/parser/SizesAttributeParser.cpp
-[ macOS ] css/query/MediaQueryFeatures.cpp
-[ macOS ] css/typedom/ComputedStylePropertyMapReadOnly.cpp
-[ macOS ] css/typedom/DeclaredStylePropertyMap.cpp
-[ macOS ] css/typedom/InlineStylePropertyMap.cpp
-[ macOS ] dom/AbortSignal.cpp
-[ macOS ] dom/ActiveDOMObject.cpp
+[ iOS ] bindings/js/ScriptController.cpp
+css/CSSStyleProperties.cpp
 dom/Attr.cpp
-[ macOS ] dom/BroadcastChannel.cpp
-[ macOS ] dom/ComposedTreeIterator.h
-[ macOS ] dom/ContainerNode.cpp
-[ macOS ] dom/CustomElementDefaultARIA.cpp
+dom/ComposedTreeIterator.h
+dom/ContainerNode.cpp
 dom/Document.cpp
 dom/Element.cpp
-[ macOS ] dom/ElementTextDirection.cpp
-[ macOS ] dom/EventPath.cpp
-[ macOS ] dom/EventSender.h
-[ macOS ] dom/EventTarget.cpp
-[ macOS ] dom/ExtensionStyleSheets.cpp
-[ macOS ] dom/InlineStyleSheetOwner.cpp
-[ macOS ] dom/MessageEvent.cpp
-[ macOS ] dom/MutationObserver.cpp
-[ macOS ] dom/PseudoElement.cpp
-[ macOS ] dom/ScriptElement.cpp
-[ macOS ] dom/ScriptExecutionContextInlines.h
-[ macOS ] dom/SecurityContext.cpp
-[ macOS ] dom/SelectorQuery.cpp
+dom/EventPath.cpp
+dom/InlineStyleSheetOwner.cpp
+dom/MutationObserver.cpp
+[ iOS ] dom/Node.cpp
 dom/ShadowRoot.cpp
-[ macOS ] dom/StyledElement.cpp
-[ macOS ] dom/ViewTransition.cpp
-[ macOS ] editing/Editor.cpp
-[ macOS ] editing/mac/FrameSelectionMac.mm
-[ macOS ] fileapi/Blob.cpp
-[ macOS ] history/CachedFrame.cpp
-[ macOS ] platform/audio/MediaSessionManagerInterface.cpp
-[ macOS ] platform/audio/PlatformMediaSessionManager.cpp
-[ macOS ] platform/audio/cocoa/MediaSessionManagerCocoa.mm
-[ macOS ] platform/audio/mac/AudioHardwareListenerMac.cpp
-[ macOS ] platform/cocoa/PlaybackSessionModelMediaElement.mm
-[ macOS ] platform/cocoa/VideoPresentationModelVideoElement.mm
-[ macOS ] platform/graphics/avfoundation/AVTrackPrivateAVFObjCImpl.mm
-[ macOS ] platform/graphics/avfoundation/InbandMetadataTextTrackPrivateAVF.cpp
-[ macOS ] platform/graphics/avfoundation/objc/CDMInstanceFairPlayStreamingAVFObjC.mm
-[ macOS ] platform/graphics/avfoundation/objc/MediaPlayerPrivateMediaStreamAVFObjC.mm
-[ macOS ] platform/graphics/cocoa/WebCoreDecompressionSession.mm
-[ macOS ] platform/mediastream/AudioTrackPrivateMediaStream.cpp
-[ macOS ] platform/mediastream/cocoa/CoreAudioCaptureUnit.cpp
-[ macOS ] platform/mediastream/cocoa/ScreenCaptureKitSharingSessionManager.mm
-[ macOS ] platform/mock/MockRealtimeMediaSourceCenter.cpp
-[ macOS ] platform/network/cocoa/WebCoreNSURLSession.mm
+dom/ViewTransition.cpp
+[ iOS ] loader/ios/LegacyPreviewLoader.mm
+[ iOS ] page/Quirks.cpp
+[ iOS ] page/WebKitNamespace.cpp
+[ iOS ] page/cocoa/ContentChangeObserver.cpp
+[ iOS ] platform/PreviewConverter.cpp
 rendering/BackgroundPainter.cpp
-[ iOS ] rendering/BorderPainter.cpp
 rendering/HitTestResult.cpp
 rendering/LayerAncestorClippingStack.cpp
 rendering/MarkedText.cpp
-[ macOS ] rendering/OutlinePainter.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBox.cpp
 rendering/RenderElement.cpp
@@ -100,23 +35,17 @@ rendering/RenderLayerCompositor.cpp
 rendering/RenderLayerFilters.cpp
 rendering/RenderLayerModelObject.cpp
 rendering/RenderLayerScrollableArea.cpp
-[ macOS ] rendering/RenderListOutsideMarker.cpp
-[ macOS ] rendering/RenderMultiColumnSet.cpp
-[ macOS ] rendering/RenderMultiColumnSpannerPlaceholder.cpp
 rendering/RenderObject.cpp
 rendering/RenderReplica.cpp
 rendering/RenderTextControl.cpp
 rendering/RenderTextControlSingleLine.h
-[ macOS ] rendering/RenderTheme.cpp
 rendering/RenderView.cpp
 rendering/RenderViewTransitionCapture.cpp
 rendering/RenderWidget.cpp
-[ macOS ] rendering/StyledMarkedText.cpp
 [ macOS ] rendering/cocoa/RenderThemeCocoa.mm
 rendering/shapes/ShapeOutsideInfo.h
 rendering/style/BorderData.cpp
 rendering/svg/RenderSVGTextPath.cpp
-[ macOS ] rendering/svg/SVGRenderSupport.cpp
 rendering/svg/legacy/LegacyRenderSVGImage.cpp
 rendering/svg/legacy/LegacyRenderSVGResourceFilter.cpp
 rendering/svg/legacy/LegacyRenderSVGRoot.cpp
@@ -128,34 +57,23 @@ rendering/updating/RenderTreeBuilderTable.cpp
 rendering/updating/RenderTreeUpdater.cpp
 rendering/updating/RenderTreeUpdaterGeneratedContent.cpp
 style/AnchorPositionEvaluator.cpp
-[ macOS ] style/ChildChangeInvalidation.cpp
 style/ElementRuleCollector.cpp
 style/RuleData.h
 style/RuleSet.cpp
 style/StyleAdjuster.cpp
-[ macOS ] style/StyleBuilder.cpp
 style/StyleDocumentScope.cpp
-[ macOS ] style/StyleExtractor.cpp
 style/StyleExtractorCustom.h
 style/StyleInvalidator.cpp
 style/StyleResolver.cpp
 style/StyleScopeRuleSets.cpp
 style/StyleTreeResolver.cpp
-[ macOS ] style/Styleable.cpp
 style/Styleable.h
 style/UserAgentStyle.cpp
 style/computed/StyleComputedStyle.cpp
 style/computed/StyleComputedStyleBase.cpp
 style/values/filter-effects/StyleFilterReference.cpp
-[ macOS ] style/values/images/kinds/StyleImageSet.cpp
-[ iOS ] style/values/primitives/StyleLengthResolution.cpp
 style/values/transforms/StyleRotate.h
 style/values/transforms/StyleScale.h
 style/values/transforms/StyleTransformList.cpp
 style/values/transforms/StyleTranslate.h
-[ macOS ] style/values/ui/StyleCursor.cpp
 style/values/will-change/StyleWillChange.h
-[ macOS ] svg/graphics/SVGImage.cpp
-[ macOS ] svg/properties/SVGAnimatedPropertyList.h
-[ macOS ] testing/InternalSettings.cpp
-[ macOS ] testing/Internals.cpp

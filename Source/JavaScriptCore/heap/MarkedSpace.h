@@ -144,6 +144,7 @@ public:
 
     void beginMarking();
     void endMarking();
+    void adoptMarkingVersion(HeapVersion);
     void snapshotUnswept();
     void clearNewlyAllocated();
     void sweepBlocks();

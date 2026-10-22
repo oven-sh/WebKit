@@ -156,6 +156,90 @@ struct Atomic {
     std::atomic<T> value;
 };
 
+// Bun: libc++ has std::atomic_ref from LLVM 19 on, and the Android NDK's (r27c) is older. Without it these are what
+// they were before 324276@main.
+#if defined(__cpp_lib_atomic_ref)
+template<typename T>
+inline T atomicLoad(T* location, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).load(order);
+}
+
+template<typename T>
+inline T atomicLoadFullyFenced(T* location)
+{
+    return std::atomic_ref<T>(*location).fetch_add(T());
+}
+
+template<typename T>
+inline void atomicStore(T* location, T newValue, std::memory_order order = std::memory_order_seq_cst)
+{
+    std::atomic_ref<T>(*location).store(newValue, order);
+}
+
+template<typename T>
+inline void atomicStoreFullyFenced(T* location, T newValue)
+{
+    std::atomic_ref<T>(*location).exchange(newValue);
+}
+
+template<typename T>
+inline bool atomicCompareExchangeWeak(T* location, T expected, T newValue, std::memory_order order = std::memory_order_seq_cst)
+{
+    T expectedOrActual = expected;
+    return std::atomic_ref<T>(*location).compare_exchange_weak(expectedOrActual, newValue, order);
+}
+
+template<typename T>
+inline bool atomicCompareExchangeWeakRelaxed(T* location, T expected, T newValue)
+{
+    return atomicCompareExchangeWeak(location, expected, newValue, std::memory_order_relaxed);
+}
+
+template<typename T>
+inline T atomicCompareExchangeStrong(T* location, T expected, T newValue, std::memory_order order = std::memory_order_seq_cst)
+{
+    T expectedOrActual = expected;
+    std::atomic_ref<T>(*location).compare_exchange_strong(expectedOrActual, newValue, order);
+    return expectedOrActual;
+}
+
+template<typename T, typename U>
+inline T atomicExchangeAdd(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).fetch_add(operand, order);
+}
+
+template<typename T, typename U>
+inline T atomicExchangeAnd(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).fetch_and(operand, order);
+}
+
+template<typename T, typename U>
+inline T atomicExchangeOr(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).fetch_or(operand, order);
+}
+
+template<typename T, typename U>
+inline T atomicExchangeSub(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).fetch_sub(operand, order);
+}
+
+template<typename T, typename U>
+inline T atomicExchangeXor(T* location, U operand, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).fetch_xor(operand, order);
+}
+
+template<typename T>
+inline T atomicExchange(T* location, T newValue, std::memory_order order = std::memory_order_seq_cst)
+{
+    return std::atomic_ref<T>(*location).exchange(newValue, order);
+}
+#else
 template<typename T>
 inline T atomicLoad(T* location, std::memory_order order = std::memory_order_seq_cst)
 {
@@ -233,6 +317,7 @@ inline T atomicExchange(T* location, T newValue, std::memory_order order = std::
 {
     return std::bit_cast<Atomic<T>*>(location)->exchange(newValue, order);
 }
+#endif // defined(__cpp_lib_atomic_ref)
 
 // Just a compiler fence. Has no effect on the hardware, but tells the compiler
 // not to move things around this call. Should not affect the compiler's ability

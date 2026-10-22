@@ -27,6 +27,8 @@
 
 #include <WebCore/PlaceholderFrameIdentifier.h>
 #include <WebCore/PlatformLayerIdentifier.h>
+#include <optional>
+#include <wtf/Forward.h>
 #include <wtf/ThreadSafeRefCounted.h>
 
 #if !USE(CA) && !USE(COORDINATED_GRAPHICS)
@@ -41,8 +43,10 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 class ImageBuffer;
+enum class ContentsFormat : uint8_t;
 #if USE(CA)
 class PlatformCALayer;
+struct PlatformCALayerDelegatedContents;
 #elif USE(COORDINATED_GRAPHICS)
 class CoordinatedPlatformLayer;
 class CoordinatedPlatformLayerBuffer;
@@ -63,6 +67,7 @@ public:
     // Must not detach the platform layer backing store.
     virtual void display(PlatformCALayer&) = 0;
     virtual GraphicsLayerCompositingCoordinatesOrientation orientation() const;
+    virtual std::optional<PlatformCALayerDelegatedContents> delegatedContents() const;
 #elif USE(COORDINATED_GRAPHICS)
     virtual void setDisplayBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&) = 0;
     virtual void display(CoordinatedPlatformLayer&, std::optional<Damage>&&) = 0;
@@ -90,6 +95,10 @@ public:
     // Like tryCopyToLayer(), but for a buffer that nothing will draw into again, and leaving it to the
     // next rendering update to deliver where that is how the layer's contents reach the compositor.
     virtual bool setContentsForNextDisplay(ImageBuffer& buffer, bool opaque, PlaceholderFrameIdentifier frame) { return tryCopyToLayer(buffer, opaque, frame); }
+
+#if PLATFORM(COCOA)
+    virtual bool tryDisplaySurface(const MachSendRight&, ContentsFormat, bool, PlaceholderFrameIdentifier) { return false; }
+#endif
 
     // Set only when the layer is hosted in another process, and so can be targeted from one.
     virtual std::optional<PlatformLayerIdentifier> destinationLayerID() const { return std::nullopt; }

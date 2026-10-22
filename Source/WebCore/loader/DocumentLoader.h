@@ -334,6 +334,8 @@ public:
     bool allowsActiveContentRuleListActionsForURL(const String& contentRuleListIdentifier, const URL&) const;
     WEBCORE_EXPORT void setActiveContentRuleListActionPatterns(const HashMap<String, Vector<String>>&);
 
+    WEBCORE_EXPORT void copyContentRuleListPoliciesFrom(const DocumentLoader&);
+
     const Vector<TargetedElementSelectors>& visibilityAdjustmentSelectors() const LIFETIME_BOUND { return m_visibilityAdjustmentSelectors; }
     void setVisibilityAdjustmentSelectors(Vector<TargetedElementSelectors>&& selectors) { m_visibilityAdjustmentSelectors = WTF::move(selectors); }
 
@@ -515,7 +517,7 @@ public:
     bool isRequestFromClientOrUserInput() const { return m_isRequestFromClientOrUserInput; }
     void setIsRequestFromClientOrUserInput(bool isRequestFromClientOrUserInput) { m_isRequestFromClientOrUserInput = isRequestFromClientOrUserInput; }
 
-    bool hasCrossOriginRedirect() const;
+    bool LEGACY_NODELETE hasCrossOriginRedirect() const;
     void setHasCrossOriginRedirect(bool hasCrossOriginRedirect) { m_hasCrossOriginRedirect = hasCrossOriginRedirect; }
 
     bool loadStartedDuringSwipeAnimation() const { return m_loadStartedDuringSwipeAnimation; }

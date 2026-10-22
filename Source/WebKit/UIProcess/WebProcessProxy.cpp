@@ -115,6 +115,7 @@
 #include <pal/system/Sound.h>
 #include <ranges>
 #include <stdio.h>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -429,9 +430,9 @@ void WebProcessProxy::addAllowedFirstPartyForCookies(const WebCore::RegistrableD
         m_allowedFirstPartiesForCookies.first = LoadedWebArchive::Yes;
 }
 
-Ref<WebProcessProxy> WebProcessProxy::create(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode, ShouldLaunchProcess shouldLaunchProcess)
+Ref<WebProcessProxy> WebProcessProxy::create(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity, IsPrewarmed isPrewarmed, ProcessCrossOriginIsolation crossOriginIsolation, ShouldLaunchProcess shouldLaunchProcess)
 {
-    Ref proxy = adoptRef(*new WebProcessProxy(processPool, websiteDataStore, isPrewarmed, crossOriginMode, lockdownMode, enhancedSecurity));
+    Ref proxy = adoptRef(*new WebProcessProxy(processPool, websiteDataStore, isPrewarmed, crossOriginIsolation, lockdownMode, enhancedSecurity));
 #if PLATFORM(MAC) && USE(RUNNINGBOARD)
     // FIXME(rdar://188839922): disable jetsam boost on prewarmed processes always, not just when SI is enabled.
     if (isPrewarmed == IsPrewarmed::Yes && WebProcessPool::hasAnyProcessPoolUsedSiteIsolation())
@@ -488,7 +489,7 @@ void WebProcessProxy::reclaimProcessesIfNeeded()
 
 Ref<WebProcessProxy> WebProcessProxy::createForRemoteWorkers(RemoteWorkerType workerType, WebProcessPool& processPool, Site&& site, WebsiteDataStore& websiteDataStore, CrossOriginMode crossOriginMode, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
 {
-    Ref proxy = adoptRef(*new WebProcessProxy(processPool, &websiteDataStore, IsPrewarmed::No, crossOriginMode, lockdownMode, enhancedSecurity));
+    Ref proxy = adoptRef(*new WebProcessProxy(processPool, &websiteDataStore, IsPrewarmed::No, processCrossOriginIsolationForBrowsingContextGroup(crossOriginMode), lockdownMode, enhancedSecurity));
     proxy->m_committedSites.add(site);
     proxy->m_remoteWorkerDomains.add(site.domain());
     proxy->m_site = WTF::move(site);
@@ -501,7 +502,7 @@ Ref<WebProcessProxy> WebProcessProxy::createForRemoteWorkers(RemoteWorkerType wo
     return proxy;
 }
 
-WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
+WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* websiteDataStore, IsPrewarmed isPrewarmed, ProcessCrossOriginIsolation crossOriginIsolation, LockdownMode lockdownMode, EnhancedSecurity enhancedSecurity)
     : AuxiliaryProcessProxy("WebProcess"_s, processPool.shouldTakeUIBackgroundAssertion() ? ShouldTakeUIBackgroundAssertion::Yes : ShouldTakeUIBackgroundAssertion::No
     , processPool.alwaysRunsAtBackgroundPriority() ? AlwaysRunsAtBackgroundPriority::Yes : AlwaysRunsAtBackgroundPriority::No)
     , m_backgroundResponsivenessTimer(makeUniqueRef<BackgroundProcessResponsivenessTimer>(*this))
@@ -518,7 +519,7 @@ WebProcessProxy::WebProcessProxy(WebProcessPool& processPool, WebsiteDataStore* 
     , m_isPrewarmed(isPrewarmed == IsPrewarmed::Yes)
     , m_lockdownMode(lockdownMode)
     , m_enhancedSecurity(enhancedSecurity)
-    , m_crossOriginMode(crossOriginMode)
+    , m_crossOriginIsolation(crossOriginIsolation)
     , m_shutdownPreventingScopeCounter([weakThis = WeakPtr { *this }](RefCounterEvent event) {
         if (RefPtr protectedThis = weakThis; protectedThis && event == RefCounterEvent::Decrement)
             protectedThis->maybeShutDown();
@@ -589,7 +590,7 @@ WebProcessProxy::~WebProcessProxy()
 #endif
 
     auto isResponsiveCallbacks = WTF::move(m_isResponsiveCallbacks);
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(false);
 
     while (m_numberOfTimesSuddenTerminationWasDisabled-- > 0)
@@ -925,7 +926,7 @@ bool WebProcessProxy::shouldSendPendingMessage(const IPC::Encoder& encoder)
                 return;
             if (sandboxExtension)
                 parameters->sandboxExtensionHandle = WTF::move(*sandboxExtension);
-            protectedThis->send(Messages::WebPage::GoToBackForwardItem(WTF::move(*parameters)), destinationID);
+            protectedThis->sendWithAsyncReply(Messages::WebPage::GoToBackForwardItem(WTF::move(*parameters)), [](FrameTraversalResult) { }, destinationID);
         };
         if (RefPtr page = WebProcessProxy::webPage(*pageID)) {
             if (RefPtr item = WebBackForwardListItem::itemForID(*frameState->itemID))
@@ -1432,7 +1433,7 @@ void WebProcessProxy::assumeReadAccessToBaseURLs(WebPageProxy& page, const Vecto
     if (!dataStore)
         return completionHandler();
     Vector<String> paths;
-    for (auto& urlString : urls) {
+    for (auto& urlString : borrow(urls)) {
         URL url { urlString };
         if (!url.protocolIsFile())
             continue;
@@ -1458,7 +1459,7 @@ void WebProcessProxy::assumeReadAccessToBaseURLs(WebPageProxy& page, const Vecto
 
         // Client loads an alternate string. This doesn't grant universal file read, but the web process is assumed
         // to have read access to this directory already.
-        for (auto& path : paths) {
+        for (auto& path : borrow(paths)) {
             weakThis->m_localPathsWithAssumedReadAccess.add(path);
             page->addPreviouslyVisitedPath(path);
         }
@@ -1877,15 +1878,18 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     // to be deleted before we can finish our work.
     Ref protectedThis { *this };
 
-    auto pages = mainPages();
+    const Vector pages = mainPages();
 
-    Vector<Ref<ProvisionalPageProxy>> provisionalPages;
-    m_provisionalPages.forEach([&] (auto& page) {
-        provisionalPages.append(page);
-    });
+    const Vector provisionalPages = [&] {
+        Vector<Ref<ProvisionalPageProxy>> provisionalPages;
+        m_provisionalPages.forEach([&](auto& page) {
+            provisionalPages.append(page);
+        });
+        return provisionalPages;
+    }();
 
     auto isResponsiveCallbacks = std::exchange(m_isResponsiveCallbacks, { });
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(false);
 
     if (isStandaloneServiceWorkerProcess())
@@ -1951,7 +1955,7 @@ void WebProcessProxy::didBecomeUnresponsive()
         page->processDidBecomeUnresponsive(*this);
 
     bool isWebProcessResponsive = false;
-    for (auto& callback : isResponsiveCallbacks)
+    for (auto& callback : borrow(isResponsiveCallbacks))
         callback(isWebProcessResponsive);
 
     // If the web process becomes unresponsive and only runs service/shared workers, kill it ourselves since there are no native clients to do it.
@@ -2086,7 +2090,7 @@ void WebProcessProxy::addPreviouslyApprovedFileURLsFromFrameStateTree(const Fram
     URL originalURL { frameState.originalURLString };
     if (originalURL.protocolIsFile())
         addPreviouslyApprovedFileURL(originalURL);
-    for (auto& child : frameState.children)
+    for (auto& child : borrow(frameState.children))
         addPreviouslyApprovedFileURLsFromFrameStateTree(child.get());
 }
 
@@ -2188,7 +2192,7 @@ bool WebProcessProxy::canBeAddedToWebProcessCache() const
         return false;
     }
 
-    if (m_crossOriginMode == CrossOriginMode::Isolated) {
+    if (crossOriginMode() == CrossOriginMode::Isolated) {
         WEBPROCESSPROXY_RELEASE_LOG(Process, "canBeAddedToWebProcessCache: Not adding to process cache because the process is cross-origin isolated");
         return false;
     }
@@ -3176,7 +3180,7 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 {
     RefPtr<WebPageProxy> targetPage;
     for (Ref page : pages()) {
-        if (page->webPageIDInMainFrameProcess() == identifier) {
+        if (page->hasWebPageInProcess(*this, identifier)) {
             targetPage = WTF::move(page);
             break;
         }
@@ -3203,9 +3207,10 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 
     m_speechRecognitionServerMap.ensure(identifier, [&]() {
 #if ENABLE(MEDIA_STREAM)
-        auto createRealtimeMediaSource = [weakPage = WeakPtr { targetPage }](WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier) {
+        auto createRealtimeMediaSource = [weakPage = WeakPtr { targetPage }, weakThis = WeakPtr { *this }, identifier](WebCore::SpeechRecognitionConnectionClientIdentifier clientIdentifier) {
             RefPtr page = weakPage;
-            return page ? page->createRealtimeMediaSourceForSpeechRecognition(clientIdentifier) : CaptureSourceOrError { { "Page is invalid"_s, WebCore::MediaAccessDenialReason::InvalidAccess } };
+            RefPtr protectedThis = weakThis;
+            return page && protectedThis ? page->createRealtimeMediaSourceForSpeechRecognition(*protectedThis, identifier, clientIdentifier) : CaptureSourceOrError { { "Page is invalid"_s, WebCore::MediaAccessDenialReason::InvalidAccess } };
         };
         Ref speechRecognitionServer = SpeechRecognitionServer::create(*this, identifier, WTF::move(permissionChecker), WTF::move(checkIfMockCaptureDevicesEnabled), WTF::move(createRealtimeMediaSource));
 #else
@@ -3244,6 +3249,19 @@ void WebProcessProxy::muteCaptureInPagesExcept(WebCore::PageIdentifier pageID)
     }
 #else
     UNUSED_PARAM(pageID);
+#endif
+}
+
+void WebProcessProxy::muteCaptureInPagesExcept(const WebProcessProxy& process, WebCore::PageIdentifier pageIDInProcess)
+{
+#if PLATFORM(COCOA)
+    for (Ref page : globalPages()) {
+        if (!page->hasWebPageInProcess(process, pageIDInProcess))
+            page->setMediaStreamCaptureMuted(true);
+    }
+#else
+    UNUSED_PARAM(process);
+    UNUSED_PARAM(pageIDInProcess);
 #endif
 }
 
@@ -3499,7 +3517,7 @@ void WebProcessProxy::getNotifications(const URL& registrationURL, const String&
             }
 
             Vector<NotificationData> filteredNotifications;
-            for (auto& notification : notifications) {
+            for (auto& notification : borrow(notifications)) {
                 if (tag == notification.tag)
                     filteredNotifications.append(notification);
             }
@@ -3606,7 +3624,7 @@ const WeakHashSet<WebProcessProxy>* WebProcessProxy::sharedWorkerClientProcesses
 
 void WebProcessProxy::permissionChanged(WebCore::PermissionName permissionName, const WebCore::SecurityOriginData& topOrigin)
 {
-    auto webProcessPools = WebKit::WebProcessPool::allProcessPools();
+    const Vector webProcessPools = WebKit::WebProcessPool::allProcessPools();
 
     for (auto& webProcessPool : webProcessPools) {
         for (Ref webProcessProxy : webProcessPool->processes())

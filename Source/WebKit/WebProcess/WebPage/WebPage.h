@@ -42,6 +42,7 @@
 #include <WebCore/DragActions.h>
 #include <WebCore/Element.h>
 #include <WebCore/FocusOptions.h>
+#include <WebCore/FrameGeometrySyncData.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/FrameTreeSyncData.h>
 #include <WebCore/HighlightVisibility.h>
@@ -91,6 +92,7 @@
 #include <wtf/Seconds.h>
 #include <wtf/UUID.h>
 #include <wtf/WallTime.h>
+#include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
 
@@ -312,6 +314,7 @@ enum class PaginationMode : uint8_t;
 enum class PaintBehavior : uint32_t;
 
 struct AXDebugInfo;
+struct AXRemoteFrameSelectedTextChange;
 struct AccessibilityRemoteToken;
 struct AccessibilitySearchCriteriaIPC;
 struct AppHighlight;
@@ -514,6 +517,7 @@ enum class DrawingAreaType : bool;
 #endif
 enum class FindOptions : uint16_t;
 enum class FindDecorationStyle : uint8_t;
+enum class FrameTraversalResult : uint8_t;
 enum class ImageOption : uint8_t;
 enum class InputType : uint8_t;
 enum class NavigatingToAppBoundDomain : bool;
@@ -903,7 +907,10 @@ public:
     void allTopDocumentSyncDataChangedInAnotherProcess(Ref<WebCore::DocumentSyncData>&&);
 
     void frameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier, const WebCore::FrameTreeSyncSerializationData&);
+    void frameGeometryChangedInAnotherProcess(Vector<WebCore::FrameGeometryUpdate>&&);
     void allFrameTreeSyncDataChangedInAnotherProcess(WebCore::FrameIdentifier, Ref<WebCore::FrameTreeSyncData>&&);
+
+    void broadcastFrameGeometryUpdatesIfNeeded();
 
     // Updates visible rect state (e.g. windowClipRect and exposedContentRect) in this process using
     // clipping rects from a parent frame process.
@@ -1009,7 +1016,7 @@ public:
     WebCore::Color underlayColor() const { return m_underlayColor; }
 
     void stopLoading();
-    void stopLoadingDueToProcessSwap();
+    void stopLoadingDueToProcessSwap(WebCore::NavigationIdentifier);
     void releaseKeptBlobURLForNewWindowNavigation();
     bool LEGACY_NODELETE defersLoading() const;
 
@@ -1758,6 +1765,7 @@ public:
 #if PLATFORM(GTK) || PLATFORM(WPE)
     void setInputMethodState(WebCore::Element*);
     void focusedElementDidChangeReadOnly(WebCore::Element&);
+    void focusedElementDidChangeType(WebCore::Element&);
 #endif
 
     void imageOrMediaDocumentSizeChanged(const WebCore::IntSize&);
@@ -1947,6 +1955,7 @@ public:
     WebCore::IntRect rectForElementAtInteractionLocation() const;
 
     const std::optional<WebCore::Color>& backgroundColor() const LIFETIME_BOUND { return m_backgroundColor; }
+    WebCore::Color effectiveBackgroundColor() const;
 
     void suspendAllMediaBuffering();
     void resumeAllMediaBuffering();
@@ -2066,6 +2075,8 @@ public:
 
     static void updatePreferencesGenerated(const WebPreferencesStore&);
     static void updateSettingsGenerated(const WebPreferencesStore&, WebCore::Settings&);
+    // Applies the preferences to the settings of a page, also of the pages of the shared and service workers.
+    static void updateSettings(const WebPreferencesStore&, WebCore::Settings&);
 
 #if ENABLE(GPU_PROCESS)
     void gpuProcessConnectionDidBecomeAvailable(GPUProcessConnection&);
@@ -2326,6 +2337,8 @@ private:
 
     void constructFrameTree(WebFrame& parent, const FrameTreeCreationParameters&);
 
+    void stopLoadingInRootFrames(WebCore::AbortOngoingNavigation);
+
     void updateThrottleState();
 
     // IPC::MessageSender
@@ -2447,7 +2460,7 @@ private:
     void loadSimulatedRequestAndResponse(LoadParameters&&, WebCore::ResourceResponse&&);
     void getPDFFirstPageSize(WebCore::FrameIdentifier, CompletionHandler<void(WebCore::FloatSize)>&&);
     void reload(WebCore::NavigationIdentifier, OptionSet<WebCore::ReloadOption> reloadOptions, SandboxExtensionHandle&&);
-    void goToBackForwardItem(GoToBackForwardItemParameters&&);
+    void goToBackForwardItem(GoToBackForwardItemParameters&&, CompletionHandler<void(FrameTraversalResult)>&&);
     [[noreturn]] void LEGACY_NODELETE goToBackForwardItemWaitingForProcessLaunch(GoToBackForwardItemParameters&&, WebKit::WebPageProxyIdentifier);
     void tryRestoreScrollPosition();
     void setInitialFocus(bool forward, bool isKeyboardEventValid, RefPtr<WebKeyboardEvent>&&, CompletionHandler<void()>&&);
@@ -2582,7 +2595,7 @@ private:
     void resume(CompletionHandler<void(bool)>&&);
 
 #if PLATFORM(COCOA)
-    void performDictionaryLookupAtLocation(const WebCore::FloatPoint&);
+    void performDictionaryLookupAtLocation(WebCore::FrameIdentifier, const WebCore::FloatPoint&, CompletionHandler<void(std::optional<WebCore::RemoteUserInputEventData>)>&&);
     void performDictionaryLookupForRange(WebCore::LocalFrame&, const WebCore::SimpleRange&, WebCore::TextIndicatorPresentationTransition);
     WebCore::DictionaryPopupInfo dictionaryPopupInfoForRange(WebCore::LocalFrame&, const WebCore::SimpleRange&, WebCore::TextIndicatorPresentationTransition);
 
@@ -2778,6 +2791,8 @@ private:
     void setIsSuspended(bool, CompletionHandler<void(std::optional<bool>)>&&);
     void suspendWithFrameItem(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&);
     void restoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier, std::optional<std::pair<URL, WebCore::SecurityOriginData>>&&, CompletionHandler<void(bool)>&&);
+    void prepareToRestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier);
+    void cancelRestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier);
     void detachResidualSubframesForBackForwardCacheRestore(WebCore::Page&);
 
     RefPtr<WebImage> snapshotAtSize(const WebCore::IntRect&, const WebCore::IntSize& bitmapSize, SnapshotOptions, WebCore::LocalFrame&, WebCore::LocalFrameView&);
@@ -2824,7 +2839,6 @@ private:
     void dispatchLoadEventToFrameOwnerElement(WebCore::FrameIdentifier);
     void addResourceTimingFromSubframe(WebCore::FrameIdentifier parentFrameID, WebCore::ResourceTiming&&);
 
-    void elementWasFocusedInAnotherProcess(WebCore::FrameIdentifier, WebCore::FocusOptions);
     void frameWasFocusedInAnotherProcess(std::optional<WebCore::FrameIdentifier>&&);
 
 #if ENABLE(WRITING_TOOLS)
@@ -2876,6 +2890,7 @@ private:
 #if PLATFORM(MAC)
     void performAccessibilitySearchInRemoteFrame(WebCore::FrameIdentifier, WebCore::AccessibilitySearchCriteriaIPC, CompletionHandler<void(Vector<WebCore::AccessibilityRemoteToken>&&)>&&);
     void continueAccessibilitySearchInParentFrame(WebCore::FrameIdentifier childFrameID, WebCore::AccessibilitySearchCriteriaIPC, CompletionHandler<void(Vector<WebCore::AccessibilityRemoteToken>&&)>&&);
+    void postAccessibilitySelectedTextChangeFromRemoteFrame(const WebCore::AXRemoteFrameSelectedTextChange&);
 #endif
 
     void requestAllTextAndRects(CompletionHandler<void(Vector<std::pair<String, WebCore::FloatRect>>&&)>&&);
@@ -2976,12 +2991,7 @@ private:
     bool m_alwaysShowsHorizontalScroller { false };
     bool m_alwaysShowsVerticalScroller { false };
 
-    bool m_shouldRenderCanvasInGPUProcess { false };
     bool m_shouldRenderDOMInGPUProcess { false };
-    bool m_shouldPlayMediaInGPUProcess { false };
-#if ENABLE(WEBGL)
-    bool m_shouldRenderWebGLInGPUProcess { false };
-#endif
 #if ENABLE(APP_BOUND_DOMAINS)
     bool m_needsInAppBrowserPrivacyQuirks { false };
 #endif
@@ -3244,6 +3254,12 @@ private:
     PendingEditorStateUpdateStatus m_pendingEditorStateUpdateStatus { PendingEditorStateUpdateStatus::NotScheduled };
     bool m_needsEditorStateVisualDataUpdate { false };
 
+    struct LastSentFrameGeometry {
+        std::optional<WebCore::FrameGeometrySyncData> geometry;
+        std::optional<WebCore::FrameViewportInfo> viewportInfo;
+    };
+    WeakHashMap<WebCore::Frame, LastSentFrameGeometry> m_lastSentFrameGeometry;
+
     WebCore::DevicePostureType m_devicePostureType { WebCore::DevicePostureType::Continuous };
 
 #if ENABLE(META_VIEWPORT)
@@ -3359,7 +3375,7 @@ private:
     bool m_isSuspendedUnderLock { false };
 
     HashSet<String, ASCIICaseInsensitiveHash> m_mimeTypesWithCustomContentProviders;
-    std::optional<WebCore::Color> m_backgroundColor { WebCore::Color::white };
+    std::optional<WebCore::Color> m_backgroundColor;
 
     std::optional<WebCore::ScrollbarOverlayStyle> m_scrollbarOverlayStyle;
 
@@ -3471,6 +3487,8 @@ private:
     Vector<String> m_corsDisablingPatterns;
 
     std::unique_ptr<WebCore::CachedPage> m_cachedPage;
+    std::optional<WebCore::BackForwardFrameItemIdentifier> m_cachedPageForRestorationID;
+    std::unique_ptr<WebCore::CachedPage> m_cachedPageForRestoration;
 
 #if ENABLE(IPC_TESTING_API)
     bool m_ipcTestingAPIEnabled { false };

@@ -96,7 +96,7 @@ static inline void startSequentialMatch(Vector<Ref<DOMCache>>&& caches, DOMCache
     doSequentialMatch(0, WTF::move(caches), WTF::move(info), WTF::move(options), WTF::move(completionHandler));
 }
 
-static inline Ref<DOMCache> copyCache(const Ref<DOMCache>& cache)
+static inline Ref<DOMCache> LEGACY_NODELETE copyCache(const Ref<DOMCache>& cache)
 {
     return cache.copyRef();
 }
@@ -108,11 +108,12 @@ void DOMCacheStorage::doSequentialMatch(DOMCache::RequestInfo&& info, CacheQuery
             promise->reject(result.releaseException());
             return;
         }
-        if (!result.returnValue()) {
+        RefPtr returnValue = result.releaseReturnValue();
+        if (!returnValue) {
             promise->resolve();
             return;
         }
-        promise->resolve<IDLInterface<FetchResponse>>(*result.returnValue());
+        promise->resolve<IDLInterface<FetchResponse>>(*returnValue);
     });
 }
 

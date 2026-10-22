@@ -56,6 +56,7 @@ class PlatformTimeRanges;
 class SourceBufferPrivate;
 class TextTrackList;
 class TimeRanges;
+class TrackOpaqueRoot;
 class VideoTrackList;
 class WebCoreOpaqueRoot;
 template<typename> class ExceptionOr;
@@ -85,7 +86,7 @@ public:
 
     bool updating() const { return m_updating; }
     ExceptionOr<Ref<TimeRanges>> buffered();
-    double timestampOffset() const;
+    double LEGACY_NODELETE timestampOffset() const;
     ExceptionOr<void> setTimestampOffset(double);
 
     VideoTrackList& videoTracks();
@@ -198,7 +199,7 @@ private:
 
     void setActive(bool);
 
-    bool validateInitializationSegment(const SourceBufferPrivateClient::InitializationSegment&);
+    bool LEGACY_NODELETE validateInitializationSegment(const SourceBufferPrivateClient::InitializationSegment&);
 
     uint64_t maximumBufferSize() const;
 
@@ -217,7 +218,7 @@ private:
     WEBCORE_EXPORT MediaTime minimumUpcomingPresentationTimeForTrackID(TrackID);
     WEBCORE_EXPORT void setMaximumQueueDepthForTrackID(TrackID, uint64_t);
     WEBCORE_EXPORT Ref<GenericPromise> setMaximumSourceBufferSize(uint64_t);
-    WEBCORE_EXPORT size_t evictableSize() const;
+    WEBCORE_EXPORT size_t LEGACY_NODELETE evictableSize() const;
 
     void updateBuffered();
 
@@ -227,7 +228,7 @@ private:
     WeakPtr<MediaSource> m_source;
     AppendMode m_mode { AppendMode::Segments };
 
-    const Ref<WTF::Observer<WebCoreOpaqueRoot()>> m_opaqueRootProvider;
+    const Ref<TrackOpaqueRoot> m_trackOpaqueRoot;
 
     RefPtr<SharedBuffer> m_pendingAppendData;
 

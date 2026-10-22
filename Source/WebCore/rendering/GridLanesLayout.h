@@ -75,7 +75,7 @@ public:
 
 private:
     GridArea gridAreaForIndefiniteGridAxisItem(const RenderBox& item, ResolvedFitTolerance);
-    GridArea gridAreaForDefiniteGridAxisItem(const RenderBox&) const;
+    GridArea LEGACY_NODELETE gridAreaForDefiniteGridAxisItem(const RenderBox&) const;
 
     struct StackingAxisPlacement {
         LayoutUnit marginBoxStart;
@@ -89,13 +89,13 @@ private:
 
     LayoutUnit stackingAxisMarginBoxForItem(const RenderBox& gridItem);
     StackingAxisPlacement updateRunningPositions(const RenderBox& gridItem, const GridArea&);
-    LayoutUnit maxRunningPositionForSpan(unsigned startLine, unsigned spanLength) const;
+    LayoutUnit LEGACY_NODELETE maxRunningPositionForSpan(unsigned startLine, unsigned spanLength) const;
     inline Style::GridTrackSizingDirection LEGACY_NODELETE gridAxisDirection() const;
 
     unsigned gridAxisTracksCount() const { return static_cast<unsigned>(m_runningPositions.size()); }
 
     bool hasDefiniteGridAxisPosition(const RenderBox& gridItem, Style::GridTrackSizingDirection gridAxisDirection) const;
-    GridArea gridAreaFromGridAxisSpan(const GridSpan&) const;
+    GridArea LEGACY_NODELETE gridAreaFromGridAxisSpan(const GridSpan&) const;
     GridSpan LEGACY_NODELETE gridAxisSpanFromArea(const GridArea&) const;
 
     Vector<LayoutUnit> m_runningPositions;

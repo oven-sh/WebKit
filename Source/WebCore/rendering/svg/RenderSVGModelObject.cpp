@@ -107,14 +107,17 @@ void RenderSVGModelObject::updateFromStyle()
         m_localTransform = std::nullopt;
 }
 
-void RenderSVGModelObject::updateLocalTransform()
+AffineTransform RenderSVGModelObject::computeLocalTransform() const
 {
     TransformationMatrix transform;
     CheckedRef style = this->style();
-    auto referenceBoxRect = transformReferenceBoxRect(style);
-    applyTransform(transform, style, referenceBoxRect, Style::TransformResolver::allTransformOperations);
+    applyTransform(transform, style, transformReferenceBoxRect(style), Style::TransformResolver::allTransformOperations);
+    return transform.toAffineTransform();
+}
 
-    auto localTransform = transform.toAffineTransform();
+void RenderSVGModelObject::updateLocalTransform()
+{
+    auto localTransform = computeLocalTransform();
     auto oldTransform = std::exchange(m_localTransform, localTransform);
     invalidateNonScalingStrokeCachesInSubtreeForSVG(oldTransform, localTransform);
 }
@@ -234,8 +237,8 @@ void RenderSVGModelObject::styleDidChange(Style::Difference diff, const Style::C
 
             // Outline properties
             if (newStyle.outlineStyle() != oldStyle.outlineStyle()
-                || newStyle.usedOutlineWidth() != oldStyle.usedOutlineWidth()
-                || newStyle.usedOutlineOffset() != oldStyle.usedOutlineOffset())
+                || Style::effectiveOutlineWidth(newStyle) != Style::effectiveOutlineWidth(oldStyle)
+                || Style::effectiveOutlineOffset(newStyle) != Style::effectiveOutlineOffset(oldStyle))
                 return true;
 
             // Resource references (clip-path, mask, filter)
@@ -253,8 +256,18 @@ void RenderSVGModelObject::styleDidChange(Style::Difference diff, const Style::C
             return false;
         };
 
-        if (visualOverflowStyleChanged(protect(style()), *oldStyle))
+        if (visualOverflowStyleChanged(protect(style()), *oldStyle)) {
             m_cachedVisualOverflowRect = std::nullopt;
+            // The old area was repainted before the change. Unless layout follows, repaint the new one too.
+            CheckedPtr layer = this->layer();
+            if (layer) {
+                layer->setSelfAndDescendantsNeedPositionUpdate();
+                layer->setRepaintStatus(RepaintStatus::NeedsFullRepaint);
+            }
+            // A layer position update never repaints an SVG container itself, only its contents.
+            if ((!layer || layer->shouldSkipRepaintAfterLayoutForSVG()) && !needsLayout())
+                repaint();
+        }
     }
 
     // SVG masks are painted independent of the target renderers visibility.

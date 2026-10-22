@@ -36,7 +36,6 @@ class RenderBlock;
 class RenderBoxModelObject;
 class RenderElement;
 class RenderObject;
-class RenderInline;
 class RenderText;
 
 namespace Style {
@@ -76,7 +75,7 @@ private:
     RenderBlock& rootRenderer() { return m_rootRenderer; }
 
     const Layout::ElementBox& LEGACY_NODELETE rootLayoutBox() const;
-    Layout::ElementBox& rootLayoutBox();
+    Layout::ElementBox& LEGACY_NODELETE rootLayoutBox();
 
     Layout::InitialContainingBlock& LEGACY_NODELETE initialContainingBlock();
 

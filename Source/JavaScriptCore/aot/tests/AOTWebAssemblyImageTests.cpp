@@ -638,12 +638,13 @@ static void testOperationSlots()
 
 static void testRuntimeFunctionSlots()
 {
-    static_assert(B3::numberOfRuntimeFunctions == 9);
+    static_assert(B3::numberOfRuntimeFunctions == 10);
 
-    AOT_TEST_CHECK(Wasm::runtimeFunctionSlot(B3::RuntimeFunction::MemoryCopy) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationMemoryCopy));
+    AOT_TEST_CHECK(Wasm::runtimeFunctionSlot(B3::RuntimeFunction::MemoryMove) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationMemoryMove));
     AOT_TEST_CHECK(Wasm::runtimeFunctionSlot(B3::RuntimeFunction::MemoryFill) == Wasm::ImagePointerTable::slotOf(Wasm::ImageCodeOperation::operationMemoryFill));
 
     constexpr B3::RuntimeFunction functionsWithoutSlot[] = {
+        B3::RuntimeFunction::GCSafeMemoryMove,
         B3::RuntimeFunction::FmodDouble,
         B3::RuntimeFunction::CeilDouble,
         B3::RuntimeFunction::CeilFloat,

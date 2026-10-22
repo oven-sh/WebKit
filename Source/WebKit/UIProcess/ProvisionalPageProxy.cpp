@@ -264,7 +264,6 @@ void ProvisionalPageProxy::cancel()
     auto error = WebKit::cancelledError(m_request);
     error.setType(WebCore::ResourceError::Type::Cancellation);
     FrameInfoData frameInfo {
-        FrameType::Local,
         m_request,
         SecurityOriginData::fromURLWithoutStrictOpaqueness(m_request.url()),
         { },
@@ -413,7 +412,7 @@ void ProvisionalPageProxy::goToBackForwardItem(API::Navigation& navigation, WebB
             sandboxExtensionHandle = WTF::move(*sandboxExtension);
         GoToBackForwardItemParameters parameters { navigation->navigationID(), WTF::move(frameState), navigationLoadType, shouldTreatAsContinuingLoad, WTF::move(websitePoliciesData), weakThis->m_page->lastNavigationWasAppInitiated(), WebCore::ShouldRestoreFromBackForwardCache::Unspecified, existingNetworkResourceLoadIdentifierToResume, WTF::move(publicSuffix), WTF::move(sandboxExtensionHandle), processSwapDisposition, shouldTreatAsContinuingLoad != WebCore::ShouldTreatAsContinuingLoad::No ? navigation->agentClusterAssignment() : std::nullopt };
         if (!protectedThis->process().isLaunching() || !itemURL.protocolIsFile())
-            protectedThis->send(Messages::WebPage::GoToBackForwardItem(WTF::move(parameters)));
+            protectedThis->sendWithAsyncReply(Messages::WebPage::GoToBackForwardItem(WTF::move(parameters)), [](FrameTraversalResult) { });
         else
             protectedThis->send(Messages::WebPage::GoToBackForwardItemWaitingForProcessLaunch(WTF::move(parameters), weakThis->m_page->identifier()));
 
@@ -425,7 +424,7 @@ Ref<FrameState> ProvisionalPageProxy::copyFrameStateForBackForwardNavigation(API
 {
     Ref frameItem = navigation.targetFrameItem() ? *navigation.targetFrameItem() : item.mainFrameItem();
     if (RefPtr page = m_page.get()) {
-        if (protect(page->preferences())->useUIProcessForBackForwardItemLoading())
+        if (protect(page->preferences())->shouldUseUIProcessForBackForwardItemLoading())
             return frameItem->copyFrameState();
     }
     return frameItem->copyFrameStateWithChildren();
@@ -737,6 +736,8 @@ void ProvisionalPageProxy::didReceiveMessage(IPC::Connection& connection, IPC::D
         || decoder.messageName() == Messages::WebPageProxy::DidFinishLoadForQuickLookDocumentInMainFrame::name()
 #endif
         || decoder.messageName() == Messages::WebPageProxy::SendMessageToInspectorFrontend::name()
+        || decoder.messageName() == Messages::WebPageProxy::FrameDidPauseForDebugger::name()
+        || decoder.messageName() == Messages::WebPageProxy::FrameDidContinueForDebugger::name()
 #if PLATFORM(GTK) || PLATFORM(WPE)
         || decoder.messageName() == Messages::WebPageProxy::DidInitiateLoadForResource::name()
         || decoder.messageName() == Messages::WebPageProxy::DidSendRequestForResource::name()

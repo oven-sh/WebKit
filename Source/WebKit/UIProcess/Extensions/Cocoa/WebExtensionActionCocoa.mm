@@ -121,6 +121,11 @@ using namespace WebKit;
 
     // New window or main frame navigation to an external URL opens in a new tab.
     if (!navigationAction.targetFrame || (navigationAction.targetFrame.isMainFrame && !isURLForThisExtension)) {
+        if (!extensionContext->canOpenURLInNewTabOrWindow(targetURL)) {
+            decisionHandler(WKNavigationActionPolicyCancel);
+            return;
+        }
+
         RefPtr webExtensionAction = _webExtensionAction.get();
         RefPtr currentWindow = webExtensionAction->window();
         RefPtr currentTab = webExtensionAction->tab();
@@ -166,6 +171,9 @@ using namespace WebKit;
 
     RefPtr extensionContext = _webExtensionAction->extensionContext();
     if (!extensionContext)
+        return nil;
+
+    if (!extensionContext->canOpenURLInNewTabOrWindow(navigationAction.request.URL))
         return nil;
 
     WebExtensionTabParameters tabParameters;
@@ -1150,18 +1158,23 @@ void WebExtensionAction::popupSizeDidChange()
 
 void WebExtensionAction::closePopup()
 {
-    if (!popupPresented())
+    // A popup that fails to load is closed before it was presented, but its web view must still be released.
+    if (!popupPresented() && !hasPopupWebView())
         return;
 
-    ASSERT(hasPopupWebView());
-
     RELEASE_LOG_DEBUG(Extensions, "Popup closed");
+
+    bool wasPresented = popupPresented();
 
     m_popupPresented = false;
     m_presentsPopupWhenReady = false;
 
-    if (auto* extensionController = extensionContext()->extensionController())
-        extensionController->setShowingActionPopup(false);
+    if (wasPresented) {
+        if (RefPtr extensionContext = this->extensionContext()) {
+            if (RefPtr extensionController = extensionContext->extensionController())
+                extensionController->setShowingActionPopup(false);
+        }
+    }
 
     [m_popupWebView _close];
     m_popupWebView = nil;

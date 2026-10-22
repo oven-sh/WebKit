@@ -150,7 +150,7 @@ void IntersectingNodeIterator::enforceEndInvariant()
     }
 }
 
-template<TreeType treeType> Node* commonInclusiveAncestor(const SimpleRange& range)
+template<TreeType treeType> Node* LEGACY_NODELETE commonInclusiveAncestor(const SimpleRange& range)
 {
     return commonInclusiveAncestor<treeType>(range.start.container, range.end.container);
 }
@@ -306,14 +306,14 @@ bool contains(TreeType type, const SimpleRange& range, const Node& node)
 
 template<TreeType treeType> bool contains(const Node& outer, const Node& inner)
 {
-    for (RefPtr inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
+    for (auto* inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
         if (inclusiveAncestor == &outer)
             return true;
     }
     return false;
 }
 
-template<> bool contains<Tree>(const Node& outer, const Node& inner)
+template<> bool LEGACY_NODELETE contains<Tree>(const Node& outer, const Node& inner)
 {
     // We specialize here because we want to take advantage of optimizations in Node::isDescendantOf.
     return outer.contains(inner);

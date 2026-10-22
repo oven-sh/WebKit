@@ -407,6 +407,7 @@ std::optional<Yarr::CharacterSetView> RegExp::specificCharacterClass() const
     case Yarr::SpecificPattern::TrailingSpacesStar:
     case Yarr::SpecificPattern::TrailingSpacesPlus:
     case Yarr::SpecificPattern::Newlines:
+    case Yarr::SpecificPattern::OptionalCRThenLF:
         return std::nullopt;
     case Yarr::SpecificPattern::CharacterClass:
     case Yarr::SpecificPattern::CharacterClassPlus:

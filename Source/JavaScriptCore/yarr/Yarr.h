@@ -96,6 +96,7 @@ enum class SpecificPattern : uint8_t {
     Newlines,
     CharacterClass,
     CharacterClassPlus,
+    OptionalCRThenLF,
 };
 
 enum class ExecutionMode : uint8_t {

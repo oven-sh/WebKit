@@ -47,6 +47,7 @@ public:
     EventTarget& wrapped() { ASSERT(m_wrapped); return *m_wrapped; }
 
     operator JSC::JSObject&() { ASSERT(m_wrapper); return *m_wrapper; }
+    JSC::JSObject& wrapper() { ASSERT(m_wrapper); return *m_wrapper; }
 
 private:
     // Only lives on the stack, while the JS wrapper keeps the wrapped object alive.
@@ -54,7 +55,7 @@ private:
     JSC::JSObject* m_wrapper { nullptr };
 };
 
-JSEventTargetWrapper jsEventTargetCast(JSC::VM&, JSC::JSValue thisValue);
+JSEventTargetWrapper LEGACY_NODELETE jsEventTargetCast(JSC::VM&, JSC::JSValue thisValue);
 
 template<> class IDLOperation<JSEventTarget> {
 public:

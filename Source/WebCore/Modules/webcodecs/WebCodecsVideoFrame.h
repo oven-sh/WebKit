@@ -32,6 +32,7 @@
 #include <WebCore/DOMRectReadOnly.h>
 #include <WebCore/JSDOMPromiseDeferredForward.h>
 #include <WebCore/PlaneLayout.h>
+#include <WebCore/PredefinedColorSpace.h>
 #include <WebCore/VideoColorSpaceInit.h>
 #include <WebCore/WebCodecsAlphaOption.h>
 #include <WebCore/WebCodecsVideoFrameData.h>
@@ -73,6 +74,7 @@ public:
         WebCodecsAlphaOption alpha { WebCodecsAlphaOption::Keep };
 
         std::optional<DOMRectInit> visibleRect;
+        double rotation { 0 };
 
         std::optional<size_t> displayWidth;
         std::optional<size_t> displayHeight;
@@ -87,6 +89,7 @@ public:
         std::optional<Vector<PlaneLayout>> layout { };
 
         std::optional<DOMRectInit> visibleRect { };
+        double rotation { 0 };
 
         std::optional<size_t> displayWidth { };
         std::optional<size_t> displayHeight { };
@@ -115,9 +118,13 @@ public:
     int64_t timestamp() const { return m_data.timestamp; }
     VideoColorSpace& colorSpace() const;
 
+    double rotation() const;
+
     struct CopyToOptions {
         std::optional<DOMRectInit> rect;
         std::optional<Vector<PlaneLayout>> layout;
+        std::optional<VideoPixelFormat> format;
+        std::optional<PredefinedColorSpace> colorSpace;
     };
     ExceptionOr<size_t> allocationSize(const CopyToOptions&);
 
@@ -131,7 +138,6 @@ public:
 
     void LEGACY_NODELETE setDisplaySize(size_t, size_t);
     void LEGACY_NODELETE setVisibleRect(const DOMRectInit&);
-    bool shoudlDiscardAlpha() const { return m_data.format && (*m_data.format == VideoPixelFormat::RGBX || *m_data.format == VideoPixelFormat::BGRX); }
 
     const WebCodecsVideoFrameData& data() const LIFETIME_BOUND { return m_data; }
 
@@ -155,8 +161,8 @@ private:
     static ExceptionOr<Ref<WebCodecsVideoFrame>> create(ScriptExecutionContext&, Ref<CSSStyleImageValue>&&, Init&&);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> createFromImageElement(ScriptExecutionContext&, auto&, Init&&);
 
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&, VideoFrame::ShouldCloneWithDifferentTimestamp);
-    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<VideoFrame>&&, Init&&, VideoFrame::ShouldCloneWithDifferentTimestamp);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<WebCodecsVideoFrame>&&, Init&&, VideoFrame::ShouldClone);
+    static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameFromOtherFrame(ScriptExecutionContext&, Ref<VideoFrame>&&, Init&&, VideoFrame::ShouldClone);
     static ExceptionOr<Ref<WebCodecsVideoFrame>> initializeFrameWithResourceAndSize(ScriptExecutionContext&, Ref<NativeImage>&&, Init&&, std::optional<IntSize> defaultDisplaySize = std::nullopt);
 
     WebCodecsVideoFrameData m_data;

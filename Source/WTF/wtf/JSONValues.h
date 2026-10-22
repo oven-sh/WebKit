@@ -62,11 +62,11 @@ public:
     void operator delete(Value*, std::destroying_delete_t);
     bool operator!() const;
 
-    static Ref<Value> null();
-    static Ref<Value> create(bool);
-    static Ref<Value> create(int);
-    static Ref<Value> create(double);
-    static Ref<Value> create(const String&);
+    static Ref<Value> LEGACY_NODELETE null();
+    static Ref<Value> LEGACY_NODELETE create(bool);
+    static Ref<Value> LEGACY_NODELETE create(int);
+    static Ref<Value> LEGACY_NODELETE create(double);
+    static Ref<Value> LEGACY_NODELETE create(const String&);
     template<class T>
     static Ref<Value> create(T) = delete;
 
@@ -96,10 +96,10 @@ public:
     }
     bool isNull() const { return std::holds_alternative<std::monostate>(m_value); }
 
-    std::optional<bool> asBoolean() const;
-    std::optional<int> asInteger() const;
-    std::optional<double> asDouble() const;
-    const String& asString() const;
+    std::optional<bool> LEGACY_NODELETE asBoolean() const;
+    std::optional<int> LEGACY_NODELETE asInteger() const;
+    std::optional<double> LEGACY_NODELETE asDouble() const;
+    const String& LEGACY_NODELETE asString() const;
     RefPtr<Value> asValue();
     RefPtr<Object> asObject();
     RefPtr<const Object> asObject() const;
@@ -116,8 +116,8 @@ public:
     void dump(PrintStream&) const;
 
     // FIXME: <http://webkit.org/b/179847> remove these functions when legacy InspectorObject symbols are no longer needed.
-    bool asDouble(double&) const;
-    bool asInteger(int&) const;
+    bool LEGACY_NODELETE asDouble(double&) const;
+    bool LEGACY_NODELETE asInteger(int&) const;
     bool asString(String&) const;
 
     size_t memoryCost() const;
@@ -158,7 +158,7 @@ protected:
 
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&);
     template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE const Visitor&) const;
-    size_t memoryCostImpl() const;
+    size_t LEGACY_NODELETE memoryCostImpl() const;
     void writeJSONImpl(StringBuilder& output) const;
 
 private:
@@ -229,7 +229,7 @@ private:
 
 class Object : public ObjectBase {
 public:
-    static WTF_EXPORT_PRIVATE Ref<Object> create();
+    static WTF_EXPORT_PRIVATE Ref<Object> LEGACY_NODELETE create();
 
     // This class expected non-cyclic values, as we cannot serialize cycles in JSON.
     using ObjectBase::setBoolean;
@@ -309,7 +309,7 @@ private:
 
 class Array final : public ArrayBase {
 public:
-    static WTF_EXPORT_PRIVATE Ref<Array> create();
+    static WTF_EXPORT_PRIVATE Ref<Array> LEGACY_NODELETE create();
 
     // This class expected non-cyclic values, as we cannot serialize cycles in JSON.
     using ArrayBase::pushBoolean;
@@ -422,109 +422,103 @@ class ArrayOf final : public ArrayBase {
 private:
     ArrayOf() { }
 
-    Array& castedArray()
-    {
-        static_assert(sizeof(Array) == sizeof(ArrayOf<T>), "cannot cast");
-        return *static_cast<Array*>(static_cast<ArrayBase*>(this));
-    }
-
 public:
     template<typename V = T>
         requires (std::same_as<bool, V> || std::same_as<Value, V>)
     void addItem(bool value)
     {
-        castedArray().pushBoolean(value);
+        pushBoolean(value);
     }
 
     template<typename V = T>
         requires (std::same_as<int, V> || std::same_as<Value, V>)
     void addItem(int value)
     {
-        castedArray().pushInteger(value);
+        pushInteger(value);
     }
 
     template<typename V = T>
         requires (std::same_as<double, V> || std::same_as<Value, V>)
     void addItem(double value)
     {
-        castedArray().pushDouble(value);
+        pushDouble(value);
     }
 
     template<typename V = T>
         requires (std::same_as<String, V> || std::same_as<Value, V>)
     void addItem(const String& value)
     {
-        castedArray().pushString(value);
+        pushString(value);
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<Value, V> && !std::is_base_of_v<ObjectBase, V> && !std::is_base_of_v<ArrayBase, V>)
     void addItem(Ref<Value>&& value)
     {
-        castedArray().pushValue(WTF::move(value));
+        pushValue(WTF::move(value));
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<ObjectBase, V>)
     void addItem(Ref<ObjectBase>&& value)
     {
-        castedArray().pushObject(WTF::move(value));
+        pushObject(WTF::move(value));
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<ArrayBase, V>)
     void addItem(Ref<ArrayBase>&& value)
     {
-        castedArray().pushArray(WTF::move(value));
+        pushArray(WTF::move(value));
     }
 
     template<typename V = T>
         requires (std::same_as<bool, V> || std::same_as<Value, V>)
     void setItem(size_t index, bool value)
     {
-        castedArray().setBoolean(index, value);
+        setBoolean(index, value);
     }
 
     template<typename V = T>
         requires (std::same_as<int, V> || std::same_as<Value, V>)
     void setItem(size_t index, int value)
     {
-        castedArray().setInteger(index, value);
+        setInteger(index, value);
     }
 
     template<typename V = T>
         requires (std::same_as<double, V> || std::same_as<Value, V>)
     void setItem(size_t index, double value)
     {
-        castedArray().setDouble(index, value);
+        setDouble(index, value);
     }
 
     template<typename V = T>
         requires (std::same_as<String, V> || std::same_as<Value, V>)
     void setItem(size_t index, const String& value)
     {
-        castedArray().setString(index, value);
+        setString(index, value);
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<Value, V> && !std::is_base_of_v<ObjectBase, V> && !std::is_base_of_v<ArrayBase, V>)
     void setItem(size_t index, Ref<Value>&& value)
     {
-        castedArray().setValue(index, WTF::move(value));
+        setValue(index, WTF::move(value));
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<ObjectBase, V>)
     void setItem(size_t index, Ref<ObjectBase>&& value)
     {
-        castedArray().setObject(index, WTF::move(value));
+        setObject(index, WTF::move(value));
     }
 
     template<typename V = T>
         requires (std::is_base_of_v<ArrayBase, V>)
     void setItem(size_t index, Ref<ArrayBase>&& value)
     {
-        castedArray().setArray(index, WTF::move(value));
+        setArray(index, WTF::move(value));
     }
 
     static Ref<ArrayOf<T>> create()

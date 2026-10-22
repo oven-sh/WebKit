@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ParserModes.h"
 #include "SourceID.h"
 #include <wtf/GenericHashKey.h>
 #include <wtf/HashMap.h>
@@ -44,12 +45,15 @@ public:
 
         unsigned m_start;
         unsigned m_end;
+        // A program that is one function has the range of that function.
+        SourceParseMode m_parseMode;
     };
 
     bool hasExecutedAtOffset(SourceID, unsigned offset);
-    void insertUnexecutedRange(SourceID, unsigned start, unsigned end);
-    void removeUnexecutedRange(SourceID, unsigned start, unsigned end);
-    Vector<std::tuple<bool, unsigned, unsigned>> getFunctionRanges(SourceID);
+    void insertUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode);
+    void removeUnexecutedRange(SourceID, unsigned start, unsigned end, SourceParseMode);
+    // hasExecuted, start, end, parseMode.
+    Vector<std::tuple<bool, unsigned, unsigned, SourceParseMode>> getFunctionRanges(SourceID);
 
 private:
     using RangeMap = UncheckedKeyHashMap<GenericHashKey<FunctionRange>, bool>;

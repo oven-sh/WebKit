@@ -48,8 +48,10 @@ Value* addressOf(Procedure& proc, RuntimeFunction function, Origin origin)
         return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(Math::truncDouble));
     case RuntimeFunction::TruncFloat:
         return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(Math::truncFloat));
-    case RuntimeFunction::MemoryCopy:
-        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryCopy));
+    case RuntimeFunction::MemoryMove:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryMove));
+    case RuntimeFunction::GCSafeMemoryMove:
+        return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationGCSafeMemoryMove));
     case RuntimeFunction::MemoryFill:
         return proc.add<ConstPtrValue>(origin, tagCFunction<OperationPtrTag>(operationMemoryFill));
     }

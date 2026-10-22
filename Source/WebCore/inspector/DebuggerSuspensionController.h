@@ -25,7 +25,9 @@
 
 #pragma once
 
+#include "DebuggerPauseSessionIdentifier.h"
 #include <wtf/CheckedPtr.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakHashSet.h>
@@ -48,15 +50,18 @@ public:
 
     // A paused FrameDebugger holds every page in the process, not only its own: pages in one process share the
     // main thread, and related pages (an opener and its popup) can call into each other synchronously.
-    static void frameDebuggerDidPause();
+    static void frameDebuggerDidPause(LocalFrame&);
     static void frameDebuggerDidContinue();
+
+    void addSessionHold(DebuggerPauseSessionIdentifier);
+    void removeSessionHold(DebuggerPauseSessionIdentifier);
 
     void documentDidBecomeCurrent(Document&);
 
 private:
     static void updateHeldDocumentsInAllPages();
 
-    bool shouldHoldDocuments() const;
+    bool LEGACY_NODELETE shouldHoldDocuments() const;
     void updateHeldDocuments();
     void holdDocument(Document&);
     void releaseDocument(Document&);
@@ -64,6 +69,7 @@ private:
     WeakRef<Page> m_page;
     WeakHashSet<Document, WeakPtrImplWithEventTargetData> m_heldDocuments;
     WeakHashSet<LocalFrame> m_pausedFrames;
+    HashSet<DebuggerPauseSessionIdentifier> m_sessionHolds;
 };
 
 } // namespace WebCore

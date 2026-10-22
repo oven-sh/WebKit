@@ -132,7 +132,7 @@ ServiceWorkerFetchTask::ServiceWorkerFetchTask(WebSWServerConnection& swServerCo
     // We only do the timeout logic for main document navigations because it is not Web-compatible to do so for subresources.
     if (loader.parameters().request.requester() == WebCore::ResourceRequestRequester::Main) {
         lazyInitialize(m_timeoutTimer, makeUnique<Timer>(*this, &ServiceWorkerFetchTask::timeoutTimerFired));
-        m_timeoutTimer->startOneShot(protect(loader.connectionToWebProcess().networkProcess())->serviceWorkerFetchTimeout());
+        m_timeoutTimer->startOneShot(protect(NetworkProcess::singleton())->serviceWorkerFetchTimeout());
     }
 
     bool canUsePreloader = session && (m_shouldRaceNetworkAndFetchHandler || isNavigationRequest(loader.parameters().options.destination)) && m_currentRequest.httpMethod() == "GET"_s;
@@ -184,6 +184,9 @@ template<typename Message> bool ServiceWorkerFetchTask::sendToClient(Message&& m
 void ServiceWorkerFetchTask::start(WebSWServerToContextConnection& serviceWorkerConnection)
 {
     SWFETCH_RELEASE_LOG("start:");
+    if (m_isDone)
+        return;
+
     m_serviceWorkerConnection = serviceWorkerConnection;
     serviceWorkerConnection.registerFetch(*this);
 
@@ -213,6 +216,9 @@ void ServiceWorkerFetchTask::contextClosed()
 
 void ServiceWorkerFetchTask::startFetch()
 {
+    ASSERT(m_loader);
+    ASSERT(!m_isDone);
+
     bool shouldStart = !m_shouldRaceNetworkAndFetchHandler || !m_isLoadingFromPreloader;
     SWFETCH_RELEASE_LOG("startFetch, shouldStart=%d", shouldStart);
 
@@ -496,7 +502,7 @@ void ServiceWorkerFetchTask::continueFetchTaskWith(ResourceRequest&& request)
         return;
     }
     if (m_timeoutTimer)
-        m_timeoutTimer->startOneShot(protect(loader->connectionToWebProcess().networkProcess())->serviceWorkerFetchTimeout());
+        m_timeoutTimer->startOneShot(protect(NetworkProcess::singleton())->serviceWorkerFetchTimeout());
     m_currentRequest = WTF::move(request);
     startFetch();
 }

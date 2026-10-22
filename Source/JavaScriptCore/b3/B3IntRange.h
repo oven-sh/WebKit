@@ -197,6 +197,7 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE shl(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) << static_cast<T>(shiftAmount);
 
@@ -225,6 +226,7 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE sShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) >> static_cast<T>(shiftAmount);
 
@@ -247,6 +249,8 @@ public:
     template<typename T>
     IntRange LEGACY_NODELETE zShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
+
         // This is an awkward corner case for all of the other logic.
         if (!shiftAmount)
             return *this;

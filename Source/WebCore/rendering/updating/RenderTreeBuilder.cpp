@@ -133,7 +133,7 @@ static void invalidateLineLayout(RenderObject& renderer, IsRemoval isRemoval)
         container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::InsertionOrRemoval);
 }
 
-static void getInlineRun(RenderObject* start, RenderObject* boundary, RenderObject*& inlineRunStart, RenderObject*& inlineRunEnd)
+static void LEGACY_NODELETE getInlineRun(RenderObject* start, RenderObject* boundary, RenderObject*& inlineRunStart, RenderObject*& inlineRunEnd)
 {
     // Beginning at |start| we find the largest contiguous run of inlines that
     // we can. We denote the run with start and end points, |inlineRunStart|
@@ -421,8 +421,8 @@ void RenderTreeBuilder::attachInternal(RenderElement& parent, RenderPtr<RenderOb
         return;
     }
 
-    if (auto* inlineParent = dynamicDowncast<RenderInline>(parent)) {
-        inlineBuilder().attach(*inlineParent, WTF::move(child), beforeChild);
+    if (parent.isInlineBox()) {
+        inlineBuilder().attach(downcast<RenderBoxModelObject>(parent), WTF::move(child), beforeChild);
         return;
     }
 
@@ -557,9 +557,8 @@ void RenderTreeBuilder::attachToRenderElementInternal(RenderElement& parent, Ren
     if (SUPPRESS_UNCOUNTED_ARG CheckedPtr cache = parent.document().axObjectCache())
         cache->childrenChanged(parent, newChild);
 
-    if (parent.hasOutlineAutoAncestor() || parent.outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto)
-        if (!is<RenderMultiColumnSet>(newChild->previousSibling())) 
-            newChild->setHasOutlineAutoAncestor();
+    if ((parent.hasOutlineAutoAncestor() || parent.style().outlineStyle() == OutlineStyle::Auto) && !is<RenderMultiColumnSet>(newChild->previousSibling()))
+        newChild->setHasOutlineAutoAncestor();
 }
 
 void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& to, RenderObject& child, RenderObject* beforeChild, NormalizeAfterInsertion normalizeAfterInsertion)
@@ -723,7 +722,7 @@ void RenderTreeBuilder::normalizeTreeAfterStyleChange(RenderElement& renderer, S
     if (is<RenderBlock>(parent))
         noLongerAffectsParent = (!wasFloating && isFloating) || (!wasOutOfFlowPositioned && isOutOfFlowPositioned);
 
-    if (isAnyOf<RenderBlockFlow, RenderInline>(parent)) {
+    if (is<RenderBlockFlow>(parent) || parent.isInlineBox()) {
         startsAffectingParent = (wasFloating || wasOutOfFlowPositioned) && !isFloating && !isOutOfFlowPositioned;
         ASSERT(!startsAffectingParent || !noLongerAffectsParent);
     }

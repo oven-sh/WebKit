@@ -41,6 +41,7 @@
 #include "SVGTextFragment.h"
 #include "StringTruncator.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "UsedStyle.h"
 #include <WebCore/StyleShadow.h>
 
 namespace WebCore {
@@ -136,7 +137,7 @@ static inline FloatBoxExtent strokeAndTextShadowInkOverflowOutsets(const Style::
     return { strokeWidth - textShadow.top(), strokeWidth + textShadow.right(), strokeWidth + textShadow.bottom(), strokeWidth - textShadow.left() };
 }
 
-static float logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
+static float LEGACY_NODELETE logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
 {
     auto logicalBottom = std::optional<float> { };
     for (auto& displayBox : boxes) {
@@ -292,8 +293,11 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
             CheckedRef style = displayBox.style();
             auto inkOverflowRect = FloatRect { displayBox.visualRectIgnoringBlockDirection() };
 
-            if (style->hasOutlineInVisualOverflow())
-                inkOverflowRect.inflate(style->usedOutlineSize(style->usedZoomForLength(), style->deviceScaleFactor()));
+            if (style->hasOutlineInVisualOverflow()) {
+                CheckedRef layoutBox = displayBox.layoutBox();
+                auto usedStyle = displayBox.isFirstFormattedLine() ? layoutBox->firstLineUsedStyle() : layoutBox->usedStyle();
+                inkOverflowRect.inflate(usedStyle.outlineSize());
+            }
 
             if (!style->boxShadow().isNone()) {
                 auto [topBoxShadow, bottomBoxShadow] = Style::shadowVerticalExtent(style->boxShadow(), style->usedZoomForLength());
@@ -315,7 +319,7 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
                 inkOverflowRect.uniteEvenIfEmpty(accumulatedInkOverflowRect);
 
             if (style->hasOutlineInVisualOverflow())
-                inkOverflowRect.inflate(style->usedOutlineSize(style->usedZoomForLength(), style->deviceScaleFactor()));
+                inkOverflowRect.inflate(layoutBox->usedStyle().outlineSize());
 
             if (!style->boxShadow().isNone()) {
                 auto [topBoxShadow, bottomBoxShadow] = Style::shadowVerticalExtent(style->boxShadow(), style->usedZoomForLength());

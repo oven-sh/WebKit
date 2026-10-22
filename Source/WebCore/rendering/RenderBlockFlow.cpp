@@ -60,7 +60,6 @@
 #include "RenderElementStyleInlines.h"
 #include "FlexFormattingUtils.h"
 #include "RenderFlexibleBox.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerScrollableArea.h"
@@ -274,9 +273,8 @@ void RenderBlockFlow::rebuildFloatingObjectSetFromIntrudingFloats()
     auto parentBlock = [&]() -> CheckedPtr<RenderBlockFlow> {
         if (auto* blockFlowParent = dynamicDowncast<RenderBlockFlow>(parent()))
             return blockFlowParent;
-        if (auto* inlineBoxParent = dynamicDowncast<RenderInline>(parent())) {
-            return dynamicDowncast<RenderBlockFlow>(inlineBoxParent->containingBlock());
-        }
+        if (parent() && parent()->isInlineBox())
+            return dynamicDowncast<RenderBlockFlow>(parent()->containingBlock());
         // We should not process floats if the parent node is not a RenderBlock. Otherwise, we will add
         // floats in an invalid context. This will cause a crash arising from a bad cast on the parent.
         // See <rdar://problem/8049753>, where float property is applied on a text node in a SVG.
@@ -887,7 +885,7 @@ static bool contentFitsWithinMaximumLines(const RenderBlockFlow& lineClampContai
         return false;
     for (CheckedPtr<const RenderObject> renderer = blockWithClampedLine.get(); renderer && renderer != &lineClampContainer; renderer = renderer->parent()) {
         CheckedPtr parent = renderer->parent();
-        if (is<RenderInline>(*parent))
+        if (parent->isInlineBox())
             continue;
         if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*parent); blockFlow && blockFlow->childrenInline()) {
             if (!blockFlow->inlineLayout() || !blockFlow->inlineLayout()->contentFitsWithinMaximumLines())
@@ -1166,7 +1164,7 @@ void RenderBlockFlow::simplifiedNormalFlowLayout()
         CheckedPtr renderer = walker.current();
         if (CheckedPtr box = dynamicDowncast<RenderBox>(renderer); box && box->needsLayout() && !box->isOutOfFlowPositioned())
             box->layout();
-        else if (isAnyOf<RenderText, RenderInline, RenderLineBreak>(renderer))
+        else if (isAnyOf<RenderText, RenderLineBreak>(renderer) || renderer->isInlineBox())
             renderer->clearNeedsLayout();
     }
 
@@ -2247,11 +2245,11 @@ RenderBlockFlow::LinePaginationAdjustment RenderBlockFlow::computeLineAdjustment
     auto computeLeafBoxTopAndBottom = [&] {
         auto lineTop = LayoutUnit::max();
         auto lineBottom = LayoutUnit::min();
-        for (auto box = lineBox->lineLeftmostLeafBox(); box; box.traverseLineRightwardOnLine()) {
-            if (box->logicalTop() < lineTop)
-                lineTop = box->logicalTop();
-            if (box->logicalBottom() > lineBottom)
-                lineBottom = box->logicalBottom();
+        for (auto& box : lineBox->leafBoxes()) {
+            if (box.logicalTop() < lineTop)
+                lineTop = box.logicalTop();
+            if (box.logicalBottom() > lineBottom)
+                lineBottom = box.logicalBottom();
         }
         return std::pair { lineTop, lineBottom };
     };
@@ -3720,17 +3718,17 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
 
         GapRects result;
 
-        auto firstSelectedBox = [&]() -> InlineIterator::LeafBoxIterator {
-            for (auto box = lineBox->lineLeftmostLeafBox(); box; box.traverseLineRightwardOnLine()) {
-                if (box->selectionState() != RenderObject::HighlightState::None)
+        auto firstSelectedBox = [&] -> InlineIterator::LeafBoxIterator {
+            for (auto& box : lineBox->leafBoxes()) {
+                if (box.selectionState() != RenderObject::HighlightState::None)
                     return box;
             }
             return { };
         }();
 
-        auto lastSelectedBox = [&]() -> InlineIterator::LeafBoxIterator {
-            for (auto box = lineBox->lineRightmostLeafBox(); box; box.traverseLineLeftwardOnLine()) {
-                if (box->selectionState() != RenderObject::HighlightState::None)
+        auto lastSelectedBox = [&] -> InlineIterator::LeafBoxIterator {
+            for (auto& box : lineBox->leafBoxes() | std::views::reverse) {
+                if (box.selectionState() != RenderObject::HighlightState::None)
                     return box;
             }
             return { };
@@ -3890,9 +3888,9 @@ int RenderBlockFlow::lineCount() const
 
 bool RenderBlockFlow::containsNonZeroBidiLevel() const
 {
-    for (auto lineBox = InlineIterator::firstLineBoxFor(*this); lineBox; lineBox.traverseNext()) {
-        for (auto box = lineBox->lineLeftmostLeafBox(); box; box = box.traverseLineRightwardOnLine()) {
-            if (box->bidiLevel())
+    for (auto& lineBox : InlineIterator::lineBoxesFor(*this)) {
+        for (auto& box : lineBox.leafBoxes()) {
+            if (box.bidiLevel())
                 return true;
         }
     }
@@ -3907,11 +3905,11 @@ static Position positionForRun(const RenderBlockFlow& flow, InlineIterator::BoxI
     if (!box->renderer().nonPseudoNode())
         return makeDeprecatedLegacyPosition(flow.nonPseudoElement(), start ? flow.caretMinOffset() : flow.caretMaxOffset());
 
-    auto* textBox = dynamicDowncast<InlineIterator::TextBoxIterator>(box);
-    if (!textBox)
+    if (!box->isText())
         return makeDeprecatedLegacyPosition(box->renderer().nonPseudoNode(), start ? box->renderer().caretMinOffset() : box->renderer().caretMaxOffset());
 
-    return makeDeprecatedLegacyPosition((*textBox)->renderer().nonPseudoNode(), start ? (*textBox)->start() : (*textBox)->end());
+    auto textBox = InlineIterator::TextBoxIterator { box };
+    return makeDeprecatedLegacyPosition(textBox->renderer().nonPseudoNode(), start ? textBox->start() : textBox->end());
 }
 
 RenderText* RenderBlockFlow::findClosestTextAtAbsolutePoint(const FloatPoint& point)
@@ -3966,13 +3964,13 @@ RenderText* RenderBlockFlow::findClosestTextAtAbsolutePoint(const FloatPoint& po
     // experience has shown that hit tests on an exploded text node can fail when within the
     // overflow fragment.
     auto previousRootInlineBoxBottom = std::optional<float> { };
-    for (auto box = InlineIterator::firstRootInlineBoxFor(blockFlow); box; box.traverseInlineBoxLineRightward()) {
+    for (auto& box : InlineIterator::rootInlineBoxesFor(blockFlow)) {
         if (previousRootInlineBoxBottom) {
             if (localPoint.y() < *previousRootInlineBoxBottom)
                 return nullptr;
 
-            if (localPoint.y() > *previousRootInlineBoxBottom && localPoint.y() < box->logicalTop()) {
-                if (auto closestBox = closestBoxForHorizontalPosition(*box->lineBox(), localPoint.x())) {
+            if (localPoint.y() > *previousRootInlineBoxBottom && localPoint.y() < box.logicalTop()) {
+                if (auto closestBox = closestBoxForHorizontalPosition(box.lineBox(), localPoint.x())) {
                     if (auto* textRenderer = dynamicDowncast<RenderText>(closestBox->renderer())) {
                         // FIXME: Remove suppression once rdar://189998365 is fixed.
                         SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderText*>(textRenderer);
@@ -3980,7 +3978,7 @@ RenderText* RenderBlockFlow::findClosestTextAtAbsolutePoint(const FloatPoint& po
                 }
             }
         }
-        previousRootInlineBoxBottom = box->logicalBottom();
+        previousRootInlineBoxBottom = box.logicalBottom();
     }
     return nullptr;
 }
@@ -4054,7 +4052,7 @@ PositionWithAffinity RenderBlockFlow::positionForPointWithInlineChildren(const L
         }
 
         // pass the box a top position that is inside it
-        auto point = LayoutPoint { pointInLogicalContents.x(), contentStartInBlockDirection(*closestBox->lineBox()) };
+        auto point = LayoutPoint { pointInLogicalContents.x(), contentStartInBlockDirection(closestBox->lineBox()) };
         if (!isHorizontalWritingMode())
             point = point.transposedPoint();
         if (closestBox->renderer().isBlockLevelReplacedOrAtomicInline()) {
@@ -4434,7 +4432,7 @@ RenderBlockFlow::InlineContentStatus RenderBlockFlow::markInlineContentDirtyForL
         if (renderer.needsLayout())
             contentNeedsNormalChildLayoutOnly = contentNeedsNormalChildLayoutOnly.value_or(true) && renderer.needsNormalChildOrSimplifiedLayoutOnly();
 
-        if (isAnyOf<RenderLineBreak, RenderInline, RenderText>(renderer))
+        if (isAnyOf<RenderLineBreak, RenderText>(renderer) || renderer.isInlineBox())
             renderer.clearNeedsLayout();
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -4991,7 +4989,7 @@ RenderObject* InlineMinMaxIterator::next()
 }
 
 template <typename SizeType>
-auto borderMarginOrPaddingWidth(LayoutUnit childValue, const SizeType& marginOrPadding, const Style::ZoomFactor& zoomFactor) -> LayoutUnit {
+LayoutUnit LEGACY_NODELETE borderMarginOrPaddingWidth(LayoutUnit childValue, const SizeType& marginOrPadding, const Style::ZoomFactor& zoomFactor) {
     if (auto fixed = marginOrPadding.tryFixed())
         return LayoutUnit(fixed->resolveZoom(zoomFactor));
     if constexpr (std::same_as<SizeType, Style::MarginEdge>) {
@@ -5028,7 +5026,7 @@ static inline void stripTrailingSpace(float& inlineMax, float& inlineMin, Render
     }
 }
 
-static inline std::optional<std::pair<const RenderText&, const RenderText&>> trailingRubyBaseAndAdjacentTextContent(const RenderInline& rubyBase, const RenderBlockFlow& blockContainer)
+static inline std::optional<std::pair<const RenderText&, const RenderText&>> trailingRubyBaseAndAdjacentTextContent(const RenderBoxModelObject& rubyBase, const RenderBlockFlow& blockContainer)
 {
     // This functions returns adjacent _content_ renderers by skipping non-inline content (floats, out-of-flow content) inline boxes and related annotation boxes.
     // e.g. <ruby>
@@ -5078,7 +5076,7 @@ static inline std::optional<std::pair<const RenderText&, const RenderText&>> tra
     return { std::pair<const RenderText&, const RenderText&> { downcast<RenderText>(*lastChild), downcast<RenderText>(*firstSibling) } };
 }
 
-static inline bool hasTrailingSoftWrapOpportunity(const RenderInline& rubyBase, const RenderBlockFlow& blockContainer)
+static inline bool hasTrailingSoftWrapOpportunity(const RenderBoxModelObject& rubyBase, const RenderBlockFlow& blockContainer)
 {
     if (rubyBase.parent()->style().textWrapMode() == TextWrapMode::NoWrap)
         return false;
@@ -5280,10 +5278,11 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
             }
             auto& childStyle = downcast<RenderElement>(*child).style();
             // Case (1) and (2). Inline replaced and inline flow elements.
-            if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(*child)) {
+            if (child->isInlineBox()) {
+                CheckedRef inlineBox = downcast<RenderBoxModelObject>(*child);
                 // Add in padding/border/margin from the appropriate side of
                 // the element.
-                float bpm = getBorderPaddingMargin(*renderInline, childIterator.isEndOfInline());
+                float bpm = getBorderPaddingMargin(inlineBox.get(), childIterator.isEndOfInline());
                 childMin += bpm;
                 childMax += bpm;
 
@@ -5296,7 +5295,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderBlockFlow::computeInlineIntrinsicLogical
                 if (childStyle.display() == Style::DisplayType::RubyBase && childIterator.isEndOfInline()) {
                     if (!rubyBaseContentStack.isEmpty()) {
                         auto rubyBaseStart = rubyBaseContentStack.last();
-                        auto baseHasBreakingPositionAfter = hasTrailingSoftWrapOpportunity(*renderInline, *this);
+                        auto baseHasBreakingPositionAfter = hasTrailingSoftWrapOpportunity(inlineBox.get(), *this);
                         rubyBaseContentStack.last() = RubyBaseContent { inlineMin - rubyBaseStart.minimumWidth, inlineMax - rubyBaseStart.maximumWidth, baseHasBreakingPositionAfter };
                         if (baseHasBreakingPositionAfter) {
                             // Let's mark based end as a breaking opportunity. Note that annotation may chage the final value of minLogicalWidth.

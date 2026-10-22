@@ -28,7 +28,6 @@
 #include "NodeInlines.h"
 #include "RenderBlock.h"
 #include "RenderButton.h"
-#include "RenderInline.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGText.h"
 #include "RenderTable.h"
@@ -118,7 +117,7 @@ static inline bool isPrecedingTypographicSpaceForFirstLetter(char32_t c)
 }
 
 // https://drafts.csswg.org/css-text/#word-separator
-static inline bool isWordSeparator(char32_t c)
+static inline bool LEGACY_NODELETE isWordSeparator(char32_t c)
 {
     switch (c) {
     case ' ':
@@ -149,7 +148,7 @@ static inline bool shouldSkipBeforeFirstLetter(char32_t c)
         || isPrecedingTypographicSpaceForFirstLetter(c);
 }
 
-static bool isDutchIJDigraph(StringView text, unsigned offset)
+static bool LEGACY_NODELETE isDutchIJDigraph(StringView text, unsigned offset)
 {
     if (offset + 1 >= text.length())
         return false;
@@ -309,7 +308,7 @@ void RenderTreeBuilder::FirstLetter::updateStyle(RenderBlock& firstLetterBlock, 
     // The first-letter renderer needs to be replaced. Create a new renderer of the right type.
     RenderPtr<RenderBoxModelObject> newFirstLetter;
     if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     else
         newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(firstLetterBlock.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();
@@ -350,7 +349,7 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
 
     RenderPtr<RenderBoxModelObject> newFirstLetter;
     if (pseudoStyle->display() == Style::DisplayType::InlineFlow)
-        newFirstLetter = createRenderer<RenderInline>(RenderObject::Type::Inline, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
+        newFirstLetter = createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     else
         newFirstLetter = createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, protect(currentTextChild.document()), WTF::move(*pseudoStyle));
     newFirstLetter->initializeStyle();

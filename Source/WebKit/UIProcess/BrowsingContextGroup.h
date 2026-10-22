@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "AgentClusterKeyingReservation.h"
+#include "AgentClusterRequest.h"
 #include "EnhancedSecurity.h"
 #include "LoadedWebArchive.h"
 #include "WebProcessProxy.h"
@@ -49,11 +51,9 @@ namespace IPC {
 class Connection;
 }
 
-namespace WebCore {
-class ResourceResponse;
-}
-
 namespace WebKit {
+
+enum class ShouldSendCloseMessage : bool { No, Yes };
 
 class FrameProcess;
 class ProvisionalPageProxy;
@@ -63,22 +63,6 @@ class WebPreferences;
 class WebProcessPool;
 
 enum class IsMainFrame : bool;
-
-// What a load asks for in terms of agent clusters. BrowsingContextGroup::assignAgentCluster() makes the assignment.
-enum class IsSubstituteData : bool { No, Yes };
-
-struct AgentClusterRequest {
-    enum class Source : uint8_t { NavigationAction, SubstituteData, NavigationResponse };
-
-    static AgentClusterRequest forNavigationAction(const URL&, const URL& topLevelCreationURL, IsSubstituteData);
-    static AgentClusterRequest forNavigationResponse(const WebCore::ResourceResponse&, const URL& topLevelCreationURL, const WebPreferences&);
-
-    Source source;
-    WebCore::SecurityOriginData origin;
-    URL topLevelCreationURL;
-    std::optional<WebCore::OriginKeyed> requestedKeying { };
-    WebCore::DocumentIsolationPolicy documentIsolationPolicy { WebCore::DocumentIsolationPolicy::None };
-};
 
 enum class BrowsingContextGroupUpdate : uint8_t { None, AddProcess, AddProcessAndInjectBrowsingContext };
 
@@ -90,10 +74,12 @@ public:
     WebCore::BrowsingContextGroupIdentifier identifier() const { return m_identifier; }
 
     WebCore::CrossOriginMode crossOriginMode() const { return m_crossOriginMode; }
+    bool LEGACY_NODELETE canUseProcessForCrossOriginIsolation(const WebProcessProxy&) const;
 
     void sharedProcessForSite(WebsiteDataStore&, API::WebsitePolicies*, const WebPreferences&, const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy::LockdownMode, EnhancedSecurity, API::PageConfiguration&, IsMainFrame, CompletionHandler<void(FrameProcess*)>&&);
     Ref<FrameProcess> ensureProcessForSite(const WebCore::Site&, const WebCore::Site& mainFrameSite, WebProcessProxy&, const WebPreferences&, LoadedWebArchive = LoadedWebArchive::No, BrowsingContextGroupUpdate = BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
     RefPtr<FrameProcess> processForSite(const WebCore::Site&);
+    RefPtr<FrameProcess> processForSite(const WebCore::Site&, ProcessCrossOriginIsolation);
     void addFrameProcess(FrameProcess&);
     void addFrameProcessAndInjectPageContextIf(FrameProcess&, Function<bool(WebPageProxy&)>);
     bool addFrameProcessWithoutInjectingPageContext(FrameProcess&);
@@ -102,8 +88,8 @@ public:
 
     void addPage(WebPageProxy&);
     void addRemotePage(WebPageProxy&, Ref<RemotePageProxy>&&);
-    void removePage(WebPageProxy&);
-    void closeRemotePagesForPage(WebPageProxy&);
+    void removePage(WebPageProxy&, ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
+    void closeRemotePagesForPage(WebPageProxy&, ShouldSendCloseMessage = ShouldSendCloseMessage::Yes);
     bool hasMultiplePages() const;
     bool hasVisiblePage() const;
     void forEachRemotePage(const WebPageProxy&, NOESCAPE const Function<void(RemotePageProxy&)>&);
@@ -117,12 +103,16 @@ public:
     bool LEGACY_NODELETE hasRemotePages(const WebPageProxy&);
 
     WebCore::OriginKeyed resolveAgentClusterKeying(const WebCore::SecurityOriginData&, WebCore::OriginKeyed requested);
-    WebCore::AgentClusterAssignment assignAgentCluster(const AgentClusterRequest&);
+    std::pair<WebCore::AgentClusterAssignment, RefPtr<AgentClusterKeyingReservation>> assignAgentCluster(const AgentClusterRequest&, AgentClusterKeyingRecording);
 
     void clearBrowsingContextGroupForTesting();
 
 private:
-    WebCore::OriginKeyed historicalAgentClusterKeying(const WebCore::SecurityOriginData&) const;
+    friend class AgentClusterKeyingReservation;
+
+    WebCore::OriginKeyed knownAgentClusterKeying(const WebCore::SecurityOriginData&) const;
+    RefPtr<AgentClusterKeyingReservation> reserveAgentClusterKeying(const WebCore::SecurityOriginData&, WebCore::OriginKeyed requested);
+    void removeAgentClusterKeyingReservation(const AgentClusterKeyingReservation&);
     WebCore::AgentClusterIdentifier agentClusterIdentifier(const WebCore::SecurityOriginData&, WebCore::OriginKeyed, const std::optional<WebCore::SecurityOriginData>& crossOriginIsolationKey);
 
     explicit BrowsingContextGroup(WebCore::CrossOriginMode);
@@ -137,11 +127,19 @@ private:
     HashSet<WebCore::Site> m_sharedProcessSites;
     WeakHashSet<WebPageProxy> m_pagesInSharedProcess;
 
-    HashMap<WebCore::Site, WeakPtr<FrameProcess>> m_processMap;
+    // A site can have a process for documents with a Document-Isolation-Policy next to its other one, so the
+    // key says which of the two it is.
+    enum class IsDocumentIsolationPolicyProcess : bool { No, Yes };
+    using ProcessMapKey = std::pair<WebCore::Site, IsDocumentIsolationPolicyProcess>;
+    ProcessMapKey processMapKey(const FrameProcess&) const;
+    bool hasProcessForSite(const WebCore::Site&) const;
+
+    HashMap<ProcessMapKey, WeakPtr<FrameProcess>> m_processMap;
     WeakListHashSet<WebPageProxy> m_pages;
     WeakHashMap<WebPageProxy, HashSet<Ref<RemotePageProxy>>> m_remotePages;
 
     HashMap<WebCore::SecurityOriginData, WebCore::OriginKeyed> m_historicalAgentClusterKeyMap;
+    HashMap<WebCore::SecurityOriginData, WeakPtr<AgentClusterKeyingReservation>> m_agentClusterKeyingReservations;
     HashMap<std::tuple<WebCore::Site, WebCore::SecurityOriginData, WebCore::SecurityOriginData>, WebCore::AgentClusterIdentifier> m_agentClusterIdentifiers;
 } DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refBrowsingContextGroup, derefBrowsingContextGroup);
 

@@ -41,7 +41,8 @@ template<typename T> class UniqueRef;
 template<typename T, class... Args>
 [[nodiscard]] UniqueRef<T> makeUniqueRefWithoutFastMallocCheck(Args&&... args)
 {
-    return UniqueRef<T>(*new T(std::forward<Args>(args)...));
+    // FIXME: Remove this suppression once rdar://190195858 is fixed.
+    SUPPRESS_FORWARD_DECL_ARG return UniqueRef<T>(*new T(std::forward<Args>(args)...));
 }
 
 template<class T, class... Args>
@@ -56,7 +57,8 @@ template<typename T, class... Args>
 {
     static_assert(std::is_same<typename T::WTFIsFastMallocAllocated, int>::value, "T should use TZoneMalloc (WTF_MAKE_TZONE_ALLOCATED or one of its variants)");
     static_assert(!HasRefPtrMemberFunctions<T>, "T should not be RefCounted");
-    return makeUniqueRefWithoutFastMallocCheck<T>(std::forward<Args>(args)...);
+    // FIXME: Remove this suppression once rdar://190195858 is fixed.
+    SUPPRESS_FORWARD_DECL_ARG return makeUniqueRefWithoutFastMallocCheck<T>(std::forward<Args>(args)...);
 }
 
 template<typename T>
@@ -144,6 +146,47 @@ inline bool isAnyOf(const UniqueRef<ArgType>& source)
 {
     return isAnyOf<ExpectedTypes...>(source.get());
 }
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>& uncheckedDowncast(UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>& uncheckedDowncast(const UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>& downcast(UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>& downcast(const UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>* dynamicDowncast(UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source>
+inline match_constness_t<Source, Target>* dynamicDowncast(const UniqueRef<Source>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+// The cast result doesn't own the object, so it can't take over from an rvalue.
+template<typename Target, typename Source> void uncheckedDowncast(UniqueRef<Source>&&) = delete;
+template<typename Target, typename Source> void downcast(UniqueRef<Source>&&) = delete;
+template<typename Target, typename Source> void dynamicDowncast(UniqueRef<Source>&&) = delete;
 
 template<typename T>
 inline bool arePointingToEqualData(const UniqueRef<T>& a, const UniqueRef<T>& b)

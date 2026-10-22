@@ -70,6 +70,7 @@ Helpers/cocoa/SiteIsolationTestUtilities.mm @nonARC
 Helpers/cocoa/SiteIsolationUtilities.mm @nonARC
 Helpers/cocoa/TextFinderTester.mm @nonARC
 Helpers/ios/IOSMouseEventTestHarness.mm @nonARC
+Helpers/mac/DataDetectorHighlightTestUtilities.mm @nonARC
 Helpers/mac/LocalEventMonitorSwizzler.mm @nonARC
 Helpers/mac/WKWebViewForTestingImmediateActions.mm @nonARC
 
@@ -223,6 +224,7 @@ Tests/WebKit/WKWebView/LocalStorageNullEntries.mm @nonARC
 Tests/WebKit/WKWebView/LocalStoragePersistence.mm @nonARC
 Tests/WebKit/WKWebView/LocalStorageQuirkTest.mm @nonARC
 Tests/WebKit/WKWebView/MediaBufferingPolicy.mm @nonARC
+Tests/WebKit/WKWebView/MediaCapturePermissionPrompt.mm @nonARC
 Tests/WebKit/WKWebView/MediaDocument.mm @nonARC
 Tests/WebKit/WKWebView/MediaLoading.mm @nonARC @no-unify
 Tests/WebKit/WKWebView/MediaMutedState.mm @nonARC

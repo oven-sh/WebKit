@@ -27,7 +27,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace Wasm {
 
-using B3::operationMemoryCopy;
+using B3::operationMemoryMove;
 using B3::operationMemoryFill;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInImage);
@@ -63,10 +63,11 @@ ImagePointerTable ImagePointerTable::forModule(const ModuleInformation& info, ui
 std::optional<uint32_t> runtimeFunctionSlot(B3::RuntimeFunction function)
 {
     switch (function) {
-    case B3::RuntimeFunction::MemoryCopy:
-        return ImagePointerTable::slotOf(ImageCodeOperation::operationMemoryCopy);
+    case B3::RuntimeFunction::MemoryMove:
+        return ImagePointerTable::slotOf(ImageCodeOperation::operationMemoryMove);
     case B3::RuntimeFunction::MemoryFill:
         return ImagePointerTable::slotOf(ImageCodeOperation::operationMemoryFill);
+    case B3::RuntimeFunction::GCSafeMemoryMove:
     case B3::RuntimeFunction::FmodDouble:
     case B3::RuntimeFunction::CeilDouble:
     case B3::RuntimeFunction::CeilFloat:

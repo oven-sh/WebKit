@@ -46,7 +46,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGContainer);
 
-static bool shouldSuspendRepaintForChildren(const LegacyRenderSVGContainer& container)
+static bool LEGACY_NODELETE shouldSuspendRepaintForChildren(const LegacyRenderSVGContainer& container)
 {
     // Issuing repaint requires absolute rect which means ancestor tree walk.
     // In cases when a container has many direct children, the overhead of resolving each individual repaint rects
@@ -173,7 +173,7 @@ void LegacyRenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint&)
     // outline rect into parent coords before drawing.
     // FIXME: This means our focus ring won't share our rotation like it should.
     // We should instead disable our clip during PaintPhase::Outline
-    if (paintInfo.phase == PaintPhase::SelfOutline && style().usedOutlineWidth() && usedStyle().visibility() == UsedVisibility::Visible) {
+    if (paintInfo.phase == PaintPhase::SelfOutline && style().hasOutline() && usedStyle().visibility() == UsedVisibility::Visible) {
         IntRect paintRectInParent = enclosingIntRect(localToParentTransform().mapRect(repaintRect));
         paintOutline(paintInfo, paintRectInParent);
     }

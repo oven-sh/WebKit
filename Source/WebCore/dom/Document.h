@@ -578,7 +578,7 @@ public:
     static constexpr ptrdiff_t documentElementMemoryOffset() { return OBJECT_OFFSETOF(Document, m_documentElement); }
 
     WEBCORE_EXPORT Element* LEGACY_NODELETE activeElement();
-    WEBCORE_EXPORT bool hasFocus() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasFocus() const;
     void whenVisible(Function<void()>&&);
 
     WEBCORE_EXPORT ExceptionOr<Ref<Element>> createElementForBindings(const AtomString& tagName);
@@ -764,7 +764,7 @@ public:
 
     inline LocalFrameView* view() const; // Defined in DocumentView.h.
     inline Page* LEGACY_NODELETE page() const; // Defined in DocumentPage.h.
-    WEBCORE_EXPORT RefPtr<LocalFrame> localMainFrame() const;
+    WEBCORE_EXPORT RefPtr<LocalFrame> LEGACY_NODELETE localMainFrame() const;
     const Settings& settings() const { return m_settings.get(); }
     EditingBehavior LEGACY_NODELETE editingBehavior() const;
 
@@ -849,8 +849,8 @@ public:
 
     const NetworkLoadPolicy& networkLoadPolicy() const final;
 
-    void suspendDeviceMotionAndOrientationUpdates();
-    void resumeDeviceMotionAndOrientationUpdates();
+    void LEGACY_NODELETE suspendDeviceMotionAndOrientationUpdates();
+    void LEGACY_NODELETE resumeDeviceMotionAndOrientationUpdates();
 
     void suspendFontLoading();
 
@@ -937,7 +937,7 @@ public:
     void processSpeculationRules();
     SpeculationRules& LEGACY_NODELETE speculationRules() const;
 
-    URL baseURLForComplete(const URL& baseURLOverride) const;
+    URL LEGACY_NODELETE baseURLForComplete(const URL& baseURLOverride) const;
     WEBCORE_EXPORT URL parseURL(const String&) const final;
     WEBCORE_EXPORT URL encodingParseURL(const String&) const final;
     URL encodingParseURL(const String&, const URL& baseURLOverride) const;
@@ -1025,8 +1025,7 @@ public:
     MouseEventWithHitTestResults prepareMouseEvent(const HitTestRequest&, const DoublePoint&, const PlatformMouseEvent&);
     // Returns whether focus was blocked. A true value does not necessarily mean the element was focused.
     // The element could have already been focused or may not be focusable (e.g. <input disabled>).
-    WEBCORE_EXPORT bool setFocusedElement(Element*, BroadcastFocusedElement = BroadcastFocusedElement::Yes);
-    WEBCORE_EXPORT bool setFocusedElement(Element*, const FocusOptions&, BroadcastFocusedElement = BroadcastFocusedElement::Yes);
+    WEBCORE_EXPORT bool setFocusedElement(Element*, const FocusOptions& = { });
     Element* focusedElement() const { return m_focusedElement.get(); }
     inline bool wasLastFocusByClick() const;
     void setLatestFocusTrigger(FocusTrigger trigger) { m_latestFocusTrigger = trigger; }
@@ -1064,6 +1063,7 @@ public:
     inline Element* cssTarget() const; // Defined in ElementInlines.h.
 
     WEBCORE_EXPORT void scheduleFullStyleRebuild();
+    void updateStyleAfterChangeInEnvironment();
     void scheduleStyleRecalc();
     void unscheduleStyleRecalc();
     bool LEGACY_NODELETE hasPendingStyleRecalc() const;
@@ -1212,7 +1212,9 @@ public:
 #endif
 
     void metaElementTextScaleChanged();
-    WEBCORE_EXPORT TextScaleMeta textScaleMeta() const;
+    WEBCORE_EXPORT TextScaleMeta LEGACY_NODELETE textScaleMeta() const;
+    float textScaleFactor() const;
+    bool textAutosizingEnabled() const;
 
 #if ENABLE(APPLICATION_MANIFEST)
     void processApplicationManifest(const ApplicationManifest&);
@@ -1341,7 +1343,7 @@ public:
     void pushCurrentScript(Element*);
     void popCurrentScript();
 
-    bool shouldDeferAsynchronousScriptsUntilParsingFinishes() const;
+    bool LEGACY_NODELETE shouldDeferAsynchronousScriptsUntilParsingFinishes() const;
 
     bool supportsPaintTiming() const;
     bool LEGACY_NODELETE supportsLargestContentfulPaint() const;
@@ -1357,8 +1359,13 @@ public:
     TransformSource* transformSource() const LIFETIME_BOUND { return m_transformSource.get(); }
 #endif
 
+    void logXMLExternalEntityDeprecationWarningIfNeeded();
+
     void incDOMTreeVersion() { m_domTreeVersion = ++s_globalTreeVersion; }
     uint64_t domTreeVersion() const { return m_domTreeVersion; }
+
+    void incRenderTreeVersion() { ++m_renderTreeVersion; }
+    uint64_t renderTreeVersion() const { return m_renderTreeVersion; }
 
     WEBCORE_EXPORT String originIdentifierForPasteboard() const;
 
@@ -1452,7 +1459,7 @@ public:
     void updateAXCustomColorModeTextBackdrops();
 #endif
 
-    void invalidateRenderingDependentRegions();
+    void LEGACY_NODELETE invalidateRenderingDependentRegions();
     void invalidateEventRegionsForFrame(HTMLFrameOwnerElement&);
 
     void invalidateEventListenerRegions();
@@ -1628,8 +1635,8 @@ public:
     bool mayHaveRenderedSVGForeignObjects() const { return m_mayHaveRenderedSVGForeignObjects; }
     void setMayHaveRenderedSVGForeignObjects() { m_mayHaveRenderedSVGForeignObjects = true; }
 
-    void didAddTouchEventHandler(Node&);
-    void didRemoveTouchEventHandler(Node&, EventHandlerRemoval = EventHandlerRemoval::One);
+    void LEGACY_NODELETE didAddTouchEventHandler(Node&);
+    void LEGACY_NODELETE didRemoveTouchEventHandler(Node&, EventHandlerRemoval = EventHandlerRemoval::One);
 
     void didRemoveEventTargetNode(Node&);
 
@@ -1672,7 +1679,7 @@ public:
     bool inStyleRecalc() const { return m_inStyleRecalc; }
     bool inRenderTreeUpdate() const { return m_inRenderTreeUpdate; }
     bool isInStyleInterleavedLayout() const { return m_isInStyleInterleavedLayout; };
-    bool isInStyleInterleavedLayoutForSelfOrAncestor() const;
+    bool LEGACY_NODELETE isInStyleInterleavedLayoutForSelfOrAncestor() const;
     bool isResolvingTreeStyle() const { return m_isResolvingTreeStyle; }
     void LEGACY_NODELETE setIsResolvingTreeStyle(bool);
 
@@ -1700,7 +1707,7 @@ public:
     bool isAXCustomColorModeActive() const;
 #endif
 
-    void adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) const;
+    void LEGACY_NODELETE adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) const;
 
     bool hasDisabledFieldsetElement() const { return m_disabledFieldsetElementsCount; }
     void addDisabledFieldsetElement() { m_disabledFieldsetElementsCount++; }
@@ -1956,7 +1963,7 @@ public:
 
     OrderedHashSet<Ref<HTMLDialogElement>>& openDialogsList() { return m_openDialogsList; }
 
-    HTMLDialogElement* activeModalDialog() const;
+    HTMLDialogElement* LEGACY_NODELETE activeModalDialog() const;
     HTMLElement* LEGACY_NODELETE topmostAutoPopover() const;
     HTMLElement* LEGACY_NODELETE topmostHintPopover() const;
     HTMLElement* LEGACY_NODELETE nearestOpenHintAncestor(Element&) const;
@@ -2177,7 +2184,7 @@ public:
 
     WEBCORE_EXPORT std::optional<TextPosition> currentParserSourcePosition() const;
 
-    bool shouldUseTouchEventRegions() const;
+    bool LEGACY_NODELETE shouldUseTouchEventRegions() const;
 
 protected:
     enum class ConstructionFlag : uint8_t {
@@ -2275,7 +2282,7 @@ private:
 
     void styleRecalcTimerFired();
 
-    QuerySelectorResults* querySelectorResults(ContainerNode&);
+    QuerySelectorResults* LEGACY_NODELETE querySelectorResults(ContainerNode&);
     QuerySelectorResults& ensureQuerySelectorResults(ContainerNode&);
 
     void intersectionObserversInitialUpdateTimerFired();
@@ -2314,7 +2321,7 @@ private:
     void wheelOrTouchEventHandlersChanged(Node* = nullptr);
 
     HttpEquivPolicy httpEquivPolicy() const;
-    AXObjectCache* existingAXObjectCacheSlow() const;
+    AXObjectCache* LEGACY_NODELETE existingAXObjectCacheSlow() const;
 
     bool shouldMaskURLForBindingsInternal(const URL&) const;
 
@@ -2335,7 +2342,7 @@ private:
 
     bool computeIsSecureContext() const;
 
-    void platformSuspendOrStopActiveDOMObjects();
+    void LEGACY_NODELETE platformSuspendOrStopActiveDOMObjects();
 
     void collectHighlightRangesFromRegister(Vector<WeakPtr<HighlightRange>>&, const HighlightRegistry&);
 
@@ -2424,6 +2431,7 @@ private:
 
     uint64_t m_domTreeVersion;
     static uint64_t s_globalTreeVersion;
+    uint64_t m_renderTreeVersion { 0 };
 
     mutable String m_uniqueIdentifier;
 
@@ -2902,6 +2910,7 @@ private:
     bool m_hasPendingXSLTransforms : 1 { false };
     bool m_hasLoggedXSLTDeprecationWarning : 1 { false };
 #endif
+    bool m_hasLoggedXMLExternalEntityDeprecationWarning : 1 { false };
 #if ENABLE(MEDIA_STREAM)
     bool m_hasHadCaptureMediaStreamTrack : 1 { false };
 #endif

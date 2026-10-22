@@ -67,6 +67,7 @@
 #include "ContentfulPaintChecker.h"
 #include "Cookie.h"
 #include "CookieJar.h"
+#include "CrossOriginMode.h"
 #include "CryptoClient.h"
 #include "ContainerNodeInlines.h"
 #include "CustomEffect.h"
@@ -258,7 +259,6 @@
 #include "RenderChildIterator.h"
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderLayerCompositor.h"
 #include "RenderLayerModelObject.h"
 #include "RenderLayoutState.h"
@@ -421,6 +421,10 @@
 #include "DOMTimerHoldingTank.h"
 #endif
 
+#if PLATFORM(COCOA)
+#include "FontCacheCoreText.h"
+#endif
+
 #if PLATFORM(IOS_FAMILY)
 #include "DeviceMotionClientIOS.h"
 #include "DeviceMotionController.h"
@@ -576,14 +580,16 @@ static bool canAccessAncestor(const SecurityOrigin& activeSecurityOrigin, Frame*
         return false;
 
     const bool isLocalActiveOrigin = activeSecurityOrigin.isLocal();
-    for (Ref localAncestor : inclusiveAncestorFrames<LocalFrame>(*targetFrame)) {
-        RefPtr ancestorDocument = localAncestor->document();
+    for (Ref ancestor : inclusiveAncestorFrames(*targetFrame)) {
         // FIXME: Should be an ASSERT? Frames should alway have documents.
-        if (!ancestorDocument)
+        if (auto* localAncestor = dynamicDowncast<LocalFrame>(ancestor); localAncestor && !localAncestor->document())
             return true;
 
-        Ref ancestorSecurityOrigin = ancestorDocument->securityOrigin();
-        if (activeSecurityOrigin.isSameOriginDomain(ancestorSecurityOrigin))
+        // Same-origin documents can be in different processes, such as when only one of them has a Document-Isolation-Policy.
+        RefPtr ancestorSecurityOrigin = ancestor->frameDocumentSecurityOrigin();
+        if (!ancestorSecurityOrigin)
+            continue;
+        if (activeSecurityOrigin.isSameOriginDomain(*ancestorSecurityOrigin))
             return true;
 
         // Allow file URL descendant navigation even when allowFileAccessFromFileURLs is false.
@@ -666,7 +672,7 @@ auto Document::allDocuments() -> DocumentsMap::ValuesIteratorRange
     return allDocumentsMap().values();
 }
 
-static inline IntDegrees currentOrientation(LocalFrame* frame)
+static inline IntDegrees LEGACY_NODELETE currentOrientation(LocalFrame* frame)
 {
 #if ENABLE(ORIENTATION_EVENTS)
     if (frame)
@@ -1724,7 +1730,7 @@ ExceptionOr<Ref<ProcessingInstruction>> Document::createProcessingInstruction(St
     if (data.contains("?>"_s))
         return Exception { ExceptionCode::InvalidCharacterError };
 
-    return ProcessingInstruction::create(*this, WTF::move(target), WTF::move(data));
+    return ProcessingInstruction::create(*this, AtomString { WTF::move(target) }, WTF::move(data));
 }
 
 Ref<Text> Document::createEditingTextNode(String&& text)
@@ -1904,7 +1910,7 @@ CustomElementRegistry* Document::effectiveGlobalCustomElementRegistry()
     return customElementRegistry();
 }
 
-static inline bool isPotentialCustomElementNameCharacter(char32_t character)
+static inline bool LEGACY_NODELETE isPotentialCustomElementNameCharacter(char32_t character)
 {
     static constexpr auto ranges = WTF::toArray<UnicodeCodePointRange>({
         { '-', '.' },
@@ -1977,7 +1983,7 @@ static ALWAYS_INLINE CustomElementNameCharacterKind LEGACY_NODELETE customElemen
     return table[character];
 }
 
-static ALWAYS_INLINE CustomElementNameValidationStatus validateCustomElementNameWithoutCheckingStandardElementNames(const AtomString& localName)
+static ALWAYS_INLINE CustomElementNameValidationStatus LEGACY_NODELETE validateCustomElementNameWithoutCheckingStandardElementNames(const AtomString& localName)
 {
     if (!isASCIILower(localName[0]))
         return CustomElementNameValidationStatus::FirstCharacterIsNotLowercaseASCIILetter;
@@ -3736,7 +3742,7 @@ void Document::destroyRenderTree()
 
     m_textAutoSizing = nullptr;
 
-    if (RefPtr view = this->view())
+    if (auto* view = this->view())
         view->didDestroyRenderTree();
 }
 
@@ -4094,6 +4100,8 @@ void Document::collectHighlightRangesFromRegister(Vector<WeakPtr<HighlightRange>
             if (&simpleRange.startContainer().treeScope() != &simpleRange.endContainer().treeScope())
                 continue;
             highlightRanges.append(highlightRange.get());
+            // This range's positions are about to be updated, which can change the renderers it highlights.
+            highlight.value->invalidateHighlightRangesForRenderer();
         }
     }
 
@@ -4108,17 +4116,21 @@ void Document::collectHighlightRangesFromRegister(Vector<WeakPtr<HighlightRange>
 
 void Document::updateHighlightPositions()
 {
-    Vector<WeakPtr<HighlightRange>> highlightRanges;
+    Vector<Ref<HighlightRegistry>, 4> highlightRegistries;
     if (m_highlightRegistry)
-        collectHighlightRangesFromRegister(highlightRanges, *m_highlightRegistry.get());
+        highlightRegistries.append(*m_highlightRegistry);
     if (m_fragmentHighlightRegistry)
-        collectHighlightRangesFromRegister(highlightRanges, *m_fragmentHighlightRegistry.get());
+        highlightRegistries.append(*m_fragmentHighlightRegistry);
     if (m_textExtractionHighlightRegistry)
-        collectHighlightRangesFromRegister(highlightRanges, *m_textExtractionHighlightRegistry.get());
+        highlightRegistries.append(*m_textExtractionHighlightRegistry);
 #if ENABLE(APP_HIGHLIGHTS)
     if (m_appHighlightRegistry)
-        collectHighlightRangesFromRegister(highlightRanges, *m_appHighlightRegistry.get());
+        highlightRegistries.append(*m_appHighlightRegistry);
 #endif
+
+    Vector<WeakPtr<HighlightRange>> highlightRanges;
+    for (auto& highlightRegistry : highlightRegistries)
+        collectHighlightRangesFromRegister(highlightRanges, highlightRegistry);
 
     for (auto& weakRangeData : highlightRanges) {
         if (RefPtr highlightRange = weakRangeData.get()) {
@@ -4141,6 +4153,11 @@ void Document::updateHighlightPositions()
 
             Highlight::repaintRange(highlightRange->range());
         }
+    }
+
+    for (auto& highlightRegistry : highlightRegistries) {
+        for (Ref highlight : highlightRegistry->map().values())
+            highlight->updateHighlightRangesForRendererIfNeeded(*this);
     }
 }
 
@@ -4270,7 +4287,7 @@ bool Document::isFullyActive() const
     // RemoteFrame ancestor lives in another process, but if it became parentless without
     // being the main frame, its iframe was removed there and the chain was severed.
     for (Ref ancestor : ancestorFrames(*frame)) {
-        if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
+        if (auto* localAncestor = dynamicDowncast<LocalFrame>(ancestor)) {
             if (!localAncestor->document() || localAncestor->document()->frame() != localAncestor)
                 return false;
         }
@@ -4802,7 +4819,7 @@ Seconds Document::domTimerAlignmentInterval(bool hasReachedMaxNestingLevel) cons
     if (m_isTimerThrottlingEnabled)
         alignmentInterval = std::max(alignmentInterval, DOMTimer::hiddenPageAlignmentInterval());
 
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         alignmentInterval = std::max(alignmentInterval, page->domTimerAlignmentInterval());
 
     if (!protect(topOrigin())->isSameOriginDomain(protect(securityOrigin())) && !hasHadUserInteraction())
@@ -5583,7 +5600,7 @@ void Document::processViewport(const String& features, ViewportArguments::Type o
 
 ViewportArguments Document::viewportArguments() const
 {
-    RefPtr page = this->page();
+    auto* page = this->page();
     if (!page)
         return m_viewportArguments;
     return page->overrideViewportArguments() ? *page->overrideViewportArguments() : m_viewportArguments;
@@ -5766,7 +5783,21 @@ void Document::metaElementTextScaleChanged()
             textScaleMeta = TextScaleMeta::Scale;
         break;
     }
+    auto oldTextScaleMeta = this->textScaleMeta();
     m_textScaleMeta = textScaleMeta;
+    auto newTextScaleMeta = this->textScaleMeta();
+    if (newTextScaleMeta == oldTextScaleMeta)
+        return;
+
+    // Non-idempotent text autosizing runs during layout. The meta change may not change any style, so force a layout.
+    if (settings().textAutosizingEnabled() && !settings().textAutosizingUsesIdempotentMode()) {
+        if (CheckedPtr renderView = this->renderView()) {
+            if (newTextScaleMeta == TextScaleMeta::Scale)
+                renderView->setTextAutosizingState(RenderView::TextAutosizingState::ResetScheduled);
+            renderView->setNeedsLayout();
+        }
+    }
+    updateStyleAfterChangeInEnvironment();
 }
 
 TextScaleMeta Document::textScaleMeta() const
@@ -5774,6 +5805,32 @@ TextScaleMeta Document::textScaleMeta() const
     if (!settings().cssTextScaleMetaEnabled())
         return TextScaleMeta::Legacy;
     return m_textScaleMeta;
+}
+
+float Document::textScaleFactor() const
+{
+    if (textScaleMeta() != TextScaleMeta::Scale)
+        return 1;
+#if PLATFORM(IOS) || PLATFORM(VISION)
+    return textScaleFactorForContentSizeCategory();
+#else
+    return 1;
+#endif
+}
+
+bool Document::textAutosizingEnabled() const
+{
+    return settings().textAutosizingEnabled() && textScaleMeta() != TextScaleMeta::Scale;
+}
+
+void Document::updateStyleAfterChangeInEnvironment()
+{
+    if (RefPtr styleResolver = styleScope().resolverIfExists())
+        styleResolver->invalidateMatchedDeclarationsCache();
+    scheduleFullStyleRebuild();
+    styleScope().didChangeStyleSheetEnvironment();
+    updateElementsAffectedByMediaQueries();
+    scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -6127,8 +6184,8 @@ void Document::addPendingScrollEventTarget(ContainerNode& originalTarget, Scroll
 
     Ref target = [&] -> Ref<ContainerNode> {
         if (RefPtr element = dynamicDowncast<HTMLElement>(originalTarget); element && element->isTextControlInnerTextElement()) {
-            if (RefPtr shadowHost = element->shadowHost())
-                return shadowHost.releaseNonNull();
+            if (auto* shadowHost = element->shadowHost())
+                return *shadowHost;
         }
         return originalTarget;
     }();
@@ -6650,7 +6707,7 @@ void Document::flushAutofocusCandidates()
         m_autofocusCandidates.removeFirst();
 
         bool hasAncestorWithCSSTarget = [&] {
-            for (CheckedPtr document = &element->document(); document && document != this; document = document->parentDocument()) {
+            for (auto* document = &element->document(); document && document != this; document = document->parentDocument()) {
                 if (document->cssTarget())
                     return true;
             }
@@ -6798,12 +6855,7 @@ void Document::invalidateRenderingDependentRegions()
 #endif
 }
 
-bool Document::setFocusedElement(Element* element, BroadcastFocusedElement broadcast)
-{
-    return setFocusedElement(element, { }, broadcast);
-}
-
-bool Document::setFocusedElement(Element* newFocusedElement, const FocusOptions& options, BroadcastFocusedElement broadcast)
+bool Document::setFocusedElement(Element* newFocusedElement, const FocusOptions& options)
 {
     // Make sure newFocusedElement is actually in this document
     if (newFocusedElement && (&newFocusedElement->document() != this))
@@ -6966,7 +7018,7 @@ bool Document::setFocusedElement(Element* newFocusedElement, const FocusOptions&
         cache->onFocusChange(oldFocusedElement.get(), newFocusedElement);
 
     if (RefPtr page = this->page())
-        page->chrome().focusedElementChanged(protect(focusedElement()).get(), protect(page->focusController().localFocusedFrame()), options, broadcast);
+        page->chrome().focusedElementChanged(protect(focusedElement()).get(), protect(page->focusController().localFocusedFrame()), options);
 
     return true;
 }
@@ -7012,9 +7064,9 @@ Element* Document::focusNavigationStartingNode(FocusDirection direction) const
     // Current behaivor is to move the sequential navigation node to / after (based on the focus direction)
     // the previous sibling of the removed node.
     if (m_focusNavigationStartingNodeIsRemoved) {
-        RefPtr nextNode = NodeTraversal::next(*node);
+        auto* nextNode = NodeTraversal::next(*node);
         if (!nextNode)
-            nextNode = WTF::move(node);
+            nextNode = node.get();
         if (direction == FocusDirection::Forward)
             return ElementTraversal::previous(*nextNode);
         if (auto* nextElement = dynamicDowncast<Element>(*nextNode))
@@ -7120,7 +7172,7 @@ void Document::moveNodeIteratorsToNewDocument(Node& node, Document& newDocument)
 void Document::updateRangesAfterChildrenChanged(ContainerNode& container)
 {
     for (auto& range : m_ranges)
-        Ref { range.get() }->nodeChildrenChanged(container);
+        range->nodeChildrenChanged(container);
 }
 
 void Document::nodeChildrenWillBeRemoved(ContainerNode& container)
@@ -7224,7 +7276,7 @@ void Document::adjustFocusNavigationNodeOnNodeRemoval(Node& node, NodeRemoval no
 
 void Document::textInserted(Node& text, unsigned offset, unsigned length)
 {
-    for (Ref range : m_ranges)
+    for (auto& range : m_ranges)
         range->textInserted(text, offset, length);
 
     if (!m_markers)
@@ -7241,7 +7293,7 @@ void Document::textInserted(Node& text, unsigned offset, unsigned length)
 
 void Document::textRemoved(Node& text, unsigned offset, unsigned length)
 {
-    for (Ref range : m_ranges)
+    for (auto& range : m_ranges)
         range->textRemoved(text, offset, length);
 
     if (!m_markers)
@@ -7346,9 +7398,9 @@ void Document::dispatchWindowLoadEvent()
 
     // A subframe that finished loading without ever being laid out was hidden (e.g. parent had
     // display:none); note that so the first layout can fire resize for the 0x0 to actual size change.
-    if (RefPtr frameView = view()) {
+    if (auto* frameView = view()) {
         if (!frameView->layoutContext().didFirstLayout()) {
-            if (RefPtr owner = ownerElement(); owner && !owner->renderer())
+            if (auto* owner = ownerElement(); owner && !owner->renderer())
                 frameView->setLoadedWhileHidden();
         }
     }
@@ -8252,6 +8304,18 @@ void Document::setTransformSource(std::unique_ptr<TransformSource> source)
 
 #endif
 
+void Document::logXMLExternalEntityDeprecationWarningIfNeeded()
+{
+    // Documents created by DOMParser and XMLHttpRequest have no frame, and addConsoleMessage
+    // silently drops messages in that case, so report on the context document instead. Throttling
+    // on the target document also keeps repeated DOMParser parses from logging more than once.
+    Ref document = contextDocument();
+    if (document->m_hasLoggedXMLExternalEntityDeprecationWarning)
+        return;
+    document->m_hasLoggedXMLExternalEntityDeprecationWarning = true;
+    document->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "XML external entities are deprecated and will be removed in a future version of WebKit."_s);
+}
+
 String Document::designMode() const
 {
     return inDesignMode() ? onAtom() : offAtom();
@@ -8755,7 +8819,7 @@ void Document::initSecurityContext()
         // but we're also sandboxed, the only thing we inherit is the ability
         // to load local resources. This lets about:blank iframes in file://
         // URL documents load images and other resources from the file system.
-        if (protect(ownerDocument->securityOrigin())->canLoadLocalResources())
+        if (ownerDocument->securityOrigin().canLoadLocalResources())
             securityOrigin().grantLoadLocalResources();
         return;
     }
@@ -8827,16 +8891,6 @@ bool Document::isContextThread() const
     return isMainThread();
 }
 
-// https://w3c.github.io/webappsec-secure-contexts/#is-url-trustworthy
-static bool isURLPotentiallyTrustworthy(const URL& url)
-{
-    if (url.protocolIsAbout())
-        return url.isAboutBlank() || url.isAboutSrcDoc();
-    if (url.protocolIsData())
-        return true;
-    return SecurityOrigin::create(url)->isPotentiallyTrustworthy();
-}
-
 // https://w3c.github.io/webappsec-secure-contexts/#is-settings-object-contextually-secure step 5.3 and 5.4
 static inline bool isDocumentSecure(const Document& document)
 {
@@ -8858,11 +8912,14 @@ bool Document::computeIsSecureContext() const
     if (!parentFrame)
         parentFrame = m_frame->loader().client().provisionalParentFrame();
     if (!parentFrame)
-        return isDocumentSecure(*this);
+        return !url().protocolIsData() && isDocumentSecure(*this);
 
     auto parentSecurityPolicy = parentFrame->frameDocumentSecurityPolicy();
     if (!parentSecurityPolicy || parentSecurityPolicy->isSecureContext == IsSecureContext::No)
         return false;
+
+    if (url().protocolIsData())
+        return true;
 
     return isDocumentSecure(*this);
 }
@@ -8878,7 +8935,9 @@ bool Document::isSecureContext() const
 
 bool Document::isInCrossOriginIsolatedAgentCluster() const
 {
-    return crossOriginOpenerPolicy().value == CrossOriginOpenerPolicyValue::SameOriginPlusCOEP;
+    if (crossOriginOpenerPolicy().value == CrossOriginOpenerPolicyValue::SameOriginPlusCOEP)
+        return true;
+    return documentIsolationPolicy() != DocumentIsolationPolicy::None && ScriptExecutionContext::crossOriginMode() == CrossOriginMode::Isolated;
 }
 
 bool Document::crossOriginIsolated() const
@@ -9151,7 +9210,7 @@ void Document::resumeScheduledTasks(ReasonForSuspension reason)
 
 void Document::suspendScriptedAnimationControllerCallbacks()
 {
-    if (RefPtr scriptedAnimationController = m_scriptedAnimationController)
+    if (auto* scriptedAnimationController = m_scriptedAnimationController.get())
         scriptedAnimationController->suspend();
 }
 
@@ -9265,7 +9324,7 @@ void Document::reveal()
     // A navigation away from this document that will replace it is in progress, so this
     // document is being discarded before it was ever revealed. Do not reveal it (and do
     // not mark it revealed, so it can still reveal if the navigation is aborted).
-    if (RefPtr frame = this->frame(); frame && frame->loader().provisionalDocumentLoader())
+    if (auto* frame = this->frame(); frame && frame->loader().provisionalDocumentLoader())
         return;
 
     m_hasBeenRevealed = true;
@@ -9906,7 +9965,7 @@ void Document::updateLastHandledUserGestureTimestamp(MonotonicTime time)
 
 bool Document::mainFrameDocumentHasHadUserInteraction() const
 {
-    RefPtr page = this->page();
+    auto* page = this->page();
     return page && page->topDocumentHasHadUserInteraction();
 }
 
@@ -9991,7 +10050,7 @@ bool Document::allowsContentJavaScript() const
     if (!m_frame || m_frame->document() != this) {
         // If this Document is frameless or in the wrong frame, its context document
         // must allow for it to run content JavaScript.
-        RefPtr contextDocument = m_contextDocument;
+        auto* contextDocument = m_contextDocument.get();
         return !contextDocument || contextDocument->allowsContentJavaScript();
     }
 
@@ -10212,7 +10271,7 @@ void Document::updateHoverActiveState(const HitTestRequest& request, Element* in
     m_hoveredElement = newHoveredElement;
 
     auto isInForeignTopLayer = [](Element* candidate) {
-        for (RefPtr element = candidate; element; element = element->parentElementInComposedTree()) {
+        for (auto* element = candidate; element; element = element->parentElementInComposedTree()) {
             if (element->isInTopLayer())
                 return !element->isInActiveChain();
         }
@@ -10404,6 +10463,11 @@ bool Document::useDarkAppearance([[maybe_unused]] const Style::ComputedStyle* st
         return pageUsesDarkAppearance;
 #endif
 
+    if (RefPtr frame = this->frame(); frame && frame->isMainFrame()) {
+        if (url().isAboutBlank() || !frame->loader().stateMachine().committedFirstRealDocumentLoad())
+            return pageUsesDarkAppearance;
+    }
+
     return false;
 }
 
@@ -10560,9 +10624,7 @@ Element* Document::activeElement()
 {
     if (Element* element = treeScope().focusedElementInScope())
         return element;
-    if (Element* body = bodyOrFrameset())
-        return body;
-    return documentElement();
+    return bodyOrFrameset();
 }
 
 bool Document::hasFocus() const
@@ -11726,7 +11788,7 @@ void Document::handlePopoverLightDismiss(const PointerEvent& event, Node& target
 
     // Find the showing hint popover (if any) that contains the pointer target.
     RefPtr<HTMLElement> clickedHintPopover;
-    if (RefPtr targetElement = dynamicDowncast<Element>(target))
+    if (auto* targetElement = dynamicDowncast<Element>(target))
         clickedHintPopover = nearestOpenHintAncestor(*targetElement);
     else if (RefPtr parent = target.parentElementInComposedTree())
         clickedHintPopover = nearestOpenHintAncestor(*parent);
@@ -11985,7 +12047,7 @@ const Style::ComputedStyle& Document::initialStyle() const
     if (!m_cachedInitialStyle) {
         float zoom = 1;
         float zoomForFontDescription = 1;
-        if (RefPtr frame = this->frame()) {
+        if (auto* frame = this->frame()) {
             zoom = !printing() ? frame->pageZoomFactor() : 1;
             zoomForFontDescription = zoom * frame->textZoomFactor();
         }
@@ -11996,7 +12058,7 @@ const Style::ComputedStyle& Document::initialStyle() const
         cachedInitialStyle->setZoom(zoom);
 
         auto initialFontFamily = FontFamily { standardFamily, FontFamilyKind::Generic };
-        auto initialComputedFontSize = Style::fontSizeForKeyword(CSSValueID::Medium, false, settingsValues(), inQuirksMode());
+        auto initialComputedFontSize = Style::fontSizeForKeyword(CSSValueID::Medium, false, *this);
         auto initialUsedFontSize = Style::usedFontSizeFromComputedSize(initialComputedFontSize, false, zoomForFontDescription, Style::MinimumFontSizeRule::AbsoluteAndRelative, settingsValues());
         auto allowUserInstalledFonts = settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
 
@@ -12386,7 +12448,7 @@ GraphicsClient* Document::graphicsClient()
 
 std::optional<PAL::SessionID> Document::sessionID() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->sessionID();
 
     return std::nullopt;
@@ -12394,7 +12456,7 @@ std::optional<PAL::SessionID> Document::sessionID() const
 
 const NetworkLoadPolicy& Document::networkLoadPolicy() const
 {
-    if (RefPtr page = this->page())
+    if (auto* page = this->page())
         return page->networkLoadPolicy();
 
     return NetworkLoadPolicy::unrestricted();
@@ -12557,7 +12619,7 @@ ViewTransition* Document::activeViewTransition() const
 
 bool Document::activeViewTransitionCapturedDocumentElement() const
 {
-    if (RefPtr activeViewTransition = m_activeViewTransition)
+    if (auto* activeViewTransition = m_activeViewTransition.get())
         return activeViewTransition->documentElementIsCaptured();
     return false;
 }

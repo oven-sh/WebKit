@@ -14,14 +14,14 @@
 #include <charconv>
 #include <cmath>
 #include <wtf/MathExtras.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
+#include <wtf/dtoa.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
 inline constexpr unsigned maxJSONIntegerLength = 20;
-inline constexpr unsigned maxJSONNumberLength = WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>();
+inline constexpr unsigned maxJSONNumberLength = numberToShortestStringBufferSize;
 inline constexpr unsigned maxJSONDateLength = maxISODateTimeLength + 2;
 
 static_assert(maxJSONIntegerLength <= jsonIntegerBytes && maxJSONNumberLength <= jsonNumberBytes && maxJSONDateLength <= jsonDateBytes);
@@ -98,7 +98,7 @@ ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double 
         return appendJSONLiteral(cursor, "null"_s);
     if (!number)
         return appendJSONLiteral(cursor, "0"_s);
-    return std::bit_cast<Latin1Character*>(WTF::dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, std::span { std::bit_cast<char*>(cursor), maxJSONNumberLength }).data());
+    return cursor + numberToShortestString(number, std::span<char, numberToShortestStringBufferSize> { std::bit_cast<char*>(cursor), numberToShortestStringBufferSize });
 }
 
 ALWAYS_INLINE Latin1Character* appendJSONTimeValue(Latin1Character* cursor, double timeValue)

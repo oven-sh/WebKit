@@ -646,6 +646,11 @@ public:
             || hijacksIndexingHeader();
     }
     
+    bool canAllocatePropertyStorageInJIT() const
+    {
+        return !hijacksIndexingHeader() && !hasAnyArrayStorage(indexingType()) && !hasElementsStartOffset();
+    }
+
     bool hasIndexingHeader(const JSCell*) const;    
     bool masqueradesAsUndefined(JSGlobalObject* lexicalGlobalObject)
     {
