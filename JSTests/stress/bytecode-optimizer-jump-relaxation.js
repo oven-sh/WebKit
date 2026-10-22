@@ -3,6 +3,7 @@
 // With the right padding its offset fits in 8 bits only until the next branch is widened, so each pass widens one more
 // branch and the number of branches sets the number of passes. The sweep finds that padding, and covers the pass
 // counts on both sides of the one where emit() forces every branch wide.
+
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error("expected " + expected + " but got " + actual);

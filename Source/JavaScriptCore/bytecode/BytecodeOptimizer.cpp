@@ -1961,11 +1961,8 @@ struct BytecodeOptimizerAccess::Mapper {
         int from = static_cast<int>(insn->newOffset);
         int to = static_cast<int>(targetInsn.newOffset == UINT_MAX ? targetInsn.oldOffset : targetInsn.newOffset);
         int delta = to - from;
-        if (!delta) {
-            // A forward target still has the previous pass's offset, so this happens while offsets move. emit()
-            // discards such a pass.
-            delta = 1;
-        }
+        if (!delta)
+            delta = 1; // Placeholder: a forward target's offset is stale while offsets move, and emit() discards such a pass.
         return BoundLabel(delta);
     }
 
