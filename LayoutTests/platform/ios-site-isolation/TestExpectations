@@ -3,7 +3,6 @@
 ####################
 # Tests that crash #
 ####################
-imported/w3c/web-platform-tests/content-security-policy/inheritance/history.sub.html [ Crash ]
 
 #######################
 # Tests that time out #
@@ -12,12 +11,12 @@ http/tests/resourceLoadStatistics/add-blocking-to-redirect.html [ Timeout ]
 http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-redirects.html [ Timeout ]
 http/tests/resourceLoadStatistics/strip-referrer-to-origin-for-third-party-requests.html [ Timeout ]
 http/tests/workers/service/resultingClientId.https.html [ Timeout ]
-platform/ios/ios/plugin/youtube-flash-plugin-iframe.html [ Timeout ]
 http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Timeout ]
 
 ########################
 # Tests that Text fail #
 ########################
+webkit.org/b/326717 imported/w3c/web-platform-tests/fetch/http-cache/status.any.sharedworker.html [ Pass Failure ]
 fast/forms/ios/focus-input-via-button-no-scaling.html [ Failure ]
 fast/viewport/ios/viewport-fit-auto.html [ Pass Failure ]
 http/tests/fast/events/touch/ios/block-without-overflow-scroll-and-passive-observer-on-document-scrolling-state.html [ Failure ]
@@ -58,10 +57,22 @@ http/tests/security/block-top-level-navigations-by-sandboxed-iframe-with-propaga
 
 # Document-Isolation-Policy is partially implemented.
 imported/w3c/web-platform-tests/html/document-isolation-policy/agent-cluster.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cache-frames.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/back-forward-cache.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/blob-document-inherits-policy.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/broadcast-channel.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-frame.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/cross-origin-isolated.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/dedicated-worker.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/header-parsing.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp-load-from-cache-storage.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/message-channel.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/navigate-across-policies.tentative.https.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context-https-iframe.tentative.html [ Pass ]
 imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context.tentative.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/origin-agent-cluster.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/partial-deployment.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/shared-array-buffer.tentative.https.html [ Pass ]
+imported/w3c/web-platform-tests/html/document-isolation-policy/window-reuse.tentative.https.html [ Pass ]
 http/tests/document-isolation-policy/xslt-result-agent-cluster.https.html [ Pass ]

@@ -48,7 +48,7 @@ ProgramExecutable::ProgramExecutable(JSGlobalObject* globalObject, const SourceC
     ASSERT(source.provider()->sourceType() == SourceProviderSourceType::Program);
     VM& vm = globalObject->vm();
     if (vm.typeProfiler() || vm.controlFlowProfiler())
-        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset());
+        vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), typeProfilingStartOffset(), typeProfilingEndOffset(), SourceParseMode::ProgramMode);
 }
 
 void ProgramExecutable::destroy(JSCell* cell)
@@ -251,7 +251,8 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         if (vm.typeProfiler() || vm.controlFlowProfiler()) {
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                unlinkedFunctionExecutable->parseMode());
         }
     }
 

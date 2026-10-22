@@ -26,7 +26,7 @@
 #include "config.h"
 #include "AudioDecoderCocoa.h"
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioSampleBufferConverter.h"
 #include "AudioSampleFormat.h"
@@ -66,7 +66,7 @@ class InternalAudioDecoderCocoa : public ThreadSafeRefCountedAndCanMakeThreadSaf
     WTF_MAKE_TZONE_ALLOCATED(InternalAudioDecoderCocoa);
 
 public:
-    static Ref<InternalAudioDecoderCocoa> create(AudioDecoder::OutputCallback&& outputCallback)
+    static Ref<InternalAudioDecoderCocoa> LEGACY_NODELETE create(AudioDecoder::OutputCallback&& outputCallback)
     {
         return adoptRef(*new InternalAudioDecoderCocoa(WTF::move(outputCallback)));
     }
@@ -397,4 +397,4 @@ void InternalAudioDecoderCocoa::close()
 
 } // namespace WebCore
 
-#endif // ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#endif // USE(AVFOUNDATION)

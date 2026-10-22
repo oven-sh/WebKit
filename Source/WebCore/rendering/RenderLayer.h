@@ -484,11 +484,13 @@ public:
     void dirtyChildrenInDOMOrderForSVG();
     void invalidateEnclosingSVGContainerSegmentation();
     bool shouldSkipRepaintAfterLayoutForSVG() const;
+    std::optional<TransformationMatrix> containerTransformForRepaintForSVG() const;
+    void setNeedsFullRepaintIfSVGContainerTransformChanged(const RenderLayerModelObject* repaintContainer);
     bool hasFailedFilterForSVG() const;
-    bool shouldSkipHitTestForSVG() const;
-    void updateAncestorDependentStateForSVG();
-    bool isCompositedSVGPaintOrderChild() const;
-    bool paintsInlineInSVGContainer() const;
+    bool LEGACY_NODELETE shouldSkipHitTestForSVG() const;
+    void LEGACY_NODELETE updateAncestorDependentStateForSVG();
+    bool LEGACY_NODELETE isCompositedSVGPaintOrderChild() const;
+    bool LEGACY_NODELETE paintsInlineInSVGContainer() const;
     bool isFlattenedByEnclosingSVGReferenceFilter() const;
 
     void repaintIncludingDescendants();
@@ -592,7 +594,7 @@ public:
     void clearClipRectsIncludingDescendants(ClipRectsType typeToClear = AllClipRectTypes);
     void clearClipRects(ClipRectsType typeToClear = AllClipRectTypes);
 
-    void addBlockSelectionGapsBounds(const LayoutRect&);
+    void LEGACY_NODELETE addBlockSelectionGapsBounds(const LayoutRect&);
     void LEGACY_NODELETE clearBlockSelectionGapsBounds();
     void repaintBlockSelectionGaps();
 
@@ -822,11 +824,12 @@ public:
     // Can pass offsetFromRoot if known.
     LayoutRect calculateLayerBounds(const RenderLayer* ancestorLayer, const LayoutSize& offsetFromRoot, OptionSet<CalculateLayerBoundsFlag> = defaultCalculateLayerBoundsFlags()) const;
     
-    LayoutRect repaintRectIncludingNonCompositingDescendants() const;
+    LayoutRect LEGACY_NODELETE repaintRectIncludingNonCompositingDescendants() const;
 
     void LEGACY_NODELETE setRepaintStatus(RepaintStatus);
     RepaintStatus repaintStatus() const { return m_repaintStatus; }
     bool needsFullRepaint() const { return m_repaintStatus == RepaintStatus::NeedsFullRepaint || m_repaintStatus == RepaintStatus::NeedsFullRepaintForOutOfFlowMovementLayout; }
+    bool LEGACY_NODELETE scheduledFullRepaintCoversContentPaintedBy(const RenderLayer& paintingLayer) const;
 
     LayoutUnit staticInlinePosition() const { return m_offsetForPosition.width(); }
     LayoutUnit staticBlockPosition() const { return m_offsetForPosition.height(); }
@@ -1045,7 +1048,7 @@ private:
     void updateAncestorDependentState();
 
     // SVG-specific methods -- defined in RenderLayerSVGAdditions.cpp.
-    bool setupClipPathIfNeededForSVG(OptionSet<PaintLayerFlag>&);
+    bool LEGACY_NODELETE setupClipPathIfNeededForSVG(OptionSet<PaintLayerFlag>&);
     void paintResourceCorrectedChildLayerForSVG(GraphicsContext&, RenderLayer& childLayer, const LayerPaintingInfo&, OptionSet<PaintLayerFlag>, LayoutSize correction) const;
     bool paintForegroundForFragmentsForSVG(const LayerFragments&, GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintBehavior>, RenderObject*);
     void paintNegativeZOrderChildrenForSVG(GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintLayerFlag>);
@@ -1297,7 +1300,7 @@ private:
 
     RenderLayer* transparentPaintingAncestor(const LayerPaintingInfo&);
     void beginTransparencyLayers(GraphicsContext&, const LayerPaintingInfo&, const LayoutRect& dirtyRect);
-    bool blendModeAppliesToSVGRootContentsOnly() const;
+    bool LEGACY_NODELETE blendModeAppliesToSVGRootContentsOnly() const;
 
     HitLayer hitTestLayer(RenderLayer* rootLayer, RenderLayer* containerLayer, const HitTestRequest&, HitTestResult&,
         const LayoutRect& hitTestRect, const HitTestLocation&, bool appliedTransform,
@@ -1568,6 +1571,7 @@ private:
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(SVGData);
         bool isPaintingResourceLayer { false };
         bool childrenInDOMOrderDirty { true };
+        std::optional<TransformationMatrix> containerTransformForRepaintRects;
         SingleThreadWeakPtr<RenderSVGHiddenContainer> enclosingHiddenOrResourceContainer;
         Vector<SVGPaintOrderLayerItem> childrenInDOMOrder;
     };

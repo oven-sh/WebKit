@@ -151,6 +151,7 @@
 #include "JSFile.h"
 #include "JSInternals.h"
 #include "JSNode.h"
+#include "LayoutIntegrationLineLayout.h"
 #include "LegacySchemeRegistry.h"
 #include "LoaderStrategy.h"
 #include "LocalDOMWindow.h"
@@ -210,6 +211,7 @@
 #include "RTCNetworkManager.h"
 #include "Range.h"
 #include "ReadableStream.h"
+#include "RenderBlockFlow.h"
 #include "RenderEmbeddedObject.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerCompositor.h"
@@ -523,7 +525,7 @@ private:
 };
 
 InspectorStubFrontend::InspectorStubFrontend(Page& inspectedPage, LocalFrame& mainFrame, RefPtr<LocalDOMWindow>&& frontendWindow)
-    : InspectorFrontendClientLocal(&inspectedPage.inspectorController(), frontendWindow->document()->page(), makeUnique<InspectorFrontendClientLocal::Settings>(), InspectorFrontendClientLocal::DispatchBackendTarget::MainFrame)
+    : InspectorFrontendClientLocal(&inspectedPage.inspectorController(), protect(frontendWindow->document()->page()), makeUnique<InspectorFrontendClientLocal::Settings>(), InspectorFrontendClientLocal::DispatchBackendTarget::MainFrame)
     , m_frontendWindow(frontendWindow.copyRef())
     , m_mainFrameInspectorController(mainFrame.inspectorController())
 {
@@ -638,6 +640,7 @@ Internals::~Internals()
 void Internals::resetToConsistentState(Page& page)
 {
     page.setPageScaleFactor(1, IntPoint(0, 0));
+    LayoutIntegration::LineLayout::setCollectsLayoutInfoForTesting(false);
     page.setPagination(Pagination());
 
     CachedMatchFinder::setMaximumRunCountForTesting(std::nullopt);
@@ -965,7 +968,7 @@ static String styleValidityToToString(Style::Validity validity)
 
 String Internals::styleChangeType(Node& node)
 {
-    node.document().styleScope().flushPendingUpdate();
+    protect(node.document().styleScope())->flushPendingUpdate();
 
     return styleValidityToToString(node.styleValidity());
 }
@@ -1682,7 +1685,7 @@ float Internals::usedOutlineOffset(Element& element)
     CheckedPtr style = element.computedStyle();
     if (!style)
         return 0;
-    return Style::evaluate<float>(style->usedOutlineOffset(), style->usedZoomForLength(), style->deviceScaleFactor());
+    return Style::evaluate<float>(Style::effectiveOutlineOffset(*style), style->usedZoomForLength(), style->deviceScaleFactor());
 }
 
 String Internals::computedAppleColorFilter(Element& element)
@@ -2267,7 +2270,7 @@ ExceptionOr<Ref<DOMRectList>> Internals::inspectorHighlightRects()
         return Exception { ExceptionCode::InvalidAccessError };
 
     InspectorOverlay::Highlight highlight;
-    document->page()->inspectorController().getHighlight(highlight, InspectorOverlay::CoordinateSystem::View);
+    protect(document->page()->inspectorController())->getHighlight(highlight, InspectorOverlay::CoordinateSystem::View);
     return DOMRectList::create(highlight.quads);
 }
 
@@ -2277,7 +2280,7 @@ ExceptionOr<unsigned> Internals::inspectorPaintRectCount()
     if (!document || !document->page())
         return Exception { ExceptionCode::InvalidAccessError };
 
-    return document->page()->inspectorController().paintRectCount();
+    return protect(document->page()->inspectorController())->paintRectCount();
 }
 
 ExceptionOr<unsigned> Internals::markerCountForNode(Node& node, const String& markerType)
@@ -4691,6 +4694,42 @@ ExceptionOr<unsigned> Internals::layoutUpdateCount()
     return document->view()->layoutUpdateCount();
 }
 
+void Internals::setInlineLayoutInfoCollectionEnabled(bool enabled)
+{
+    LayoutIntegration::LineLayout::setCollectsLayoutInfoForTesting(enabled);
+}
+
+ExceptionOr<Internals::InlineLayoutInfo> Internals::lastInlineLayoutInfo(Element& element)
+{
+    protect(element.document())->updateLayout(LayoutOptions::IgnorePendingStylesheets);
+
+    CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(element.renderer());
+    CheckedPtr inlineLayout = blockFlow ? blockFlow->inlineLayout() : nullptr;
+    auto* layoutInfo = inlineLayout ? inlineLayout->layoutInfoForTesting() : nullptr;
+    if (!layoutInfo)
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    auto range = [&] {
+        switch (layoutInfo->range) {
+        case Layout::InlineLayoutResult::Range::Full:
+            return "Full"_s;
+        case Layout::InlineLayoutResult::Range::FullFromDamage:
+            return "FullFromDamage"_s;
+        case Layout::InlineLayoutResult::Range::PartialFromDamage:
+            return "PartialFromDamage"_s;
+        }
+        ASSERT_NOT_REACHED();
+        return ""_s;
+    };
+    return InlineLayoutInfo {
+        layoutInfo->sequenceNumber,
+        range(),
+        layoutInfo->isFromMaximumIntrinsicWidthLine,
+        static_cast<unsigned>(layoutInfo->laidOutLineCount),
+        static_cast<unsigned>(layoutInfo->reusedLineCount)
+    };
+}
+
 ExceptionOr<void> Internals::startTrackingRenderLayerPositionUpdates()
 {
     RefPtr document = contextDocument();
@@ -4746,6 +4785,24 @@ ExceptionOr<unsigned> Internals::renderingUpdateCount()
         return Exception { ExceptionCode::InvalidAccessError };
 
     return document->page()->renderingUpdateCount();
+}
+
+ExceptionOr<unsigned> Internals::sentFrameViewportInfoCount()
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->page())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    return document->page()->sentFrameViewportInfoCountForTesting();
+}
+
+ExceptionOr<unsigned> Internals::sentFrameGeometryCount()
+{
+    RefPtr document = contextDocument();
+    if (!document || !document->page())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    return document->page()->sentFrameGeometryCountForTesting();
 }
 
 ExceptionOr<std::optional<double>> Internals::timeToNextRenderingUpdate()
@@ -4892,7 +4949,7 @@ ExceptionOr<String> Internals::getCurrentCursorInfo()
         return Exception { ExceptionCode::InvalidAccessError };
 
 #if !PLATFORM(IOS_FAMILY)
-    Cursor cursor = document->frame()->eventHandler().currentMouseCursor();
+    Cursor cursor = protect(document->frame()->eventHandler())->currentMouseCursor();
 
     StringBuilder result;
     result.append("type="_s, cursorTypeToString(cursor.type()), " hotSpot="_s, cursor.hotSpot().x(), ',', cursor.hotSpot().y());
@@ -6767,13 +6824,13 @@ bool Internals::isProcessingUserGesture()
 
 void Internals::withUserGesture(Ref<VoidCallback>&& callback)
 {
-    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, contextDocument());
+    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, protect(contextDocument()));
     callback->invoke();
 }
 
 void Internals::withoutUserGesture(Ref<VoidCallback>&& callback)
 {
-    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::No, contextDocument());
+    UserGestureIndicator gestureIndicator(IsProcessingUserGesture::No, protect(contextDocument()));
     callback->invoke();
 }
 
@@ -7117,6 +7174,12 @@ Vector<int> Internals::webglMaxDrawingBufferSize(WebGLRenderingContextBase& cont
         return { };
     auto size = gl->maxDrawingBufferSize();
     return { size[0], size[1] };
+}
+
+Vector<int> Internals::webglDefaultFramebufferAllocatedSize(WebGLRenderingContextBase& context)
+{
+    auto size = context.defaultFramebufferAllocatedSize();
+    return { size.width(), size.height() };
 }
 #endif
 
@@ -8313,6 +8376,11 @@ bool Internals::isRemoteUIAppForAccessibility()
     return false;
 }
 
+bool Internals::isIOKitAvailable()
+{
+    return false;
+}
+
 bool Internals::hasSandboxIOKitOpenAccessToClass(const String& process, const String& ioKitClass)
 {
     UNUSED_PARAM(process);
@@ -8707,7 +8775,7 @@ void Internals::acceptTypedArrays(Int32Array&)
 
 Internals::SelectorFilterHashCounts Internals::selectorFilterHashCounts(const String& selector)
 {
-    auto selectorList = CSSSelectorParser::parseSelectorList(selector, CSSParserContext(*contextDocument()));
+    auto selectorList = CSSSelectorParser::parseSelectorList(selector, CSSParserContext(*protect(contextDocument())));
     if (!selectorList)
         return { };
 

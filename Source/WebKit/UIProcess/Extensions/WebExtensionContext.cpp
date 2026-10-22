@@ -123,6 +123,20 @@ Vector<Ref<API::Error>> WebExtensionContext::errors()
     return array;
 }
 
+void WebExtensionContext::didEncounterScriptError(const String& message, const String& sourceURL, uint32_t lineNumber, uint32_t columnNumber, WebExtensionContentWorldType)
+{
+    auto path = sourceURL.isEmpty() ? String() : URL(sourceURL).path().toString();
+    if (path.startsWith('/'))
+        path = path.substring(1);
+    auto location = !path.isEmpty() ? (columnNumber ? makeString(path, ':', lineNumber, ':', columnNumber) : makeString(path, ':', lineNumber)) : String();
+    String description;
+    if (message.isEmpty())
+        description = !location.isEmpty() ? makeString('(', location, ')') : String();
+    else
+        description = !location.isEmpty() ? makeString(message, " ("_s, location, ')') : message;
+    recordError(createError(Error::ScriptExecutionError, description));
+}
+
 String WebExtensionContext::stateFilePath() const
 {
     if (!storageIsPersistent())
@@ -145,6 +159,25 @@ void WebExtensionContext::setBaseURL(URL&& url)
 bool WebExtensionContext::isURLForThisExtension(const URL& url) const
 {
     return url.isValid() && protocolHostAndPortAreEqual(baseURL(), url);
+}
+
+bool WebExtensionContext::canOpenURLInNewTabOrWindow(const URL& url) const
+{
+    if (url.protocolIsJavaScript())
+        return false;
+
+    if (url.protocolIsFile())
+        return hasAccessToFileURLs();
+
+    return true;
+}
+
+String WebExtensionContext::unsupportedURLForNewTabOrWindowMessage(const URL& url) const
+{
+    if (url.protocolIsJavaScript())
+        return "it cannot be a JavaScript URL"_s;
+
+    return "it cannot be a local file URL"_s;
 }
 
 bool WebExtensionContext::isURLForAnyExtension(const URL& url)

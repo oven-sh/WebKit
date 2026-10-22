@@ -73,7 +73,6 @@
 #import "PluginDocument.h"
 #import "PluginViewBase.h"
 #import "Range.h"
-#import "RenderInline.h"
 #import "RenderObjectInlines.h"
 #import "RenderTextControl.h"
 #import "RenderView.h"
@@ -1850,7 +1849,7 @@ static id handleTableSelectedRowsAttribute(WebAccessibilityObjectWrapper*, AXCor
     return selectedChildren.size() ? makeNSArray(WTF::move(selectedChildren)) : nil;
 }
 
-static id handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
+static id LEGACY_NODELETE handleSelectedColumnsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject&)
 {
     return nil;
 }
@@ -2776,7 +2775,17 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
     return [self _accessibilityHitTest:point returnPlatformElements:YES];
 }
 
+- (id)_accessibilityHitTestForScreenPoint:(NSPoint)point
+{
+    return [self _accessibilityHitTest:point returnPlatformElements:YES pointIsInScreenSpace:YES];
+}
+
 - (id)_accessibilityHitTest:(NSPoint)point returnPlatformElements:(BOOL)returnPlatformElements
+{
+    return [self _accessibilityHitTest:point returnPlatformElements:returnPlatformElements pointIsInScreenSpace:NO];
+}
+
+- (id)_accessibilityHitTest:(NSPoint)point returnPlatformElements:(BOOL)returnPlatformElements pointIsInScreenSpace:(BOOL)pointIsInScreenSpace
 {
     RefPtr<AXCoreObject> backingObject = self.updateObjectBackingStore;
     if (!backingObject)
@@ -2784,7 +2793,14 @@ id attributeValueForTesting(const RefPtr<AXCoreObject>& backingObject, NSString 
 
     if (RefPtr axObject = dynamicDowncast<AccessibilityObject>(backingObject))
         axObject->updateChildrenIfNecessary();
-    RefPtr axObject = backingObject->accessibilityHitTest(IntPoint(point));
+
+    RefPtr<AXCoreObject> axObject;
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    if (RefPtr isolatedObject = pointIsInScreenSpace ? dynamicDowncast<AXIsolatedObject>(backingObject) : nullptr)
+        axObject = isolatedObject->accessibilityHitTestForScreenPoint(IntPoint(point));
+    else
+#endif
+        axObject = backingObject->accessibilityHitTest(IntPoint(point));
 
     RetainPtr<id> hit = nil;
     if (axObject) {

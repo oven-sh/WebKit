@@ -203,7 +203,7 @@ public:
     WEBCORE_EXPORT void injectUserScripts(UserScriptInjectionTime);
     WEBCORE_EXPORT void injectUserScriptImmediately(DOMWrapperWorld&, const UserScript&);
     UserContentProvider* LEGACY_NODELETE userContentProvider();
-    const UserContentProvider* userContentProvider() const;
+    const UserContentProvider* LEGACY_NODELETE userContentProvider() const;
     WEBCORE_EXPORT bool LEGACY_NODELETE hasUserContentProvider(const UserContentProvider&);
 
     WEBCORE_EXPORT String trackedRepaintRectsAsText() const;
@@ -375,7 +375,7 @@ public:
     const FrameConsoleClient& console() const { return m_consoleClient.get(); }
 
     // The debugger to attach to this frame's global objects.
-    JSC::Debugger* debugger() const LIFETIME_BOUND;
+    JSC::Debugger* LEGACY_NODELETE debugger() const LIFETIME_BOUND;
 
 protected:
     void frameWasDisconnectedFromOwner() const final;

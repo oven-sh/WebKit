@@ -48,7 +48,6 @@ class HitTestResult;
 class RenderBlockFlow;
 class RenderBox;
 class RenderBoxModelObject;
-class RenderInline;
 class RenderListOutsideMarker;
 struct PaintInfo;
 struct SVGTextFragment;
@@ -108,7 +107,7 @@ public:
     LayoutRect inkOverflowBoundingBoxRectFor(const RenderBoxModelObject&) const;
     Vector<FloatRect> collectInlineBoxRects(const RenderBoxModelObject&) const;
 
-    LayoutUnit contentLogicalHeight() const;
+    LayoutUnit LEGACY_NODELETE contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
     bool LEGACY_NODELETE hasEllipsisInBlockDirectionOnLastFormattedLine() const;
     bool contentFitsWithinMaximumLines() const { return m_inlineContent && m_inlineContent->contentFitsWithinMaximumLines(); }
@@ -134,8 +133,8 @@ public:
     InlineIterator::InlineBoxIterator firstInlineBoxFor(const RenderBoxModelObject&) const;
     InlineIterator::InlineBoxIterator firstRootInlineBox() const;
     InlineIterator::BoxIterator lastBox() const;
-    InlineIterator::LineBoxIterator firstLineBox() const;
-    InlineIterator::LineBoxIterator lastLineBox() const;
+    InlineIterator::LineBoxIterator LEGACY_NODELETE firstLineBox() const;
+    InlineIterator::LineBoxIterator LEGACY_NODELETE lastLineBox() const;
 
     const RenderBlockFlow& flow() const { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
     RenderBlockFlow& flow() { return downcast<RenderBlockFlow>(*m_rootLayoutBox->rendererForIntegration()); }
@@ -165,16 +164,32 @@ public:
 
     bool LEGACY_NODELETE hasBlocks() const;
 
+    // The last layout() pass. A pagination restart runs a second pass from inside layout().
+    struct LayoutInfoForTesting {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(LayoutInfoForTesting);
+        // Increases with every inline layout of any block container.
+        uint64_t sequenceNumber { 0 };
+        Layout::InlineLayoutResult::Range range { Layout::InlineLayoutResult::Range::Full };
+        bool isFromMaximumIntrinsicWidthLine { false };
+        size_t laidOutLineCount { 0 };
+        // Lines kept from the previous layout.
+        size_t reusedLineCount { 0 };
+    };
+    WEBCORE_EXPORT static void LEGACY_NODELETE setCollectsLayoutInfoForTesting(bool);
+    const LayoutInfoForTesting* layoutInfoForTesting() const { return m_layoutInfoForTesting.get(); }
+
 private:
     void preparePlacedFloats();
     FloatRect constructContent(const Layout::InlineLayoutState&, std::unique_ptr<Layout::InlineLayoutResult>&&);
+    static std::unique_ptr<LayoutInfoForTesting> collectLayoutInfoForTesting(const Layout::InlineLayoutResult*);
+    void setLayoutInfoForTesting(std::unique_ptr<LayoutInfoForTesting>&&);
     Vector<LineAdjustment> adjustContentForPagination(const Layout::BlockLayoutState&, bool isPartialLayout);
     void updateRenderTreePositions(const Vector<LineAdjustment>&, const Layout::InlineLayoutState&, bool didDiscardContent);
 
     InlineContent& ensureInlineContent() LIFETIME_BOUND;
     Layout::BlockFormattingState& ensureBlockFormattingState() LIFETIME_BOUND;
     Layout::InlineContentCache& ensureInlineContentCache() LIFETIME_BOUND;
-    const Layout::InlineItemList& inlineItemsForInvalidation() const LIFETIME_BOUND;
+    const Layout::InlineItemList& LEGACY_NODELETE inlineItemsForInvalidation() const LIFETIME_BOUND;
 
     Layout::LayoutState& layoutState() LIFETIME_BOUND { return *m_layoutState; }
     const Layout::LayoutState& layoutState() const LIFETIME_BOUND { return *m_layoutState; }
@@ -208,6 +223,7 @@ private:
     std::unique_ptr<Layout::InlineDamage> m_lineDamage;
     std::unique_ptr<InlineContent> m_inlineContent;
     BoxGeometryUpdater m_boxGeometryUpdater;
+    std::unique_ptr<LayoutInfoForTesting> m_layoutInfoForTesting;
 };
 
 }

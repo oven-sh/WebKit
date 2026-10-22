@@ -156,6 +156,6 @@ private:
     bool LEGACY_NODELETE shouldPopPath(unsigned);
 };
 
-WTF_EXPORT_PRIVATE bool isForbiddenHostCodePoint(char16_t);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE isForbiddenHostCodePoint(char16_t);
 
 }

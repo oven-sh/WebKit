@@ -34,7 +34,6 @@
 #include "PaintInfoInlines.h"
 #include "RenderBox.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextBoxPainter.h"
@@ -196,8 +195,8 @@ void InlineContentPainter::paint()
     paintLineEndingEllipsisIfApplicable({ });
 
     OutlinePainter outlinePainter { m_paintInfo };
-    for (CheckedRef renderInline : m_outlineObjects)
-        outlinePainter.paintOutline(renderInline, m_paintOffset);
+    for (CheckedRef inlineBox : m_outlineObjects)
+        outlinePainter.paintOutline(inlineBox, m_paintOffset);
 }
 
 LayoutPoint InlineContentPainter::flippedContentOffsetIfNeeded(const RenderBox& childRenderer) const

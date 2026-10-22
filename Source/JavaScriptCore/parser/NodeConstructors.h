@@ -715,11 +715,12 @@ namespace JSC {
     {
     }
 
-    inline CoalesceNode::CoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool hasAbsorbedOptionalChain)
+    inline CoalesceNode::CoalesceNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool hasAbsorbedOptionalChain, int optionalChainEndOffset)
         : ExpressionNode(location, ResultType::forCoalesce(expr1->resultDescriptor(), expr2->resultDescriptor()))
         , m_expr1(expr1)
         , m_expr2(expr2)
         , m_hasAbsorbedOptionalChain(hasAbsorbedOptionalChain)
+        , m_optionalChainEndOffset(optionalChainEndOffset)
     {
     }
 

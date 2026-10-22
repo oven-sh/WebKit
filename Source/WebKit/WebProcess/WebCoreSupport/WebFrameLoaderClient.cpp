@@ -131,14 +131,13 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
     RefPtr coreLocalFrame = m_frame->coreLocalFrame();
     RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
 
-    auto originator = webPage->takeMainFrameNavigationInitiator();
+    auto originator = m_frame->isMainFrame() ? webPage->takeMainFrameNavigationInitiator() : nullptr;
 
     std::optional<WebPageProxyIdentifier> originatingPageID;
     if (RefPtr webPage = requester.pageID ? WebProcess::singleton().webPage(*requester.pageID) : nullptr)
         originatingPageID = webPage->webPageProxyIdentifier();
 
     auto originatingFrameInfoData = originator ? FrameInfoData { WTF::move(*originator) } : FrameInfoData {
-        FrameType::Local,
         ResourceRequest { URL { requester.url } },
         requester.securityOrigin->data(),
         { },
@@ -302,12 +301,6 @@ void WebFrameLoaderClient::setPrinting(bool printing, FloatSize pageSize, FloatS
 {
     if (RefPtr webPage = m_frame->page())
         webPage->send(Messages::WebPageProxy::SetFramePrinting(m_frame->frameID(), printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize));
-}
-
-void WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
-{
-    if (RefPtr webPage = m_frame->page())
-        webPage->send(Messages::WebPageProxy::BroadcastAllFrameTreeSyncData(m_frame->frameID(), data));
 }
 
 void WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeSyncSerializationData&& data)

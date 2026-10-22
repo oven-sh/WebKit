@@ -1,2 +1,2 @@
-[ macOS ] mac/DOM/WebDOMOperations.mm
-[ macOS ] mac/WebInspector/WebNodeHighlightView.mm
+[ iOS ] ios/WebCoreSupport/WebChromeClientIOS.mm
+[ iOS ] mac/WebView/WebFrame.mm

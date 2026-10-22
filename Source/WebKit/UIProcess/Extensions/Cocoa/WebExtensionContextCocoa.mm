@@ -37,6 +37,7 @@
 #import "APIContentRuleListStore.h"
 #import "APIData.h"
 #import "APIPageConfiguration.h"
+#import "APIWebsitePolicies.h"
 #import "CocoaHelpers.h"
 #import "ContextMenuContextData.h"
 #import "FormDataReference.h"
@@ -270,20 +271,6 @@ void WebExtensionContext::clearError(Error error)
     dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([this, protectedThis = Ref { *this }]() {
         [NSNotificationCenter.defaultCenter postNotificationName:WKWebExtensionContextErrorsDidUpdateNotification object:wrapper() userInfo:nil];
     }).get());
-}
-
-void WebExtensionContext::didEncounterScriptError(const String& message, const String& sourceURL, uint32_t lineNumber, uint32_t columnNumber, WebExtensionContentWorldType)
-{
-    auto path = sourceURL.isEmpty() ? String() : URL(sourceURL).path().toString();
-    if (path.startsWith('/'))
-        path = path.substring(1);
-    auto location = !path.isEmpty() ? (columnNumber ? makeString(path, ':', lineNumber, ':', columnNumber) : makeString(path, ':', lineNumber)) : String();
-    String description;
-    if (message.isEmpty())
-        description = !location.isEmpty() ? makeString('(', location, ')') : String();
-    else
-        description = !location.isEmpty() ? makeString(message, " ("_s, location, ')') : message;
-    recordError(createError(Error::ScriptExecutionError, description));
 }
 
 std::expected<bool, RefPtr<API::Error>> WebExtensionContext::load(WebExtensionController& controller, String storageDirectory)
@@ -2626,6 +2613,10 @@ WKWebViewConfiguration *WebExtensionContext::webViewConfiguration(WebViewPurpose
     // By default extension URLs are masked, for extension pages we can relax this.
     configuration._maskedURLSchemes = [NSSet set];
 
+    Ref pageConfiguration = *configuration->_pageConfiguration;
+    pageConfiguration->setDefaultWebsitePolicies(protect(pageConfiguration->defaultWebsitePolicies())->copy());
+    [configuration.defaultWebpagePreferences _setContentRuleListsEnabled:NO exceptions:[NSSet setWithObject:uniqueIdentifier().createNSString().get()]];
+
     configuration.defaultWebpagePreferences._autoplayPolicy = _WKWebsiteAutoplayPolicyAllow;
 
     if (purpose == WebViewPurpose::Tab) {
@@ -3521,11 +3512,18 @@ void WebExtensionContext::compileDeclarativeNetRequestRules(NSDictionary *rulesD
         NSArray<NSString *> *parsingErrorStrings;
         auto *allConvertedRules = [_WKWebExtensionDeclarativeNetRequestTranslator translateRules:allJSONObjects errorStrings:&parsingErrorStrings];
 
+        NSArray<NSString *> *errorStringsToRecord = jsonDeserializationErrorStrings;
 #if ENABLE(DNR_ON_RULE_MATCHED_DEBUG)
-        RefPtr extension = m_extension;
-        for (NSString *errorString in parsingErrorStrings)
-            recordError(extension->createError(WebExtension::Error::InvalidDeclarativeNetRequest, errorString));
+        errorStringsToRecord = [errorStringsToRecord arrayByAddingObjectsFromArray:parsingErrorStrings];
 #endif
+
+        if (errorStringsToRecord.count) {
+            dispatch_async(mainDispatchQueueSingleton(), makeBlockPtr([this, protectedThis = Ref { *this }, errorStringsToRecord = RetainPtr { errorStringsToRecord }] {
+                RefPtr extension = m_extension;
+                for (NSString *errorString in errorStringsToRecord.get())
+                    recordError(extension->createError(WebExtension::Error::InvalidDeclarativeNetRequest, errorString));
+            }).get());
+        }
 
         auto *webKitRules = encodeJSONString(allConvertedRules, JSONOptions::FragmentsAllowed);
         if (!webKitRules) {

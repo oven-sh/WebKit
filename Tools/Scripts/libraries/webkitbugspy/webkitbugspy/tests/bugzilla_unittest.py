@@ -26,6 +26,7 @@ import logging
 import re
 import time
 import unittest
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from webkitcorepy import OutputCapture
@@ -218,6 +219,181 @@ class TestBugzilla(unittest.TestCase):
         with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES):
             self.assertEqual(bugzilla.Tracker(self.URL).issue(2).attachments, [])
             self.assertEqual(bugzilla.Tracker(self.URL).issue(2).patches, [])
+
+    def test_add_attachment(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )):
+            issue = bugzilla.Tracker(self.URL).issue(1)
+            self.assertEqual([attachment.name for attachment in issue.attachments], ['fix.patch', 'notes.txt'])
+
+            added = issue.add_attachment('screenshot.png', b'PNG BYTES', content_type='image/png', summary='A screenshot')
+            self.assertEqual(added.name, 'screenshot.png')
+            self.assertEqual(added.content_type, 'image/png')
+            self.assertEqual(added.contents(), b'PNG BYTES')
+            self.assertEqual([attachment.name for attachment in issue.attachments], ['fix.patch', 'notes.txt', 'screenshot.png'])
+
+            attachments = bugzilla.Tracker(self.URL).issue(1).attachments
+            self.assertEqual([attachment.name for attachment in attachments], ['fix.patch', 'notes.txt', 'screenshot.png'])
+            self.assertEqual(attachments[2].content_type, 'image/png')
+            self.assertEqual(attachments[2].contents(), b'PNG BYTES')
+
+    def test_add_attachment_before_listing(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )):
+            issue = bugzilla.Tracker(self.URL).issue(2)
+            issue.add_attachment('notes.txt', b'some notes')
+            self.assertEqual([attachment.name for attachment in issue.attachments], ['notes.txt'])
+            self.assertEqual(issue.attachments[0].contents(), b'some notes')
+
+    def test_add_attachment_request(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )) as mock:
+            issue = bugzilla.Tracker(self.URL).issue(2)
+            with patch.object(mock, 'request', wraps=mock.request) as request:
+                issue.add_attachment('crash.log', b'LOG', content_type='text/x-log', summary='Crash log')
+
+            posts = [call for call in request.call_args_list if call.args[0] == 'POST']
+            self.assertEqual(len(posts), 1)
+            self.assertTrue(posts[0].args[1].startswith('{}/rest/bug/2/attachment?login='.format(self.URL)))
+            self.assertEqual(
+                posts[0].kwargs['json'],
+                dict(ids=[2], data='TE9H', file_name='crash.log', summary='Crash log', content_type='text/x-log'),
+            )
+            self.assertEqual(posts[0].kwargs['timeout'], bugzilla.Tracker.DEFAULT_TIMEOUT)
+
+    def test_add_attachment_defaults(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )) as mock:
+            issue = bugzilla.Tracker(self.URL).issue(2)
+            with patch.object(mock, 'request', wraps=mock.request) as request:
+                issue.add_attachment('build-log.txt', b'LOG')
+                issue.add_attachment('artifact.unknownextension', b'DATA')
+
+            payloads = [call.kwargs['json'] for call in request.call_args_list if call.args[0] == 'POST']
+            self.assertEqual(
+                [(payload['file_name'], payload['summary'], payload['content_type']) for payload in payloads], [
+                    ('build-log.txt', 'build-log.txt', 'text/plain'),
+                    ('artifact.unknownextension', 'artifact.unknownextension', 'application/octet-stream'),
+                ],
+            )
+
+    def test_add_attachment_refused(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )), OutputCapture() as captured:
+            tracker = bugzilla.Tracker(self.URL)
+            issue = tracker.issue(2)
+            self.assertEqual(issue.attachments, [])
+
+            with self.assertRaises(RuntimeError) as caught:
+                issue.add_attachment('empty.txt', b'')
+            self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 400: The attachment is empty.')
+            self.assertEqual(issue.attachments, [])
+            self.assertEqual(bugzilla.Tracker(self.URL).issue(2).attachments, [])
+            self.assertEqual(tracker._logins_left, 4)
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_add_attachment_missing_bug(self):
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )):
+            tracker = bugzilla.Tracker(self.URL)
+            with self.assertRaises(RuntimeError) as caught:
+                tracker.issue(100).add_attachment('notes.txt', b'some notes')
+            self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 404: Bug #100 does not exist.')
+            self.assertEqual(tracker._logins_left, 4)
+
+    def test_add_attachment_refused_login(self):
+        def refused_login(mock, url, id, credentials, data):
+            response = error_response(url, 401, 300, 'The username or password you entered is not valid.')
+            response.reason = 'Unauthorized'
+            return response
+
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )), patch.object(mocks.Bugzilla, '_post_attachment', refused_login):
+            tracker = bugzilla.Tracker(self.URL)
+            with self.assertRaises(RuntimeError) as caught:
+                tracker.issue(2).add_attachment('notes.txt', b'some notes')
+            self.assertEqual(
+                str(caught.exception),
+                'Bugzilla attachment POST returned 401: The username or password you entered is not valid.',
+            )
+            self.assertEqual(tracker._logins_left, 3)
+
+    def test_add_attachment_refused_without_a_message(self):
+        def refusal(text):
+            def bad_gateway(mock, url, id, credentials, data):
+                response = wkmocks.Response(url=url, status_code=502, text=text)
+                response.reason = 'Server Unavailable'
+                return response
+            return bad_gateway
+
+        for text in ('Bad Gateway', json.dumps(dict(error=True, code=32000)), json.dumps(['Bad Gateway'])):
+            with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            )), patch.object(mocks.Bugzilla, '_post_attachment', refusal(text)):
+                tracker = bugzilla.Tracker(self.URL)
+                with self.assertRaises(RuntimeError) as caught:
+                    tracker.issue(2).add_attachment('notes.txt', b'some notes')
+                self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 502: {}'.format(text))
+                self.assertEqual(tracker._logins_left, 4)
+
+    def test_add_attachment_refused_with_an_empty_body(self):
+        def unauthorized(mock, url, id, credentials, data):
+            response = wkmocks.Response(url=url, status_code=401)
+            response.reason = 'Unauthorized'
+            return response
+
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )), patch.object(mocks.Bugzilla, '_post_attachment', unauthorized):
+            tracker = bugzilla.Tracker(self.URL)
+            with self.assertRaises(RuntimeError) as caught:
+                tracker.issue(2).add_attachment('notes.txt', b'some notes')
+            self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 401: Unauthorized')
+            self.assertEqual(tracker._logins_left, 4)
+
+    def test_add_attachment_refused_with_an_empty_body_and_reason(self):
+        def refusal(reason):
+            def unauthorized(mock, url, id, credentials, data):
+                response = wkmocks.Response(url=url, status_code=401)
+                response.reason = reason
+                return response
+            return unauthorized
+
+        for reason in (None, ''):
+            with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            )), patch.object(mocks.Bugzilla, '_post_attachment', refusal(reason)):
+                tracker = bugzilla.Tracker(self.URL)
+                with self.assertRaises(RuntimeError) as caught:
+                    tracker.issue(2).add_attachment('notes.txt', b'some notes')
+                self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 401')
+                self.assertEqual(tracker._logins_left, 4)
+
+        # The mock's own answer to an unknown login has no body, and its response carries no reason at all.
+        with mocks.Bugzilla(self.URL.split('://')[1], issues=ATTACHMENT_ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='nobody@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )):
+            with self.assertRaises(RuntimeError) as caught:
+                bugzilla.Tracker(self.URL).issue(2).add_attachment('notes.txt', b'some notes')
+            self.assertEqual(str(caught.exception), 'Bugzilla attachment POST returned 401')
 
     def test_watchers(self):
         with mocks.Bugzilla(self.URL.split('://')[1], issues=mocks.ISSUES):
@@ -729,6 +905,11 @@ What component in 'WebKit' should the bug be associated with?:
                 "Failed to add comment to 'https://bugs.example.com/show_bug.cgi?id=1 Example issue 1'\n",
             )
 
+            with OutputCapture() as captured, self.assertRaises(RuntimeError) as caught:
+                tracker.issue(1).add_attachment('notes.txt', b'Failed attachment')
+            self.assertEqual(str(caught.exception), 'Exhausted login attempts')
+            self.assertEqual(captured.stderr.getvalue(), '')
+
             with OutputCapture() as captured:
                 self.assertIsNone(tracker.create(
                     'New bug', 'Creating new bug',
@@ -1075,6 +1256,79 @@ What component in 'WebKit' should the bug be associated with?:
                 self.assertEqual(issue.comments[-1].content, '<rdar://problem/1>')
                 # Should have prompted about overwriting
                 self.assertIn('tracking a different bug', captured.stderr.getvalue())
+
+    @contextmanager
+    def importer_cced(self, answer, description):
+        issues = [dict(
+            title='Bug with the importer CCed',
+            timestamp=1639536160,
+            opened=True,
+            creator=mocks.USERS['Tim Contributor'],
+            assignee=mocks.USERS['Tim Contributor'],
+            description=description,
+            project='WebKit',
+            component='Text',
+            version='Other',
+            keywords=[],
+            comments=[],
+            watchers=[
+                mocks.USERS['Tim Contributor'],
+                mocks.USERS['Radar WebKit Bug Importer'],
+            ],
+        )]
+        with wkmocks.Terminal.input(answer), OutputCapture(level=logging.INFO) as captured, mocks.Bugzilla(
+            self.URL.split('://')[1], environment=wkmocks.Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            ), users=mocks.USERS, issues=issues, projects=mocks.PROJECTS,
+        ), mocks.Radar(
+            users=mocks.USERS, issues=mocks.ISSUES, projects=mocks.PROJECTS,
+        ), wkmocks.Time:
+            radar_tracker = radar.Tracker()
+            bugzilla_tracker = bugzilla.Tracker(self.URL, radar_importer=mocks.USERS['Radar WebKit Bug Importer'])
+
+            with patch('webkitbugspy.Tracker._trackers', [radar_tracker, bugzilla_tracker]):
+                yield bugzilla_tracker.issue(1), captured
+
+    def test_cc_radar_importer_already_cced_no_inradar_exit(self):
+        with self.importer_cced('Exit', 'A test issue') as (issue, _):
+            with self.assertRaises(ValueError) as context:
+                issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>'))
+            self.assertEqual(str(context.exception), "Radar Importer is already CC'd")
+            self.assertEqual(issue.comments, [])
+
+    def test_cc_radar_importer_already_cced_no_inradar_default_is_exit(self):
+        with self.importer_cced('', 'A test issue') as (issue, _):
+            with self.assertRaises(ValueError) as context:
+                issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>'))
+            self.assertEqual(str(context.exception), "Radar Importer is already CC'd")
+            self.assertEqual(issue.comments, [])
+
+    def test_cc_radar_importer_already_cced_no_inradar_skip_cc(self):
+        with self.importer_cced('Skip CC', 'A test issue') as (issue, captured):
+            self.assertIsNone(issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>')))
+            self.assertEqual(issue.comments, [])
+            self.assertIn('Skipping CC for', captured.stdout.getvalue())
+
+    def test_cc_radar_importer_already_cced_different_tracked_bug_exit(self):
+        with self.importer_cced('Exit', 'A test issue\n<rdar://problem/2>') as (issue, _):
+            with self.assertRaises(ValueError) as context:
+                issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>'))
+            self.assertEqual(str(context.exception), 'Radar is tracking a different bug')
+            self.assertEqual(issue.comments, [])
+
+    def test_cc_radar_importer_already_cced_different_tracked_bug_default_is_exit(self):
+        with self.importer_cced('', 'A test issue\n<rdar://problem/2>') as (issue, _):
+            with self.assertRaises(ValueError) as context:
+                issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>'))
+            self.assertEqual(str(context.exception), 'Radar is tracking a different bug')
+            self.assertEqual(issue.comments, [])
+
+    def test_cc_radar_importer_already_cced_different_tracked_bug_skip_cc(self):
+        with self.importer_cced('Skip CC', 'A test issue\n<rdar://problem/2>') as (issue, captured):
+            self.assertIsNone(issue.cc_radar(block=True, radar=Tracker.from_string('<rdar://1>')))
+            self.assertEqual(issue.comments, [])
+            self.assertIn('Skipping CC for', captured.stdout.getvalue())
 
     def test_cc_radar_see_also_not_confused_as_tracked_radar(self):
         """When the importer is already CC'd and see-also links reference other

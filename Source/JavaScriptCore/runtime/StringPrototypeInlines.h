@@ -509,22 +509,19 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
 
     CallData callData;
     JSString* replacementCell = nullptr;
-    String replaceString;
-    if (replaceValue.isString()) {
+    if (replaceValue.isString())
         replacementCell = asString(replaceValue);
-        replaceString = replacementCell->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    } else {
+    else {
         callData = JSC::getCallDataInline(replaceValue);
         if (callData.type == CallData::Type::None) {
             replacementCell = replaceValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            replaceString = replacementCell->value(globalObject);
-            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
 
-    if (!replaceString.isNull()) {
+    if (replacementCell) {
+        auto replaceString = replacementCell->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if constexpr (mode == StringReplaceMode::Single)
             RELEASE_AND_RETURN(scope, (stringReplaceStringString<StringReplaceSubstitutions::Yes, StringReplaceUseTable::No, BoyerMooreHorspoolTable<uint8_t>>(globalObject, jsString, string, searchString, replacementCell, replaceString, nullptr)));
         else {
@@ -566,7 +563,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
             replacement = call(globalObject, replaceValue, callData, jsUndefined(), ArgList { args.data(), args.size() });
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
-        replaceString = replacement.toWTFString(globalObject);
+        String replaceString = replacement.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         if (!sourceRanges.tryConstructAndAppend(endOfLastMatch, matchStart)) [[unlikely]] {
@@ -575,7 +572,7 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         }
 
         size_t matchEnd = matchStart + searchStringLength;
-        replacements.append(replaceString);
+        replacements.append(WTF::move(replaceString));
 
         endOfLastMatch = matchEnd;
         if constexpr (mode == StringReplaceMode::Single)
@@ -1239,6 +1236,7 @@ static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObjec
     case Yarr::SpecificPattern::LeadingSpacesStar:
     case Yarr::SpecificPattern::Atom:
     case Yarr::SpecificPattern::Newlines:
+    case Yarr::SpecificPattern::OptionalCRThenLF:
     case Yarr::SpecificPattern::None:
         break;
     }

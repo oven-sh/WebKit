@@ -97,6 +97,7 @@ class SubstituteData;
 class DocumentPrefetcher;
 
 enum class CachePolicy : uint8_t;
+enum class IsSameDocumentNavigation : bool;
 enum class NewLoadInProgress : bool;
 enum class NavigationPolicyDecision : uint8_t;
 enum class ShouldTreatAsContinuingLoad : uint8_t;
@@ -167,7 +168,7 @@ public:
     // FIXME: These are all functions which stop loads. We have too many.
     void stopAllLoadersAndCheckCompleteness();
     WEBCORE_EXPORT void stopAllLoaders(ClearProvisionalItem = ClearProvisionalItem::Yes, StopLoadingPolicy = StopLoadingPolicy::PreventDuringUnloadEvents);
-    WEBCORE_EXPORT void stopForUserCancel(bool deferCheckLoadComplete = false);
+    WEBCORE_EXPORT void stopForUserCancel(DeferCheckLoadComplete = DeferCheckLoadComplete::No, AbortOngoingNavigation = AbortOngoingNavigation::Yes);
     void stopForBackForwardCache();
     void stop();
     void stopLoading(UnloadEventPolicy);
@@ -192,7 +193,7 @@ public:
     FrameState state() const { return m_state; }
 
     enum class CanIncludeCurrentDocumentLoader : bool { No, Yes };
-    WEBCORE_EXPORT RefPtr<DocumentLoader> loaderForWebsitePolicies(CanIncludeCurrentDocumentLoader = CanIncludeCurrentDocumentLoader::Yes) const;
+    WEBCORE_EXPORT RefPtr<DocumentLoader> LEGACY_NODELETE loaderForWebsitePolicies(CanIncludeCurrentDocumentLoader = CanIncludeCurrentDocumentLoader::Yes) const;
 
     bool shouldReportResourceTimingToParentFrame() const { return m_shouldReportResourceTimingToParentFrame; };
     void setShouldReportResourceTimingToParentFrame(bool value) { m_shouldReportResourceTimingToParentFrame = value; }
@@ -311,7 +312,7 @@ public:
 
     bool quickRedirectComing() const { return m_quickRedirectComing; }
 
-    WEBCORE_EXPORT bool shouldReplaceHistoryItemInChildFrame() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE shouldReplaceHistoryItemInChildFrame() const;
 
     WEBCORE_EXPORT bool shouldClose();
 
@@ -376,6 +377,7 @@ public:
 
     void clearDeferredTraversal();
     void resumeDeferredTraversal();
+    bool hasDeferredTraversal() const { return !!m_deferredTraversalItem; }
 
     void setWaitingForDelegatedBackForwardLoad() { m_isWaitingForDelegatedBackForwardLoad = true; }
     WEBCORE_EXPORT void clearWaitingForDelegatedBackForwardLoad();
@@ -391,7 +393,7 @@ public:
 
     bool loadChildHistoryItemIntoFrame(LocalFrame&);
     WEBCORE_EXPORT void continueLoadURLIntoChildFrame(const URL&, const String& referer, LocalFrame&);
-    WEBCORE_EXPORT FrameLoadRequest createFrameLoadRequest(URL&&);
+    WEBCORE_EXPORT FrameLoadRequest createFrameLoadRequest(URL&&, const String& referrer);
 
     bool isDispatchingPageSwapEvent() const  { return m_isDispatchingPageSwapEvent; }
 
@@ -507,6 +509,7 @@ private:
     void updateRequestAndAddExtraFields(Frame&, ResourceRequest&, IsMainResource, FrameLoadType, ShouldUpdateAppInitiatedValue, IsServiceWorkerNavigationLoad, WillOpenInNewWindow, Document*);
 
     NavigateEventDispatchResult dispatchNavigateEvent(FrameLoadType, const FrameLoadRequest&, bool isSameDocument, FormState* = nullptr, Event* = nullptr, SerializedScriptValue* classicHistoryAPIState = nullptr);
+    NavigateEventDispatchResult dispatchNavigateEventForFragmentNavigationFromAnotherProcess(const DocumentLoader&, FrameLoadType, NavigationHistoryBehavior);
     bool shouldDispatchNavigateEventForHistoryTraversal(const HistoryItem&, const HistoryItem* fromItem);
 
     WeakRef<LocalFrame> m_frame;

@@ -62,6 +62,7 @@ class ResolvedColors;
 struct ColorLayers;
 struct ColorMix;
 struct ContrastColor;
+struct KeywordColor;
 struct RelativeAlphaColor;
 template<typename Descriptor> struct RelativeColor;
 
@@ -79,6 +80,7 @@ private:
         UniqueRef<ColorLayers>,
         UniqueRef<ColorMix>,
         UniqueRef<ContrastColor>,
+        UniqueRef<KeywordColor>,
         UniqueRef<RelativeAlphaColor>,
         UniqueRef<RelativeColor<RGBFunctionModernRelative>>,
         UniqueRef<RelativeColor<HSLFunctionModern>>,
@@ -120,6 +122,7 @@ public:
     Color(ColorLayers&&);
     Color(ColorMix&&);
     Color(ContrastColor&&);
+    Color(KeywordColor&&);
     Color(RelativeAlphaColor&&);
     Color(RelativeColor<RGBFunctionModernRelative>&&);
     Color(RelativeColor<HSLFunctionModern>&&);
@@ -148,7 +151,7 @@ public:
 
     bool operator==(const Color&) const;
 
-    static const Color& currentColor();
+    static const Color& LEGACY_NODELETE currentColor();
 
     bool containsCurrentColor() const;
     bool LEGACY_NODELETE isCurrentColor() const;

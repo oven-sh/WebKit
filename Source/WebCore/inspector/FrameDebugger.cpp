@@ -70,13 +70,9 @@ void FrameDebugger::attachDebugger()
 {
     JSC::Debugger::attachDebugger();
 
-    RefPtr frame = m_frame.get();
-    if (!frame)
-        return;
-
     m_isAttachedToFrame = true;
 
-    Ref windowProxy = frame->windowProxy();
+    Ref windowProxy = protect(m_frame)->windowProxy();
     for (auto& jsWindowProxy : windowProxy->jsWindowProxiesAsVector()) {
         auto* globalObject = jsWindowProxy->window();
         if (globalObject && !globalObject->debugger())
@@ -115,7 +111,7 @@ void FrameDebugger::didPause(JSGlobalObject* globalObject)
     ASSERT(!s_pausedFrameDebugger);
     s_pausedFrameDebugger = this;
 
-    DebuggerSuspensionController::frameDebuggerDidPause();
+    DebuggerSuspensionController::frameDebuggerDidPause(protect(m_frame.get()));
 }
 
 void FrameDebugger::didContinue(JSGlobalObject* globalObject)
@@ -158,10 +154,7 @@ void FrameDebugger::runEventLoopWhilePausedInternal()
 {
     TimerBase::fireTimersInNestedEventLoop();
 
-    RefPtr protectedFrame = m_frame.get();
-    if (!protectedFrame)
-        return;
-
+    Ref protectedFrame = m_frame;
     while (!m_doneProcessingDebuggerEvents) {
         if (!platformShouldContinueRunningEventLoopWhilePaused())
             break;

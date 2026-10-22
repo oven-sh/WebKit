@@ -76,7 +76,7 @@
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AVSampleBufferRenderSynchronizerAdditions.mm>)
 #import <WebKitAdditions/AVSampleBufferRenderSynchronizerAdditions.mm>
 #else
-static void setSynchronizerScreenReserved(AVSampleBufferRenderSynchronizer *, bool) { }
+static void LEGACY_NODELETE setSynchronizerScreenReserved(AVSampleBufferRenderSynchronizer *, bool) { }
 #endif
 
 @interface AVSampleBufferDisplayLayer (Staging_100128644)
@@ -316,7 +316,7 @@ void AudioVideoRendererAVFObjC::enqueueSample(TrackIdentifier trackId, Ref<Media
             videoRenderer->enqueueSample(sample, minimumUpcomingTime);
             if (!m_hasEverSubmittedVideoSample) {
                 m_hasEverSubmittedVideoSample = true;
-                m_previousRendererConfiguration.isRenderingCompressedVideo = !isUsingDecompressionSession();
+                m_previousRendererConfiguration.isRenderingCompressedVideo = !isUsingDecompressionSession() && !isReceivingDecodedSamples();
             }
         }
         break;
@@ -1293,6 +1293,7 @@ void AudioVideoRendererAVFObjC::addAudioRenderer(TrackIdentifier trackId)
 
     if (!m_audioTracksMap.add(trackId, AudioTrackProperties()).isNewEntry)
         return;
+    updateAllRenderersHaveAvailableSamples();
 
     RetainPtr renderer = adoptNS([PAL::allocAVSampleBufferAudioRendererInstance() init]);
 
@@ -1335,6 +1336,7 @@ void AudioVideoRendererAVFObjC::removeAudioRenderer(TrackIdentifier trackId)
         m_audioRenderers.remove(trackId);
         ASSERT(m_audioTracksMap.contains(trackId));
         m_audioTracksMap.remove(trackId);
+        updateAllRenderersHaveAvailableSamples();
     }
 }
 
@@ -1807,6 +1809,11 @@ bool AudioVideoRendererAVFObjC::isUsingDecompressionSession() const
     return m_videoRenderer && m_videoRenderer->isUsingDecompressionSession();
 }
 
+bool AudioVideoRendererAVFObjC::isReceivingDecodedSamples() const
+{
+    return m_videoRenderer && m_videoRenderer->isReceivingDecodedSamples();
+}
+
 bool AudioVideoRendererAVFObjC::willUseDecompressionSessionIfNeeded() const
 {
     if (!canUseDecompressionSession())
@@ -1822,7 +1829,7 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::stageVideoRenderer(WebSampleBuffe
     RefPtr videoRenderer = m_videoRenderer;
 
     RendererConfiguration newConfiguration {
-        .isRenderingCompressedVideo = !!renderer && !willUseDecompressionSessionIfNeeded() && m_hasEverSubmittedVideoSample
+        .isRenderingCompressedVideo = !!renderer && !willUseDecompressionSessionIfNeeded() && !isReceivingDecodedSamples() && m_hasEverSubmittedVideoSample
     };
     if (renderer == videoRenderer->renderer()) {
         if (std::exchange(m_previousRendererConfiguration, newConfiguration) != newConfiguration && renderer)

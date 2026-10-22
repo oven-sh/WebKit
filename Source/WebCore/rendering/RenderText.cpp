@@ -50,7 +50,6 @@
 #include "Range.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderCombineText.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
 #include "RenderTextInlines.h"
@@ -162,9 +161,9 @@ static HashMap<SingleThreadWeakRef<const RenderText>, String>& LEGACY_NODELETE o
     return map;
 }
 
-static HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderInline>>& LEGACY_NODELETE inlineWrapperForDisplayContentsMap()
+static HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>& LEGACY_NODELETE inlineWrapperForDisplayContentsMap()
 {
-    static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderInline>>> map;
+    static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>> map;
     return map;
 }
 
@@ -346,7 +345,7 @@ String capitalize(const String& string, char32_t previousCharacter, const AtomSt
     return result == string ? string : result.toString();
 }
 
-static LayoutRect snappedSelectionRect(const LayoutRect& selectionRect, float logicalRight, WritingMode writingMode)
+static LayoutRect LEGACY_NODELETE snappedSelectionRect(const LayoutRect& selectionRect, float logicalRight, WritingMode writingMode)
 {
     auto snappedSelectionRect = enclosingIntRect(selectionRect);
     LayoutUnit logicalWidth = snappedSelectionRect.width();
@@ -399,7 +398,7 @@ static LayoutRect selectionRectForTextBox(const InlineIterator::TextBox& textBox
         }
     }
 
-    auto lineSelectionRect = LineSelection::logicalRect(*textBox.lineBox());
+    auto lineSelectionRect = LineSelection::logicalRect(textBox.lineBox());
     auto selectionRect = LayoutRect { 0, lineSelectionRect.y(), textBox.logicalWidth(), lineSelectionRect.height() };
 
     auto textRun = textBox.textRun();
@@ -638,15 +637,15 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
         }
 
         bool separateLines = false;
-        if (textBox->lineBox()->isFirstAfterPageBreak()) {
+        if (textBox->lineBox().isFirstAfterPageBreak()) {
             // The top of the second line in a column aligns with the bottom of the first line in adjacent columns,
             // which can cause the geometries united, extending the highlight box into unselected content.
             // To prevent this, use setSeparateFromPreviousLine for each column to ensure the geometries won't be united.
             separateLines = true;
             if (textBox->isHorizontal())
-                rect.shiftYEdgeTo(textBox->lineBox()->logicalTop());
+                rect.shiftYEdgeTo(textBox->lineBox().logicalTop());
             else
-                rect.shiftXEdgeTo(textBox->lineBox()->logicalTop());
+                rect.shiftXEdgeTo(textBox->lineBox().logicalTop());
         }
 
         RenderBlock* containingBlock = this->containingBlock();
@@ -675,7 +674,7 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
         bool isFixed = false;
         // FIXME: Remove suppression once rdar://189998444 is fixed.
         SUPPRESS_MEMORY_UNSAFE_CAST auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, &isFixed);
-        bool boxIsHorizontal = !is<InlineIterator::SVGTextBoxIterator>(textBox) ? textBox->isHorizontal() : !writingMode().isVertical();
+        bool boxIsHorizontal = !textBox->isSVGText() ? textBox->isHorizontal() : !writingMode().isVertical();
 
         auto selectionGeometry = SelectionGeometry(absoluteQuad, HTMLElement::selectionRenderingBehavior(protect(textNode())), textBox->direction(), extentsRect.x(), extentsRect.maxX(), extentsRect.maxY(), 0, textBox->isLineBreak(), isFirstOnLine, isLastOnLine, containsStart, containsEnd, boxIsHorizontal, isFixed, view().pageNumberForBlockProgressionOffset(absoluteQuad.enclosingBoundingBox().x()));
         selectionGeometry.setSeparateFromPreviousLine(separateLines);
@@ -686,7 +685,7 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
 static std::optional<IntRect> ellipsisRectForTextBox(const InlineIterator::TextBox& textBox, unsigned start, unsigned end)
 {
     auto lineBox = textBox.lineBox();
-    if (!lineBox->hasEllipsis())
+    if (!lineBox.hasEllipsis())
         return { };
 
     auto selectableRange = textBox.selectableRange();
@@ -701,7 +700,7 @@ static std::optional<IntRect> ellipsisRectForTextBox(const InlineIterator::TextB
     if (ellipsisEndPosition < *selectableRange.truncation && ellipsisStartPosition > *selectableRange.truncation)
         return { };
 
-    return IntRect { lineBox->ellipsisVisualRect(InlineIterator::LineBox::AdjustedForSelection::Yes) };
+    return IntRect { lineBox.ellipsisVisualRect(InlineIterator::LineBox::AdjustedForSelection::Yes) };
 }
 
 enum class ClippingOption { NoClipping, ClipToEllipsis };
@@ -771,7 +770,7 @@ static Vector<LayoutRect> characterRects(const InlineIterator::TextBox& run, uns
         });
     }
 
-    auto lineSelectionRect = LineSelection::logicalRect(*run.lineBox());
+    auto lineSelectionRect = LineSelection::logicalRect(run.lineBox());
     auto selectionRect = LayoutRect { run.logicalLeftIgnoringInlineDirection(), lineSelectionRect.y(), run.logicalWidth(), lineSelectionRect.height() };
     return run.fontCascade().characterSelectionRectsForText(run.textRun(), selectionRect, clampedStart, clampedEnd).map([&](auto& characterRect) {
         return snappedSelectionRect(characterRect, run.logicalRightIgnoringInlineDirection(), run.writingMode());
@@ -1010,10 +1009,10 @@ PositionWithAffinity RenderText::positionForPoint(const LayoutPoint& point, HitT
             run.traverseNextTextBox();
 
         auto lineBox = run->lineBox();
-        auto top = LayoutUnit { std::min(previousLineBoxContentBottomOrBorderAndPadding(*lineBox), lineBox->contentLogicalTop()) };
+        auto top = LayoutUnit { std::min(previousLineBoxContentBottomOrBorderAndPadding(lineBox), lineBox.contentLogicalTop()) };
         if (logicalPoint.y() > top || (!blocksAreFlipped && logicalPoint.y() == top)) {
-            auto bottom = LayoutUnit { LineSelection::logicalBottom(*lineBox) };
-            if (auto nextLineBox = lineBox->next())
+            auto bottom = LayoutUnit { LineSelection::logicalBottom(lineBox) };
+            if (auto nextLineBox = lineBox.next())
                 bottom = std::min(bottom, LayoutUnit { nextLineBox->contentLogicalTop() });
 
             if (logicalPoint.y() < bottom || (blocksAreFlipped && logicalPoint.y() == bottom)) {
@@ -1575,7 +1574,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     clearContentLogicalWidthsInvalidation();
 }
 
-template<typename CharacterType> static inline bool containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
+template<typename CharacterType> static inline bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
 {
     for (auto character : characters) {
         if (!style.isCollapsibleWhiteSpace(character))
@@ -2258,7 +2257,7 @@ StringView RenderText::stringView(unsigned start, std::optional<unsigned> stop) 
     return StringView { text() }.substring(start, destination - start);
 }
 
-RenderInline* RenderText::inlineWrapperForDisplayContents()
+RenderBoxModelObject* RenderText::inlineWrapperForDisplayContents()
 {
     ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
 
@@ -2267,7 +2266,7 @@ RenderInline* RenderText::inlineWrapperForDisplayContents()
     return inlineWrapperForDisplayContentsMap().get(this);
 }
 
-void RenderText::setInlineWrapperForDisplayContents(RenderInline* wrapper)
+void RenderText::setInlineWrapperForDisplayContents(RenderBoxModelObject* wrapper)
 {
     ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
 

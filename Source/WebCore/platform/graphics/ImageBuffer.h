@@ -73,6 +73,7 @@ struct ImageBufferCreationContext {
 #if HAVE(IOSURFACE)
     RefPtr<IOSurfacePool> surfacePool;
     PlatformDisplayID displayID { 0 };
+    bool useIOSurfaceWebKitBehavior { false };
 #endif
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     DynamicContentScalingResourceCache dynamicContentScalingResourceCache;
@@ -137,7 +138,7 @@ public:
     static bool sizeNeedsClamping(const FloatSize&);
     static bool sizeNeedsClamping(const FloatSize&, FloatSize& scale);
     static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&);
-    static FloatSize clampedSize(const FloatSize&, FloatSize& scale);
+    static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&, FloatSize& scale);
     static FloatRect LEGACY_NODELETE clampedRect(const FloatRect&);
 
     WEBCORE_EXPORT RefPtr<ImageBuffer> clone() const;
@@ -149,7 +150,7 @@ public:
 
     WEBCORE_EXPORT virtual void submitDrawingCommands();
 
-    void prepareForDisplay();
+    WEBCORE_EXPORT virtual void prepareForDisplay();
 
     WEBCORE_EXPORT IntSize backendSize() const;
 
@@ -200,7 +201,8 @@ public:
     WEBCORE_EXPORT virtual std::optional<DynamicContentScalingDisplayList> dynamicContentScalingDisplayList();
 #endif
 
-    RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate();
+    WEBCORE_EXPORT virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate();
+    WEBCORE_EXPORT virtual void releaseLayerContentsDisplayDelegate();
 
     // Returns NativeImage of the current drawing results. Results in an immutable copy of the current back buffer.
     // Caller is responsible for ensuring that the passed reference is the only reference to the ImageBuffer.

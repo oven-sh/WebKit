@@ -73,7 +73,7 @@ set(TestWTF_SOURCES
     Tests/WTF/DataMutex.cpp
     Tests/WTF/DateMath.cpp
     Tests/WTF/Deque.cpp
-    Tests/WTF/DragonBoxTest.cpp
+    Tests/WTF/DominatorsTests.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
     Tests/WTF/EnumSet.cpp
     Tests/WTF/EnumTraits.cpp
@@ -187,10 +187,12 @@ set(TestWTF_SOURCES
     Tests/WTF/VariantList.cpp
     Tests/WTF/Vector.cpp
     Tests/WTF/VectorBorrow.cpp
+    Tests/WTF/VersionedField.cpp
     Tests/WTF/WTFString.cpp
     Tests/WTF/WeakPtr.cpp
     Tests/WTF/WorkQueue.cpp
     Tests/WTF/WorkerPool.cpp
+    Tests/WTF/ZmijTest.cpp
 )
 
 # These tests check conversions that copy elision would otherwise remove.
@@ -361,6 +363,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/TestPlatformStrategies.cpp
         Tests/WebCore/TextCodec.cpp
         Tests/WebCore/TextIterator.cpp
+        Tests/WebCore/TextMeasurementCache.cpp
         Tests/WebCore/TimeRanges.cpp
         Tests/WebCore/TransformationMatrix.cpp
         Tests/WebCore/U2fCommandConstructorTest.cpp
@@ -658,11 +661,19 @@ if (ENABLE_WEBKIT)
             WebKit::gtest
         )
 
-        set(TestIPC_FRAMEWORKS
-            WebKit
-        )
+        if (APPLE)
+            list(APPEND TestIPC_SOURCES
+                ${WEBKIT_DIR}/Shared/WebFoundTextRange.cpp
 
-        if (NOT APPLE)
+                $<TARGET_OBJECTS:WebKitPlatform>
+                $<TARGET_OBJECTS:WebKitPlatformARC>
+            )
+
+            list(APPEND TestIPC_LIBRARIES
+                WebKit::JavaScriptCore
+                WebKit::WebCore
+            )
+        else ()
             # TestIPC compiles the IPC implementation directly rather than linking WebKit.
             list(APPEND TestIPC_SOURCES
                 generic/main.cpp
@@ -725,6 +736,9 @@ if (ENABLE_WEBKIT)
                 ${GLIB_LIBRARIES}
             )
 
+            set(TestIPC_FRAMEWORKS
+                WebKit
+            )
         endif ()
 
         WEBKIT_EXECUTABLE_DECLARE(TestIPC)

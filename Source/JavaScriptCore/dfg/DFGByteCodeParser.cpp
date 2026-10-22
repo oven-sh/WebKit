@@ -3168,12 +3168,44 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case TypedArraySetIntrinsic: {
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, OutOfBounds)
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, UnexpectedResizableArrayBufferView))
+                return CallOptimizationResult::DidNothing;
+
+            ArrayMode mode = getArrayMode(Array::Write);
+            if (!mode.isSomeTypedArrayView() || mode.type() == Array::AnyTypedArray || mode.mayBeResizableOrGrowableSharedTypedArray())
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+
+            Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+            Node* source = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* offset = argumentCountIncludingThis > 2 ? get(virtualRegisterForArgumentIncludingThis(2, registerOffset)) : jsConstant(jsNumber(0));
+            addToGraph(CheckArray, OpInfo(mode.asWord()), base);
+            addToGraph(CheckArray, OpInfo(mode.asWord()), source);
+            addToGraph(TypedArraySet, OpInfo(mode.typedArrayType()), base, source, offset);
+            setResult(addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            return CallOptimizationResult::Inlined;
+        }
+
         case ArrayPushIntrinsic: {
             if (static_cast<unsigned>(argumentCountIncludingThis) >= MIN_SPARSE_ARRAY_INDEX)
                 return CallOptimizationResult::DidNothing;
 
             ArrayMode arrayMode = getArrayMode(Array::Write);
             if (!arrayMode.isJSArray())
+                return CallOptimizationResult::DidNothing;
+
+            // push() with no arguments still sets length, which throws when length is not writable.
+            // Only ArrayStorage arrays can have such a length, so leave those to the generic call.
+            if (argumentCountIncludingThis == 1 && !arrayModeImpliesWritableLength(arrayMode.type()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -12340,7 +12372,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             keepUsesOfCurrentInstructionAlive(currentInstruction, m_currentIndex.checkpoint());
 
             Node* iteratedObject = addToGraph(GetInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::IteratedObject)), OpInfo(SpecObject), get(bytecode.m_iterable));
-            Node* isIteratedArray = addToGraph(IsCellWithType, OpInfo(ArrayType), iteratedObject);
+            Node* isIteratedArray = addToGraph(IsCellWithType, OpInfo(JSTypeRange { ArrayType, ArrayType }), iteratedObject);
 
             BranchData* arrayBranchData = m_graph.m_branchData.add();
             arrayBranchData->taken = BranchTarget(fastBlock);
@@ -12547,7 +12579,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             failedBlock = allocateUntargetableBlock();
 
             Node* isKnownIterFunction = addToGraph(CompareEqPtr, OpInfo(frozenMapEntriesFunction), get(bytecode.m_symbolIterator));
-            Node* isMap = addToGraph(IsCellWithType, OpInfo(JSMapType), get(bytecode.m_iterable));
+            Node* isMap = addToGraph(IsCellWithType, OpInfo(JSTypeRange { JSMapType, JSMapType }), get(bytecode.m_iterable));
 
             BranchData* branchData = m_graph.m_branchData.add();
             branchData->taken = BranchTarget(fastMapBlock);
@@ -12619,7 +12651,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             failedBlock = allocateUntargetableBlock();
 
             Node* isKnownIterFunction = addToGraph(CompareEqPtr, OpInfo(frozenSetValuesFunction), get(bytecode.m_symbolIterator));
-            Node* isSet = addToGraph(IsCellWithType, OpInfo(JSSetType), get(bytecode.m_iterable));
+            Node* isSet = addToGraph(IsCellWithType, OpInfo(JSTypeRange { JSSetType, JSSetType }), get(bytecode.m_iterable));
 
             BranchData* branchData = m_graph.m_branchData.add();
             branchData->taken = BranchTarget(fastSetBlock);
@@ -12688,7 +12720,7 @@ void ByteCodeParser::handleIteratorOpen(const JSInstruction* currentInstruction,
             failedBlock = allocateUntargetableBlock();
 
             Node* isKnownIterFunction = addToGraph(CompareEqPtr, OpInfo(frozenStringSymbolIteratorFunction), symbolIterator);
-            Node* isString = addToGraph(IsCellWithType, OpInfo(StringType), get(bytecode.m_iterable));
+            Node* isString = addToGraph(IsCellWithType, OpInfo(JSTypeRange { StringType, StringType }), get(bytecode.m_iterable));
 
             BranchData* branchData = m_graph.m_branchData.add();
             branchData->taken = BranchTarget(fastStringBlock);
@@ -13639,7 +13671,7 @@ void ByteCodeParser::handleAsyncIteratorOpen(const JSInstruction* currentInstruc
             addToGraph(CheckJSCast, OpInfo(JSAsyncGenerator::info()), get(bytecode.m_iterable));
             addToGraph(CheckIsConstant, OpInfo(primordialIter), symbolAsyncIterator);
         } else {
-            Node* isAsyncGenerator = addToGraph(IsCellWithType, OpInfo(JSAsyncGeneratorType), get(bytecode.m_iterable));
+            Node* isAsyncGenerator = addToGraph(IsCellWithType, OpInfo(JSTypeRange { JSAsyncGeneratorType, JSAsyncGeneratorType }), get(bytecode.m_iterable));
             Node* isprimordialIter = addToGraph(CompareEqPtr, OpInfo(primordialIter), symbolAsyncIterator);
             Node* eligible = addToGraph(ArithBitAnd, isAsyncGenerator, isprimordialIter);
             emitExitOK();

@@ -39,7 +39,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderView.h"
 #include "StyleBorderImage.h"
@@ -50,7 +49,7 @@
 namespace WebCore {
 
 InlineBoxPainter::InlineBoxPainter(const LayoutIntegration::InlineContent& inlineContent, const InlineDisplay::Box& box, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : InlineBoxPainter(*InlineIterator::inlineBoxFor(inlineContent, box), paintInfo, paintOffset)
+    : InlineBoxPainter(InlineIterator::inlineBoxFor(inlineContent, box), paintInfo, paintOffset)
 {
 }
 
@@ -59,7 +58,7 @@ InlineBoxPainter::InlineBoxPainter(const InlineIterator::InlineBox& inlineBox, P
     , m_paintInfo(paintInfo)
     , m_paintOffset(paintOffset)
     , m_renderer(m_inlineBox.renderer())
-    , m_isFirstLineBox(m_inlineBox.lineBox()->isFirst())
+    , m_isFirstLineBox(m_inlineBox.lineBox().isFirst())
     , m_isRootInlineBox(m_inlineBox.isRootInlineBox())
     , m_isHorizontal(m_inlineBox.isHorizontal())
 {
@@ -73,8 +72,8 @@ void InlineBoxPainter::paint()
         if (renderer().usedStyle().visibility() != UsedVisibility::Visible || !renderer().hasOutline() || m_isRootInlineBox)
             return;
 
-        auto& inlineFlow = downcast<RenderInline>(renderer());
-        m_paintInfo.outlineObjects->add(inlineFlow);
+        ASSERT(renderer().isInlineBox());
+        m_paintInfo.outlineObjects->add(renderer());
 
         return;
     }
@@ -99,10 +98,10 @@ void InlineBoxPainter::paint()
 #endif
 
     if (m_paintInfo.phase == PaintPhase::Accessibility) {
-        if (auto* renderInline = dynamicDowncast<RenderInline>(m_renderer)) {
-            auto linesBoundingBox = enclosingIntRect(renderInline->visualOverflowRect());
+        if (m_renderer.isInlineBox()) {
+            auto linesBoundingBox = enclosingIntRect(m_renderer.visualOverflowRect());
             linesBoundingBox.moveBy(roundedIntPoint(m_paintOffset));
-            m_paintInfo.accessibilityRegionContext()->takeBounds(dynamicDowncast<RenderInline>(m_renderer), WTF::move(linesBoundingBox));
+            m_paintInfo.accessibilityRegionContext()->takeBoundsForInlineBox(m_renderer, WTF::move(linesBoundingBox));
         }
         return;
     }

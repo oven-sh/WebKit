@@ -26,12 +26,15 @@
 #include "config.h"
 #include "RuntimeQuirkTable.h"
 
+#include "Logging.h"
 #include "QuirkBehaviorDeclarations.h"
 #include <array>
 #include <wtf/EnumTraits.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexedRange.h>
 #include <wtf/JSONValues.h>
+#include <wtf/MainThread.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/StringBuilder.h>
@@ -72,7 +75,7 @@ void RuntimeQuirk::apply(QuirksData& quirksData) const
 static constexpr std::array rowFields { "bugs"_s, "comment"_s, "matches"_s, "embeddedMatches"_s, "excludeMatches"_s, "queryContains"_s, "fragmentContains"_s, "environment"_s, "available"_s, "behaviors"_s };
 static constexpr std::array behaviorFields { "id"_s, "script"_s, "userAgent"_s, "chromeCompatibilityVersion"_s, "cookieNames"_s, "elementSelector"_s, "documentSelector"_s, "secondaryURL"_s, "bugs"_s, "comment"_s };
 
-static String nonEmptyString(const JSON::Value& value)
+static String LEGACY_NODELETE nonEmptyString(const JSON::Value& value)
 {
     auto& string = value.asString();
     return string.isEmpty() ? String { } : string;
@@ -121,7 +124,7 @@ static bool isBugReference(StringView bug)
 namespace {
 
 template<typename CharacterType>
-bool isBuildConditionNameCharacter(CharacterType character)
+bool LEGACY_NODELETE isBuildConditionNameCharacter(CharacterType character)
 {
     return isASCIIAlphanumeric(character) || character == '_';
 }
@@ -206,7 +209,7 @@ private:
         return isEnabled(*condition);
     }
 
-    bool skipOperator(Operator op)
+    bool LEGACY_NODELETE skipOperator(Operator op)
     {
         auto character = op == Operator::Or ? '|' : '&';
         skipWhile(m_buffer, ' ');
@@ -601,6 +604,59 @@ String QuirkTableParseError::description() const
 
     builder.append(": "_s, message(*this));
     return builder.toString();
+}
+
+static RuntimeQuirkTable loadQuirkTable()
+{
+    auto json = loadQuirkTableJSON();
+    if (json.isNull()) {
+        RELEASE_LOG_ERROR(Loading, "QuirkTable.json could not be loaded; no site-specific quirks will apply");
+        return { };
+    }
+
+    auto result = parseQuirkTable(json);
+    for (auto& error : result.errors)
+        RELEASE_LOG_ERROR(Loading, "QuirkTable.json: %" PUBLIC_LOG_STRING, error.description().utf8());
+    ASSERT_WITH_MESSAGE(result.errors.isEmpty(), "QuirkTable.json has errors; see the log");
+    return WTF::move(result.table);
+}
+
+class QuirkTableHolder {
+public:
+    static QuirkTableHolder& singleton()
+    {
+        static MainThreadNeverDestroyed<QuirkTableHolder> holder;
+        return holder.get();
+    }
+
+    const RuntimeQuirkTable& table()
+    {
+        if (!m_table)
+            m_table = loadQuirkTable();
+        return *m_table;
+    }
+
+    void install(RuntimeQuirkTable&& table)
+    {
+        m_table = WTF::move(table);
+    }
+
+private:
+    friend class WTF::NeverDestroyed<QuirkTableHolder, WTF::MainThreadAccessTraits>;
+
+    QuirkTableHolder() = default;
+
+    std::optional<RuntimeQuirkTable> m_table;
+};
+
+void setQuirkTable(RuntimeQuirkTable&& table)
+{
+    QuirkTableHolder::singleton().install(WTF::move(table));
+}
+
+const RuntimeQuirkTable& quirkTable()
+{
+    return QuirkTableHolder::singleton().table();
 }
 
 } // namespace WebCore

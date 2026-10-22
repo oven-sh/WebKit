@@ -353,6 +353,13 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
+    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
+    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
+    inline int startOffsetOfBasicBlock(ExpressionNode* node)
+    {
+        return node->startOffset() - 1;
+    }
+
     class BytecodeGenerator : public BytecodeGeneratorBase<JSGeneratorTraits> {
         WTF_MAKE_TZONE_ALLOCATED(BytecodeGenerator);
         WTF_MAKE_NONCOPYABLE(BytecodeGenerator);
@@ -689,6 +696,32 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
+        // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
+        // it is in goes on after it.
+        void emitProfileControlFlow(int textOffset, int textEndOffset)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileControlFlowSlow(textOffset, textEndOffset);
+        }
+        // For what `?.`, a logical assignment or a default value can skip. The text of the test of a `case` is in the basic
+        // block of its clause, where a basic block of its own would mark a part of a clause that did not run as executed.
+        // `&&`, `||`, `??` and `?:` have theirs there.
+        void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
+        {
+            if (!m_isInCaseTest)
+                emitProfileControlFlow(textOffset, textEndOffset);
+        }
+        bool& isInCaseTest() { return m_isInCaseTest; }
+        // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
+        // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
+        bool emitProfileControlFlowAfter(StatementNode* statement)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                return emitProfileControlFlowAfterSlow(statement);
+            return false;
+        }
+        int& statementsEndOffset() { return m_statementsEndOffset; }
+        unsigned yieldPoints() const { return m_yieldPoints; }
         
         RegisterID* emitLoadArrowFunctionLexicalEnvironment(const Identifier&);
         RegisterID* ensureThis();
@@ -908,6 +941,7 @@ namespace JSC {
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
         RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
         bool isLazyModuleFunctionDeclaration(const Variable&) const;
+        RegisterID* emitLoadPrivateName(const Variable&);
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);
 
@@ -998,6 +1032,7 @@ namespace JSC {
     private:
         static constexpr int CurrentLexicalScopeIndex = -2;
         static constexpr int OutermostLexicalScopeIndex = -1;
+        static constexpr unsigned maxPrivateNameRegisters = 16;
 
         int currentLexicalScopeIndex() const
         {
@@ -1062,12 +1097,12 @@ namespace JSC {
 
         bool hasFinallyScopes() const { return m_currentFinallyContext; }
 
-        void pushOptionalChainTarget();
-        void pushOptionalChainTarget(Label&);
+        void pushOptionalChainTarget(int textEndOffset);
+        void pushOptionalChainTarget(Label&, int textEndOffset);
         void popOptionalChainTarget();
         void popOptionalChainTarget(RegisterID* dst, bool isDelete);
         void discardOptionalChainTarget();
-        void emitOptionalCheck(RegisterID* src);
+        void emitOptionalCheck(RegisterID* src, int textOffset);
 
         void pushForInScope(RegisterID* local, RegisterID* propertyName, RegisterID* propertyOffset, RegisterID* enumerator, RegisterID* mode, std::optional<Variable> base);
         void popForInScope(RegisterID* local);
@@ -1097,6 +1132,8 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset);
+        bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
@@ -1167,6 +1204,8 @@ namespace JSC {
 
         void retrieveLastUnaryOp(int& dstIndex, int& srcIndex);
         ALWAYS_INLINE void LEGACY_NODELETE rewind();
+        template<typename Op, typename... Args>
+        void replaceLastInstruction(Args...);
 
         void allocateScope();
 
@@ -1317,6 +1356,7 @@ namespace JSC {
 
         void pushPrivateAccessNames(const PrivateNameEnvironment*);
         void popPrivateAccessNames();
+        void invalidateLoadedPrivateNames() { m_loadedPrivateNames.shrink(0); }
 
         bool needsArguments() const { return m_needsArguments; };
         bool shouldGetArgumentsDotLengthFast(ExpressionNode* node) const
@@ -1360,6 +1400,8 @@ namespace JSC {
         const FixedVector<Identifier>* m_generatorOrAsyncWrapperFunctionParameterNames { nullptr };
         Vector<TDZStackEntry> m_TDZStack;
         Vector<PrivateNameEnvironment> m_privateNamesStack;
+        Vector<RefPtr<RegisterID>> m_privateNameRegisters;
+        Vector<UniquedStringImpl*, maxPrivateNameRegisters> m_loadedPrivateNames;
         std::optional<size_t> m_varScopeLexicalScopeStackIndex;
         void pushTDZVariables(const VariableEnvironment&, TDZCheckOptimization, TDZRequirement);
 
@@ -1430,9 +1472,16 @@ namespace JSC {
         Vector<TryRange> m_tryRanges;
         SegmentedVector<TryData, 8> m_tryData;
 
-        Vector<Ref<Label>> m_optionalChainTargetStack;
+        struct OptionalChainTarget {
+            Ref<Label> label;
+            int textEndOffset;
+        };
+        Vector<OptionalChainTarget> m_optionalChainTargetStack;
 
         int m_nextConstantOffset { 0 };
+        int m_statementsEndOffset { 0 };
+        StatementNode* m_lastStatementWithProfileControlFlowAfter { nullptr };
+        bool m_isInCaseTest { false };
         
         // Constant pool
         IdentifierMap m_identifierMap;

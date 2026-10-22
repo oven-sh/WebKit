@@ -40,8 +40,6 @@
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
 #include <WebCore/IPAddressSpace.h>
-#include <WebCore/OriginAgentClusterPolicy.h>
-#include <WebCore/ResourceResponse.h>
 #include <WebCore/SecurityOrigin.h>
 
 #define BROWSINGCONTEXTGROUP_RELEASE_LOG(fmt, ...) RELEASE_LOG(SiteIsolation, "%p - BrowsingContextGroup::" fmt, this, ##__VA_ARGS__)
@@ -70,7 +68,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
     if (!preferences.siteIsolationEnabled() || !preferences.siteIsolationSharedProcessEnabled())
         return completionHandler(nullptr);
 
-    if (site.isEmpty() || m_processMap.contains(site) || m_crossOriginMode == CrossOriginMode::Isolated)
+    if (site.isEmpty() || hasProcessForSite(site) || m_crossOriginMode == CrossOriginMode::Isolated)
         return completionHandler(nullptr);
 
     if (isLoopbackOrLocalNetworkSite(site, preferences.localNetworkAccessEnabled()))
@@ -119,7 +117,7 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
         return completionHandler(existingSharedProcess.get());
     }
 
-    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, ProcessSwapDisposition::Other, m_crossOriginMode);
+    Ref process = protect(pageConfiguration.processPool())->processForSite(websiteDataStore, WebProcessProxy::IsolatedProcessType::Shared, site, mainFrameSite, lockdownMode, enhancedSecurity, pageConfiguration, ProcessSwapDisposition::Other, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
     ASSERT(!process->isInProcessCache());
     Ref frameProcess = FrameProcess::create(process, *this, std::nullopt, mainFrameSite, preferences, LoadedWebArchive::No, BrowsingContextGroupUpdate::AddProcessAndInjectBrowsingContext);
     ASSERT(frameProcess->isSharedProcess());
@@ -130,13 +128,20 @@ void BrowsingContextGroup::sharedProcessForSite(WebsiteDataStore& websiteDataSto
     completionHandler(frameProcess.ptr());
 }
 
+bool BrowsingContextGroup::canUseProcessForCrossOriginIsolation(const WebProcessProxy& process) const
+{
+    if (m_crossOriginMode == CrossOriginMode::Isolated)
+        return process.crossOriginIsolation() == ProcessCrossOriginIsolation::BrowsingContextGroup;
+    return process.crossOriginIsolation() != ProcessCrossOriginIsolation::BrowsingContextGroup;
+}
+
 Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, const Site& mainFrameSite, WebProcessProxy& process, const WebPreferences& preferences, LoadedWebArchive loadedWebArchive, BrowsingContextGroupUpdate browsingContextGroupUpdate)
 {
-    ASSERT(process.isDummyProcessProxy() || process.crossOriginMode() == m_crossOriginMode);
+    ASSERT(process.isDummyProcessProxy() || canUseProcessForCrossOriginIsolation(process));
 
     if (preferences.siteIsolationEnabled()) {
         RefPtr sharedProcess = liveSharedProcess();
-        if (sharedProcess && (m_sharedProcessSites.contains(site) || process.isSharedProcess())) {
+        if (sharedProcess && !process.isDocumentIsolationPolicyProcess() && (m_sharedProcessSites.contains(site) || process.isSharedProcess())) {
             ASSERT(&sharedProcess->process() == &process);
             if (m_sharedProcessSites.add(site).isNewEntry) {
                 process.addSharedProcessDomain(site.domain());
@@ -144,7 +149,7 @@ Ref<FrameProcess> BrowsingContextGroup::ensureProcessForSite(const Site& site, c
             }
             return sharedProcess.releaseNonNull();
         }
-        if (RefPtr existingProcess = processForSite(site)) {
+        if (RefPtr existingProcess = processForSite(site, process.crossOriginIsolation())) {
             if (existingProcess->process().coreProcessIdentifier() == process.coreProcessIdentifier())
                 return existingProcess.releaseNonNull();
         }
@@ -171,13 +176,31 @@ void BrowsingContextGroup::clearSharedProcess()
     m_pagesInSharedProcess.clear();
 }
 
+auto BrowsingContextGroup::processMapKey(const FrameProcess& process) const -> ProcessMapKey
+{
+    bool isDocumentIsolationPolicyProcess = process.process().isDocumentIsolationPolicyProcess();
+    ASSERT(!isDocumentIsolationPolicyProcess || m_crossOriginMode == CrossOriginMode::Shared);
+    return { *process.site(), isDocumentIsolationPolicyProcess ? IsDocumentIsolationPolicyProcess::Yes : IsDocumentIsolationPolicyProcess::No };
+}
+
+bool BrowsingContextGroup::hasProcessForSite(const Site& site) const
+{
+    return m_processMap.contains({ site, IsDocumentIsolationPolicyProcess::No }) || m_processMap.contains({ site, IsDocumentIsolationPolicyProcess::Yes });
+}
+
 RefPtr<FrameProcess> BrowsingContextGroup::processForSite(const Site& site)
 {
+    return processForSite(site, processCrossOriginIsolationForBrowsingContextGroup(m_crossOriginMode));
+}
+
+RefPtr<FrameProcess> BrowsingContextGroup::processForSite(const Site& site, ProcessCrossOriginIsolation crossOriginIsolation)
+{
+    auto isDocumentIsolationPolicyProcess = crossOriginIsolation == ProcessCrossOriginIsolation::DocumentIsolationPolicy ? IsDocumentIsolationPolicyProcess::Yes : IsDocumentIsolationPolicyProcess::No;
     RefPtr<FrameProcess> process;
-    if (m_sharedProcessSites.contains(site))
+    if (isDocumentIsolationPolicyProcess == IsDocumentIsolationPolicyProcess::No && m_sharedProcessSites.contains(site))
         process = liveSharedProcess();
     else
-        process = m_processMap.get(site);
+        process = m_processMap.get({ site, isDocumentIsolationPolicyProcess });
     if (!process)
         return nullptr;
     if (process->process().state() == WebProcessProxy::State::Terminated)
@@ -246,9 +269,11 @@ void BrowsingContextGroup::addFrameProcessAndInjectPageContextIf(FrameProcess& p
     for (Ref page : m_pages) {
         // Under site isolation, a same-site page should be hosted in the same process and
         // shouldn't need a remote page. Empty sites are the exception, as they can compare equal
-        // for pages that are not actually co-located in the same process.
+        // for pages that are not actually co-located in the same process, and so are documents
+        // with a Document-Isolation-Policy, which have their own process.
         bool sameSite = site == Site(URL(page->currentURL()));
-        if (sameSite && !site.isEmpty())
+        RefPtr mainFrame = page->mainFrame();
+        if (sameSite && !site.isEmpty() && mainFrame && mainFrame->process().isDocumentIsolationPolicyProcess() == processProxy->isDocumentIsolationPolicyProcess())
             continue;
         createRemotePageIfNeeded(page, site);
     }
@@ -276,11 +301,11 @@ static bool canReplaceFrameProcessInProcessMap(const WebCore::Site& site, const 
 
 bool BrowsingContextGroup::addFrameProcessWithoutInjectingPageContext(FrameProcess& process)
 {
-    auto& site = *process.site();
-    if (m_processMap.get(site) == &process)
+    auto key = processMapKey(process);
+    if (m_processMap.get(key) == &process)
         return false;
-    ASSERT(!m_processMap.get(site) || canReplaceFrameProcessInProcessMap(site, *m_processMap.get(site)));
-    m_processMap.set(site, process);
+    ASSERT(!m_processMap.get(key) || canReplaceFrameProcessInProcessMap(key.first, *m_processMap.get(key)));
+    m_processMap.set(WTF::move(key), process);
     return true;
 }
 
@@ -290,12 +315,12 @@ void BrowsingContextGroup::removeFrameProcess(FrameProcess& process)
         if (m_sharedProcess.get() == &process)
             clearSharedProcess();
     } else {
-        auto& site = *process.site();
         // A later navigation may already have replaced this entry (see
         // canReplaceFrameProcessInProcessMap), in which case the site now belongs to a different
         // FrameProcess and this teardown must leave it alone.
-        if (m_processMap.get(site) == &process)
-            m_processMap.remove(site);
+        auto key = processMapKey(process);
+        if (m_processMap.get(key) == &process)
+            m_processMap.remove(key);
     }
     m_remotePages.removeIf([&] (auto& pair) {
         auto& set = pair.value;
@@ -340,8 +365,8 @@ void BrowsingContextGroup::addPage(WebPageProxy& page)
     if (RefPtr sharedProcess = liveSharedProcess(); sharedProcess && m_pagesInSharedProcess.add(page).isNewEntry)
         createRemotePageIfNeeded(sharedProcess->process(), *m_sharedProcessSites.begin());
 
-    m_processMap.removeIf([&] (auto& pair) {
-        auto& site = pair.key;
+    m_processMap.removeIf([&](auto& pair) {
+        auto& site = pair.key.first;
         auto& process = pair.value;
         if (!process) {
             ASSERT_NOT_REACHED_WITH_MESSAGE("FrameProcess should remove itself in the destructor so we should never find a null WeakPtr");
@@ -360,16 +385,16 @@ void BrowsingContextGroup::addRemotePage(WebPageProxy& page, Ref<RemotePageProxy
     }).iterator->value.add(WTF::move(remotePage));
 }
 
-void BrowsingContextGroup::removePage(WebPageProxy& page)
+void BrowsingContextGroup::removePage(WebPageProxy& page, ShouldSendCloseMessage shouldSendCloseMessage)
 {
     m_pages.remove(page);
-    closeRemotePagesForPage(page);
+    closeRemotePagesForPage(page, shouldSendCloseMessage);
 }
 
-void BrowsingContextGroup::closeRemotePagesForPage(WebPageProxy& page)
+void BrowsingContextGroup::closeRemotePagesForPage(WebPageProxy& page, ShouldSendCloseMessage shouldSendCloseMessage)
 {
     for (auto& remotePage : m_remotePages.take(page))
-        protect(remotePage)->disconnect();
+        protect(remotePage)->disconnect(shouldSendCloseMessage);
 }
 
 bool BrowsingContextGroup::hasMultiplePages() const
@@ -464,9 +489,32 @@ WebCore::OriginKeyed BrowsingContextGroup::resolveAgentClusterKeying(const WebCo
     }).iterator->value;
 }
 
-WebCore::OriginKeyed BrowsingContextGroup::historicalAgentClusterKeying(const WebCore::SecurityOriginData& origin) const
+WebCore::OriginKeyed BrowsingContextGroup::knownAgentClusterKeying(const WebCore::SecurityOriginData& origin) const
 {
-    return m_historicalAgentClusterKeyMap.getOptional(origin).value_or(WebCore::OriginKeyed::No);
+    if (auto keying = m_historicalAgentClusterKeyMap.getOptional(origin))
+        return *keying;
+    if (RefPtr reservation = m_agentClusterKeyingReservations.get(origin))
+        return reservation->keying();
+    return WebCore::OriginKeyed::No;
+}
+
+RefPtr<AgentClusterKeyingReservation> BrowsingContextGroup::reserveAgentClusterKeying(const WebCore::SecurityOriginData& origin, WebCore::OriginKeyed requested)
+{
+    if (m_historicalAgentClusterKeyMap.contains(origin))
+        return nullptr;
+    auto& existingReservation = m_agentClusterKeyingReservations.add(origin, nullptr).iterator->value;
+    if (RefPtr reservation = existingReservation)
+        return reservation;
+    Ref reservation = AgentClusterKeyingReservation::create(*this, origin, requested);
+    existingReservation = reservation;
+    return reservation;
+}
+
+void BrowsingContextGroup::removeAgentClusterKeyingReservation(const AgentClusterKeyingReservation& reservation)
+{
+    auto it = m_agentClusterKeyingReservations.find(reservation.origin());
+    if (it != m_agentClusterKeyingReservations.end() && it->value == &reservation)
+        m_agentClusterKeyingReservations.remove(it);
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#obtain-similar-origin-window-agent
@@ -479,29 +527,11 @@ WebCore::AgentClusterIdentifier BrowsingContextGroup::agentClusterIdentifier(con
     }).iterator->value;
 }
 
-AgentClusterRequest AgentClusterRequest::forNavigationAction(const URL& url, const URL& topLevelCreationURL, IsSubstituteData isSubstituteData)
-{
-    return { isSubstituteData == IsSubstituteData::Yes ? Source::SubstituteData : Source::NavigationAction, WebCore::SecurityOrigin::create(url)->data(), topLevelCreationURL };
-}
-
-AgentClusterRequest AgentClusterRequest::forNavigationResponse(const WebCore::ResourceResponse& response, const URL& topLevelCreationURL, const WebPreferences& preferences)
-{
-    Ref origin = WebCore::SecurityOrigin::create(response.url());
-    auto isSecureContext = origin->isPotentiallyTrustworthy() && WebCore::SecurityOrigin::create(topLevelCreationURL)->isPotentiallyTrustworthy() ? WebCore::IsSecureContext::Yes : WebCore::IsSecureContext::No;
-    AgentClusterRequest request { Source::NavigationResponse, origin->data(), topLevelCreationURL };
-    // The WebContent process only applies these policies to http(s) and blob: documents.
-    bool hasPolicyHeaders = response.url().protocolIsInHTTPFamilyOrBlob();
-    if (hasPolicyHeaders && preferences.documentIsolationPolicyEnabled() && preferences.siteIsolationEnabled())
-        request.documentIsolationPolicy = WebCore::obtainDocumentIsolationPolicy(response, isSecureContext);
-    if (preferences.originAgentClusterEnabled())
-        request.requestedKeying = hasPolicyHeaders ? WebCore::obtainOriginAgentClusterPolicy(response, isSecureContext, nullptr) : WebCore::OriginKeyed::No;
-    return request;
-}
-
-WebCore::AgentClusterAssignment BrowsingContextGroup::assignAgentCluster(const AgentClusterRequest& request)
+std::pair<WebCore::AgentClusterAssignment, RefPtr<AgentClusterKeyingReservation>> BrowsingContextGroup::assignAgentCluster(const AgentClusterRequest& request, AgentClusterKeyingRecording recording)
 {
     auto& origin = request.origin;
     WebCore::AgentClusterAssignment assignment { std::nullopt, WebCore::OriginKeyed::No, request.documentIsolationPolicy };
+    std::optional<WebCore::OriginKeyed> keyingToSettle;
     // https://html.spec.whatwg.org/multipage/origin.html#origin-keyed-agent-clusters
     // A document with a Document-Isolation-Policy is origin-keyed and does not use the historical agent cluster key map.
     if (assignment.documentIsolationPolicy != WebCore::DocumentIsolationPolicy::None)
@@ -509,24 +539,33 @@ WebCore::AgentClusterAssignment BrowsingContextGroup::assignAgentCluster(const A
     else {
         switch (request.source) {
         case AgentClusterRequest::Source::NavigationAction:
-            assignment.isOriginKeyed = historicalAgentClusterKeying(origin);
+            assignment.isOriginKeyed = knownAgentClusterKeying(origin);
             break;
         case AgentClusterRequest::Source::SubstituteData:
-            // Substitute data gets no response decision, so its keying is recorded right away.
+            // Substitute data gets no response decision, so its keying is settled now.
             if (!origin.isOpaque())
-                assignment.isOriginKeyed = resolveAgentClusterKeying(origin, WebCore::OriginKeyed::No);
+                keyingToSettle = WebCore::OriginKeyed::No;
             break;
         case AgentClusterRequest::Source::NavigationResponse:
-            if (request.requestedKeying)
-                assignment.isOriginKeyed = resolveAgentClusterKeying(origin, *request.requestedKeying);
+            keyingToSettle = request.requestedKeying;
             break;
+        }
+    }
+
+    RefPtr<AgentClusterKeyingReservation> reservation;
+    if (keyingToSettle) {
+        if (recording == AgentClusterKeyingRecording::Now)
+            assignment.isOriginKeyed = resolveAgentClusterKeying(origin, *keyingToSettle);
+        else {
+            reservation = reserveAgentClusterKeying(origin, *keyingToSettle);
+            assignment.isOriginKeyed = knownAgentClusterKeying(origin);
         }
     }
 
     // FIXME: Assign opaque origins an agent cluster too. Their responses can then no longer skip the policy decision through the injected bundle.
     // A blob URL created by an opaque origin belongs to its creator's agent cluster, which needs the blob URL entry rather than the URL.
     if (origin.isOpaque())
-        return assignment;
+        return { assignment, WTF::move(reservation) };
 
     // https://wicg.github.io/document-isolation-policy/#coi-agent-cluster-key
     std::optional<WebCore::SecurityOriginData> crossOriginIsolationKey;
@@ -535,13 +574,14 @@ WebCore::AgentClusterAssignment BrowsingContextGroup::assignAgentCluster(const A
     else if (m_crossOriginMode == WebCore::CrossOriginMode::Isolated)
         crossOriginIsolationKey = WebCore::SecurityOriginData::fromURL(request.topLevelCreationURL);
     assignment.identifier = agentClusterIdentifier(origin, assignment.isOriginKeyed, crossOriginIsolationKey);
-    return assignment;
+    return { assignment, WTF::move(reservation) };
 }
 
 void BrowsingContextGroup::clearBrowsingContextGroupForTesting()
 {
     m_identifier = WebCore::BrowsingContextGroupIdentifier::generate();
     m_historicalAgentClusterKeyMap.clear();
+    m_agentClusterKeyingReservations.clear();
     m_agentClusterIdentifiers.clear();
 }
 

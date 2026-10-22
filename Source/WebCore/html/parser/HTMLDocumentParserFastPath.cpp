@@ -467,7 +467,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::b;
             static constexpr std::array<CharacterType, 1> tagNameCharacters { 'b' };
 
-            static Ref<HTMLElement> create(Document& document)
+            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::bTag, document);
             }
@@ -497,7 +497,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::footer;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 'f', 'o', 'o', 't', 'e', 'r' };
 
-            static Ref<HTMLElement> create(Document& document)
+            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::footerTag, document);
             }
@@ -507,7 +507,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::i;
             static constexpr std::array<CharacterType, 1> tagNameCharacters { 'i' };
 
-            static Ref<HTMLElement> create(Document& document)
+            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::iTag, document);
             }
@@ -587,7 +587,7 @@ private:
             static constexpr ElementName tagName = ElementNames::HTML::strong;
             static constexpr std::array<CharacterType, 6> tagNameCharacters { 's', 't', 'r', 'o', 'n', 'g' };
 
-            static Ref<HTMLElement> create(Document& document)
+            static Ref<HTMLElement> LEGACY_NODELETE create(Document& document)
             {
                 return HTMLElement::create(HTMLNames::strongTag, document);
             }
@@ -895,7 +895,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     bool LEGACY_NODELETE parsingFailed() const { return m_parseResult != HTMLFastPathResult::Succeeded; }
 
-    void didFail(HTMLFastPathResult result)
+    void LEGACY_NODELETE didFail(HTMLFastPathResult result)
     {
         if (m_parseResult == HTMLFastPathResult::Succeeded)
             m_parseResult = result;

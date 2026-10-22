@@ -20,6 +20,8 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from unittest.mock import Mock, patch
+
 from webkitcorepy import Version
 
 from webkitpy.port.ios_simulator import IOSSimulatorPort
@@ -157,6 +159,17 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
             '/mock-checkout/LayoutTests/platform/wk2',
         ])
 
+    def test_device_type_matches_any_runtime_patch_version(self):
+        port = self.make_port()
+        port.set_option('version', None)
+        port.device_version = lambda: Version(18, 4, 1)
+        self.assertEqual(port._device_type_with_version().software_version, Version(18, 4))
+
+    def test_device_type_keeps_requested_version(self):
+        port = self.make_port()
+        port.set_option('version', '18.4.1')
+        self.assertEqual(port._device_type_with_version().software_version, Version(18, 4, 1))
+
     def test_max_child_processes(self):
         port = self.make_port()
         self.assertEqual(port.max_child_processes(DeviceType.from_string('Apple Watch')), 0)
@@ -169,3 +182,17 @@ class IOSSimulatorTest(ios_testcase.IOSTest):
         self.assertEqual(configuration['platform'], 'ios')
         self.assertEqual(configuration['style'], 'release')
         self.assertEqual(configuration['version_name'], 'iOS {}'.format(port.device_version()))
+
+    def test_did_spawn_worker_warms_up_booted_simulator(self):
+        port = self.make_port()
+        port.target_host = lambda worker_number: Mock(platform_device=Mock(booted_by_script=True))
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.did_spawn_worker(1)
+        warm_up_runner.assert_called_once_with(1)
+
+    def test_did_spawn_worker_does_not_warm_up_already_booted_simulator(self):
+        port = self.make_port()
+        port.target_host = lambda worker_number: Mock(platform_device=Mock(booted_by_script=False))
+        with patch.object(port, '_warm_up_runner') as warm_up_runner:
+            port.did_spawn_worker(1)
+        warm_up_runner.assert_not_called()

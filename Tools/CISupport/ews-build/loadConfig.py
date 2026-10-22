@@ -49,6 +49,9 @@ custom_suffix = get_custom_suffix()
 BUILDER_NAME_LENGTH_LIMIT = 70
 STEP_NAME_LENGTH_LIMIT = 50
 
+# Where a worker runs, if it is managed: on EC2, or in Air-Cloud.
+WORKER_FLEETS = ('aws', 'air-cloud')
+
 
 def render_config(template=None, output=None):
     template = template or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config-template.yaml')
@@ -215,6 +218,9 @@ def checkValidWorker(worker):
 
     if not worker.get('platform'):
         raise Exception('Worker {} does not have platform defined.'.format(worker['name']))
+
+    if 'fleet' in worker and worker['fleet'] not in WORKER_FLEETS:
+        raise Exception('Worker {} has fleet "{}", which must be one of {}.'.format(worker['name'], worker['fleet'], ', '.join(WORKER_FLEETS)))
 
 
 def checkValidBuilder(config, builder):

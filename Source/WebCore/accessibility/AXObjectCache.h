@@ -308,7 +308,7 @@ public:
     {
         return m_nodeObjectMapping.get(element);
     }
-    std::optional<AXID> getAXID(RenderObject&) const;
+    std::optional<AXID> LEGACY_NODELETE getAXID(RenderObject&) const;
 
     void remove(RenderObject&);
     void remove(Node&);
@@ -384,6 +384,11 @@ public:
     void onSelectedOptionChanged(Element&);
     void onSelectedOptionChanged(HTMLSelectElement&, int optionIndex);
     void onSelectedTextChanged(const VisiblePositionRange&, AccessibilityObject* = nullptr);
+#if PLATFORM(MAC)
+    // Posts AXSelectedTextChanged on this cache's root web area for a selection change in a cross-site frame, relayed
+    // from that frame's process. VoiceOver only handles the notification on the top-level web area.
+    WEBCORE_EXPORT void postSelectedTextChangeFromRemoteFrame(const AXRemoteFrameSelectedTextChange&);
+#endif
     void onSlottedContentChange(const HTMLSlotElement&);
     void onStyleChange(Element&, OptionSet<Style::Change>, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle* newStyle);
     void onStyleChange(RenderText&, Style::Difference, const Style::ComputedStyle* oldStyle, const Style::ComputedStyle& newStyle);
@@ -420,7 +425,7 @@ public:
 #if PLATFORM(COCOA)
     void onFormSubmissionAttemptWithoutNavigation(HTMLFormElement&, HTMLFormControlElement* submitter);
     void onFormSubmissionWillNavigate(HTMLFormElement&);
-    WEBCORE_EXPORT bool isWatchingForFormErrors() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isWatchingForFormErrors() const;
 #endif
     // Called synchronously for each trusted (user-generated) click or keydown, just before the event is dispatched to the
     // page's listeners. It must run first, because pages that validate without a real form submission typically write
@@ -510,7 +515,7 @@ public:
     void deferAttributeChangeIfNeeded(Element&, const QualifiedName&, const AtomString&, const AtomString&);
 
     // True for the attributes in relationAttributes() (aria-labelledby, aria-owns, etc.).
-    static bool isRelationAttribute(const QualifiedName&);
+    static bool LEGACY_NODELETE isRelationAttribute(const QualifiedName&);
     // Records that an element carries a relation attribute so the next relations rebuild includes it.
     void trackRelationAttributeElement(Element&);
 
@@ -600,7 +605,7 @@ public:
 #endif
 
     void deferCanvasFocusPathBoundsUpdate(Element& canvasFallbackElement, HTMLCanvasElement&, FloatRect bounds);
-    std::optional<IntRect> cachedBoundsForID(AXID) const;
+    std::optional<IntRect> LEGACY_NODELETE cachedBoundsForID(AXID) const;
 
     // Text marker utilities.
     std::optional<TextMarkerData> textMarkerDataForVisiblePosition(const VisiblePosition&, TextMarkerOrigin = static_cast<TextMarkerOrigin>(0));
@@ -688,7 +693,7 @@ public:
     // it never suppresses a later, genuine mutation of the same node.
     WEBCORE_EXPORT void deferReRenderedContent(Node&);
 
-    WEBCORE_EXPORT static void setAnnouncementTranslationTimeoutForTesting(std::optional<Seconds>);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setAnnouncementTranslationTimeoutForTesting(std::optional<Seconds>);
 
     void LEGACY_NODELETE setTextSelectionIntent(const AXTextStateChangeIntent&);
     void LEGACY_NODELETE setIsSynchronizingSelection(bool);
@@ -706,8 +711,8 @@ public:
     void postLiveRegionChangeNotification(AccessibilityObject&);
 
     // Testing-only: number of times a live region snapshot has been (re)computed since the last reset.
-    WEBCORE_EXPORT unsigned liveRegionSnapshotBuildCount() const;
-    WEBCORE_EXPORT void resetLiveRegionSnapshotBuildCount();
+    WEBCORE_EXPORT unsigned LEGACY_NODELETE liveRegionSnapshotBuildCount() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE resetLiveRegionSnapshotBuildCount();
 
     void frameLoadingEventNotification(LocalFrame*, AXLoadingEvent);
 
@@ -718,11 +723,14 @@ public:
 
     AXComputedObjectAttributeCache* computedObjectAttributeCache() LIFETIME_BOUND { return m_computedObjectAttributeCache.get(); }
 
-    Document* document() const;
+    Document* LEGACY_NODELETE document() const;
     FrameIdentifier frameID() const { return m_frameID; }
 
     RefPtr<Page> LEGACY_NODELETE page() const;
-    IntPoint mapScreenPointToPagePoint(const IntPoint&) const;
+    WEBCORE_EXPORT IntPoint mapScreenPointToPagePoint(const IntPoint&) const;
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    std::optional<IntPoint> mapScreenPointToContentPointUsingFrameGeometry(const IntPoint&) const;
+#endif
 
     void objectBecameIgnored(const AccessibilityObject&);
     void objectBecameUnignored(const AccessibilityObject&);
@@ -921,7 +929,7 @@ private:
     void flushPendingAnnouncements();
     void pendingAnnouncementTimeoutTimerFired();
     void scheduleAnnouncementTimeoutTimerIfNeeded();
-    static Seconds announcementTranslationTimeout();
+    static Seconds LEGACY_NODELETE announcementTranslationTimeout();
 
     void liveRegionChangedNotificationPostTimerFired();
     void processChangedLiveRegions();

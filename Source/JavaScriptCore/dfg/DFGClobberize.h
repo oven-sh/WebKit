@@ -2774,6 +2774,11 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
         write(TypedArrayProperties);
         return;
     }
+    case TypedArraySet:
+        read(MiscFields);
+        read(TypedArrayProperties);
+        write(TypedArrayProperties);
+        return;
 
     case ResolvePromiseFirstResolving:
     case RejectPromiseFirstResolving:

@@ -942,11 +942,11 @@ CSSFontFaceMetricOverrideDescriptorsEnabled:
 
 CSSFontPaletteMixFunctionEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS palette-mix() function"
   humanReadableDescription: "Enable the CSS palette-mix() function"
-  defaultValue: false
+  defaultValue: true
 
 CSSFontSynthesisStyleObliqueOnlyEnabled:
   type: bool
@@ -2028,6 +2028,7 @@ DocumentIsolationPolicyEnabled:
   humanReadableName: "Document-Isolation-Policy header"
   humanReadableDescription: "Support for the Document-Isolation-Policy header"
   defaultValue: false
+  sharedPreferenceForWebProcess: true
 
 # FIXME: This is on by default in WebKit2. Perhaps we should consider turning it on for WebKitLegacy as well.
 DownloadAttributeEnabled:
@@ -2133,6 +2134,17 @@ EnhancedSecurityEnabledByDefault:
   excludeFrom: [ WebCore ]
   defaultValue: false
 
+EnhancedSecurityEnabledByDefaultForSystemApps:
+  type: bool
+  status: internal
+  category: security
+  defaultsOverridable: true
+  humanReadableName: "Enhanced Security enabled by default for system apps"
+  humanReadableDescription: "Enables Enhanced Security by default for WebViews that do not explicitly set it in Apple apps that ship with the OS, excluding web browsers"
+  webKitLegacyExposed: false
+  excludeFrom: [ WebCore ]
+  defaultValue: false
+
 EnhancedSecurityForceDisabled:
   type: bool
   status: internal
@@ -2220,6 +2232,14 @@ EventTimingEnabled:
   defaultValue:
     default: true
     WebKitLegacy: false
+
+ExemptAllowlistedCookiesFromItp:
+  type: bool
+  status: unstable
+  category: privacy
+  humanReadableName: "Exempt Allowlisted Cookies From ITP Data Removal"
+  humanReadableDescription: "Exempt allowlisted cookies and local storage from ITP data deletion"
+  defaultValue: false
 
 ExperimentalSandboxEnabled:
   type: bool
@@ -2755,6 +2775,14 @@ HTMLInCanvasEnabled:
   webcoreOnChange: setNeedsRelayoutAllFrames
   humanReadableName: "HTML-in-Canvas"
   humanReadableDescription: "Enable HTML-in-Canvas"
+  defaultValue: false
+
+HTMLProcessingInstructionEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "HTML processing instructions"
+  humanReadableDescription: "Enable processing instructions in HTML"
   defaultValue: false
 
 HTTPEquivEnabled:
@@ -4801,6 +4829,18 @@ PermissionsAPIEnabled:
   sharedPreferenceForWebProcess: true
   richJavaScript: true
 
+PhoneNumberPossessionEnabled:
+  type: bool
+  status: internal
+  category: dom
+  humanReadableName: "Phone Number Possession credentials"
+  humanReadableDescription: "Enable requesting phone number possession credentials with navigator.credentials.get()"
+  condition: ENABLE(PHONE_NUMBER_POSSESSION)
+  defaultValue: false
+  sharedPreferenceForWebProcess: true
+  disableInLockdownMode: true
+  richJavaScript: true
+
 PhotoPickerPrefersOriginalImageFormat:
   type: bool
   status: internal
@@ -4950,6 +4990,14 @@ PrivateClickMeasurementFraudPreventionEnabled:
     "HAVE(RSA_BSSA)": true
     default: false
 
+PrivateClickMeasurementPrivateRelayEnforcementEnabled:
+  type: bool
+  status: developer
+  category: privacy
+  humanReadableName: "Private Click Measurement Private Relay Enforcement. Only applies when Debug Mode is enabled"
+  humanReadableDescription: "Require Private Click Measurement reports to be sent over Private Relay even when Private Click Measurement Debug Mode is enabled"
+  defaultValue: false
+
 PrivateTokenUsageByThirdPartyEnabled:
   type: bool
   status: stable
@@ -4981,18 +5029,6 @@ PromiseIsPromiseEnabled:
   sharedPreferenceForWebProcess: true
   excludeFrom: [ WebKitLegacy, WebCore ]
   defaultValue: false
-
-ProofOfPossessionEnabled:
-  type: bool
-  status: internal
-  category: dom
-  humanReadableName: "Proof of Possession credentials"
-  humanReadableDescription: "Enable requesting proof of possession credentials with navigator.credentials.get()"
-  condition: ENABLE(PROOF_OF_POSSESSION)
-  defaultValue: false
-  sharedPreferenceForWebProcess: true
-  disableInLockdownMode: true
-  richJavaScript: true
 
 PropagateDamagingInformation:
   type: bool
@@ -5260,6 +5296,13 @@ SKAttributionEnabled:
   status: embedder
   humanReadableName: "SKAttribution"
   humanReadableDescription: "SKAttribution"
+  defaultValue: true
+
+SVG2TextLayoutAlgorithmEnabled:
+  type: bool
+  status: internal
+  humanReadableName: "SVG 2 text layout algorithm"
+  humanReadableDescription: "Use the SVG 2 text layout algorithm for SVG text"
   defaultValue: true
 
 SVGExternalResourcesEnabled:
@@ -5870,6 +5913,14 @@ SiteIsolationEnabled:
   humanReadableDescription: "Put cross-origin iframes in a different process"
   defaultValue: false
   sharedPreferenceForWebProcess: true
+
+SiteIsolationGlobalDebuggerPauseEnabled:
+  type: bool
+  status: unstable
+  category: security
+  humanReadableName: "Site Isolation: hold all frames while debugging"
+  humanReadableDescription: "While Web Inspector is paused in a frame, hold the frames of the same page in other processes"
+  defaultValue: false
 
 SiteIsolationHighValueFraudTargetDomainsEnabled:
   type: bool
@@ -7174,6 +7225,15 @@ WebCodecsVideoEnabled:
   sharedPreferenceForWebProcess: true
   richJavaScript: true
   mediaPlaybackRelated: true
+
+WebCodecsVideoFrameRotationEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "WebCodecs VideoFrame rotation"
+  humanReadableDescription: "Enable the rotation attribute and init members of WebCodecs VideoFrame"
+  condition: ENABLE(WEB_CODECS)
+  defaultValue: false
 
 WebContentRestrictionsAskToEnabled:
   type: bool

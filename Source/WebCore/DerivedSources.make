@@ -1441,6 +1441,9 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasFillRule.idl \
     $(WebCore)/html/canvas/CanvasFillStrokeStyles.idl \
     $(WebCore)/html/canvas/CanvasFilters.idl \
+    $(WebCore)/html/canvas/CanvasFontKerning.idl \
+    $(WebCore)/html/canvas/CanvasFontStretch.idl \
+    $(WebCore)/html/canvas/CanvasFontVariantCaps.idl \
     $(WebCore)/html/canvas/CanvasGradient.idl \
     $(WebCore)/html/canvas/CanvasImageData.idl \
     $(WebCore)/html/canvas/CanvasImageSmoothing.idl \
@@ -1460,6 +1463,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/CanvasTextAlign.idl \
     $(WebCore)/html/canvas/CanvasTextBaseline.idl \
     $(WebCore)/html/canvas/CanvasTextDrawingStyles.idl \
+    $(WebCore)/html/canvas/CanvasTextRendering.idl \
     $(WebCore)/html/canvas/CanvasTransform.idl \
     $(WebCore)/html/canvas/CanvasUserInterface.idl \
     $(WebCore)/html/canvas/EXTBlendMinMax.idl \
@@ -1502,6 +1506,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/PaintRenderingContext2D.idl \
     $(WebCore)/html/canvas/Path2D.idl \
     $(WebCore)/html/canvas/PredefinedColorSpace.idl \
+    $(WebCore)/html/canvas/RenderingMode.idl \
 	$(WebCore)/html/canvas/UpdateElementGeometryOptions.idl \
     $(WebCore)/html/canvas/WebGL2RenderingContext.idl \
     $(WebCore)/html/canvas/WebGLActiveInfo.idl \
@@ -2625,6 +2630,7 @@ GENERATE_QUIRK_BEHAVIORS = \
     QuirkBehaviorDeclarations.h \
     QuirkBehaviorDefinitions.h \
     QuirkBehaviorID.h \
+    QuirkBehaviorID.serialization.in \
     QuirksAccessors.cpp \
     QuirksAccessors.h \
 #

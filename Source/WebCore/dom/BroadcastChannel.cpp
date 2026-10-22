@@ -71,7 +71,7 @@ static PartitionedSecurityOrigin partitionedSecurityOriginFromContext(ScriptExec
 
 class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
 public:
-    static Ref<MainThreadBridge> create(BroadcastChannel& channel, const String& name)
+    static Ref<MainThreadBridge> LEGACY_NODELETE create(BroadcastChannel& channel, const String& name)
     {
         return adoptRef(*new MainThreadBridge(channel, name));
     }
@@ -79,7 +79,7 @@ public:
     void registerChannel();
     void unregisterChannel();
     void postMessage(Ref<SerializedScriptValue>&&);
-    void detach() { m_broadcastChannel = nullptr; }
+    void LEGACY_NODELETE detach() { m_broadcastChannel = nullptr; }
 
     String name() const { return m_name.isolatedCopy(); }
 
@@ -127,7 +127,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(Page*)
 
 void BroadcastChannel::MainThreadBridge::registerChannel()
 {
-    ensureOnMainThread([this, protectedThis = Ref { *this }, contextIdentifier = protect(m_broadcastChannel->scriptExecutionContext())->identifier()](auto* page) mutable {
+    ensureOnMainThread([this, protectedThis = Ref { *this }, contextIdentifier = m_broadcastChannel->scriptExecutionContext()->identifier()](auto* page) mutable {
         if (page)
             protect(page->broadcastChannelRegistry())->registerChannel(m_origin, m_name, identifier());
         channelToContextIdentifier().add(identifier(), contextIdentifier);
@@ -249,7 +249,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message, Com
         if (channel.m_isClosed || !channel.scriptExecutionContext())
             return;
 
-        auto* globalObject = channel.scriptExecutionContext()->globalObject();
+        auto* globalObject = protect(channel.scriptExecutionContext())->globalObject();
         if (!globalObject)
             return;
 

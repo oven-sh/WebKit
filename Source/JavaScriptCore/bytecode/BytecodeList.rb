@@ -459,6 +459,7 @@ op :profile_type,
 op :profile_control_flow,
     args: {
         textOffset: int,
+        textEndOffset: int,
     },
     metadata: {
         basicBlockLocation: BasicBlockLocation.*,

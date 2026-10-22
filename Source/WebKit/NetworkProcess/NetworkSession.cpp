@@ -249,6 +249,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     , m_persistedDomains(parameters.resourceLoadStatisticsParameters.persistedDomains)
     , m_privateClickMeasurement(managerOrProxy(*this, networkProcess, parameters))
     , m_privateClickMeasurementDebugModeEnabled(parameters.enablePrivateClickMeasurementDebugMode)
+    , m_privateClickMeasurementPrivateRelayEnforcementEnabled(parameters.enablePrivateClickMeasurementPrivateRelayEnforcement)
     , m_prefetchCache(makeUniqueRef<PrefetchCache>())
     , m_broadcastChannelRegistry(NetworkBroadcastChannelRegistry::create(networkProcess))
     , m_testSpeedMultiplier(parameters.testSpeedMultiplier)
@@ -306,6 +307,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     m_isStaleWhileRevalidateEnabled = parameters.staleWhileRevalidateEnabled;
 
     setTrackingPreventionEnabled(parameters.resourceLoadStatisticsParameters.enabled);
+    setExemptAllowlistedCookiesFromITP(parameters.resourceLoadStatisticsParameters.exemptAllowlistedCookiesFromITP);
 
     setShouldSendPrivateTokenIPCForTesting(parameters.shouldSendPrivateTokenIPCForTesting);
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
@@ -534,6 +536,12 @@ void NetworkSession::setShouldEnbleSameSiteStrictEnforcement(WebCore::SameSiteSt
         resourceLoadStatistics->setSameSiteStrictEnforcementEnabled(enabled);
 }
 
+void NetworkSession::setExemptAllowlistedCookiesFromITP(bool exempt)
+{
+    if (CheckedPtr storageSession = networkStorageSession())
+        storageSession->setExemptAllowlistedCookiesFromITP(exempt);
+}
+
 void NetworkSession::setFirstPartyHostCNAMEDomain(String&& firstPartyHost, WebCore::RegistrableDomain&& cnameDomain)
 {
     ASSERT(!firstPartyHost.isEmpty() && !cnameDomain.isEmpty() && firstPartyHost != cnameDomain.string());
@@ -718,6 +726,15 @@ void NetworkSession::setPrivateClickMeasurementDebugMode(bool enabled)
 
     m_privateClickMeasurementDebugModeEnabled = enabled;
     m_privateClickMeasurement->setDebugModeIsEnabled(enabled);
+}
+
+void NetworkSession::setPrivateClickMeasurementPrivateRelayEnforcement(bool enabled)
+{
+    if (m_privateClickMeasurementPrivateRelayEnforcementEnabled == enabled)
+        return;
+
+    m_privateClickMeasurementPrivateRelayEnforcementEnabled = enabled;
+    m_privateClickMeasurement->setPrivateRelayEnforcementIsEnabled(enabled);
 }
 
 void NetworkSession::firePrivateClickMeasurementTimerImmediatelyForTesting()
@@ -934,7 +951,7 @@ void NetworkSession::removeSyntheticLoaderAwaitingWebProcessTransferForTesting(N
 }
 #endif
 
-RefPtr<WebSocketTask> NetworkSession::createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, IsInitiatedByDedicatedWorker)
+RefPtr<WebSocketTask> NetworkSession::createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, IsInitiatedByWorker)
 {
     return nullptr;
 }

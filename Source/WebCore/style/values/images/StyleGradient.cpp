@@ -190,7 +190,7 @@ public:
 
     static constexpr float LEGACY_NODELETE maxExtent(float) { return 1; }
 
-    void normalizeStopsAndEndpointsOutsideRange(Vector<ResolvedGradientStop>& stops, WebCore::ColorInterpolationMethod)
+    void LEGACY_NODELETE normalizeStopsAndEndpointsOutsideRange(Vector<ResolvedGradientStop>& stops, WebCore::ColorInterpolationMethod)
     {
         float firstOffset = *stops.first().offset;
         float lastOffset = *stops.last().offset;
@@ -229,7 +229,7 @@ public:
 
     // Radial gradients may need to extend further than the endpoints, because they have
     // to repeat out to the corners of the box.
-    float maxExtent(float gradientLength) const
+    float LEGACY_NODELETE maxExtent(float gradientLength) const
     {
         auto maxLengthForRepeat = distanceToFarthestCorner(m_data.point1, m_size);
         if (maxLengthForRepeat > gradientLength)

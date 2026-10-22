@@ -80,15 +80,6 @@ CustomElementConstructionData::CustomElementConstructionData(Ref<JSCustomElement
 
 CustomElementConstructionData::~CustomElementConstructionData() = default;
 
-namespace {
-
-inline bool LEGACY_NODELETE isASCIIWhitespaceOrReplacementCharacter(char16_t character)
-{
-    return isASCIIWhitespace(character) || character == replacementCharacter;
-}
-
-}
-
 static inline TextPosition LEGACY_NODELETE uninitializedPositionValue1()
 {
     return TextPosition(OrdinalNumber::fromOneBasedInt(-1), OrdinalNumber());
@@ -411,6 +402,10 @@ void HTMLTreeBuilder::processToken(AtomHTMLToken&& token)
     case HTMLToken::Type::Comment:
         m_shouldSkipLeadingNewline = false;
         processComment(WTF::move(token));
+        return;
+    case HTMLToken::Type::ProcessingInstruction:
+        m_shouldSkipLeadingNewline = false;
+        processProcessingInstruction(WTF::move(token));
         return;
     case HTMLToken::Type::Character:
         processCharacter(WTF::move(token));
@@ -2515,6 +2510,28 @@ void HTMLTreeBuilder::processEndTag(AtomHTMLToken&& token)
     }
 }
 
+void HTMLTreeBuilder::processProcessingInstruction(AtomHTMLToken&& token)
+{
+    ASSERT(token.type() == HTMLToken::Type::ProcessingInstruction);
+    if (m_insertionMode == InsertionMode::Initial
+        || m_insertionMode == InsertionMode::BeforeHTML
+        || m_insertionMode == InsertionMode::AfterAfterBody
+        || m_insertionMode == InsertionMode::AfterAfterFrameset) {
+        m_tree.insertProcessingInstructionOnDocument(WTF::move(token));
+        return;
+    }
+    if (m_insertionMode == InsertionMode::AfterBody) {
+        m_tree.insertProcessingInstructionOnHTMLHtmlElement(WTF::move(token));
+        return;
+    }
+    if (m_insertionMode == InsertionMode::InTableText) {
+        defaultForInTableText();
+        processProcessingInstruction(WTF::move(token));
+        return;
+    }
+    m_tree.insertProcessingInstruction(WTF::move(token));
+}
+
 void HTMLTreeBuilder::processComment(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::Comment);
@@ -2540,6 +2557,8 @@ void HTMLTreeBuilder::processComment(AtomHTMLToken&& token)
 void HTMLTreeBuilder::processCharacter(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Type::Character);
+    if (token.isReplacedNullCharacter())
+        return;
     ExternalCharacterTokenBuffer buffer(token);
     processCharacterBuffer(buffer);
 }
@@ -2823,7 +2842,7 @@ void HTMLTreeBuilder::processCharacterBufferForInBody(ExternalCharacterTokenBuff
 #else
     m_tree.insertTextNode(characters);
 #endif
-    if (m_framesetOk && !characters.containsOnly<isASCIIWhitespaceOrReplacementCharacter>())
+    if (m_framesetOk && !characters.containsOnly<isASCIIWhitespace>())
         m_framesetOk = false;
 }
 
@@ -3226,10 +3245,13 @@ void HTMLTreeBuilder::processTokenInForeignContent(AtomHTMLToken&& token)
     case HTMLToken::Type::Comment:
         m_tree.insertComment(WTF::move(token));
         return;
+    case HTMLToken::Type::ProcessingInstruction:
+        m_tree.insertProcessingInstruction(WTF::move(token));
+        return;
     case HTMLToken::Type::Character: {
         String characters = token.characters();
         m_tree.insertTextNode(characters);
-        if (m_framesetOk && !characters.containsOnly<isASCIIWhitespaceOrReplacementCharacter>())
+        if (m_framesetOk && !token.isReplacedNullCharacter() && !characters.containsOnly<isASCIIWhitespace>())
             m_framesetOk = false;
         break;
     }

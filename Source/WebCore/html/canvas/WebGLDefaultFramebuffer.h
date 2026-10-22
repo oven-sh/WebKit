@@ -41,8 +41,8 @@ class WebGLDefaultFramebuffer {
     WTF_MAKE_TZONE_ALLOCATED(WebGLDefaultFramebuffer);
     WTF_MAKE_NONCOPYABLE(WebGLDefaultFramebuffer);
 public:
-    // Creates the framebuffer with a 0x0 size. The caller must call setSize() and ensureSize()
-    // once the context is initialized to allocate and configure the attachments.
+    // Creates the framebuffer with a 0x0 size. The caller must call setSize() once the context
+    // is initialized. The attachments are allocated and configured by the first ensureSize().
     static std::unique_ptr<WebGLDefaultFramebuffer> create(WebGLRenderingContextBase&);
     ~WebGLDefaultFramebuffer();
 
@@ -75,6 +75,9 @@ public:
             || m_depthStencilAttachment == GraphicsContextGL::DEPTH_STENCIL_ATTACHMENT;
     }
     IntSize size() const { return m_size; }
+    // The size of the allocated storage, or empty if the storage is not allocated. May differ
+    // from size() until the next ensureSize().
+    IntSize allocatedSize() const { return m_storageSize; }
 
     // The answers to the queries about the default framebuffer, such as DEPTH_BITS or SAMPLES.
     // They depend only on the formats chosen at creation, not on whether or how the storage is
@@ -91,7 +94,7 @@ public:
     // Sets the size of the drawing buffer, reported by size(). The storage is reallocated to the
     // new size and cleared in the next ensureSize(). Resizing the canvas with separate width and
     // height assignments thus does not allocate the storage for the intermediate sizes.
-    void setSize(IntSize);
+    void LEGACY_NODELETE setSize(IntSize);
     // Reallocates the storage if the size was set since the last reallocation. Must be called
     // before the storage is used. Returns false if the storage could not be allocated. The caller
     // must then lose the context, as the default framebuffer is unusable. The reallocation stays
