@@ -11,7 +11,7 @@ ARG LINUX_ARCH="x86_64"
 # `base` is the toolchain and nothing else: it takes no lane setting, so it is the same for every lane. CI builds it once per change, keeps it in ghcr.io, and hands it to the lanes as
 # `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the `image` job).
 # Without that, it is built here like any other stage. Lane settings belong in `lane` below.
-FROM alpine:3.23 as base
+FROM alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0 as base
 
 # LLVM 23 is in Alpine edge only. `@edge` is a tagged repository: apk takes a package from it only when the package is
 # asked for with that tag, or when a tagged package needs something 3.23 does not have. So musl, libstdc++ and gcc stay
@@ -42,11 +42,14 @@ ENV LD lld
 # Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
 # (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
-RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+ADD --checksum=sha256:${ZSTD_SHA256} \
+    https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz /tmp/zstd.tar.gz
+RUN tar xzf /tmp/zstd.tar.gz -C /tmp \
     && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
     && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
     && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \
-    && rm -rf /tmp/zstd-${ZSTD_VERSION} \
+    && rm -rf /tmp/zstd-${ZSTD_VERSION} /tmp/zstd.tar.gz \
     && zstd --version
 
 # ───────────────────────────────────────────────────────────────────────────
