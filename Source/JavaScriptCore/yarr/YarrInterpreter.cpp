@@ -1362,6 +1362,119 @@ public:
         return false;
     }
 
+    // ParenthesesSubpatternFixedWidthBegin/End wrap a group marked isFixedWidthLoop (see YarrPattern.cpp).
+    // The body runs inline, as it does for Once and Terminal groups. The frame keeps the position the
+    // group was entered at and the number of iterations completed. Nothing in the body can match
+    // differently on a second try, so backtracking never re-enters a completed iteration: a greedy
+    // group gives an iteration back by stepping the input back by the body's width, and a non-greedy
+    // one runs the body once more. The group's capture is always the last completed iteration, so it
+    // is recomputed from the position instead of being saved per iteration.
+    void recordFixedWidthLoopCapture(ByteTerm& term, unsigned matchAmount)
+    {
+        if (!term.capture())
+            return;
+
+        unsigned subpatternId = term.subpatternId();
+        if (!matchAmount) {
+            output[(subpatternId << 1)] = offsetNoMatch;
+            output[(subpatternId << 1) + 1] = offsetNoMatch;
+            if (term.duplicateNamedGroupId())
+                output[pattern->offsetForDuplicateNamedGroupId(term.duplicateNamedGroupId())] = 0;
+            return;
+        }
+
+        unsigned end = input.getPos() - term.inputPosition;
+        output[(subpatternId << 1)] = end - term.atom.iterationInputLength;
+        output[(subpatternId << 1) + 1] = end;
+        if (term.duplicateNamedGroupId())
+            output[pattern->offsetForDuplicateNamedGroupId(term.duplicateNamedGroupId())] = subpatternId;
+    }
+
+    bool matchParenthesesFixedWidthBegin(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin);
+        ASSERT(term.atom.quantityType != QuantifierType::FixedCount);
+
+        BackTrackInfoParenthesesFixedWidth* backTrack = reinterpret_cast<BackTrackInfoParenthesesFixedWidth*>(context->frame + term.frameLocation);
+        backTrack->begin = input.getPos();
+        backTrack->matchAmount = 0;
+        recordFixedWidthLoopCapture(term, 0);
+
+        // A non-greedy group with no minimum runs its body only when what follows has failed.
+        if (term.atom.quantityType == QuantifierType::NonGreedy && !term.atom.quantityMinCount)
+            context->term += term.atom.parenthesesWidth;
+        return true;
+    }
+
+    bool matchParenthesesFixedWidthEnd(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd);
+
+        BackTrackInfoParenthesesFixedWidth* backTrack = reinterpret_cast<BackTrackInfoParenthesesFixedWidth*>(context->frame + term.frameLocation);
+        unsigned matchAmount = ++backTrack->matchAmount;
+        recordFixedWidthLoopCapture(term, matchAmount);
+
+        // Loop back to the body's first term for another iteration: as many as allowed when greedy,
+        // as many as required when non-greedy.
+        unsigned wanted = term.atom.quantityType == QuantifierType::Greedy ? term.atom.quantityMaxCount : term.atom.quantityMinCount;
+        if (matchAmount < wanted)
+            context->term -= term.atom.parenthesesWidth;
+        return true;
+    }
+
+    bool backtrackParenthesesFixedWidthBegin(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin);
+
+        // An iteration failed inside the body. The input is back at the start of that iteration.
+        BackTrackInfoParenthesesFixedWidth* backTrack = reinterpret_cast<BackTrackInfoParenthesesFixedWidth*>(context->frame + term.frameLocation);
+        if (term.atom.quantityType == QuantifierType::Greedy && backTrack->matchAmount >= term.atom.quantityMinCount) {
+            // The iterations completed so far are the match. Continue after the group.
+            context->term += term.atom.parenthesesWidth;
+            return true;
+        }
+
+        // A required iteration failed, or the iteration a non-greedy group was asked for did. The
+        // group fails.
+        input.setPos(backTrack->begin);
+        recordFixedWidthLoopCapture(term, 0);
+        return false;
+    }
+
+    bool backtrackParenthesesFixedWidthEnd(ByteTerm& term, DisjunctionContext* context)
+    {
+        ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd);
+
+        // What follows the group failed.
+        BackTrackInfoParenthesesFixedWidth* backTrack = reinterpret_cast<BackTrackInfoParenthesesFixedWidth*>(context->frame + term.frameLocation);
+        switch (term.atom.quantityType) {
+        case QuantifierType::Greedy:
+            if (backTrack->matchAmount > term.atom.quantityMinCount) {
+                // Give the last iteration back and try what follows again.
+                --backTrack->matchAmount;
+                input.uncheckInput(term.atom.iterationInputLength);
+                recordFixedWidthLoopCapture(term, backTrack->matchAmount);
+                return true;
+            }
+            break;
+        case QuantifierType::NonGreedy:
+            if (backTrack->matchAmount < term.atom.quantityMaxCount) {
+                // Run the body once more.
+                context->term -= term.atom.parenthesesWidth;
+                return true;
+            }
+            break;
+        case QuantifierType::FixedCount:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+
+        // No other number of iterations is possible. The group fails: backtrack to before it.
+        input.setPos(backTrack->begin);
+        recordFixedWidthLoopCapture(term, 0);
+        context->term -= term.atom.parenthesesWidth;
+        return false;
+    }
+
     bool LEGACY_NODELETE matchParentheticalAssertionBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParentheticalAssertionBegin);
@@ -2097,6 +2210,14 @@ public:
             if (matchParenthesesTerminalEnd(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
+        case ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin:
+            if (matchParenthesesFixedWidthBegin(currentTerm(), context))
+                MATCH_NEXT();
+            BACKTRACK();
+        case ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd:
+            if (matchParenthesesFixedWidthEnd(currentTerm(), context))
+                MATCH_NEXT();
+            BACKTRACK();
         case ByteTerm::Type::ParentheticalAssertionBegin:
             if (matchParentheticalAssertionBegin(currentTerm(), context))
                 MATCH_NEXT();
@@ -2243,6 +2364,14 @@ public:
             BACKTRACK();
         case ByteTerm::Type::ParenthesesSubpatternTerminalEnd:
             if (backtrackParenthesesTerminalEnd(currentTerm(), context))
+                MATCH_NEXT();
+            BACKTRACK();
+        case ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin:
+            if (backtrackParenthesesFixedWidthBegin(currentTerm(), context))
+                MATCH_NEXT();
+            BACKTRACK();
+        case ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd:
+            if (backtrackParenthesesFixedWidthEnd(currentTerm(), context))
                 MATCH_NEXT();
             BACKTRACK();
         case ByteTerm::Type::ParentheticalAssertionBegin:
@@ -2513,6 +2642,19 @@ public:
         m_currentAlternativeIndex = beginTerm + 1;
     }
 
+    void atomParenthesesFixedWidthBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    {
+        unsigned beginTerm = m_bodyDisjunction->terms.size();
+
+        m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
+        m_bodyDisjunction->terms.last().frameLocation = frameLocation;
+        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
+        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
+
+        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex));
+        m_currentAlternativeIndex = beginTerm + 1;
+    }
+
     void atomParenthesesSubpatternBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
     {
         // Errrk! - this is a little crazy, we initially generate as a Type::ParenthesesSubpatternOnceBegin,
@@ -2747,6 +2889,39 @@ public:
         m_bodyDisjunction->terms[endTerm].atom.quantityType = quantityType;
     }
 
+    void atomParenthesesFixedWidthEnd(unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, unsigned iterationInputLength)
+    {
+        unsigned beginTerm = popParenthesesStack();
+        closeAlternative(beginTerm + 1);
+        unsigned endTerm = m_bodyDisjunction->terms.size();
+
+        ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin);
+        ASSERT(m_bodyDisjunction->terms[beginTerm].matchDirection() == Forward);
+
+        bool capture = m_bodyDisjunction->terms[beginTerm].capture();
+        unsigned subpatternId = m_bodyDisjunction->terms[beginTerm].subpatternId();
+
+        m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd, subpatternId, capture, false, inputPosition, m_currentFlags));
+
+        if (m_pattern.hasDuplicateNamedCaptureGroups() && capture) {
+            auto duplicateNamedGroupId = m_pattern.m_duplicateNamedGroupForSubpatternId[subpatternId];
+            if (duplicateNamedGroupId) {
+                m_bodyDisjunction->terms[endTerm].atom.parenIds.duplicateNamedGroupId = duplicateNamedGroupId;
+                m_bodyDisjunction->terms[beginTerm].atom.parenIds.duplicateNamedGroupId = duplicateNamedGroupId;
+            }
+        }
+
+        for (unsigned termIndex : { beginTerm, endTerm }) {
+            ByteTerm& term = m_bodyDisjunction->terms[termIndex];
+            term.atom.parenthesesWidth = endTerm - beginTerm;
+            term.frameLocation = frameLocation;
+            term.atom.quantityMinCount = quantityMinCount;
+            term.atom.quantityMaxCount = quantityMaxCount;
+            term.atom.quantityType = quantityType;
+            term.atom.iterationInputLength = iterationInputLength;
+        }
+    }
+
     void regexBegin(unsigned numSubpatterns, unsigned callFrameSize, bool onceThrough)
     {
         m_bodyDisjunction = makeUnique<ByteDisjunction>(numSubpatterns, callFrameSize);
@@ -2913,6 +3088,14 @@ public:
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, disjunctionAlreadyCheckedCount, matchDirection))
                             return error;
                         atomParenthesesTerminalEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType);
+                    } else if (term.parentheses.isFixedWidthLoop) {
+                        auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
+                        if (delegateEndInputOffset.hasOverflowed())
+                            return ErrorCode::OffsetTooLarge;
+                        atomParenthesesFixedWidthBegin(term.parentheses.subpatternId, matchDirection, term.capture(), delegateEndInputOffset, term.frameLocation, term.frameLocation + YarrStackSpaceForBackTrackInfoParentheses);
+                        if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, 0, matchDirection))
+                            return error;
+                        atomParenthesesFixedWidthEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_minimumSize);
                     } else {
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
@@ -3253,6 +3436,22 @@ void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
         dumpInputPosition(term);
         dumpFrameLocation(term);
         break;
+    case ByteTerm::Type::ParenthesesSubpatternFixedWidthBegin:
+        outputTermIndexAndNest(idx, m_nesting++);
+        out.print("ParenthesesSubpatternFixedWidthBegin");
+        dumpCaptured(term);
+        dumpQuantity(term);
+        out.print(" width:", term.atom.iterationInputLength);
+        dumpInputPosition(term);
+        dumpFrameLocation(term);
+        break;
+    case ByteTerm::Type::ParenthesesSubpatternFixedWidthEnd:
+        outputTermIndexAndNest(idx, --m_nesting);
+        out.print("ParenthesesSubpatternFixedWidthEnd");
+        dumpCaptured(term);
+        dumpInputPosition(term);
+        dumpFrameLocation(term);
+        break;
     case ByteTerm::Type::ParentheticalAssertionBegin:
         outputTermIndexAndNest(idx, m_nesting++);
         out.print("ParentheticalAssertionBegin");
@@ -3333,6 +3532,7 @@ static_assert(sizeof(BackTrackInfoAlternative) == (YarrStackSpaceForBackTrackInf
 static_assert(sizeof(BackTrackInfoParentheticalAssertion) == (YarrStackSpaceForBackTrackInfoParentheticalAssertion * sizeof(uintptr_t)));
 static_assert(sizeof(BackTrackInfoParenthesesOnce) == (YarrStackSpaceForBackTrackInfoParenthesesOnce * sizeof(uintptr_t)));
 static_assert(sizeof(BackTrackInfoParenthesesTerminal) == (YarrStackSpaceForBackTrackInfoParenthesesTerminal * sizeof(uintptr_t)));
+static_assert(sizeof(BackTrackInfoParenthesesFixedWidth) <= (YarrStackSpaceForBackTrackInfoParentheses * sizeof(uintptr_t)));
 static_assert(sizeof(Interpreter<char16_t>::BackTrackInfoParentheses) <= (YarrStackSpaceForBackTrackInfoParentheses * sizeof(uintptr_t)));
 
 
