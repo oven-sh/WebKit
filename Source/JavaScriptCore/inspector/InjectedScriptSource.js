@@ -44,7 +44,7 @@ function createObjectWithoutPrototype(/* key1, value1, key2, value2, ... */)
 function createArrayWithoutPrototype(/* value1, value2, ... */)
 {
     let array = new @Array(arguments.length);
-    array.__proto__ = null;
+    @setPrototypeDirect.@call(array, null);
     
     for (let i = 0; i < arguments.length; ++i)
         @arrayPush(array, arguments[i]);
@@ -924,10 +924,11 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
 
         if (includeProto) {
             try {
-                if (object.__proto__)
+                let prototype = @Object.@getPrototypeOf(object);
+                if (prototype)
                     callback(@createObjectWithoutPrototype(
                         "name", "__proto__",
-                        "value", object.__proto__,
+                        "value", prototype,
                         "writable", true,
                         "configurable", true,
                         "isOwn", true,
@@ -1547,7 +1548,8 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
         }
 
         // Not a basic object.
-        if (object.__proto__ && object.__proto__.__proto__)
+        let prototype = @Object.@getPrototypeOf(object);
+        if (prototype && @Object.@getPrototypeOf(prototype))
             return false;
 
         // Objects are simple if they have 3 or less simple value properties.

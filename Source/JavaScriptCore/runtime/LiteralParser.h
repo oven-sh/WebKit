@@ -140,7 +140,7 @@ ALWAYS_INLINE void LEGACY_NODELETE setParserTokenString(LiteralParserToken<CharT
 template <typename CharType, JSONReviverMode reviverMode>
 class LiteralParser {
 public:
-    LiteralParser(JSGlobalObject*, std::span<const CharType> characters, ParserMode, CodeBlock* nullOrCodeBlock = nullptr);
+    LiteralParser(JSGlobalObject*, std::span<const CharType> characters, ParserMode);
     
     String getErrorMessage()
     { 
@@ -333,7 +333,6 @@ private:
     void setErrorMessageForToken(TokenType);
 
     JSGlobalObject* const m_globalObject;
-    CodeBlock* const m_nullOrCodeBlock;
     JSONCache& m_jsonCache;
     Lexer m_lexer;
     const ParserMode m_mode;

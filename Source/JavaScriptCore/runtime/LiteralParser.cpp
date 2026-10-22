@@ -49,6 +49,14 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JSONCache);
 
+// `__proto__: value` in an object literal sets the [[Prototype]] of the object itself. It is not a
+// [[Set]], so it does not reach an accessor named `__proto__` on Object.prototype.
+static ALWAYS_INLINE void setPrototypeOfObjectLiteral(VM& vm, JSObject* object, JSValue value)
+{
+    if (value.isObject() || value.isNull())
+        object->setPrototypeDirect(vm, value);
+}
+
 template<typename CharType, JSONReviverMode reviverMode>
 inline const CharType* LiteralParser<CharType, reviverMode>::Lexer::currentTokenStart() const
 {
@@ -66,9 +74,8 @@ inline const CharType* LiteralParser<CharType, reviverMode>::Lexer::currentToken
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
-LiteralParser<CharType, reviverMode>::LiteralParser(JSGlobalObject* globalObject, std::span<const CharType> characters, ParserMode mode, CodeBlock* nullOrCodeBlock)
+LiteralParser<CharType, reviverMode>::LiteralParser(JSGlobalObject* globalObject, std::span<const CharType> characters, ParserMode mode)
     : m_globalObject(globalObject)
-    , m_nullOrCodeBlock(nullOrCodeBlock)
     , m_jsonCache(globalObject->vm().jsonCache())
     , m_lexer(characters, mode)
     , m_mode(mode)
@@ -1825,9 +1832,9 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
             if (!value) [[unlikely]]
                 return { };
 
-            // After parseRecursively, user code may have run (e.g. due to a __proto__ setter in a
-            // nested object), which may have changed the structure of the object. This invalidates
-            // any cached transition, so reset it to Identifier to take the slow path.
+            // A nested `__proto__` sets the prototype of the nested object and runs no user code, so
+            // the recursive parse is not expected to change the structure of this object. If it ever
+            // does, the cached transition is invalid: reset it to Identifier to take the slow path.
             if constexpr (parserMode != StrictJSON) {
                 if (object->structure() != originalStructure && std::holds_alternative<ExistingProperty>(property)) [[unlikely]]
                     property = Identifier::fromUid(vm, std::get<ExistingProperty>(property).structure->transitionPropertyName());
@@ -1879,9 +1886,7 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                         m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
                         return { };
                     }
-                    PutPropertySlot slot(object, m_nullOrCodeBlock && m_nullOrCodeBlock->ownerExecutable()->isInStrictContext());
-                    JSValue(object).put(m_globalObject, ident, value, slot);
-                    RETURN_IF_EXCEPTION(scope, { });
+                    setPrototypeOfObjectLiteral(vm, object, value);
                 } else if (std::optional<uint32_t> index = parseIndex(ident)) {
                     object->putDirectIndex(m_globalObject, index.value(), value);
                     RETURN_IF_EXCEPTION(scope, { });
@@ -2063,9 +2068,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                             m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
                             return { };
                         }
-                        PutPropertySlot slot(object, m_nullOrCodeBlock && m_nullOrCodeBlock->ownerExecutable()->isInStrictContext());
-                        JSValue(object).put(m_globalObject, ident, primitive, slot);
-                        RETURN_IF_EXCEPTION(scope, { });
+                        setPrototypeOfObjectLiteral(vm, object, primitive);
                     } else {
                         if (std::optional<uint32_t> index = parseIndex(ident)) {
                             object->putDirectIndex(m_globalObject, index.value(), primitive);
@@ -2158,9 +2161,7 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
                     m_parseErrorMessage = "Attempted to redefine __proto__ property"_s;
                     return { };
                 }
-                PutPropertySlot slot(object, m_nullOrCodeBlock && m_nullOrCodeBlock->ownerExecutable()->isInStrictContext());
-                JSValue(object).put(m_globalObject, ident, lastValue, slot);
-                RETURN_IF_EXCEPTION(scope, { });
+                setPrototypeOfObjectLiteral(vm, object, lastValue);
             } else {
                 if (std::optional<uint32_t> index = parseIndex(ident)) {
                     object->putDirectIndex(m_globalObject, index.value(), lastValue);
