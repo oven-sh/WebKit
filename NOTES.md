@@ -155,3 +155,7 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   Local compile check without a build: bench/syntax-check.sh <prebuilt dir> heap/SlotVisitor.cpp heap/Collector.cpp (passes for 20c0b1bc).
   NEXT: wait for preview autobuild-preview-pr-838-20c0b1bc; build-arm.sh final4; verify option 0 == main (repro vcs ~60k, tree), default unchanged, bun tests,
   objdump; ASAN sample with the new debug-asan tarball; update pin in bun branch; PR bodies (drafts in bench/); open bun PR; issue comment; pushback.
+- 2026-10-22 01:45 UTC: WebKit#838 title and body updated on GitHub (still draft; body = bench/wk838-body.md). Pushback self-review launched on oven-sh/WebKit#838:
+  run_id 49c2ef2e6e00 (resume: Workflow({module: "robobun:rdr/pushback", resume_from_run_id: "49c2ef2e6e00"})). /tmp/design.json rebuilt (bench/design.json).
+  Waiting for preview autobuild-preview-pr-838-20c0b1bc (bench/wait-build.sh final4 <tag> builds the arm and unpacks the debug-asan tarball to /workspace/dl/wk-final4-asan).
+  Then: bench/verify-arm.sh final4 final4; bench/asan-probes.sh + stress-sample-asan.sh with the new asan jsc; pin the new tag in the bun branch; open the bun PR.

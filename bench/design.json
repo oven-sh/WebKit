@@ -1,0 +1,31 @@
+{
+  "premise": "defect: a single-threaded LRU churn spends its time in futex and sched_yield of the GC marking helpers (oven-sh/bun#44893); one GC marker is 2 times faster",
+  "pick": "on-request-helpers (oven-sh/WebKit#838): the marking pays for each wake-up of a marker (one per minimumBytesMarkedForParallelMarking visited), no helper parks in a collection, wake-ups happen with m_markingMutex released",
+  "pick_reason": "the component that wakes every parked helper for every shared cell is SlotVisitor::donateKnownParallel and the helper protocol of the Collector; the fix belongs there, for every collection size, and not in a threshold for when the helpers join (WebKit#800), which covers collections under 1 MB only",
+  "why_not_minimal": "a higher threshold in #800 (the minimal patch) makes a wide 10 MB collection mark on one thread and leaves every larger linked collection with the wake-up storm; one wake-up per donated segment still wakes 8 threads for 0.2 ms of marking in a Map",
+  "plan": [
+    "zero per-cell cost in SlotVisitor::drain and untouched lock-free early-outs of donateKnownParallel",
+    "one wake function with the payment check inside; every futex wake after m_markingMutex is released",
+    "large cycles: request the paid-for deficit at each resume; a dry helper polls the shared stacks for a bounded time before it leaves",
+    "a cycle that asked for nobody stays paused, in Collector::runFixpointPhase, for every scheduler",
+    "the option at 0 keeps the upstream protocol (changed during the build: 'no payment' was worse than upstream on trees and in collectContinuously)",
+    "bun tests: wake-ups per collection at 4,096 and 131,072 entries; helpers mark a 40 MB full collection; option 0 at the race-test sites",
+    "ship: WebKit merges first, the pin moves to the merged sha"
+  ],
+  "measurements": [
+    "drain loop instructions per cell, main vs PR (objdump): 55 vs 55",
+    "repro: ns/op, system CPU, voluntary context switches, wake-ups per collection",
+    "125 MB churn: bytes marked in pauses, headroom used up, peak RSS, pauses",
+    "tree/map/list/wide/records full GC ms",
+    "16k/64k/131k LRU ns/op vs one marker",
+    "workers; weak-heavy eden pause",
+    "release binary size; sizeof SlotVisitor/Collector"
+  ],
+  "siblings_in_scope": ["Collector::runTaskInParallel (constraint solver wake-ups)", "SlotVisitor::donateAll", "SlotVisitor::drainInParallelPassively", "helper termination notices", "end of cycle notifyAll"],
+  "siblings_noted": ["worker heaps (oven-sh/bun#44247, oven-sh/WebKit#744)", "passive collector wake (oven-sh/WebKit#775)", "refused thread starts (oven-sh/WebKit#824)"],
+  "revive": null,
+  "gates_outcome": {
+    "gate1_per_cell_cost": "met: +0 instructions per cell",
+    "gate2_large_cycle_parity": "not met for RSS: 798-814 MB vs 678-706 MB on main; total pause not longer; cause measured (the mutator no longer waits for m_markingMutex in Collector::runConcurrentPhase)"
+  }
+}
