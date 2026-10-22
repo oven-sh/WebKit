@@ -696,15 +696,15 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
-        // For what does not run as often as the text around it: a part of an expression or of the head of a loop, or a
-        // statement that is a part of another. The basic block it is in goes on after it.
+        // For what does not run as often as the text around it: a part of an expression, or a statement that is a part of
+        // another. The basic block it is in goes on after it.
         void emitProfileControlFlow(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
         void emitProfileControlFlow(ExpressionNode* node) { emitProfileControlFlow(startOffsetOfBasicBlock(node), node->endOffset()); }
-        // The test or the update of a loop, what a for-in or a for-of assigns to, or the test of a case.
+        // The test of a while or a for, the update of a for, what a for-in or a for-of assigns to, or the test of a case.
         void emitProfileControlFlowOfStatementHead(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
