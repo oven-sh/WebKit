@@ -4572,6 +4572,13 @@ void DoWhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
 // ------------------------------ WhileNode ------------------------------------
 
+// A loop emits its test twice. Two ops with the same range share a counter.
+static void emitLoopTest(BytecodeGenerator& generator, ExpressionNode* test, Label& trueTarget, Label& falseTarget, FallThroughMode fallThroughMode)
+{
+    generator.emitProfileControlFlow(startOffsetOfBasicBlock(test), test->endOffset());
+    generator.emitNodeInConditionContext(test, trueTarget, falseTarget, fallThroughMode);
+}
+
 void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     if (generator.shouldBeConcernedWithCompletionValue() && m_statement->hasEarlyBreakOrContinue())
@@ -4580,9 +4587,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     Ref<LabelScope> scope = generator.newLabelScope(LabelScope::Loop);
     Ref<Label> topOfLoop = generator.newLabel();
 
-    // The test is emitted twice. Two ops with the same range share a counter.
-    generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr), m_expr->endOffset());
-    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
+    emitLoopTest(generator, m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
     generator.emitLabel(topOfLoop.get());
     generator.emitLoopHint();
@@ -4592,8 +4597,7 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     generator.emitLabel(*scope->continueTarget());
 
-    generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr), m_expr->endOffset());
-    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
+    emitLoopTest(generator, m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
 
     generator.emitLabel(scope->breakTarget());
 
@@ -4621,11 +4625,8 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
             }
 
             Ref<Label> topOfLoop = generator.newLabel();
-            if (m_expr2) {
-                // The test is emitted twice. Two ops with the same range share a counter.
-                generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr2), m_expr2->endOffset());
-                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
-            }
+            if (m_expr2)
+                emitLoopTest(generator, m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
 
             generator.emitLabel(topOfLoop.get());
             generator.emitLoopHint();
@@ -4640,10 +4641,9 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
                 generator.emitNodeInIgnoreResultPosition(m_expr3);
             }
 
-            if (m_expr2) {
-                generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr2), m_expr2->endOffset());
-                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
-            } else
+            if (m_expr2)
+                emitLoopTest(generator, m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
+            else
                 generator.emitJump(topOfLoop.get());
 
             generator.emitLabel(scope->breakTarget());
@@ -4803,8 +4803,9 @@ void ForInNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         generator.emitEnumeratorNext(propertyName.get(), mode.get(), index.get(), base.get(), enumerator.get());
         generator.emitJumpIfSentinelString(propertyName.get(), scope->breakTarget());
 
-        // What is assigned to, up to `in`.
-        generator.emitProfileControlFlow(divotStart().offset, divot().offset);
+        // What is assigned to, up to `in`. The initializer of `for (var x = 1 in o)` ran once, before the loop.
+        if (!m_lexpr->isAssignResolveNode())
+            generator.emitProfileControlFlow(divotStart().offset, divot().offset);
         this->emitLoopHeader(generator, propertyName.get());
 
         generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
@@ -5110,13 +5111,13 @@ SwitchInfo::SwitchType CaseBlockNode::tryTableSwitch(Vector<ExpressionNode*, 8>&
     return SwitchInfo::SwitchType::String;
 }
 
-// A test that is a constant or a name reads as a label. Its text is in the basic block of its clause, as `case` is, so
-// `case Kind.A: return 1;` that does not match did not run. Any other test is code that runs when it is compared.
-static bool isLabel(ExpressionNode* test)
+// Such a test reads as a label. Its text is in the basic block of its clause, as `case` is, so `case Kind.A: return 1;`
+// that does not match did not run. Any other test is code that runs when it is compared.
+static bool isConstantOrName(ExpressionNode* test)
 {
     while (test->isDotAccessorNode())
         test = static_cast<DotAccessorNode*>(test)->base();
-    return test->isConstant() || test->isResolveNode();
+    return test->isConstant() || test->isResolveNode() || test->isThisNode();
 }
 
 void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterID* switchExpression, RegisterID* dst)
@@ -5138,7 +5139,7 @@ void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterI
         auto emitTests = [&](ClauseListNode* list) {
             for (; list; list = list->getNext()) {
                 ExpressionNode* test = list->getClause()->expr();
-                if (!isLabel(test))
+                if (!isConstantOrName(test))
                     generator.emitProfileControlFlow(startOffsetOfBasicBlock(test), test->endOffset());
                 RefPtr<RegisterID> clauseVal = generator.emitNode(test);
                 Ref<Label> clauseLabel = generator.newLabel();
