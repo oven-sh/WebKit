@@ -151,6 +151,12 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
     vm.writeBarrier(this);
 }
 
+void ErrorInstance::clearCollectedStackFrames()
+{
+    Locker locker { cellLock() };
+    m_collectedStackFrames = nullptr;
+}
+
 size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 {
     size_t size = sizeof(ErrorInstance);

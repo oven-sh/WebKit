@@ -112,11 +112,7 @@ public:
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
     // The stack is then the error's name and message followed by m_stackString, with no call to VM::onComputeCollectedErrorInfoJSValue().
-    void clearCollectedStackFrames()
-    {
-        Locker locker { cellLock() };
-        m_collectedStackFrames = nullptr;
-    }
+    void clearCollectedStackFrames();
 
 #endif
 
