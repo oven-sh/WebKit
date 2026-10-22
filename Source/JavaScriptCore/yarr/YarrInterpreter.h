@@ -66,6 +66,8 @@ struct ByteTerm {
             QuantifierType quantityType;
             unsigned quantityMinCount;
             unsigned quantityMaxCount;
+            // ParenthesesSubpatternFixedWidthBegin/End: the input one iteration of the body consumes.
+            unsigned iterationInputLength;
         } atom;
         struct {
             int next;
@@ -108,6 +110,8 @@ struct ByteTerm {
         ParenthesesSubpatternOnceEnd,
         ParenthesesSubpatternTerminalBegin,
         ParenthesesSubpatternTerminalEnd,
+        ParenthesesSubpatternFixedWidthBegin,
+        ParenthesesSubpatternFixedWidthEnd,
         ParentheticalAssertionBegin,
         ParentheticalAssertionEnd,
         CheckInput,
