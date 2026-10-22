@@ -1,0 +1,1593 @@
+~~~ Running agent environment hook
+> C:\buildkite-agent\hooks\environment.ps1
+# BUILDKITE_BUILD_CHECKOUT_PATH changed
+~~~ Preparing working directory
+# Creating "C:\\buildkite-agent\\build"
+> cd C:\buildkite-agent\build
+> git clone -v --depth=1 -- https://github.com/oven-sh/bun.git .
+Cloning into '.'...
+POST git-upload-pack (193 bytes)
+POST git-upload-pack (262 bytes)
+Updating files:  10% (2625/24712)
+Updating files:  11% (2719/24712)
+Updating files:  12% (2966/24712)
+Updating files:  13% (3213/24712)
+Updating files:  13% (3323/24712)
+Updating files:  13% (3454/24712)
+Updating files:  14% (3460/24712)
+Updating files:  14% (3641/24712)
+Updating files:  15% (3707/24712)
+Updating files:  16% (3954/24712)
+Updating files:  17% (4202/24712)
+Updating files:  18% (4449/24712)
+Updating files:  19% (4696/24712)
+Updating files:  19% (4870/24712)
+Updating files:  20% (4943/24712)
+Updating files:  21% (5190/24712)
+Updating files:  22% (5437/24712)
+Updating files:  23% (5684/24712)
+Updating files:  24% (5931/24712)
+Updating files:  25% (6178/24712)
+Updating files:  26% (6426/24712)
+Updating files:  27% (6673/24712)
+Updating files:  27% (6674/24712)
+Updating files:  28% (6920/24712)
+Updating files:  29% (7167/24712)
+Updating files:  30% (7414/24712)
+Updating files:  31% (7661/24712)
+Updating files:  32% (7908/24712)
+Updating files:  32% (8138/24712)
+Updating files:  33% (8155/24712)
+Updating files:  34% (8403/24712)
+Updating files:  35% (8650/24712)
+Updating files:  36% (8897/24712)
+Updating files:  37% (9144/24712)
+Updating files:  38% (9391/24712)
+Updating files:  39% (9638/24712)
+Updating files:  40% (9885/24712)
+Updating files:  41% (10132/24712)
+Updating files:  41% (10171/24712)
+Updating files:  42% (10380/24712)
+Updating files:  43% (10627/24712)
+Updating files:  44% (10874/24712)
+Updating files:  45% (11121/24712)
+Updating files:  46% (11368/24712)
+Updating files:  47% (11615/24712)
+Updating files:  48% (11862/24712)
+Updating files:  48% (12077/24712)
+Updating files:  49% (12109/24712)
+Updating files:  50% (12356/24712)
+Updating files:  51% (12604/24712)
+Updating files:  52% (12851/24712)
+Updating files:  53% (13098/24712)
+Updating files:  54% (13345/24712)
+Updating files:  55% (13592/24712)
+Updating files:  55% (13734/24712)
+Updating files:  56% (13839/24712)
+Updating files:  57% (14086/24712)
+Updating files:  58% (14333/24712)
+Updating files:  59% (14581/24712)
+Updating files:  60% (14828/24712)
+Updating files:  61% (15075/24712)
+Updating files:  61% (15238/24712)
+Updating files:  62% (15322/24712)
+Updating files:  63% (15569/24712)
+Updating files:  64% (15816/24712)
+Updating files:  65% (16063/24712)
+Updating files:  66% (16310/24712)
+Updating files:  67% (16558/24712)
+Updating files:  67% (16779/24712)
+Updating files:  68% (16805/24712)
+Updating files:  69% (17052/24712)
+Updating files:  70% (17299/24712)
+Updating files:  71% (17546/24712)
+Updating files:  72% (17793/24712)
+Updating files:  73% (18040/24712)
+Updating files:  74% (18287/24712)
+Updating files:  75% (18534/24712)
+Updating files:  75% (18715/24712)
+Updating files:  76% (18782/24712)
+Updating files:  77% (19029/24712)
+Updating files:  78% (19276/24712)
+Updating files:  79% (19523/24712)
+Updating files:  80% (19770/24712)
+Updating files:  81% (20017/24712)
+Updating files:  82% (20264/24712)
+Updating files:  83% (20511/24712)
+Updating files:  84% (20759/24712)
+Updating files:  84% (20834/24712)
+Updating files:  85% (21006/24712)
+Updating files:  86% (21253/24712)
+Updating files:  87% (21500/24712)
+Updating files:  88% (21747/24712)
+Updating files:  89% (21994/24712)
+Updating files:  90% (22241/24712)
+Updating files:  91% (22488/24712)
+Updating files:  91% (22695/24712)
+Updating files:  92% (22736/24712)
+Updating files:  93% (22983/24712)
+Updating files:  94% (23230/24712)
+Updating files:  95% (23477/24712)
+Updating files:  96% (23724/24712)
+Updating files:  97% (23971/24712)
+Updating files:  98% (24218/24712)
+Updating files:  98% (24358/24712)
+Updating files:  99% (24465/24712)
+Updating files: 100% (24712/24712)
+Updating files: 100% (24712/24712), done.
+> git clean -ffxdq
+# Fetch and checkout pull request head from GitHub
+> git fetch -v --prune --depth=1 -- origin refs/pull/46432/head 80cca09eb06b8f4706df948ee589464e44d4449e
+POST git-upload-pack (419 bytes)
+POST git-upload-pack (340 bytes)
+POST git-upload-pack (349 bytes)
+From https://github.com/oven-sh/bun
+ * branch              refs/pull/46432/head -> FETCH_HEAD
+ * branch              80cca09eb06b8f4706df948ee589464e44d4449e -> FETCH_HEAD
+# FETCH_HEAD is now `80cca09eb06b8f4706df948ee589464e44d4449e`
+# Skipping commit verification: pull request build (#46432)
+> git -c advice.detachedHead=false checkout -f 80cca09eb06b8f4706df948ee589464e44d4449e
+HEAD is now at 80cca09e ci: diagnose the Windows baseline lane (temporary) [skip tests]
+# Cleaning again to catch any post-checkout changes
+> git clean -ffxdq
+# Remote Git mirror: outcome=skipped site=none skip_reason=no-url
+# Checking to see if git commit information needs to be sent to Buildkite...
+# BUILDKITE_COMMIT is already resolved and meta-data populated, skipping
+~~~ Running batch script
+> C:\Windows\SystemTemp\buildkite-script-1810968718.bat
+Downloading build artifacts...
+
+2026-10-22 06:12:55 INFO   Searching for artifacts: "bun-windows-x64-profile.zip" within step: "windows-x64-build-bun"
+2026-10-22 06:12:55 INFO   Found 1 artifacts. Starting to download to: C:\buildkite-agent\build
+2026-10-22 06:12:59 INFO   Successfully downloaded "bun-windows-x64-profile.zip" 272 MiB with SHA256 7132678af888d5fea87ddc5c5f96cf31f070526a232106b4e84d02c27a77c7da
+Extracting bun-windows-x64-profile.zip...
+
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded fallible-iterator v0.2.0
+  Downloaded memchr v2.8.0
+  Downloaded scroll v0.11.0
+  Downloaded uuid v1.21.0
+  Downloaded lazy_static v1.5.0
+  Downloaded pdb v0.8.0
+  Downloaded object v0.36.7
+  Downloaded iced-x86 v1.21.0
+   Compiling object v0.36.7
+   Compiling memchr v2.8.0
+   Compiling scroll v0.11.0
+   Compiling lazy_static v1.5.0
+   Compiling uuid v1.21.0
+   Compiling fallible-iterator v0.2.0
+   Compiling iced-x86 v1.21.0
+   Compiling pdb v0.8.0
+   Compiling verify-baseline-static v0.1.0 (C:\buildkite-agent\build\scripts\verify-baseline-static)
+    Finished `release` profile [optimized] target(s) in 42.99s
+--- Verifying bun-profile.exe on Nehalem (SSE4.2, no AVX/AVX2/AVX512)
+    Binary:   C:\buildkite-agent\build\bun-windows-x64-profile\bun-profile.exe
+    Emulator: C:\intel-sde\sde.exe -nhm --
+
++++ Static instruction scan
+scanning C:\buildkite-agent\build\bun-windows-x64-profile\bun-profile.exe (115591168 bytes, 96835 symbols, 0 data ranges) against x86-64 Nehalem (no AVX/AES-NI/BMI)
+decoded 21906161 instructions across 1 text section(s)
+
+ALLOWLISTED (suppressed, runtime-dispatched):
+  <lib:aesni-gcm-x86_64-win.asm.obj>  [AES, AVX, MOVBE, PCLMULQDQ]  (353 insns)
+  <lib:libcpmt.lib>  [AVX, AVX2, AVX512F, AVX512VL, LZCNT]  (342 insns)
+  AddGreenToBlueAndRed_AVX2  [AVX, AVX2]  (7 insns)
+  AddVectorEq_AVX2  [AVX, AVX2]  (25 insns)
+  AddVector_AVX2  [AVX, AVX2]  (25 insns)
+  BundleColorMap_AVX2  [AVX, AVX2]  (65 insns)
+  CHUNKCOPY_SAFE  [AVX, AVX2]  (44 insns)
+  CRYPTO_rdrand  [RDRAND]  (1 insns)
+  CRYPTO_rdrand_multiple8_buf  [RDRAND]  (1 insns)
+  ChaCha20_ctr32_avx2  [AVX, AVX2]  (433 insns)
+  CollectColorBlueTransforms_AVX2  [AVX, AVX2]  (50 insns)
+  CollectColorRedTransforms_AVX2  [AVX, AVX2]  (44 insns)
+  CombinedShannonEntropy_AVX2  [AVX, AVX2]  (24 insns)
+  ConvertBGRAToRGBA_AVX2  [AVX, AVX2]  (19 insns)
+  GET_CHUNK_MAG  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (45 insns)
+  PredictorAdd0_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd10_AVX2  [AVX, AVX2]  (130 insns)
+  PredictorAdd11_AVX2  [AVX, AVX2]  (126 insns)
+  PredictorAdd12_AVX2  [AVX, AVX2]  (81 insns)
+  PredictorAdd1_AVX2  [AVX, AVX2]  (15 insns)
+  PredictorAdd2_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd3_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd4_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorAdd8_AVX2  [AVX, AVX2]  (11 insns)
+  PredictorAdd9_AVX2  [AVX, AVX2]  (11 insns)
+  PredictorSub0_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub10_AVX2  [AVX, AVX2]  (25 insns)
+  PredictorSub11_AVX2  [AVX, AVX2]  (27 insns)
+  PredictorSub12_AVX2  [AVX, AVX2]  (20 insns)
+  PredictorSub13_AVX2  [AVX, AVX2]  (59 insns)
+  PredictorSub1_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub2_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub3_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub4_AVX2  [AVX, AVX2]  (5 insns)
+  PredictorSub5_AVX2  [AVX, AVX2]  (17 insns)
+  PredictorSub6_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub7_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub8_AVX2  [AVX, AVX2]  (12 insns)
+  PredictorSub9_AVX2  [AVX, AVX2]  (12 insns)
+  SubtractGreenFromBlueAndRed_AVX2  [AVX, AVX2]  (7 insns)
+  TransformColorInverse_AVX2  [AVX, AVX2]  (24 insns)
+  TransformColor_AVX2  [AVX, AVX2]  (21 insns)
+  VectorMismatch_AVX2  [AVX, AVX2]  (13 insns)
+  __remainder_piby2_fma3  [AVX, FMA]  (21 insns)
+  __remainder_piby2_fma3_bdl  [AVX, FMA]  (21 insns)
+  __std_reverse_trivially_swappable_1  [AVX, AVX2]  (8 insns)
+  __std_reverse_trivially_swappable_2  [AVX, AVX2]  (8 insns)
+  __std_reverse_trivially_swappable_4  [AVX, AVX2]  (6 insns)
+  __std_reverse_trivially_swappable_8  [AVX, AVX2]  (5 insns)
+  _handle_nan_fma  [AVX]  (1 insns)
+  _handle_nanf_fma  [AVX]  (1 insns)
+  acos_fma  [AVX, FMA]  (67 insns)
+  acosf_fma  [AVX, FMA]  (60 insns)
+  adler32_avx2  [AVX, AVX2]  (87 insns)
+  adler32_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (65 insns)
+  adler32_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]  (67 insns)
+  adler32_fold_copy_avx2  [AVX, AVX2]  (92 insns)
+  adler32_fold_copy_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (72 insns)
+  adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]  (119 insns)
+  adler32_x86_avx2  [AVX, AVX2]  (66 insns)
+  adler32_x86_avx2_vnni  [AVX, AVX2, AVX_VNNI]  (119 insns)
+  adler32_x86_avx512_vl256_vnni  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]  (164 insns)
+  adler32_x86_avx512_vl512_vnni  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]  (99 insns)
+  aes_gcm_dec_update_vaes_avx2  [AVX, AVX2, PCLMULQDQ, VAES, VPCLMULQDQ]  (281 insns)
+  aes_gcm_dec_update_vaes_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2, VAES, VPCLMULQDQ]  (318 insns)
+  aes_gcm_enc_update_vaes_avx2  [AVX, AVX2, PCLMULQDQ, VAES, VPCLMULQDQ]  (366 insns)
+  aes_gcm_enc_update_vaes_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2, VAES, VPCLMULQDQ]  (412 insns)
+  aes_hw_cbc_encrypt  [AES]  (118 insns)
+  aes_hw_ctr32_encrypt_blocks  [AES]  (135 insns)
+  aes_hw_decrypt  [AES]  (196 insns)
+  aes_hw_ecb_encrypt  [AES]  (4 insns)
+  aes_hw_encrypt  [AES]  (2 insns)
+  aes_hw_encrypt_key_to_decrypt_key  [AES]  (3 insns)
+  aes_hw_set_encrypt_key_alt  [AES]  (6 insns)
+  aes_hw_set_encrypt_key_base  [AES]  (31 insns)
+  aesni_gcm_decrypt  [AES, AVX]  (115 insns)
+  aesni_gcm_encrypt  [AVX, PCLMULQDQ]  (215 insns)
+  asin_fma  [AVX, FMA]  (70 insns)
+  asinf_fma  [AVX, FMA]  (61 insns)
+  atan2_fma  [AVX, BMI2, FMA]  (131 insns)
+  atan2f_fma  [AVX, BMI2, FMA]  (80 insns)
+  atan_fma  [AVX, FMA]  (54 insns)
+  atanf_fma  [AVX, FMA]  (41 insns)
+  beeu_mod_inverse_vartime  [AVX]  (8 insns)
+  blake2b_simd::avx2::compress1_loop  [AVX, AVX2]  (1437 insns)
+  bn_mulx4x_mont  [ADX, BMI2]  (96 insns)
+  bn_mulx4x_mont_gather5  [ADX, BMI2]  (94 insns)
+  bn_sqrx8x_internal  [ADX, BMI1, BMI2]  (198 insns)
+  bssl::BORINGSSL_keccak_short_x4  [AVX]  (40 insns)
+  bun::N_AVX10_2::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX10_2::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX10_2::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX10_2::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX10_2::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX10_2::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX10_2::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX10_2::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX10_2::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16]  (135 insns)
+  bun::N_AVX10_2::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX10_2::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX10_2::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX10_2::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX10_2::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX10_2::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX10_2::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX10_2::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX10_2::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX10_2::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX10_2::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX10_2::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX10_2::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX10_2::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX10_2::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX10_2::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX10_2::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX10_2::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX10_2::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (60 insns)
+  bun::N_AVX10_2::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX10_2::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX10_2::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX10_2::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX10_2::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX10_2::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX10_2::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX10_2::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX10_2::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX10_2::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX10_2::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, BMI2, GFNI]  (243 insns)
+  bun::N_AVX10_2::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX10_2::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX10_2::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX10_2::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX10_2::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (78 insns)
+  bun::N_AVX10_2::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (62 insns)
+  bun::N_AVX2::BSwap16Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::BSwap32Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::BSwap64Impl  [AVX, AVX2]  (38 insns)
+  bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::CopyAsciiPrefixImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::CopyU16ToU8Impl  [AVX, AVX2]  (39 insns)
+  bun::N_AVX2::CountCharImpl  [AVX, AVX2]  (70 insns)
+  bun::N_AVX2::CountDelimsImpl  [AVX, AVX2]  (76 insns)
+  bun::N_AVX2::CountPrintableAscii16Impl  [AVX, AVX2]  (33 insns)
+  bun::N_AVX2::DecodeHex16Impl  [AVX, AVX2]  (115 insns)
+  bun::N_AVX2::DecodeHex8Impl  [AVX, AVX2]  (103 insns)
+  bun::N_AVX2::EncodeHexLowerImpl  [AVX, AVX2]  (104 insns)
+  bun::N_AVX2::FillWithSkipMaskImpl  [AVX]  (33 insns)
+  bun::N_AVX2::FirstNonAscii16Impl  [AVX, AVX2, BMI2]  (9 insns)
+  bun::N_AVX2::FirstNonAscii8Impl  [AVX, AVX2]  (5 insns)
+  bun::N_AVX2::HtmlEscapeExtraLen16Impl  [AVX, AVX2]  (18 insns)
+  bun::N_AVX2::HtmlEscapeExtraLen8Impl  [AVX, AVX2]  (18 insns)
+  bun::N_AVX2::IndexOfAnyCharImpl  [AVX, AVX2]  (34 insns)
+  bun::N_AVX2::IndexOfCharImpl  [AVX, AVX2]  (9 insns)
+  bun::N_AVX2::IndexOfEscapeChar16Impl  [AVX, AVX2, BMI2]  (37 insns)
+  bun::N_AVX2::IndexOfEscapeChar8Impl  [AVX, AVX2]  (36 insns)
+  bun::N_AVX2::IndexOfFirstAsciiUpper16Impl  [AVX, AVX2, BMI2]  (9 insns)
+  bun::N_AVX2::IndexOfFirstAsciiUpperImpl  [AVX, AVX2]  (8 insns)
+  bun::N_AVX2::IndexOfHTMLEscapeChar16Impl  [AVX, AVX2, BMI2]  (20 insns)
+  bun::N_AVX2::IndexOfHTMLEscapeChar8Impl  [AVX, AVX2]  (19 insns)
+  bun::N_AVX2::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX2]  (11 insns)
+  bun::N_AVX2::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX2]  (17 insns)
+  bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX2]  (22 insns)
+  bun::N_AVX2::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX2]  (17 insns)
+  bun::N_AVX2::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX2]  (16 insns)
+  bun::N_AVX2::IndexOfNotCharImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX2]  (7 insns)
+  bun::N_AVX2::JsonIndexImpl  [AVX, AVX2, BMI1, BMI2]  (199 insns)
+  bun::N_AVX2::LastIndexOfAnyCharImpl  [AVX, AVX2]  (34 insns)
+  bun::N_AVX2::LastIndexOfCharImpl  [AVX, AVX2]  (22 insns)
+  bun::N_AVX2::LineStartsImpl  [AVX, AVX2, BMI1]  (15 insns)
+  bun::N_AVX2::LowerAscii16Impl  [AVX, AVX2]  (28 insns)
+  bun::N_AVX2::LowerAsciiImpl  [AVX, AVX2]  (50 insns)
+  bun::N_AVX2::MemMem16Impl  [AVX, AVX2]  (123 insns)
+  bun::N_AVX2::MemMemImpl  [AVX, AVX2]  (287 insns)
+  bun::N_AVX2::MemMemSearch<0,unsigned short>  [AVX, AVX2, BMI2]  (118 insns)
+  bun::N_AVX2::MemMemSearch<1,unsigned short>  [AVX, AVX2, BMI2]  (165 insns)
+  bun::N_AVX2::MemRMem16Impl  [AVX, AVX2]  (123 insns)
+  bun::N_AVX2::MemRMemImpl  [AVX, AVX2]  (226 insns)
+  bun::N_AVX2::OddBlocksImpl  [AVX, AVX2, BMI2]  (43 insns)
+  bun::N_AVX2::ParseMappingsImpl  [AVX, AVX2, BMI2]  (346 insns)
+  bun::N_AVX2::ScannerRunStopsImpl  [AVX, AVX2]  (99 insns)
+  bun::N_AVX2::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX2, BMI1, BMI2]  (142 insns)
+  bun::N_AVX2::VisibleLatin1WidthImpl  [AVX, AVX2]  (127 insns)
+  bun::N_AVX2::VisibleUTF16WidthImpl  [AVX, AVX2]  (87 insns)
+  bun::N_AVX2::XmlIndex16Impl  [AVX, AVX2, BMI1, BMI2]  (503 insns)
+  bun::N_AVX2::XmlIndexImpl  [AVX, AVX2, BMI1, BMI2]  (202 insns)
+  bun::N_AVX3::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (31 insns)
+  bun::N_AVX3::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (144 insns)
+  bun::N_AVX3::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (108 insns)
+  bun::N_AVX3::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512F]  (153 insns)
+  bun::N_AVX3::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (58 insns)
+  bun::N_AVX3::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3::MemMemSearch<0,unsigned short>  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (64 insns)
+  bun::N_AVX3::MemMemSearch<1,unsigned short>  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (128 insns)
+  bun::N_AVX3::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2]  (29 insns)
+  bun::N_AVX3::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (241 insns)
+  bun::N_AVX3::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F]  (50 insns)
+  bun::N_AVX3::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, BMI2]  (81 insns)
+  bun::N_AVX3::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2]  (60 insns)
+  bun::N_AVX3_DL::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_DL::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_DL::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_DL::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_DL::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_DL::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_DL::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_DL::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_DL::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_DL::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (135 insns)
+  bun::N_AVX3_DL::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_DL::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_DL::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_DL::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_DL::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_DL::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_DL::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_DL::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_DL::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_DL::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_DL::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_DL::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_DL::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_DL::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_DL::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_DL::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_DL::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_DL::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_DL::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_DL::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (60 insns)
+  bun::N_AVX3_DL::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_DL::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_DL::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_DL::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_DL::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_DL::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_DL::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_DL::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_DL::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_DL::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_DL::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_DL::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_DL::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_DL::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_DL::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_DL::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (78 insns)
+  bun::N_AVX3_DL::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (62 insns)
+  bun::N_AVX3_SPR::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_SPR::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_SPR::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_SPR::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_SPR::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_SPR::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_SPR::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_SPR::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_SPR::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_SPR::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16]  (135 insns)
+  bun::N_AVX3_SPR::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_SPR::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_SPR::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_SPR::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_SPR::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_SPR::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_SPR::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_SPR::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_SPR::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_SPR::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_SPR::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_SPR::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_SPR::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_SPR::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_SPR::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_SPR::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_SPR::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_SPR::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_SPR::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_SPR::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (75 insns)
+  bun::N_AVX3_SPR::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_SPR::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_SPR::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_SPR::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_SPR::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_SPR::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_SPR::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_SPR::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_SPR::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_SPR::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_SPR::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_SPR::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_SPR::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_SPR::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_SPR::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_SPR::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (93 insns)
+  bun::N_AVX3_SPR::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (77 insns)
+  bun::N_AVX3_ZEN4::BSwap16Impl  [AVX, AVX2, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_ZEN4::BSwap32Impl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (47 insns)
+  bun::N_AVX3_ZEN4::BSwap64Impl  [AVX, AVX512BW, AVX512F]  (38 insns)
+  bun::N_AVX3_ZEN4::ContainsNewlineOrNonASCIIOrQuoteImpl  [AVX, AVX512BW, AVX512F]  (8 insns)
+  bun::N_AVX3_ZEN4::CopyAsciiPrefixImpl  [AVX, AVX512BW, AVX512F]  (13 insns)
+  bun::N_AVX3_ZEN4::CopyU16ToU8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (23 insns)
+  bun::N_AVX3_ZEN4::CountCharImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (66 insns)
+  bun::N_AVX3_ZEN4::CountDelimsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_ZEN4::CountPrintableAscii16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (28 insns)
+  bun::N_AVX3_ZEN4::DecodeHex16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (135 insns)
+  bun::N_AVX3_ZEN4::DecodeHex8Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (104 insns)
+  bun::N_AVX3_ZEN4::EncodeHexLowerImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, GFNI]  (482 insns)
+  bun::N_AVX3_ZEN4::FillWithSkipMaskImpl  [AVX, AVX512DQ, AVX512F]  (27 insns)
+  bun::N_AVX3_ZEN4::FirstNonAscii16Impl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::FirstNonAscii8Impl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_ZEN4::HtmlEscapeExtraLen16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (49 insns)
+  bun::N_AVX3_ZEN4::HtmlEscapeExtraLen8Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (137 insns)
+  bun::N_AVX3_ZEN4::IndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (31 insns)
+  bun::N_AVX3_ZEN4::IndexOfCharImpl  [AVX, AVX512BW, BMI2]  (10 insns)
+  bun::N_AVX3_ZEN4::IndexOfEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_ZEN4::IndexOfEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (26 insns)
+  bun::N_AVX3_ZEN4::IndexOfFirstAsciiUpper16Impl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_ZEN4::IndexOfFirstAsciiUpperImpl  [AVX, AVX512BW, AVX512F]  (9 insns)
+  bun::N_AVX3_ZEN4::IndexOfHTMLEscapeChar16Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_ZEN4::IndexOfHTMLEscapeChar8Impl  [AVX, AVX512BW, AVX512F]  (17 insns)
+  bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInMultilineCommentImpl  [AVX, AVX512BW, AVX512F]  (14 insns)
+  bun::N_AVX3_ZEN4::IndexOfInterestingCharacterInStringLiteralImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplBacktick  [AVX, AVX512BW, AVX512F]  (19 insns)
+  bun::N_AVX3_ZEN4::IndexOfNeedsEscapeForJavaScriptStringImplQuote  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::IndexOfNewlineOrNonASCIIOrHashOrAtImpl  [AVX, AVX512BW, AVX512F]  (16 insns)
+  bun::N_AVX3_ZEN4::IndexOfNotCharImpl  [AVX, AVX512BW]  (7 insns)
+  bun::N_AVX3_ZEN4::IndexOfSpaceOrNewlineOrNonASCIIImpl  [AVX, AVX512BW, AVX512F]  (7 insns)
+  bun::N_AVX3_ZEN4::JsonIndexImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2, GFNI]  (75 insns)
+  bun::N_AVX3_ZEN4::LastIndexOfAnyCharImpl  [AVX, AVX512BW, AVX512F]  (35 insns)
+  bun::N_AVX3_ZEN4::LastIndexOfCharImpl  [AVX, AVX512BW]  (22 insns)
+  bun::N_AVX3_ZEN4::LineStartsImpl  [AVX, AVX512BW, AVX512F, BMI1]  (15 insns)
+  bun::N_AVX3_ZEN4::LowerAscii16Impl  [AVX, AVX512BW, AVX512F, AVX512VL]  (81 insns)
+  bun::N_AVX3_ZEN4::LowerAsciiImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (92 insns)
+  bun::N_AVX3_ZEN4::MemMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_ZEN4::MemMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]  (256 insns)
+  bun::N_AVX3_ZEN4::MemRMem16Impl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (134 insns)
+  bun::N_AVX3_ZEN4::MemRMemImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]  (190 insns)
+  bun::N_AVX3_ZEN4::OddBlocksImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (29 insns)
+  bun::N_AVX3_ZEN4::ParseMappingsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, GFNI]  (243 insns)
+  bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX512BW, AVX512F, GFNI]  (50 insns)
+  bun::N_AVX3_ZEN4::VisibleLatin1WidthExcludeANSIImpl  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (84 insns)
+  bun::N_AVX3_ZEN4::VisibleLatin1WidthImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (113 insns)
+  bun::N_AVX3_ZEN4::VisibleUTF16WidthImpl  [AVX, AVX512BW, AVX512F, AVX512VL]  (74 insns)
+  bun::N_AVX3_ZEN4::XmlIndex16Impl  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]  (93 insns)
+  bun::N_AVX3_ZEN4::XmlIndexImpl  [AVX, AVX512BW, AVX512F, BMI2, GFNI]  (77 insns)
+  bun::xxh3::N_AVX10_2::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX2::HashLong  [AVX, AVX2, BMI2]  (108 insns)
+  bun::xxh3::N_AVX3::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_DL::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_SPR::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun::xxh3::N_AVX3_ZEN4::HashLong  [AVX, AVX2, AVX512DQ, AVX512F, BMI2]  (202 insns)
+  bun_image::N_AVX10_2::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX10_2::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX10_2::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX10_2::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX10_2::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX10_2::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX10_2::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX2::CmykToRgbaImpl  [AVX, AVX2]  (220 insns)
+  bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]  (16 insns)
+  bun_image::N_AVX2::HorizPass  [AVX, AVX2]  (20 insns)
+  bun_image::N_AVX2::ModulateImpl  [AVX, AVX2, FMA]  (52 insns)
+  bun_image::N_AVX2::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX2::Rotate180Impl  [AVX, AVX2]  (16 insns)
+  bun_image::N_AVX2::VertPass  [AVX, AVX2, BMI1]  (22 insns)
+  bun_image::N_AVX3::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (218 insns)
+  bun_image::N_AVX3::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3::HorizPass  [AVX, AVX2]  (20 insns)
+  bun_image::N_AVX3::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3::VertPass  [AVX, AVX512BW, AVX512F, BMI1]  (23 insns)
+  bun_image::N_AVX3_DL::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_DL::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_DL::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_DL::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_DL::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_DL::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_DL::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX3_SPR::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_SPR::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_SPR::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_SPR::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_SPR::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_SPR::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_SPR::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  bun_image::N_AVX3_ZEN4::CmykToRgbaImpl  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]  (195 insns)
+  bun_image::N_AVX3_ZEN4::FlipHImpl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_ZEN4::HorizPass  [AVX, AVX2, AVX512VL, AVX512_VNNI]  (28 insns)
+  bun_image::N_AVX3_ZEN4::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]  (42 insns)
+  bun_image::N_AVX3_ZEN4::NearestPaletteImpl  [AVX]  (12 insns)
+  bun_image::N_AVX3_ZEN4::Rotate180Impl  [AVX, AVX512F]  (16 insns)
+  bun_image::N_AVX3_ZEN4::VertPass  [AVX, AVX512BW, AVX512F, AVX512_VNNI, BMI1]  (29 insns)
+  chacha20_poly1305_open_avx2  [AVX, AVX2, BMI2]  (1232 insns)
+  chacha20_poly1305_seal_avx2  [AVX, AVX2, BMI2]  (1629 insns)
+  chunkmemset_avx512  [AVX, AVX2, AVX512BW, AVX512VL, BMI2]  (45 insns)
+  chunkmemset_safe_avx2  [AVX, AVX2]  (36 insns)
+  compare256_avx2  [AVX, AVX2]  (27 insns)
+  compare256_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (26 insns)
+  cos  [AVX, FMA]  (49 insns)
+  cosf  [AVX, FMA]  (58 insns)
+  cosh_fma  [AVX, FMA]  (91 insns)
+  coshf_fma  [AVX, FMA]  (82 insns)
+  crc32_fold_pclmulqdq  [PCLMULQDQ]  (100 insns)
+  crc32_fold_pclmulqdq_copy  [PCLMULQDQ]  (24 insns)
+  crc32_fold_pclmulqdq_final  [PCLMULQDQ]  (10 insns)
+  crc32_fold_vpclmulqdq  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (317 insns)
+  crc32_fold_vpclmulqdq_copy  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (271 insns)
+  crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]  (41 insns)
+  crc32_fold_vpclmulqdq_reset  [AVX]  (6 insns)
+  crc32_pclmulqdq  [PCLMULQDQ]  (10 insns)
+  crc32_vpclmulqdq  [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]  (47 insns)
+  crc32_x86_pclmulqdq  [PCLMULQDQ]  (51 insns)
+  crc32_x86_pclmulqdq_avx  [AVX, PCLMULQDQ]  (198 insns)
+  crc32_x86_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (206 insns)
+  crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (245 insns)
+  crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (254 insns)
+  ctiMasmProbeTrampolineAVX  [AVX]  (32 insns)
+  deflate_decompress_bmi2  [BMI2]  (48 insns)
+  ecp_nistz256_mul_mont_adx  [ADX, BMI2]  (58 insns)
+  ecp_nistz256_ord_mul_mont_adx  [ADX, BMI2]  (106 insns)
+  ecp_nistz256_ord_sqr_mont_adx  [ADX, BMI2]  (86 insns)
+  ecp_nistz256_select_w5_avx2  [AVX, AVX2]  (45 insns)
+  ecp_nistz256_select_w7_avx2  [AVX, AVX2]  (53 insns)
+  ecp_nistz256_sqr_mont_adx  [ADX, BMI2]  (42 insns)
+  exp  [AVX, FMA]  (34 insns)
+  exp2_fma  [AVX, FMA]  (54 insns)
+  expf  [AVX, FMA]  (28 insns)
+  fma  [FMA]  (1 insns)
+  fmod  [FMA]  (1 insns)
+  gcm_ghash_avx  [AVX, PCLMULQDQ]  (364 insns)
+  gcm_ghash_clmul  [PCLMULQDQ]  (39 insns)
+  gcm_ghash_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (116 insns)
+  gcm_ghash_vpclmulqdq_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (144 insns)
+  gcm_gmult_clmul  [PCLMULQDQ]  (3 insns)
+  gcm_gmult_vpclmulqdq_avx2  [AVX, PCLMULQDQ]  (28 insns)
+  gcm_gmult_vpclmulqdq_avx512  [AVX, AVX512F, AVX512VL, PCLMULQDQ]  (29 insns)
+  gcm_init_avx  [AVX, PCLMULQDQ]  (87 insns)
+  gcm_init_clmul  [PCLMULQDQ]  (9 insns)
+  gcm_init_vpclmulqdq_avx2  [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]  (76 insns)
+  gcm_init_vpclmulqdq_avx512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]  (58 insns)
+  gen_half_mask  [BMI2]  (1 insns)
+  inflate_fast_avx2  [AVX, AVX2, BMI2]  (146 insns)
+  inflate_fast_avx512  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (77 insns)
+  ipint_i64_atomic_rmw32_cmpxchg_u_atomic_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_abs_validate  [AVX]  (3 insns)
+  ipint_simd_f32x4_add_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ceil_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_convert_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_convert_i32x4_u_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_demote_f64x2_zero_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_div_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_eq_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_floor_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ge_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_gt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_le_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_lt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_max_validate  [AVX]  (8 insns)
+  ipint_simd_f32x4_min_validate  [AVX]  (7 insns)
+  ipint_simd_f32x4_mul_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_ne_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_nearest_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_neg_validate  [AVX]  (3 insns)
+  ipint_simd_f32x4_pmax_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_pmin_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_relaxed_madd_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_relaxed_max_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_relaxed_min_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_relaxed_nmadd_validate  [AVX]  (2 insns)
+  ipint_simd_f32x4_splat_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_sqrt_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_sub_validate  [AVX]  (1 insns)
+  ipint_simd_f32x4_trunc_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_abs_validate  [AVX]  (3 insns)
+  ipint_simd_f64x2_add_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ceil_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_convert_low_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_convert_low_i32x4_u_validate  [AVX]  (6 insns)
+  ipint_simd_f64x2_div_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_eq_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_floor_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ge_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_gt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_le_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_lt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_max_validate  [AVX]  (8 insns)
+  ipint_simd_f64x2_min_validate  [AVX]  (7 insns)
+  ipint_simd_f64x2_mul_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_ne_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_nearest_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_neg_validate  [AVX]  (3 insns)
+  ipint_simd_f64x2_pmax_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_pmin_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_promote_low_f32x4_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_madd_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_relaxed_max_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_min_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_relaxed_nmadd_validate  [AVX]  (2 insns)
+  ipint_simd_f64x2_splat_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_sqrt_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_sub_validate  [AVX]  (1 insns)
+  ipint_simd_f64x2_trunc_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_add_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_avgr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extadd_pairwise_i8x16_s_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extadd_pairwise_i8x16_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extend_high_i8x16_s_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_extend_high_i8x16_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_extend_low_i8x16_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extend_low_i8x16_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_extmul_high_i8x16_s_validate  [AVX]  (5 insns)
+  ipint_simd_i16x8_extmul_high_i8x16_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_extmul_low_i8x16_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_extmul_low_i8x16_u_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i16x8_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_mul_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_narrow_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_narrow_i32x4_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i16x8_q15mulr_sat_s_validate  [AVX]  (6 insns)
+  ipint_simd_i16x8_relaxed_dot_i8x16_i7x16_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_relaxed_q15mulr_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shl_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shr_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_shr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_splat_validate  [AVX]  (3 insns)
+  ipint_simd_i16x8_sub_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_sub_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i16x8_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_add_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_dot_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extadd_pairwise_i16x8_s_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_extadd_pairwise_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extend_high_i16x8_s_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_extend_high_i16x8_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_extend_low_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extend_low_i16x8_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_extmul_high_i16x8_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_high_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_low_i16x8_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_extmul_low_i16x8_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i32x4_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_mul_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_relaxed_dot_i8x16_i7x16_add_s_validate  [AVX]  (5 insns)
+  ipint_simd_i32x4_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i32x4_relaxed_trunc_f64x2_s_zero_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_relaxed_trunc_f64x2_u_zero_validate  [AVX]  (7 insns)
+  ipint_simd_i32x4_shl_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_shr_s_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_shr_u_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_splat_validate  [AVX]  (2 insns)
+  ipint_simd_i32x4_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i32x4_trunc_sat_f32x4_s_validate  [AVX]  (8 insns)
+  ipint_simd_i32x4_trunc_sat_f32x4_u_validate  [AVX]  (13 insns)
+  ipint_simd_i32x4_trunc_sat_f64x2_s_zero_validate  [AVX]  (6 insns)
+  ipint_simd_i32x4_trunc_sat_f64x2_u_zero_validate  [AVX]  (10 insns)
+  ipint_simd_i64x2_abs_validate  [AVX]  (4 insns)
+  ipint_simd_i64x2_add_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extend_high_i32x4_s_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_extend_high_i32x4_u_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_extend_low_i32x4_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extend_low_i32x4_u_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_extmul_high_i32x4_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_high_i32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_low_i32x4_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_extmul_low_i32x4_u_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i64x2_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_shl_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_shr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i64x2_splat_validate  [AVX]  (2 insns)
+  ipint_simd_i64x2_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_abs_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_add_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_all_true_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_avgr_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_eq_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_ge_s_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_ge_u_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_gt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_gt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_le_s_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_le_u_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_lt_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_lt_u_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_max_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_max_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_min_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_min_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_narrow_i16x8_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_narrow_i16x8_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_ne_validate  [AVX]  (3 insns)
+  ipint_simd_i8x16_neg_validate  [AVX]  (2 insns)
+  ipint_simd_i8x16_popcnt_validate  [AVX]  (13 insns)
+  ipint_simd_i8x16_relaxed_laneselect_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_relaxed_swizzle_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_shl_validate  [AVX]  (10 insns)
+  ipint_simd_i8x16_shr_s_validate  [AVX]  (6 insns)
+  ipint_simd_i8x16_shr_u_validate  [AVX]  (6 insns)
+  ipint_simd_i8x16_splat_validate  [AVX]  (4 insns)
+  ipint_simd_i8x16_sub_sat_s_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_sub_sat_u_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_sub_validate  [AVX]  (1 insns)
+  ipint_simd_i8x16_swizzle_validate  [AVX]  (4 insns)
+  ipint_simd_v128_and_validate  [AVX]  (1 insns)
+  ipint_simd_v128_andnot_validate  [AVX]  (1 insns)
+  ipint_simd_v128_any_true_validate  [AVX]  (1 insns)
+  ipint_simd_v128_bitselect_validate  [AVX]  (3 insns)
+  ipint_simd_v128_load16_splat_mem_validate  [AVX]  (3 insns)
+  ipint_simd_v128_load32_splat_mem_validate  [AVX]  (1 insns)
+  ipint_simd_v128_load64_splat_mem_validate  [AVX]  (1 insns)
+  ipint_simd_v128_load8_splat_mem_validate  [AVX]  (3 insns)
+  ipint_simd_v128_not_validate  [AVX]  (2 insns)
+  ipint_simd_v128_or_validate  [AVX]  (1 insns)
+  ipint_simd_v128_xor_validate  [AVX]  (1 insns)
+  jsimd_convsamp_avx2  [AVX, AVX2]  (15 insns)
+  jsimd_extbgr_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_extbgr_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_extbgrx_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extbgrx_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extrgb_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_extrgb_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_extrgbx_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extrgbx_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extxbgr_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extxbgr_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_extxrgb_gray_convert_avx2  [AVX, AVX2]  (101 insns)
+  jsimd_extxrgb_ycc_convert_avx2  [AVX, AVX2]  (187 insns)
+  jsimd_fdct_islow_avx2  [AVX, AVX2]  (146 insns)
+  jsimd_h2v1_downsample_avx2  [AVX, AVX2]  (27 insns)
+  jsimd_h2v1_extbgr_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_extbgrx_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extrgb_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_extrgbx_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extxbgr_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_extxrgb_merged_upsample_avx2  [AVX, AVX2]  (121 insns)
+  jsimd_h2v1_fancy_upsample_avx2  [AVX, AVX2]  (51 insns)
+  jsimd_h2v1_merged_upsample_avx2  [AVX, AVX2]  (128 insns)
+  jsimd_h2v1_upsample_avx2  [AVX, AVX2]  (12 insns)
+  jsimd_h2v2_downsample_avx2  [AVX, AVX2]  (43 insns)
+  jsimd_h2v2_fancy_upsample_avx2  [AVX, AVX2]  (152 insns)
+  jsimd_h2v2_upsample_avx2  [AVX, AVX2]  (16 insns)
+  jsimd_idct_islow_avx2  [AVX, AVX2]  (204 insns)
+  jsimd_quantize_avx2  [AVX, AVX2]  (29 insns)
+  jsimd_rgb_gray_convert_avx2  [AVX, AVX2]  (99 insns)
+  jsimd_rgb_ycc_convert_avx2  [AVX, AVX2]  (185 insns)
+  jsimd_ycc_extbgr_convert_avx2  [AVX, AVX2]  (120 insns)
+  jsimd_ycc_extbgrx_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extrgb_convert_avx2  [AVX, AVX2]  (120 insns)
+  jsimd_ycc_extrgbx_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extxbgr_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_extxrgb_convert_avx2  [AVX, AVX2]  (113 insns)
+  jsimd_ycc_rgb_convert_avx2  [AVX, AVX2]  (120 insns)
+  keccak_f_x4  [AVX, AVX2]  (375 insns)
+  log  [AVX, FMA]  (72 insns)
+  log10  [AVX, FMA]  (79 insns)
+  log10f  [AVX, FMA]  (57 insns)
+  log2f_fma  [AVX, FMA]  (18 insns)
+  logf  [AVX, FMA]  (48 insns)
+  longest_match_avx2  [AVX, AVX2]  (25 insns)
+  longest_match_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (22 insns)
+  longest_match_slow_avx2  [AVX, AVX2]  (26 insns)
+  longest_match_slow_avx512  [AVX, AVX512BW, AVX512F, AVX512VL]  (23 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::find_impl  [AVX, AVX2]  (37 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::find_prefilter_impl  [AVX, AVX2]  (21 insns)
+  memchr::arch::x86_64::avx2::packedpair::Finder::with_pair_impl  [AVX, AVX2]  (9 insns)
+  memchr::arch::x86_64::memchr::memchr2_raw::find_avx2  [AVX, AVX2]  (53 insns)
+  memchr::arch::x86_64::memchr::memchr3_raw::find_avx2  [AVX, AVX2]  (79 insns)
+  memchr::arch::x86_64::memchr::memchr_raw::find_avx2  [AVX, AVX2]  (29 insns)
+  memcpy  [AVX]  (68 insns)
+  memcpy_avx_ermsb_Intel  [AVX]  (68 insns)
+  memcpy_avx_ermsb_amd  [AVX]  (68 insns)
+  memset  [AVX]  (37 insns)
+  pow_fma  [AVX, BMI2, FMA]  (159 insns)
+  powf  [AVX, FMA]  (150 insns)
+  rsaz_1024_gather5_avx2  [AVX, AVX2]  (101 insns)
+  rsaz_1024_mul_avx2  [AVX, AVX2]  (367 insns)
+  rsaz_1024_scatter5_avx2  [AVX, AVX2]  (6 insns)
+  rsaz_1024_sqr_avx2  [AVX, AVX2]  (440 insns)
+  sha1_block_data_order_avx  [AVX]  (213 insns)
+  sha1_block_data_order_avx2  [AVX, AVX2, BMI1, BMI2]  (644 insns)
+  sha1_block_data_order_hw  [SHA]  (72 insns)
+  sha256_block_data_order_avx  [AVX]  (145 insns)
+  sha256_block_data_order_hw  [SHA]  (56 insns)
+  sha512_block_data_order_avx  [AVX]  (235 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char16_t>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,0,char>  [AVX, AVX2, BMI1]  (298 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,1,char16_t>  [AVX, AVX2, BMI1]  (306 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,0,1,char>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,0,char16_t>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,0,char>  [AVX, AVX2, BMI1]  (286 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,1,char16_t>  [AVX, AVX2, BMI1]  (294 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<0,1,1,char>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,char16_t>  [AVX, AVX2, BMI1]  (302 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,0,0,char>  [AVX, AVX2, BMI1]  (298 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char16_t>  [AVX, AVX2, BMI1]  (290 insns)
+  simdutf::haswell::`anonymous namespace'::base64::compress_decode_base64<1,1,0,char>  [AVX, AVX2, BMI1]  (286 insns)
+  simdutf::haswell::implementation::binary_length_from_base64  [AVX, AVX2]  (136 insns)
+  simdutf::haswell::implementation::binary_to_base64  [AVX, AVX2]  (219 insns)
+  simdutf::haswell::implementation::binary_to_base64_with_lines  [AVX, AVX2]  (465 insns)
+  simdutf::haswell::implementation::change_endianness_utf16  [AVX, AVX2]  (38 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf16be  [AVX, AVX2]  (18 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf16le  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf32  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_latin1_to_utf8  [AVX, AVX2]  (31 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_latin1  [AVX, AVX2]  (77 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_latin1_with_errors  [AVX, AVX2]  (11 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf32  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf32_with_errors  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf8  [AVX, AVX2]  (88 insns)
+  simdutf::haswell::implementation::convert_utf16be_to_utf8_with_errors  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_latin1  [AVX, AVX2]  (55 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_latin1_with_errors  [AVX, AVX2]  (7 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf32  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf32_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf8  [AVX, AVX2]  (88 insns)
+  simdutf::haswell::implementation::convert_utf16le_to_utf8_with_errors  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::convert_utf32_to_latin1  [AVX, AVX2]  (84 insns)
+  simdutf::haswell::implementation::convert_utf32_to_latin1_with_errors  [AVX, AVX2]  (28 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16be  [AVX, AVX2]  (87 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16be_with_errors  [AVX, AVX2]  (83 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16le  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf16le_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf8  [AVX, AVX2]  (108 insns)
+  simdutf::haswell::implementation::convert_utf32_to_utf8_with_errors  [AVX, AVX2]  (101 insns)
+  simdutf::haswell::implementation::convert_utf8_to_latin1  [AVX, AVX2]  (78 insns)
+  simdutf::haswell::implementation::convert_utf8_to_latin1_with_errors  [AVX, AVX2]  (75 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16be  [AVX, AVX2]  (193 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16be_with_errors  [AVX, AVX2]  (205 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16le  [AVX, AVX2]  (177 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf16le_with_errors  [AVX, AVX2]  (183 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf32  [AVX, AVX2]  (171 insns)
+  simdutf::haswell::implementation::convert_utf8_to_utf32_with_errors  [AVX, AVX2]  (181 insns)
+  simdutf::haswell::implementation::convert_valid_utf16be_to_utf32  [AVX, AVX2]  (14 insns)
+  simdutf::haswell::implementation::convert_valid_utf16le_to_utf32  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_latin1  [AVX, AVX2]  (24 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf16be  [AVX, AVX2]  (132 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf16le  [AVX, AVX2]  (118 insns)
+  simdutf::haswell::implementation::convert_valid_utf8_to_utf32  [AVX, AVX2]  (113 insns)
+  simdutf::haswell::implementation::count_utf16be  [AVX, AVX2]  (46 insns)
+  simdutf::haswell::implementation::count_utf16le  [AVX, AVX2]  (41 insns)
+  simdutf::haswell::implementation::count_utf8  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::detect_encodings  [AVX, AVX2]  (223 insns)
+  simdutf::haswell::implementation::find  [AVX, AVX2]  (16 insns)
+  simdutf::haswell::implementation::latin1_length_from_utf8  [AVX, AVX2]  (89 insns)
+  simdutf::haswell::implementation::to_well_formed_utf16be  [AVX, AVX2, BMI1]  (149 insns)
+  simdutf::haswell::implementation::to_well_formed_utf16le  [AVX, AVX2, BMI1]  (149 insns)
+  simdutf::haswell::implementation::utf16_length_from_utf32  [AVX, AVX2]  (77 insns)
+  simdutf::haswell::implementation::utf16_length_from_utf8  [AVX, AVX2]  (136 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf16be  [AVX, AVX2]  (46 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf16le  [AVX, AVX2]  (41 insns)
+  simdutf::haswell::implementation::utf32_length_from_utf8  [AVX, AVX2]  (63 insns)
+  simdutf::haswell::implementation::utf8_length_from_latin1  [AVX, AVX2]  (74 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16be  [AVX, AVX2]  (93 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16be_with_replacement  [AVX, AVX2]  (103 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16le  [AVX, AVX2]  (87 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf16le_with_replacement  [AVX, AVX2]  (100 insns)
+  simdutf::haswell::implementation::utf8_length_from_utf32  [AVX, AVX2]  (157 insns)
+  simdutf::haswell::implementation::validate_ascii  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_ascii_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf16be  [AVX, AVX2, BMI1]  (19 insns)
+  simdutf::haswell::implementation::validate_utf16be_as_ascii  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf16be_with_errors  [AVX, AVX2, BMI1]  (19 insns)
+  simdutf::haswell::implementation::validate_utf16le  [AVX, AVX2, BMI1]  (21 insns)
+  simdutf::haswell::implementation::validate_utf16le_as_ascii  [AVX, AVX2]  (8 insns)
+  simdutf::haswell::implementation::validate_utf16le_with_errors  [AVX, AVX2, BMI1]  (21 insns)
+  simdutf::haswell::implementation::validate_utf32  [AVX, AVX2]  (17 insns)
+  simdutf::haswell::implementation::validate_utf32_with_errors  [AVX, AVX2]  (12 insns)
+  simdutf::haswell::implementation::validate_utf8  [AVX, AVX2]  (150 insns)
+  simdutf::haswell::implementation::validate_utf8_with_errors  [AVX, AVX2]  (149 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,1,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,0,1,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,1,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<0,1,1,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (119 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,0,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (111 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char16_t>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (97 insns)
+  simdutf::icelake::`anonymous namespace'::compress_decode_base64<1,1,0,char>  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (89 insns)
+  simdutf::icelake::implementation::binary_length_from_base64  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (101 insns)
+  simdutf::icelake::implementation::binary_to_base64  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (95 insns)
+  simdutf::icelake::implementation::binary_to_base64_with_lines  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (83 insns)
+  simdutf::icelake::implementation::change_endianness_utf16  [AVX, AVX512BW, AVX512F, BMI2]  (10 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf16be  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (25 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (17 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf32  [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]  (17 insns)
+  simdutf::icelake::implementation::convert_latin1_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (83 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (19 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (21 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (120 insns)
+  simdutf::icelake::implementation::convert_utf16be_to_utf8_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (122 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (16 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf8  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (115 insns)
+  simdutf::icelake::implementation::convert_utf16le_to_utf8_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]  (117 insns)
+  simdutf::icelake::implementation::convert_utf32_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_utf32_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (16 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]  (74 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16be_with_errors  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]  (91 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]  (63 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf16le_with_errors  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]  (88 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (150 insns)
+  simdutf::icelake::implementation::convert_utf32_to_utf8_with_errors  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (159 insns)
+  simdutf::icelake::implementation::convert_utf8_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI1, BMI2]  (47 insns)
+  simdutf::icelake::implementation::convert_utf8_to_latin1_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI1, BMI2]  (48 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16be  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (278 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16be_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (278 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (264 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf16le_with_errors  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2, LZCNT]  (264 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf32  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (383 insns)
+  simdutf::icelake::implementation::convert_utf8_to_utf32_with_errors  [AVX, AVX2, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (356 insns)
+  simdutf::icelake::implementation::convert_valid_utf16be_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]  (19 insns)
+  simdutf::icelake::implementation::convert_valid_utf16be_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (40 insns)
+  simdutf::icelake::implementation::convert_valid_utf16le_to_latin1  [AVX, AVX512BW, AVX512F, BMI2]  (13 insns)
+  simdutf::icelake::implementation::convert_valid_utf16le_to_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::convert_valid_utf32_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]  (74 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_latin1  [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]  (35 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf16be  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI2]  (471 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf16le  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI2]  (410 insns)
+  simdutf::icelake::implementation::convert_valid_utf8_to_utf32  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2]  (235 insns)
+  simdutf::icelake::implementation::count_utf16be  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (64 insns)
+  simdutf::icelake::implementation::count_utf16le  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (61 insns)
+  simdutf::icelake::implementation::count_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::detect_encodings  [AVX, AVX512BW, AVX512F, BMI2]  (110 insns)
+  simdutf::icelake::implementation::find  [AVX, AVX512BW, BMI2]  (36 insns)
+  simdutf::icelake::implementation::latin1_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::to_well_formed_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (109 insns)
+  simdutf::icelake::implementation::to_well_formed_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (109 insns)
+  simdutf::icelake::implementation::utf16_length_from_utf32  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]  (55 insns)
+  simdutf::icelake::implementation::utf16_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (102 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf16be  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (64 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf16le  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]  (61 insns)
+  simdutf::icelake::implementation::utf32_length_from_utf8  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VPOPCNTDQ]  (94 insns)
+  simdutf::icelake::implementation::utf8_length_from_latin1  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]  (84 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (43 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16be_with_replacement  [AVX, AVX512BW, AVX512F, BMI2]  (64 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (38 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf16le_with_replacement  [AVX, AVX512BW, AVX512F, BMI2]  (59 insns)
+  simdutf::icelake::implementation::utf8_length_from_utf32  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]  (144 insns)
+  simdutf::icelake::implementation::validate_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (19 insns)
+  simdutf::icelake::implementation::validate_ascii_with_errors  [AVX, AVX512BW, BMI2]  (13 insns)
+  simdutf::icelake::implementation::validate_utf16be  [AVX, AVX512BW, AVX512F, BMI2]  (21 insns)
+  simdutf::icelake::implementation::validate_utf16be_as_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (14 insns)
+  simdutf::icelake::implementation::validate_utf16be_with_errors  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (25 insns)
+  simdutf::icelake::implementation::validate_utf16le  [AVX, AVX512BW, AVX512F, BMI2]  (33 insns)
+  simdutf::icelake::implementation::validate_utf16le_as_ascii  [AVX, AVX512BW, AVX512F, BMI2]  (10 insns)
+  simdutf::icelake::implementation::validate_utf16le_with_errors  [AVX, AVX512BW, AVX512F, BMI1, BMI2]  (23 insns)
+  simdutf::icelake::implementation::validate_utf32  [AVX, AVX512BW, AVX512F, BMI2]  (25 insns)
+  simdutf::icelake::implementation::validate_utf32_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (18 insns)
+  simdutf::icelake::implementation::validate_utf8  [AVX, AVX512BW, AVX512F, BMI2]  (74 insns)
+  simdutf::icelake::implementation::validate_utf8_with_errors  [AVX, AVX512BW, AVX512F, BMI2]  (78 insns)
+  sin  [AVX, FMA]  (47 insns)
+  sinf  [AVX, FMA]  (65 insns)
+  sinh_fma  [AVX, FMA]  (96 insns)
+  sinhf_fma  [AVX, FMA]  (82 insns)
+  slide_hash_avx2  [AVX, AVX2]  (30 insns)
+  strnlen  [AVX, AVX2]  (4 insns)
+  tan  [AVX, FMA]  (94 insns)
+  tanf  [AVX, FMA]  (58 insns)
+  tanh_fma  [AVX, FMA]  (86 insns)
+  tanhf_fma  [AVX, FMA]  (83 insns)
+  wcslen  [AVX, AVX2]  (4 insns)
+  wcsnlen  [AVX, AVX2]  (4 insns)
+  -- 970 symbols, 65060 instructions total
+
+STALE ALLOWLIST ENTRIES (no matching symbol found — remove these?):
+  <lib:lolhtml.lib>
+  PredictorAdd13_AVX2
+  PredictorAdd5_AVX2
+  PredictorAdd6_AVX2
+  PredictorAdd7_AVX2
+  _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4hash11BuildHasher8hash_oneRNtNtNt<rust-hash>8lol_html4html10local_name9LocalNameEB1R_
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect
+  _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect
+  __std_min_element_d
+  __std_mismatch_1
+  __std_reverse_copy_trivially_copyable_1
+  __std_search_1
+  `anonymous namespace'::__std_find_last_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_1,unsigned char>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_2,unsigned short>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_4,unsigned int>
+  `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_8,unsigned __int64>
+  `anonymous namespace'::__std_minmax_disp<1,`anonymous namespace'::_Minmax_traits_8,0>
+  `anonymous namespace'::__std_minmax_impl<1,`anonymous namespace'::_Minmax_traits_8_avx,0>
+  `anonymous namespace'::__std_minmax_impl<3,`anonymous namespace'::_Minmax_traits_8_avx,1>
+  bssl::BORINGSSL_keccak_squeeze_x4
+  bun_image::N_AVX2::Rotate270Impl
+  bun_image::N_AVX2::Rotate90Impl
+  bun_image::N_AVX3::Rotate270Impl
+  bun_image::N_AVX3::Rotate90Impl
+  bun_image::N_AVX3_DL::Rotate270Impl
+  bun_image::N_AVX3_DL::Rotate90Impl
+  bun_image::N_AVX3_SPR::Rotate270Impl
+  bun_image::N_AVX3_SPR::Rotate90Impl
+  bun_image::N_AVX3_ZEN4::Rotate270Impl
+  bun_image::N_AVX3_ZEN4::Rotate90Impl
+  chunkcopy_safe
+  chunkmemset_avx2
+  chunkmemset_safe_avx512
+  crc32_fold_pclmulqdq_reset
+  llint_entry
+  memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::Three::find_raw_avx2
+  memchr::arch::x86_64::avx2::memchr::Two::find_raw_avx2
+  memchr::arch::x86_64::memchr::memrchr_raw::find_avx2
+  pow
+  simdutf::haswell::implementation::convert_valid_utf16be_to_latin1
+  simdutf::haswell::implementation::convert_valid_utf16le_to_latin1
+  simdutf::haswell::implementation::convert_valid_utf32_to_latin1
+  simdutf::icelake::implementation::convert_valid_utf32_to_latin1
+  simdutf::icelake::implementation::convert_valid_utf32_to_utf16le
+  strcspn
+  strpbrk
+  strspn
+
+SUMMARY:
+  violations:  0 symbols, 0 instructions
+  allowlisted: 970 symbols
+  stale allowlist entries: 51
+  PASS
+
+    PASS (1.8s)
+
++++ SIMD baseline tests
+bun test v1.4.4-canary.1 (80cca09eb)
+
+..\buildkite-agent\build\test\js\bun\jsc-stress\fixtures\simd-baseline.test.ts:
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > clean passthrough [30.68ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > ampersand in middle [71.98ms]
+(pass) escapeHTML — @Vector(16, u8) gated by enableSIMD > all special chars [8.19ms]
+(pass) stringWidth — @Vector(16, u8) ungated > ascii [4.57ms]
+(pass) stringWidth — @Vector(16, u8) ungated > empty [0.41ms]
+(pass) stringWidth — @Vector(16, u8) ungated > tabs [8.08ms]
+(pass) stringWidth — @Vector(16, u8) ungated > mixed printable and zero-width [10.41ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 16 [27.71ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 32 [6.79ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 64 [2.07ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 128 [0.80ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > size 256 [1.87ms]
+(pass) Buffer hex encoding — @Vector(16, u8) gated by enableSIMD > all byte values [12.61ms]
+(pass) base64 — simdutf runtime dispatch > ascii roundtrip [23.13ms]
+(pass) base64 — simdutf runtime dispatch > binary roundtrip [112.73ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > ascii roundtrip [22.71ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > mixed ascii + multibyte [25.41ms]
+(pass) TextEncoder/TextDecoder — simdutf runtime dispatch > emoji surrogate pairs [6.99ms]
+(pass) decodeURIComponent — SIMD % scanning > clean passthrough [9.97ms]
+(pass) decodeURIComponent — SIMD % scanning > encoded at various positions [14.43ms]
+(pass) decodeURIComponent — SIMD % scanning > heavy utf8 encoding [18.22ms]
+(pass) URL parsing — Highway indexOfChar/indexOfAny > long URL with all components [76.02ms]
+(pass) JSON — JS lexer SIMD string scanning > large object roundtrip [74.46ms]
+(pass) JSON — JS lexer SIMD string scanning > string with escape sequences [26.59ms]
+(pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1941.10ms]
+(pass) Latin-1 to UTF-8 — @Vector(16, u8) ungated > full byte range [31.19ms]
+(pass) String search — Highway memMem/indexOfChar > indexOf long string [14.01ms]
+(pass) String search — Highway memMem/indexOfChar > includes long string [0.86ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > flat grey survives encode, decode, encode byte for byte [4218.86ms]
+(pass) JPEG codec: libjpeg-turbo jsimd runtime dispatch > gradient round-trips through baseline and progressive encoders [3625.44ms]
+
+ 30 pass
+ 0 fail
+ 54 expect() calls
+Ran 30 tests across 1 file. [24.95s]
+    PASS (33.4s)
++++ diagnosis 0.0 default, mimalloc statistics: flat grey 4305.62 ms, gradient 3764.85 ms, Ran 30 tests across 1 file. [25.79s] | FLAT png=2808 encode1=879 recode=389 gaps=[] | first test after 18.0 s | over 250 ms: long headers:1997, flat grey surv:4306, gradient round:3765 | GC E1157 E15 E223 E10 E98 E88 E5 | walked/skipped 4351/18 -> 12052/106, discards/freed 19/7 -> 35/43, purges 95 -> 168, commits 142 -> 210
++++ diagnosis 0.1 default: flat grey 6420.98 ms, gradient 3697.35 ms, Ran 30 tests across 1 file. [27.88s] | FLAT png=5132 encode1=744 recode=410 gaps=[] | first test after 18.0 s | over 250 ms: long headers:2000, flat grey surv:6421, gradient round:3697 | GC E1156 E15 E217 E10 E113 E76 E5
+   -15114 [GC<0x00000191F8FB0110>: starting 120.559500ms]
+    -3130 [GC<0x00000191F8FB0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=79.401270ms 470+0 v=43kb 333+0 v=49kb 317+0 v=50kb 20+0 v=75kb 233+0 v=408kb 218+0 v=428kb 233+0 v=435kb 207+0 v=463kb 101+0 v=477kb 69+0 v=481kb 33+0 v=499kb 1+0 v=500kb i#2:N<WsOJw>Pbc tp=13.951530ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1155.624400ms (max 1155.624400), cycle 1145.003300ms END]
+    -3073 [GC<0x00000191F8FB0110>: epilogue 39.565500ms]
+    -2974 [GC<0x00000191F8FB0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.637800ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.569400ms (max 1155.624400), cycle 14.271100ms END]
+    -2973 [GC<0x00000191F8FB0110>: epilogue 0.836100ms]
+     -746 [GC<0x00000191F8FB0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=4.013100ms 114+43 v=16kb 73+0 v=29kb 49+0 v=37kb 35+0 v=43kb 2+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=216.916300ms (max 1155.624400), cycle 164.598000ms END]
+     -743 [GC<0x00000191F8FB0110>: epilogue 2.669900ms]
+     -668 [GC<0x00000191F8FB0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.472000ms (max 1155.624400), cycle 10.188600ms END]
+     -668 [GC<0x00000191F8FB0110>: epilogue 0.199400ms]
+      -40 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [2000.25ms]
+     5992 [GC<0x00000191F8FB0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=1.134750ms 15+110 v=7kb 3+110 v=22kb 93+10 v=28kb 68+10 v=37kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=2.836170ms 0+0 v=47kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 893kb, mw=0 p=113.270900ms (max 1155.624400), cycle 113.001700ms END]
+     6019 [GC<0x00000191F8FB0110>: epilogue 25.932500ms]
+     6330 FLAT start=1792649692586 png=5132 encode1=744 recode=410 gaps=[]
+     6355 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6420.98ms]
+     9398 [GC<0x00000191F8FB0110>: START M 2247kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.628890ms 4+75 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=7.299120ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 931kb, mw=0 p=76.472800ms (max 1155.624400), cycle 76.229700ms END]
+     9664 [GC<0x00000191F8FB0110>: epilogue 190.677400ms]
+     9850 [GC<0x00000191F8FB0110>: START M 2270kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.415920ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 931kb, mw=0 p=5.259400ms (max 1155.624400), cycle 5.010800ms END]
+     9851 [GC<0x00000191F8FB0110>: epilogue 0.202000ms]
+    10053 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3697.35ms]
++++ diagnosis 0.2 default, original file: flat grey 4071.6 ms, gradient 3717.16 ms, Ran 30 tests across 1 file. [24.26s] |  | first test after 16.9 s | over 250 ms: long headers:1948, flat grey surv:4072, gradient round:3717 | GC E1130 E15 E250 E10 E96 E88 E6
++++ diagnosis 0.3 one marker: flat grey 4168.88 ms, gradient 3407.74 ms, Ran 30 tests across 1 file. [24.51s] | FLAT png=2885 encode1=926 recode=230 gaps=[] | first test after 17.5 s | over 250 ms: long headers:1882, flat grey surv:4169, gradient round:3408 | GC 
++++ diagnosis 0.4 full sweep of holes every 4th: flat grey 4738.96 ms, gradient 3590.22 ms, Ran 30 tests across 1 file. [26.07s] | FLAT png=3436 encode1=687 recode=386 gaps=[] | first test after 18.0 s | over 250 ms: long headers:2002, flat grey surv:4739, gradient round:3590 | GC E1154 E17 E257 E10 E95 E75 E5 | walked/skipped 4350/18 -> 12817/100, discards/freed 19/7 -> 33/30, purges 89 -> 148, commits 141 -> 194
+   -15180 [GC<0x000001ED82000110>: starting 131.178200ms]
+    -3220 [GC<0x000001ED82000110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=79.644390ms 470+0 v=43kb 333+0 v=95kb 97+0 v=102kb 103+0 v=408kb 218+0 v=428kb 234+0 v=435kb 208+0 v=463kb 101+0 v=500kb i#2:N<WsOJw>Pbc tp=14.150400ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1153.969100ms (max 1153.969100), cycle 1143.472300ms END]
+    -3164 [GC<0x000001ED82000110>: epilogue 39.703700ms]
+    -3062 [GC<0x000001ED82000110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.660510ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=16.689900ms (max 1153.969100), cycle 16.410100ms END]
+    -3049 [GC<0x000001ED82000110>: epilogue 0.875800ms]
+     -838 [GC<0x000001ED82000110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=4.016310ms 114+43 v=16kb 73+0 v=43kb i#2:N<WsOJw>Pbc tp=0.770880ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=256.832100ms (max 1153.969100), cycle 167.881700ms END]
+     -835 [GC<0x000001ED82000110>: epilogue 2.673800ms]
+     -761 [GC<0x000001ED82000110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.462100ms (max 1153.969100), cycle 10.178600ms END]
+     -761 [GC<0x000001ED82000110>: epilogue 0.218400ms]
+      -98 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [2001.56ms]
+     4222 [GC<0x000001ED82000110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.930660ms 16+110 v=7kb 4+110 v=23kb 94+10 v=28kb 69+10 v=37kb 18+10 v=48kb i#2:N<WsOJw>Pbc tp=1.773420ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 899kb, mw=0 p=95.400300ms (max 1153.969100), cycle 95.135200ms END]
+     4250 [GC<0x000001ED82000110>: epilogue 26.322200ms]
+     4553 FLAT start=1792649692644 png=3436 encode1=687 recode=386 gaps=[]
+     4579 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [4738.96ms]
+     7576 [GC<0x000001ED82000110>: START M 2268kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.665040ms 4+75 v=2kb 3+0 v=2kb i#2:N<WsOJw>Pbc tp=7.017090ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 937kb, mw=0 p=75.198400ms (max 1153.969100), cycle 74.933800ms END]
+     7832 [GC<0x000001ED82000110>: epilogue 207.693400ms]
+     7856 [GC<0x000001ED82000110>: START M 2291kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.382890ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 937kb, mw=0 p=5.092200ms (max 1153.969100), cycle 4.821800ms END]
+     7957 [GC<0x000001ED82000110>: epilogue 100.540200ms]
+     8170 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3590.22ms]
++++ diagnosis 0.5 GC timer off: flat grey 4052.95 ms, gradient 3328.49 ms, Ran 30 tests across 1 file. [25.00s] | FLAT png=2783 encode1=904 recode=237 gaps=[] | first test after 18.0 s | over 250 ms: long headers:1921, flat grey surv:4053, gradient round:3328 | GC E1154
++++ diagnosis 1.0 default, mimalloc statistics: flat grey 2646.6 ms, gradient 2922.98 ms, Ran 30 tests across 1 file. [26.32s] | FLAT png=1433 encode1=651 recode=327 gaps=[] | first test after 20.9 s | over 250 ms: long headers:2095, flat grey surv:2647, gradient round:2923 | GC E1243 E16 E298 E11 E86 E40 E5 | walked/skipped 6432/35 -> 15091/190, discards/freed 18/13 -> 37/48, purges 98 -> 175, commits 134 -> 203
++++ diagnosis 1.1 default: flat grey 4321.81 ms, gradient 3650.11 ms, Ran 30 tests across 1 file. [24.46s] | FLAT png=2960 encode1=867 recode=363 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1956, flat grey surv:4322, gradient round:3650 | GC E1142 E15 E246 E10 E105 E77 E5
++++ diagnosis 1.2 default, 20 ms heartbeat: flat grey 4279.21 ms, gradient 3608.99 ms, Ran 30 tests across 1 file. [27.53s] | FLAT png=2895 encode1=925 recode=281 gaps=[3677ms@+0 374ms@+3677] | first test after 19.8 s | over 250 ms: long headers:2028, flat grey surv:4279, gradient round:3609 | GC E1162 E17 E271 E10 E110 E72 E6
++++ diagnosis 1.3 upstream protocol: flat grey 4602.63 ms, gradient 3630.99 ms, Ran 30 tests across 1 file. [25.11s] | FLAT png=3317 encode1=668 recode=390 gaps=[] | first test after 17.4 s | over 250 ms: long headers:1998, flat grey surv:4603, gradient round:3631 | GC E1420 E22 E23c192 E13 E67c354 E100 E22 | walked/skipped 13922/86 -> 22650/210, discards/freed 42/9 -> 60/39, purges 153 -> 219, commits 166 -> 228
+   -14283 [GC<0x0000022BDD1F0110>: starting 130.017200ms]
+    -3246 [GC<0x0000022BDD1F0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=189.498210ms 29+0 v=502kb i#2:N<WsOJw>Pbc tp=17.391300ms 1+0 v=502kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 699kb, mw=0 p=1420.397300ms (max 1420.397300), cycle 1410.151600ms END]
+    -3193 [GC<0x0000022BDD1F0110>: epilogue 38.849800ms]
+    -3088 [GC<0x0000022BDD1F0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=1.402410ms 3+0 p=18.116400ms (max 1420.397300)...]
+    -3057 [GC<0x0000022BDD1F0110>: M a=0kb hf=0.000 mu=0.700 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 700kb, mw=0 p=22.204900ms (max 1420.397300), cycle 49.891500ms END]
+    -3057 [GC<0x0000022BDD1F0110>: epilogue 0.796100ms]
+     -853 [GC<0x0000022BDD1F0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=10.949940ms 10+0 p=207.515500ms (max 1420.397300)...]
+     -821 [GC<0x0000022BDD1F0110>: M a=0kb hf=0.000 mu=0.700 v=43kb i#2:N<WsOJw>Pbc tp=0.994620ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 778kb, mw=0 p=23.425700ms (max 1420.397300), cycle 191.679700ms END]
+     -818 [GC<0x0000022BDD1F0110>: epilogue 2.613000ms]
+     -742 [GC<0x0000022BDD1F0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=1.539930ms 0+0 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 778kb, mw=0 p=12.693700ms (max 1420.397300), cycle 12.426400ms END]
+     -742 [GC<0x0000022BDD1F0110>: epilogue 0.219400ms]
+     -221 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1998.34ms]
+     4018 [GC<0x0000022BDD1F0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=1.446510ms 13+0 p=24.463400ms (max 1420.397300)...]
+     4343 [GC<0x0000022BDD1F0110>: M a=0kb hf=0.000 mu=0.700 v=48kb i#2:N<WsOJw>Pbc tp=1.922070ms 0+3 v=48kb i#3:Msm(3) tp=0.908040ms 0+3 v=48kb i#4:P<CsMsm(0)ShBcsMsrDSrbCbDomoWsOJw>Pbc => 902kb, mw=0 p=66.642200ms (max 1420.397300), cycle 354.076600ms END]
+     4370 [GC<0x0000022BDD1F0110>: epilogue 26.782400ms]
+     4418 FLAT start=1792649723265 png=3317 encode1=668 recode=390 gaps=[]
+     4447 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [4602.63ms]
+     7083 [GC<0x0000022BDD1F0110>: START M 2268kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.833940ms 9+0 v=2kb i#2:N<WsOJw>Pbc tp=13.616580ms 0+0 v=3kb i#3:P<JwWsOMsm(0)CsShBcsMsrDSrbCb>Pbc tp=5.632290ms 0+0 v=4kb i#4:P<WsOJwMsm(0)CsShBcsMsrDSrbCbDomo>Pbc => 940kb, mw=0 p=99.917600ms (max 1420.397300), cycle 99.644200ms END]
+     7447 [GC<0x0000022BDD1F0110>: epilogue 256.859000ms]
+     7790 [GC<0x0000022BDD1F0110>: START M 1860kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(12)SrbBcs> tp=0.721020ms 0+0 v=0kb i#2:N<WsOJw>Pbc tp=3.540030ms 0+0 v=0kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 940kb, mw=0 p=22.135600ms (max 1420.397300), cycle 21.859100ms END]
+     7886 [GC<0x0000022BDD1F0110>: epilogue 95.778400ms]
+     8078 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3630.99ms]
++++ diagnosis 1.4 no full sweep of holes: flat grey 4439.62 ms, gradient 3694.56 ms, Ran 30 tests across 1 file. [24.77s] | FLAT png=3072 encode1=839 recode=396 gaps=[] | first test after 17.1 s | over 250 ms: long headers:1971, flat grey surv:4440, gradient round:3695 | GC E1165 E15 E246 E10 E107 E78 E6
++++ diagnosis 1.5 no purge of holes: flat grey 4454.41 ms, gradient 3620.49 ms, Ran 30 tests across 1 file. [24.64s] | FLAT png=3312 encode1=777 recode=237 gaps=[] | first test after 17.0 s | over 250 ms: long headers:1938, flat grey surv:4454, gradient round:3620 | GC E1139 E15 E217 E11 E377 E95 E15
++++ diagnosis 2.0 default, mimalloc statistics: flat grey 4646.09 ms, gradient 3590.25 ms, Ran 30 tests across 1 file. [24.70s] | FLAT png=3348 encode1=667 recode=405 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1970, flat grey surv:4646, gradient round:3590 | GC E1141 E15 E250 E10 E114 E72 E11 | walked/skipped 4378/17 -> 11760/103, discards/freed 16/7 -> 31/34, purges 85 -> 148, commits 123 -> 177
+   -13907 [GC<0x00000165FF0B0110>: starting 85.802100ms]
+    -3157 [GC<0x00000165FF0B0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=78.473220ms 470+0 v=43kb 333+0 v=49kb 317+0 v=50kb 20+0 v=165kb 211+0 v=179kb 191+0 v=196kb 327+0 v=408kb 218+0 v=428kb 234+0 v=435kb 208+0 v=463kb 101+0 v=477kb 69+0 v=481kb 33+0 v=499kb 1+0 v=500kb i#2:N<WsOJw>Pbc tp=14.307660ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1141.136400ms (max 1141.136400), cycle 1130.776600ms END]
+    -3102 [GC<0x00000165FF0B0110>: epilogue 39.146600ms]
+    -3003 [GC<0x00000165FF0B0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.653940ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=15.450800ms (max 1141.136400), cycle 15.182600ms END]
+    -3002 [GC<0x00000165FF0B0110>: epilogue 0.876800ms]
+     -818 [GC<0x00000165FF0B0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.938130ms 114+43 v=16kb 73+0 v=29kb 49+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=249.778200ms (max 1141.136400), cycle 163.142100ms END]
+     -815 [GC<0x00000165FF0B0110>: epilogue 2.558500ms]
+     -743 [GC<0x00000165FF0B0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.303100ms (max 1141.136400), cycle 10.036700ms END]
+     -742 [GC<0x00000165FF0B0110>: epilogue 0.232700ms]
+     -224 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1970.48ms]
+     4133 [GC<0x00000165FF0B0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.925440ms 16+110 v=7kb 4+110 v=23kb 94+10 v=28kb 69+10 v=33kb 46+10 v=37kb 18+10 v=48kb i#2:N<WsOJw>Pbc tp=5.628810ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 899kb, mw=0 p=113.944500ms (max 1141.136400), cycle 113.671500ms END]
+     4160 [GC<0x00000165FF0B0110>: epilogue 26.551500ms]
+     4464 FLAT start=1792649753321 png=3348 encode1=667 recode=405 gaps=[]
+     4490 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [4646.09ms]
+     7508 [GC<0x00000165FF0B0110>: START M 2220kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.650100ms 4+75 v=2kb 3+0 v=2kb i#2:N<WsOJw>Pbc tp=7.006950ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 937kb, mw=0 p=71.839500ms (max 1141.136400), cycle 71.561900ms END]
+     7771 [GC<0x00000165FF0B0110>: epilogue 175.552900ms]
+     7877 [GC<0x00000165FF0B0110>: START M 1875kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=1.561650ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 937kb, mw=0 p=10.974200ms (max 1141.136400), cycle 10.740400ms END]
+     7877 [GC<0x00000165FF0B0110>: epilogue 0.251800ms]
+     8081 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3590.25ms]
++++ diagnosis 2.1 default: flat grey 4434.88 ms, gradient 3546.9 ms, Ran 30 tests across 1 file. [24.45s] | FLAT png=3177 encode1=731 recode=395 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1972, flat grey surv:4435, gradient round:3547 | GC E1138 E17 E248 E10 E105 E78 E5
++++ diagnosis 2.2 default, original file: flat grey 3957.05 ms, gradient 3774.65 ms, Ran 30 tests across 1 file. [24.21s] |  | first test after 16.8 s | over 250 ms: long headers:1976, flat grey surv:3957, gradient round:3775 | GC E1132 E14 E223 E10 E154 E89 E6
++++ diagnosis 2.3 one marker: flat grey 3987.91 ms, gradient 3238.65 ms, Ran 30 tests across 1 file. [22.85s] | FLAT png=2766 encode1=862 recode=234 gaps=[] | first test after 16.0 s | over 250 ms: long headers:1870, flat grey surv:3988, gradient round:3239 | GC 
++++ diagnosis 2.4 full sweep of holes every 4th: flat grey 4545.76 ms, gradient 3566.64 ms, Ran 30 tests across 1 file. [24.61s] | FLAT png=3285 encode1=663 recode=371 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1970, flat grey surv:4546, gradient round:3567 | GC E1143 E15 E246 E10 E109 E72 E11 | walked/skipped 4377/17 -> 14173/98, discards/freed 16/7 -> 34/34, purges 85 -> 157, commits 123 -> 179
++++ diagnosis 2.5 GC timer off: flat grey 4073.93 ms, gradient 3205.58 ms, Ran 30 tests across 1 file. [23.66s] | FLAT png=2830 encode1=879 recode=232 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1890, flat grey surv:4074, gradient round:3206 | GC E1133
++++ diagnosis 3.0 default, mimalloc statistics: flat grey 6409.33 ms, gradient 3649.4 ms, Ran 30 tests across 1 file. [26.59s] | FLAT png=5120 encode1=691 recode=372 gaps=[] | first test after 17.0 s | over 250 ms: long headers:1973, flat grey surv:6409, gradient round:3649 | GC E1141 E15 E253 E10 E106 E77 E5 | walked/skipped 4354/18 -> 13134/154, discards/freed 16/7 -> 36/40, purges 85 -> 162, commits 123 -> 187
+   -13966 [GC<0x000001B182000110>: starting 79.687200ms]
+    -3179 [GC<0x000001B182000110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=79.158540ms 470+0 v=43kb 333+0 v=49kb 317+0 v=102kb 103+0 v=408kb 218+0 v=428kb 234+0 v=435kb 208+0 v=463kb 101+0 v=500kb i#2:N<WsOJw>Pbc tp=14.426340ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1141.485400ms (max 1141.485400), cycle 1130.956700ms END]
+    -3122 [GC<0x000001B182000110>: epilogue 39.104700ms]
+    -3024 [GC<0x000001B182000110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.655830ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.848300ms (max 1141.485400), cycle 14.555600ms END]
+    -3023 [GC<0x000001B182000110>: epilogue 0.851100ms]
+     -818 [GC<0x000001B182000110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.884790ms 114+43 v=16kb 73+0 v=43kb i#2:N<WsOJw>Pbc tp=0.303450ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=253.443400ms (max 1141.485400), cycle 166.849200ms END]
+     -815 [GC<0x000001B182000110>: epilogue 2.632400ms]
+     -743 [GC<0x000001B182000110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.220800ms (max 1141.485400), cycle 9.950300ms END]
+     -743 [GC<0x000001B182000110>: epilogue 0.213800ms]
+     -223 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1973.41ms]
+     5920 [GC<0x000001B182000110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.972240ms 15+110 v=7kb 3+110 v=22kb 94+10 v=28kb 70+10 v=37kb 19+10 v=48kb i#2:N<WsOJw>Pbc tp=1.873110ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 895kb, mw=0 p=105.690400ms (max 1141.485400), cycle 105.385300ms END]
+     5947 [GC<0x000001B182000110>: epilogue 26.608400ms]
+     6227 FLAT start=1792649781255 png=5120 encode1=691 recode=372 gaps=[]
+     6254 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6409.33ms]
+     9263 [GC<0x000001B182000110>: START M 2215kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(77)SrbBcs> tp=0.627030ms 4+77 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=6.899220ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 932kb, mw=0 p=76.821600ms (max 1141.485400), cycle 76.589700ms END]
+     9558 [GC<0x000001B182000110>: epilogue 207.542700ms]
+     9709 [GC<0x000001B182000110>: START M 1871kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.386880ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 932kb, mw=0 p=5.037600ms (max 1141.485400), cycle 4.801400ms END]
+     9709 [GC<0x000001B182000110>: epilogue 0.212200ms]
+     9903 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3649.40ms]
++++ diagnosis 3.1 default: flat grey 4097.37 ms, gradient 3841.49 ms, Ran 30 tests across 1 file. [24.50s] | FLAT png=2733 encode1=882 recode=350 gaps=[] | first test after 17.0 s | over 250 ms: long headers:1969, flat grey surv:4097, gradient round:3841 | GC E1167 E15 E250 E10 E86 E87 E5
++++ diagnosis 3.2 default, 20 ms heartbeat: flat grey 4413.84 ms, gradient 3673.04 ms, Ran 30 tests across 1 file. [24.65s] | FLAT png=2974 encode1=1026 recode=252 gaps=[3854ms@+0 287ms@+3854] | first test after 17.0 s | over 250 ms: long headers:1973, flat grey surv:4414, gradient round:3673 | GC E1194 E15 E219 E11 E112 E79 E5
++++ diagnosis 3.3 upstream protocol: flat grey 4356.17 ms, gradient 3838.59 ms, Ran 30 tests across 1 file. [25.06s] | FLAT png=2847 encode1=879 recode=400 gaps=[] | first test after 17.2 s | over 250 ms: long headers:2007, flat grey surv:4356, gradient round:3839 | GC E1415 E27 E236 E18 E43c364 E85c223 E27 | walked/skipped 14223/91 -> 23644/256, discards/freed 43/9 -> 59/44, purges 157 -> 222, commits 170 -> 233
++++ diagnosis 3.4 no full sweep of holes: flat grey 4489.07 ms, gradient 3628.35 ms, Ran 30 tests across 1 file. [24.65s] | FLAT png=3288 encode1=672 recode=396 gaps=[] | first test after 17.0 s | over 250 ms: long headers:1968, flat grey surv:4489, gradient round:3628 | GC E1144 E15 E248 E10 E103 E78 E6
++++ diagnosis 3.5 no purge of holes: flat grey 4539.18 ms, gradient 3584.25 ms, Ran 30 tests across 1 file. [24.57s] | FLAT png=3385 encode1=785 recode=240 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1954, flat grey surv:4539, gradient round:3584 | GC E1150 E15 E256 E11 E375 E74 E6
++++ diagnosis 4.0 default, mimalloc statistics: flat grey 4511.59 ms, gradient 3654.14 ms, Ran 30 tests across 1 file. [24.62s] | FLAT png=3242 encode1=657 recode=388 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1949, flat grey surv:4512, gradient round:3654 | GC E1129 E16 E250 E10 E101 E80 E5 | walked/skipped 4400/17 -> 11778/102, discards/freed 16/7 -> 31/34, purges 87 -> 153, commits 125 -> 180
++++ diagnosis 4.1 default: flat grey 3913.92 ms, gradient 3556.85 ms, Ran 30 tests across 1 file. [23.96s] | FLAT png=2992 encode1=423 recode=371 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1950, flat grey surv:3914, gradient round:3557 | GC E1133 E15 E209 E10 E105 E77 E5
++++ diagnosis 4.2 default, original file: flat grey 3544.28 ms, gradient 3699.76 ms, Ran 30 tests across 1 file. [25.59s] |  | first test after 18.7 s | over 250 ms: long headers:2016, flat grey surv:3544, gradient round:3700 | GC E1128 E16 E272 E11 E95 E75 E6
++++ diagnosis 4.3 one marker: flat grey 3545.73 ms, gradient 3200.61 ms, Ran 30 tests across 1 file. [22.34s] | FLAT png=2639 encode1=562 recode=218 gaps=[] | first test after 16.1 s | over 250 ms: long headers:1839, flat grey surv:3546, gradient round:3201 | GC 
++++ diagnosis 4.4 full sweep of holes every 4th: flat grey 3756.91 ms, gradient 3707.24 ms, Ran 30 tests across 1 file. [25.83s] | FLAT png=2563 encode1=596 recode=373 gaps=[] | first test after 18.7 s | over 250 ms: long headers:2010, flat grey surv:3757, gradient round:3707 | GC E1135 E15 E232 E11 E96 E76 E5 | walked/skipped 5786/18 -> 15995/110, discards/freed 16/7 -> 37/41, purges 85 -> 173, commits 123 -> 195
++++ diagnosis 4.5 GC timer off: flat grey 4329.9 ms, gradient 3110.17 ms, Ran 30 tests across 1 file. [23.82s] | FLAT png=3251 encode1=699 recode=255 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1884, flat grey surv:4330, gradient round:3110 | GC E1130
++++ diagnosis 5.0 default, mimalloc statistics: flat grey 4203.99 ms, gradient 3601.32 ms, Ran 30 tests across 1 file. [26.10s] | FLAT png=3072 encode1=543 recode=362 gaps=[] | first test after 18.5 s | over 250 ms: long headers:2002, flat grey surv:4204, gradient round:3601 | GC E1124 E15 E265 E10 E98 E71 E6 | walked/skipped 4346/18 -> 12219/153, discards/freed 16/7 -> 35/34, purges 85 -> 152, commits 123 -> 178
++++ diagnosis 5.1 default: flat grey 6199.88 ms, gradient 3649.93 ms, Ran 30 tests across 1 file. [26.29s] | FLAT png=5152 encode1=550 recode=369 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1950, flat grey surv:6200, gradient round:3650 | GC E1142 E14 E214 E10 E109 E76 E6
+   -13802 [GC<0x000002CFDD780110>: starting 90.416600ms]
+    -3052 [GC<0x000002CFDD780110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=78.229440ms 470+0 v=43kb 333+0 v=49kb 317+0 v=102kb 103+0 v=408kb 218+0 v=428kb 233+0 v=435kb 207+0 v=463kb 101+0 v=500kb i#2:N<WsOJw>Pbc tp=14.402580ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1141.803700ms (max 1141.803700), cycle 1131.723200ms END]
+    -2997 [GC<0x000002CFDD780110>: epilogue 38.774200ms]
+    -2898 [GC<0x000002CFDD780110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.613860ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.393500ms (max 1141.803700), cycle 14.109400ms END]
+    -2897 [GC<0x000002CFDD780110>: epilogue 0.843500ms]
+     -717 [GC<0x000002CFDD780110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.772200ms 114+43 v=16kb 73+0 v=29kb 49+0 v=37kb 35+0 v=43kb 2+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=213.753000ms (max 1141.803700), cycle 164.911300ms END]
+     -715 [GC<0x000002CFDD780110>: epilogue 2.446300ms]
+     -637 [GC<0x000002CFDD780110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.315100ms (max 1141.803700), cycle 10.029400ms END]
+     -637 [GC<0x000002CFDD780110>: epilogue 0.218400ms]
+     -126 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1950.05ms]
+     5815 [GC<0x000002CFDD780110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.913560ms 15+110 v=7kb 3+110 v=22kb 93+10 v=28kb 68+10 v=33kb 46+10 v=37kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=2.038290ms 0+0 v=47kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 893kb, mw=0 p=109.172600ms (max 1141.803700), cycle 108.911100ms END]
+     5842 [GC<0x000002CFDD780110>: epilogue 26.137000ms]
+     6114 FLAT start=1792649839766 png=5152 encode1=550 recode=369 gaps=[]
+     6139 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6199.88ms]
+     9220 [GC<0x000002CFDD780110>: START M 2215kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(74)SrbBcs> tp=0.667410ms 4+74 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=6.817800ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 931kb, mw=0 p=75.837100ms (max 1141.803700), cycle 75.490700ms END]
+     9496 [GC<0x000002CFDD780110>: epilogue 253.533600ms]
+     9582 [GC<0x000002CFDD780110>: START M 2206kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.476760ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 931kb, mw=0 p=5.687400ms (max 1141.803700), cycle 5.434200ms END]
+     9583 [GC<0x000002CFDD780110>: epilogue 0.234600ms]
+     9788 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3649.93ms]
++++ diagnosis 5.2 default, 20 ms heartbeat: flat grey 4477.7 ms, gradient 3674.48 ms, Ran 30 tests across 1 file. [24.68s] | FLAT png=3061 encode1=1010 recode=246 gaps=[3923ms@+0 403ms@+3923] | first test after 16.9 s | over 250 ms: long headers:1981, flat grey surv:4478, gradient round:3674 | GC E1179 E15 E241 E10 E108 E77 E12
++++ diagnosis 5.3 upstream protocol: flat grey 4592.99 ms, gradient 3638.92 ms, Ran 30 tests across 1 file. [25.10s] | FLAT png=3279 encode1=668 recode=422 gaps=[] | first test after 17.2 s | over 250 ms: long headers:2032, flat grey surv:4593, gradient round:3639 | GC E1401 E30 E288 E18 E48c387 E80c212 E25 | walked/skipped 14364/96 -> 22714/206, discards/freed 42/11 -> 58/38, purges 157 -> 217, commits 170 -> 227
++++ diagnosis 5.4 no full sweep of holes: flat grey 4325.07 ms, gradient 3600.8 ms, Ran 30 tests across 1 file. [24.34s] | FLAT png=2984 encode1=845 recode=368 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1948, flat grey surv:4325, gradient round:3601 | GC E1130 E17 E246 E10 E102 E80 E7
++++ diagnosis 5.5 no purge of holes: flat grey 4005.2 ms, gradient 3604.84 ms, Ran 30 tests across 1 file. [25.87s] | FLAT png=2791 encode1=855 recode=231 gaps=[] | first test after 18.5 s | over 250 ms: long headers:1977, flat grey surv:4005, gradient round:3605 | GC E1119 E17 E267 E11 E381 E112 E6
++++ diagnosis 6.0 default, mimalloc statistics: flat grey 4556.25 ms, gradient 3608.86 ms, Ran 30 tests across 1 file. [24.64s] | FLAT png=3281 encode1=654 recode=393 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1968, flat grey surv:4556, gradient round:3609 | GC E1144 E15 E251 E10 E98 E80 E5 | walked/skipped 4354/18 -> 11636/97, discards/freed 16/7 -> 29/33, purges 87 -> 146, commits 125 -> 177
++++ diagnosis 6.1 default: flat grey 6232.01 ms, gradient 3641.68 ms, Ran 30 tests across 1 file. [26.39s] | FLAT png=5185 encode1=545 recode=370 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1969, flat grey surv:6232, gradient round:3642 | GC E1148 E15 E207 E10 E108 E101 E5
+   -13861 [GC<0x000001BB80CA0110>: starting 130.425900ms]
+    -3066 [GC<0x000001BB80CA0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=79.326630ms 470+0 v=43kb 333+0 v=49kb 317+0 v=50kb 20+0 v=75kb 233+0 v=81kb 189+0 v=88kb 91+0 v=95kb 97+0 v=408kb 218+0 v=428kb 233+0 v=500kb i#2:N<WsOJw>Pbc tp=14.733600ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1147.848500ms (max 1147.848500), cycle 1137.318000ms END]
+    -3011 [GC<0x000001BB80CA0110>: epilogue 39.217500ms]
+    -2911 [GC<0x000001BB80CA0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.651420ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=15.279600ms (max 1147.848500), cycle 14.998700ms END]
+    -2910 [GC<0x000001BB80CA0110>: epilogue 0.847200ms]
+     -726 [GC<0x000001BB80CA0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.620670ms 114+43 v=16kb 73+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=207.248200ms (max 1147.848500), cycle 165.362300ms END]
+     -724 [GC<0x000001BB80CA0110>: epilogue 2.569200ms]
+     -651 [GC<0x000001BB80CA0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.326000ms (max 1147.848500), cycle 10.101200ms END]
+     -651 [GC<0x000001BB80CA0110>: epilogue 0.230800ms]
+     -132 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1969.17ms]
+     5842 [GC<0x000001BB80CA0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.961440ms 15+110 v=7kb 3+110 v=22kb 93+10 v=28kb 68+10 v=33kb 46+10 v=37kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=1.927200ms 0+0 v=47kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 893kb, mw=0 p=107.644400ms (max 1147.848500), cycle 107.408200ms END]
+     5870 [GC<0x000001BB80CA0110>: epilogue 26.202400ms]
+     6143 FLAT start=1792649869246 png=5185 encode1=545 recode=370 gaps=[]
+     6167 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6232.01ms]
+     9031 [GC<0x000001BB80CA0110>: START M 2279kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(74)SrbBcs> tp=0.647730ms 4+74 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=13.901340ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 931kb, mw=0 p=100.840900ms (max 1147.848500), cycle 100.600900ms END]
+     9358 [GC<0x000001BB80CA0110>: epilogue 238.078200ms]
+     9507 [GC<0x000001BB80CA0110>: START M 2302kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.361920ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 931kb, mw=0 p=5.111800ms (max 1147.848500), cycle 4.850600ms END]
+     9604 [GC<0x000001BB80CA0110>: epilogue 96.362000ms]
+     9835 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3641.68ms]
++++ diagnosis 6.2 default, original file: flat grey 3986.04 ms, gradient 3739.43 ms, Ran 30 tests across 1 file. [24.22s] |  | first test after 16.9 s | over 250 ms: long headers:1971, flat grey surv:3986, gradient round:3739 | GC E1148 E15 E217 E10 E95 E87 E6
++++ diagnosis 6.3 one marker: flat grey 4340.22 ms, gradient 3127.85 ms, Ran 30 tests across 1 file. [23.12s] | FLAT png=3313 encode1=677 recode=222 gaps=[] | first test after 16.1 s | over 250 ms: long headers:1862, flat grey surv:4340, gradient round:3128 | GC 
++++ diagnosis 6.4 full sweep of holes every 4th: flat grey 4536.23 ms, gradient 3604.87 ms, Ran 30 tests across 1 file. [24.67s] | FLAT png=3247 encode1=674 recode=391 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1970, flat grey surv:4536, gradient round:3605 | GC E1145 E15 E213 E10 E103 E73 E6 | walked/skipped 4377/17 -> 12646/98, discards/freed 16/7 -> 30/35, purges 87 -> 148, commits 125 -> 180
++++ diagnosis 6.5 GC timer off: flat grey 3929.52 ms, gradient 3129.02 ms, Ran 30 tests across 1 file. [25.34s] | FLAT png=2906 encode1=666 recode=231 gaps=[] | first test after 18.6 s | over 250 ms: long headers:1920, flat grey surv:3930, gradient round:3129 | GC E1134
++++ diagnosis 7.0 default, mimalloc statistics: flat grey 6372.44 ms, gradient 3626.38 ms, Ran 30 tests across 1 file. [26.49s] | FLAT png=5195 encode1=553 recode=399 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1945, flat grey surv:6372, gradient round:3626 | GC E1152 E14 E215 E11 E106 E77 E5 | walked/skipped 4588/27 -> 12592/112, discards/freed 16/7 -> 32/34, purges 85 -> 152, commits 123 -> 177
+   -13938 [GC<0x0000022BE1140110>: starting 121.960500ms]
+    -3153 [GC<0x0000022BE1140110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=81.763200ms 470+0 v=43kb 333+0 v=49kb 317+0 v=50kb 20+0 v=75kb 233+0 v=81kb 189+0 v=88kb 91+0 v=95kb 97+0 v=408kb 218+0 v=428kb 234+0 v=500kb i#2:N<WsOJw>Pbc tp=14.040090ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1151.803500ms (max 1151.803500), cycle 1141.433300ms END]
+    -3098 [GC<0x0000022BE1140110>: epilogue 38.933600ms]
+    -2995 [GC<0x0000022BE1140110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.622830ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.459800ms (max 1151.803500), cycle 14.186200ms END]
+    -2995 [GC<0x0000022BE1140110>: epilogue 0.821400ms]
+     -810 [GC<0x0000022BE1140110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.567210ms 114+43 v=16kb 73+0 v=29kb 49+0 v=43kb i#2:N<WsOJw>Pbc tp=0.712020ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=215.320600ms (max 1151.803500), cycle 160.806100ms END]
+     -808 [GC<0x0000022BE1140110>: epilogue 2.590400ms]
+     -736 [GC<0x0000022BE1140110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.581900ms (max 1151.803500), cycle 10.302700ms END]
+     -736 [GC<0x0000022BE1140110>: epilogue 0.200600ms]
+     -222 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1944.77ms]
+     5857 [GC<0x0000022BE1140110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.946080ms 15+110 v=7kb 3+110 v=22kb 94+10 v=28kb 70+10 v=33kb 47+10 v=37kb 19+10 v=48kb i#2:N<WsOJw>Pbc tp=1.856190ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 895kb, mw=0 p=105.993600ms (max 1151.803500), cycle 105.732200ms END]
+     5884 [GC<0x0000022BE1140110>: epilogue 26.720000ms]
+     6191 FLAT start=1792649898818 png=5195 encode1=553 recode=399 gaps=[]
+     6217 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6372.44ms]
+     9271 [GC<0x0000022BE1140110>: START M 2215kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(77)SrbBcs> tp=0.620160ms 4+77 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=6.932970ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 932kb, mw=0 p=77.394400ms (max 1151.803500), cycle 77.134600ms END]
+     9529 [GC<0x0000022BE1140110>: epilogue 217.260600ms]
+     9641 [GC<0x0000022BE1140110>: START M 1823kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.411270ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 932kb, mw=0 p=5.320700ms (max 1151.803500), cycle 5.035500ms END]
+     9642 [GC<0x0000022BE1140110>: epilogue 0.211800ms]
+     9844 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3626.38ms]
++++ diagnosis 7.1 default: flat grey 4248.99 ms, gradient 3797.47 ms, Ran 30 tests across 1 file. [24.59s] | FLAT png=2861 encode1=863 recode=394 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1993, flat grey surv:4249, gradient round:3797 | GC E1189 E14 E206 E10 E102 E88 E5
++++ diagnosis 7.2 default, 20 ms heartbeat: flat grey 4191.21 ms, gradient 3829.28 ms, Ran 30 tests across 1 file. [24.48s] | FLAT png=2768 encode1=896 recode=366 gaps=[3657ms@+0 243ms@+3657] | first test after 16.9 s | over 250 ms: long headers:1952, flat grey surv:4191, gradient round:3829 | GC E1139 E15 E246 E10 E91 E90 E10
++++ diagnosis 7.3 upstream protocol: flat grey 4623.57 ms, gradient 3697.64 ms, Ran 30 tests across 1 file. [25.27s] | FLAT png=3126 encode1=866 recode=408 gaps=[] | first test after 17.2 s | over 250 ms: long headers:2055, flat grey surv:4624, gradient round:3698 | GC E377c1551 E23 E272 E16 E59c115 E100 E7 | walked/skipped 13875/168 -> 22901/280, discards/freed 37/8 -> 53/44, purges 144 -> 220, commits 162 -> 228
+   -14365 [GC<0x0000017702000110>: starting 55.187800ms]
+    -3689 [GC<0x0000017702000110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=130.073100ms 30+0 v=105kb 301+0 p=1048.628500ms (max 1048.628500)...]
+    -3176 [GC<0x0000017702000110>: M a=0kb hf=0.000 mu=0.700 v=499kb i#2:N<WsOJw>Pbc tp=18.025920ms 1+9 v=499kb i#3:P<WsOJwMsrShCsMsm(9)>Pbc tp=13.941270ms 0+0 v=504kb i#4:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 702kb, mw=0 p=376.819100ms (max 1048.628500), cycle 1550.799300ms END]
+    -3129 [GC<0x0000017702000110>: epilogue 38.584400ms]
+    -3103 [GC<0x0000017702000110>: START M 1558kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.439140ms 0+0 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 702kb, mw=0 p=23.279400ms (max 1048.628500), cycle 23.001600ms END]
+    -3102 [GC<0x0000017702000110>: epilogue 1.107300ms]
+     -859 [GC<0x0000017702000110>: START M 1686kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(52)SrbBcs> tp=20.963700ms 10+0 v=40kb i#2:N<WsOJw>Pbc tp=0.825600ms 0+0 v=40kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=271.912800ms (max 1048.628500), cycle 217.705900ms END]
+     -857 [GC<0x0000017702000110>: epilogue 2.367000ms]
+     -735 [GC<0x0000017702000110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=1.597590ms 0+0 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=16.058600ms (max 1048.628500), cycle 14.487000ms END]
+     -735 [GC<0x0000017702000110>: epilogue 0.237300ms]
+     -219 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [2054.82ms]
+     4043 [GC<0x0000017702000110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=7.617870ms 13+0 p=44.473400ms (max 1048.628500)...]
+     4110 [GC<0x0000017702000110>: M a=0kb hf=0.000 mu=0.700 v=48kb i#2:N<WsOJw>Pbc tp=2.956620ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 894kb, mw=0 p=58.740300ms (max 1048.628500), cycle 114.596200ms END]
+     4138 [GC<0x0000017702000110>: epilogue 26.733400ms]
+     4444 FLAT start=1792649899244 png=3126 encode1=866 recode=408 gaps=[]
+     4470 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [4623.57ms]
+     7499 [GC<0x0000017702000110>: START M 2247kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(77)SrbBcs> tp=1.201590ms 0+0 v=3kb i#2:N<WsOJw>Pbc tp=7.937490ms 0+0 v=4kb i#3:P<JwWsO> tp=7.736520ms 0+0 v=4kb i#4:P<WsOJwMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 932kb, mw=0 p=100.061600ms (max 1048.628500), cycle 99.780500ms END]
+     7835 [GC<0x0000017702000110>: epilogue 239.510900ms]
+     7960 [GC<0x0000017702000110>: START M 1887kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+0 v=0kb i#2:N<WsOJw>Pbc tp=0.567000ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsOJw>Pbc => 932kb, mw=0 p=7.360500ms (max 1048.628500), cycle 6.426000ms END]
+     7960 [GC<0x0000017702000110>: epilogue 0.224000ms]
+     8168 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3697.64ms]
++++ diagnosis 7.4 no full sweep of holes: flat grey 4030.88 ms, gradient 3830.22 ms, Ran 30 tests across 1 file. [24.34s] | FLAT png=2668 encode1=986 recode=244 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1958, flat grey surv:4031, gradient round:3830 | GC E1139 E14 E247 E10 E122 E88 E5
++++ diagnosis 7.5 no purge of holes: flat grey 4391.15 ms, gradient 3701.27 ms, Ran 30 tests across 1 file. [24.54s] | FLAT png=3023 encode1=1011 recode=229 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1940, flat grey surv:4391, gradient round:3701 | GC E1178 E17 E216 E11 E399 E79 E5
++++ diagnosis 8.0 default, mimalloc statistics: flat grey 3803.02 ms, gradient 3791.74 ms, Ran 30 tests across 1 file. [24.09s] | FLAT png=2576 encode1=652 recode=348 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1951, flat grey surv:3803, gradient round:3792 | GC E1141 E15 E248 E10 E98 E88 E6 | walked/skipped 4354/18 -> 12583/155, discards/freed 16/7 -> 36/43, purges 85 -> 167, commits 123 -> 191
++++ diagnosis 8.1 default: flat grey 4004.58 ms, gradient 3711.45 ms, Ran 30 tests across 1 file. [26.24s] | FLAT png=2895 encode1=585 recode=392 gaps=[] | first test after 18.6 s | over 250 ms: long headers:2011, flat grey surv:4005, gradient round:3711 | GC E1125 E17 E229 E10 E101 E73 E11
++++ diagnosis 8.2 default, original file: flat grey 3881.63 ms, gradient 3803.9 ms, Ran 30 tests across 1 file. [24.19s] |  | first test after 16.8 s | over 250 ms: long headers:1955, flat grey surv:3882, gradient round:3804 | GC E1143 E17 E250 E10 E174 E113 E11
++++ diagnosis 8.3 one marker: flat grey 4448.51 ms, gradient 2909.03 ms, Ran 30 tests across 1 file. [23.12s] | FLAT png=3409 encode1=687 recode=229 gaps=[] | first test after 16.3 s | over 250 ms: long headers:1842, flat grey surv:4449, gradient round:2909 | GC 
++++ diagnosis 8.4 full sweep of holes every 4th: flat grey 4554.28 ms, gradient 3676.95 ms, Ran 30 tests across 1 file. [24.85s] | FLAT png=3110 encode1=842 recode=377 gaps=[] | first test after 17.1 s | over 250 ms: long headers:1957, flat grey surv:4554, gradient round:3677 | GC E1143 E15 E248 E10 E109 E77 E11 | walked/skipped 4377/17 -> 14448/101, discards/freed 16/7 -> 34/41, purges 85 -> 159, commits 123 -> 188
++++ diagnosis 8.5 GC timer off: flat grey 4008.44 ms, gradient 3100.55 ms, Ran 30 tests across 1 file. [23.57s] | FLAT png=2741 encode1=910 recode=229 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1885, flat grey surv:4008, gradient round:3101 | GC E1141
++++ diagnosis 9.0 default, mimalloc statistics: flat grey 3758.77 ms, gradient 3756.85 ms, Ran 30 tests across 1 file. [24.05s] | FLAT png=2582 encode1=735 recode=219 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1957, flat grey surv:3759, gradient round:3757 | GC E1141 E15 E248 E10 E118 E85 E6 | walked/skipped 4354/18 -> 12915/152, discards/freed 16/7 -> 35/42, purges 85 -> 166, commits 123 -> 189
++++ diagnosis 9.1 default: flat grey 4461.1 ms, gradient 3595.76 ms, Ran 30 tests across 1 file. [24.73s] | FLAT png=3072 encode1=990 recode=268 gaps=[] | first test after 17.1 s | over 250 ms: long headers:1957, flat grey surv:4461, gradient round:3596 | GC E1263 E15 E215 E10 E130 E80 E5
++++ diagnosis 9.2 default, 20 ms heartbeat: flat grey 4504.01 ms, gradient 3709.5 ms, Ran 30 tests across 1 file. [24.75s] | FLAT png=3249 encode1=843 recode=250 gaps=[3947ms@+0 404ms@+3947] | first test after 16.9 s | over 250 ms: long headers:1952, flat grey surv:4504, gradient round:3710 | GC E1151 E15 E249 E10 E110 E82 E7
++++ diagnosis 9.3 upstream protocol: flat grey 4526.66 ms, gradient 3735.05 ms, Ran 30 tests across 1 file. [25.23s] | FLAT png=3278 encode1=657 recode=369 gaps=[] | first test after 17.3 s | over 250 ms: long headers:1988, flat grey surv:4527, gradient round:3735 | GC E1491 E30 E232 E12 E60c498 E79 E28 | walked/skipped 14212/93 -> 22342/181, discards/freed 45/9 -> 61/34, purges 159 -> 222, commits 169 -> 225
++++ diagnosis 9.4 no full sweep of holes: flat grey 4175.9 ms, gradient 3870.88 ms, Ran 30 tests across 1 file. [24.65s] | FLAT png=2808 encode1=885 recode=348 gaps=[] | first test after 17.1 s | over 250 ms: long headers:1964, flat grey surv:4176, gradient round:3871 | GC E1159 E15 E253 E10 E86 E121 E11
++++ diagnosis 9.5 no purge of holes: flat grey 4136.17 ms, gradient 3541.83 ms, Ran 30 tests across 1 file. [26.04s] | FLAT png=3135 encode1=646 recode=228 gaps=[] | first test after 18.8 s | over 250 ms: long headers:1976, flat grey surv:4136, gradient round:3542 | GC E1131 E17 E266 E11 E365 E71 E5
++++ diagnosis 10.0 default, mimalloc statistics: flat grey 3759.24 ms, gradient 3747.87 ms, Ran 30 tests across 1 file. [23.94s] | FLAT png=2601 encode1=596 recode=339 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1948, flat grey surv:3759, gradient round:3748 | GC E1127 E15 E247 E10 E99 E86 E5 | walked/skipped 4377/17 -> 13252/163, discards/freed 16/7 -> 35/42, purges 87 -> 168, commits 124 -> 195
++++ diagnosis 10.1 default: flat grey 4463.41 ms, gradient 3622.66 ms, Ran 30 tests across 1 file. [24.53s] | FLAT png=3253 encode1=689 recode=390 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1948, flat grey surv:4463, gradient round:3623 | GC E1129 E15 E213 E10 E103 E79 E5
++++ diagnosis 10.2 default, original file: flat grey 4023.15 ms, gradient 3563.68 ms, Ran 30 tests across 1 file. [25.87s] |  | first test after 18.6 s | over 250 ms: long headers:1998, flat grey surv:4023, gradient round:3564 | GC E1128 E15 E235 E10 E97 E69 E5
++++ diagnosis 10.3 one marker: flat grey 4272.1 ms, gradient 3187.29 ms, Ran 30 tests across 1 file. [23.15s] | FLAT png=3053 encode1=864 recode=230 gaps=[] | first test after 16.1 s | over 250 ms: long headers:1839, flat grey surv:4272, gradient round:3187 | GC 
++++ diagnosis 10.4 full sweep of holes every 4th: flat grey 4540.47 ms, gradient 3595.77 ms, Ran 30 tests across 1 file. [24.54s] | FLAT png=3256 encode1=796 recode=266 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1948, flat grey surv:4540, gradient round:3596 | GC E1128 E15 E215 E10 E119 E78 E6 | walked/skipped 4377/17 -> 14221/100, discards/freed 16/7 -> 33/34, purges 87 -> 156, commits 125 -> 181
++++ diagnosis 10.5 GC timer off: flat grey 4389.85 ms, gradient 2915.88 ms, Ran 30 tests across 1 file. [23.60s] | FLAT png=3364 encode1=671 recode=230 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1878, flat grey surv:4390, gradient round:2916 | GC E1127
++++ diagnosis 11.0 default, mimalloc statistics: flat grey 6164.39 ms, gradient 3749.77 ms, Ran 30 tests across 1 file. [26.41s] | FLAT png=4810 encode1=753 recode=378 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1948, flat grey surv:6164, gradient round:3750 | GC E1173 E14 E243 E10 E88 E89 E6 | walked/skipped 4354/18 -> 13684/153, discards/freed 16/7 -> 35/43, purges 85 -> 162, commits 123 -> 190
+   -13940 [GC<0x0000017081BB0110>: starting 87.061700ms]
+    -3150 [GC<0x0000017081BB0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=86.464170ms 470+0 v=43kb 333+0 v=102kb 103+0 v=408kb 218+0 v=428kb 234+0 v=435kb 208+0 v=463kb 101+0 v=477kb 69+0 v=481kb 33+0 v=499kb 1+0 v=500kb i#2:N<WsOJw>Pbc tp=14.488380ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1173.023700ms (max 1173.023700), cycle 1162.633000ms END]
+    -3096 [GC<0x0000017081BB0110>: epilogue 38.545600ms]
+    -2995 [GC<0x0000017081BB0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.650250ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.434100ms (max 1173.023700), cycle 14.135300ms END]
+    -2994 [GC<0x0000017081BB0110>: epilogue 0.839400ms]
+     -813 [GC<0x0000017081BB0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.707340ms 114+43 v=16kb 73+0 v=29kb 49+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=243.048700ms (max 1173.023700), cycle 158.922800ms END]
+     -810 [GC<0x0000017081BB0110>: epilogue 2.590800ms]
+     -739 [GC<0x0000017081BB0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.206000ms (max 1173.023700), cycle 9.955600ms END]
+     -739 [GC<0x0000017081BB0110>: epilogue 0.237500ms]
+     -220 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1948.12ms]
+     5654 [GC<0x0000017081BB0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.948180ms 15+110 v=7kb 3+110 v=22kb 94+10 v=28kb 70+10 v=33kb 47+10 v=37kb 19+10 v=48kb i#2:N<WsOJw>Pbc tp=2.016810ms 0+0 v=48kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 892kb, mw=0 p=87.986900ms (max 1173.023700), cycle 86.998900ms END]
+     5682 [GC<0x0000017081BB0110>: epilogue 26.687000ms]
+     5984 FLAT start=1792650015921 png=4810 encode1=753 recode=378 gaps=[]
+     6011 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6164.39ms]
+     9201 [GC<0x0000017081BB0110>: START M 2213kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(78)SrbBcs> tp=0.659520ms 4+78 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=7.209240ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 930kb, mw=0 p=88.672200ms (max 1173.023700), cycle 88.372100ms END]
+     9428 [GC<0x0000017081BB0110>: epilogue 225.919500ms]
+     9560 [GC<0x0000017081BB0110>: START M 1868kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.409860ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 930kb, mw=0 p=5.795800ms (max 1173.023700), cycle 5.002900ms END]
+     9560 [GC<0x0000017081BB0110>: epilogue 0.222500ms]
+     9760 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3749.77ms]
++++ diagnosis 11.1 default: flat grey 6042.76 ms, gradient 3780.69 ms, Ran 30 tests across 1 file. [26.29s] | FLAT png=4807 encode1=738 recode=365 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1954, flat grey surv:6043, gradient round:3781 | GC E1137 E17 E236 E10 E100 E88 E5
+   -13819 [GC<0x000001CC58BF0110>: starting 86.564600ms]
+    -3048 [GC<0x000001CC58BF0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=78.453570ms 470+0 v=43kb 333+0 v=49kb 317+0 v=50kb 20+0 v=75kb 233+0 v=81kb 189+0 v=408kb 218+0 v=500kb i#2:N<WsOJw>Pbc tp=14.280990ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1137.212600ms (max 1137.212600), cycle 1126.615000ms END]
+    -2993 [GC<0x000001CC58BF0110>: epilogue 38.457800ms]
+    -2893 [GC<0x000001CC58BF0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.650760ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=16.674500ms (max 1137.212600), cycle 16.363100ms END]
+    -2891 [GC<0x000001CC58BF0110>: epilogue 0.874500ms]
+     -722 [GC<0x000001CC58BF0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.950790ms 114+43 v=16kb 73+0 v=29kb 49+0 v=37kb 35+0 v=43kb 2+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=236.106000ms (max 1137.212600), cycle 161.111500ms END]
+     -719 [GC<0x000001CC58BF0110>: epilogue 2.642200ms]
+     -647 [GC<0x000001CC58BF0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.131400ms (max 1137.212600), cycle 9.837400ms END]
+     -647 [GC<0x000001CC58BF0110>: epilogue 0.262000ms]
+     -130 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1954.33ms]
+     5648 [GC<0x000001CC58BF0110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.922290ms 15+110 v=7kb 3+110 v=22kb 93+10 v=28kb 68+10 v=33kb 46+10 v=37kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=2.393160ms 0+0 v=47kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 891kb, mw=0 p=99.738600ms (max 1137.212600), cycle 99.468400ms END]
+     5675 [GC<0x000001CC58BF0110>: epilogue 26.564800ms]
+     5955 FLAT start=1792650015685 png=4807 encode1=738 recode=365 gaps=[]
+     5980 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6042.76ms]
+     9115 [GC<0x000001CC58BF0110>: START M 2261kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(75)SrbBcs> tp=0.660030ms 4+75 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=7.162290ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 928kb, mw=0 p=87.547200ms (max 1137.212600), cycle 87.272400ms END]
+     9341 [GC<0x000001CC58BF0110>: epilogue 165.706100ms]
+     9567 [GC<0x000001CC58BF0110>: START M 2284kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.395610ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 928kb, mw=0 p=5.354900ms (max 1137.212600), cycle 5.042600ms END]
+     9568 [GC<0x000001CC58BF0110>: epilogue 0.223200ms]
+     9761 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3780.69ms]
++++ diagnosis 11.2 default, 20 ms heartbeat: flat grey 4287.28 ms, gradient 3745.41 ms, Ran 30 tests across 1 file. [24.49s] | FLAT png=3006 encode1=713 recode=405 gaps=[3715ms@+0 292ms@+3715] | first test after 16.7 s | over 250 ms: long headers:1947, flat grey surv:4287, gradient round:3745 | GC E1137 E16 E246 E10 E102 E90 E5
++++ diagnosis 11.3 upstream protocol: flat grey 4545.93 ms, gradient 3642.97 ms, Ran 30 tests across 1 file. [25.02s] | FLAT png=3265 encode1=648 recode=411 gaps=[] | first test after 17.3 s | over 250 ms: long headers:1978, flat grey surv:4546, gradient round:3643 | GC E372c1416 E25 E225 E16 E48c373 E83 E18 | walked/skipped 13956/82 -> 22712/201, discards/freed 39/8 -> 56/35, purges 149 -> 210, commits 164 -> 220
++++ diagnosis 11.4 no full sweep of holes: flat grey 4426.74 ms, gradient 3668.97 ms, Ran 30 tests across 1 file. [24.55s] | FLAT png=3266 encode1=652 recode=377 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1950, flat grey surv:4427, gradient round:3669 | GC E1163 E15 E214 E10 E110 E75 E6
++++ diagnosis 11.5 no purge of holes: flat grey 4439.09 ms, gradient 3615.51 ms, Ran 30 tests across 1 file. [24.45s] | FLAT png=3305 encode1=772 recode=234 gaps=[] | first test after 16.7 s | over 250 ms: long headers:1928, flat grey surv:4439, gradient round:3616 | GC E1140 E15 E247 E11 E373 E74 E5
++++ diagnosis 12.0 default, mimalloc statistics: flat grey 3980.14 ms, gradient 3598.14 ms, Ran 30 tests across 1 file. [23.95s] | FLAT png=3000 encode1=414 recode=343 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1951, flat grey surv:3980, gradient round:3598 | GC E1132 E14 E246 E11 E102 E78 E5 | walked/skipped 4354/18 -> 12752/155, discards/freed 16/7 -> 32/35, purges 87 -> 154, commits 125 -> 183
++++ diagnosis 12.1 default: flat grey 4099.44 ms, gradient 3787.83 ms, Ran 30 tests across 1 file. [24.31s] | FLAT png=2710 encode1=993 recode=265 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1956, flat grey surv:4099, gradient round:3788 | GC E1133 E15 E224 E10 E250 E109 E6
++++ diagnosis 12.2 default, original file: flat grey 4141.82 ms, gradient 3631.12 ms, Ran 30 tests across 1 file. [24.17s] |  | first test after 16.7 s | over 250 ms: long headers:1955, flat grey surv:4142, gradient round:3631 | GC E1127 E15 E249 E11 E95 E78 E5
++++ diagnosis 12.3 one marker: flat grey 4372.84 ms, gradient 3090.87 ms, Ran 30 tests across 1 file. [23.04s] | FLAT png=3325 encode1=685 recode=241 gaps=[] | first test after 16.1 s | over 250 ms: long headers:1846, flat grey surv:4373, gradient round:3091 | GC 
++++ diagnosis 12.4 full sweep of holes every 4th: flat grey 4309.69 ms, gradient 3798.57 ms, Ran 30 tests across 1 file. [24.49s] | FLAT png=2801 encode1=1010 recode=274 gaps=[] | first test after 16.7 s | over 250 ms: long headers:1954, flat grey surv:4310, gradient round:3799 | GC E1127 E15 E245 E10 E305 E89 E5 | walked/skipped 4353/18 -> 15152/144, discards/freed 16/7 -> 37/42, purges 87 -> 160, commits 125 -> 187
++++ diagnosis 12.5 GC timer off: flat grey 3523.96 ms, gradient 3204.6 ms, Ran 30 tests across 1 file. [23.01s] | FLAT png=2582 encode1=601 recode=207 gaps=[] | first test after 16.8 s | over 250 ms: long headers:1880, flat grey surv:3524, gradient round:3205 | GC E1130
++++ diagnosis 13.0 default, mimalloc statistics: flat grey 2959.25 ms, gradient 2883.97 ms, Ran 30 tests across 1 file. [26.78s] | FLAT png=1609 encode1=730 recode=384 gaps=[] | first test after 20.8 s | over 250 ms: long headers:2102, flat grey surv:2959, gradient round:2884 | GC E1255 E17 E296 E11 E86 E39 E5 | walked/skipped 6431/35 -> 14105/126, discards/freed 18/13 -> 35/47, purges 99 -> 171, commits 133 -> 199
++++ diagnosis 13.1 default: flat grey 6101.83 ms, gradient 3767.77 ms, Ran 30 tests across 1 file. [26.54s] | FLAT png=4846 encode1=739 recode=385 gaps=[] | first test after 17.1 s | over 250 ms: long headers:1973, flat grey surv:6102, gradient round:3768 | GC E1148 E15 E256 E10 E98 E89 E6
+   -13930 [GC<0x00000259CBD50110>: starting 118.881300ms]
+    -3094 [GC<0x00000259CBD50110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=78.707160ms 470+0 v=43kb 333+0 v=49kb 317+0 v=102kb 103+0 v=126kb 232+0 v=138kb 186+0 v=154kb 239+0 v=160kb 237+0 v=165kb 211+0 v=179kb 191+0 v=196kb 327+0 v=206kb 252+0 v=216kb 288+0 v=222kb 254+0 v=232kb 263+0 v=408kb 218+0 v=428kb 233+0 v=435kb 207+0 v=500kb i#2:N<WsOJw>Pbc tp=14.644770ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1147.831200ms (max 1147.831200), cycle 1137.324400ms END]
+    -3037 [GC<0x00000259CBD50110>: epilogue 39.212600ms]
+    -2939 [GC<0x00000259CBD50110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.658290ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=14.776300ms (max 1147.831200), cycle 14.510500ms END]
+    -2938 [GC<0x00000259CBD50110>: epilogue 0.837900ms]
+     -729 [GC<0x00000259CBD50110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.641460ms 114+43 v=16kb 73+0 v=29kb 49+0 v=37kb 35+0 v=43kb 2+0 v=43kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=256.150200ms (max 1147.831200), cycle 167.156300ms END]
+     -726 [GC<0x00000259CBD50110>: epilogue 2.626100ms]
+     -653 [GC<0x00000259CBD50110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=10.174600ms (max 1147.831200), cycle 9.882900ms END]
+     -652 [GC<0x00000259CBD50110>: epilogue 0.240700ms]
+     -131 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1972.62ms]
+     5687 [GC<0x00000259CBD50110>: START M 1849kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.905580ms 15+110 v=7kb 3+110 v=22kb 93+10 v=28kb 68+10 v=33kb 46+10 v=37kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=2.406780ms 0+0 v=47kb i#3:P<Msm(0)CsShBcsMsrDSrbCbDomoWsOJw>Pbc => 891kb, mw=0 p=98.342100ms (max 1147.831200), cycle 98.087200ms END]
+     5713 [GC<0x00000259CBD50110>: epilogue 26.184800ms]
+     6013 FLAT start=1792650073158 png=4846 encode1=739 recode=385 gaps=[]
+     6038 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6101.83ms]
+     9186 [GC<0x00000259CBD50110>: START M 2213kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(76)SrbBcs> tp=0.659160ms 4+76 v=2kb 3+0 v=3kb i#2:N<WsOJw>Pbc tp=7.408260ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShCsBcsMsrDSrbCbDomo>Pbc => 928kb, mw=0 p=88.981900ms (max 1147.831200), cycle 88.696000ms END]
+     9441 [GC<0x00000259CBD50110>: epilogue 195.117600ms]
+     9603 [GC<0x00000259CBD50110>: START M 2204kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.461130ms 0+0 v=0kb i#3:P<Msm(0)ShCsBcsMsrDSrbCbDomoWsJwO>Pbc => 928kb, mw=0 p=5.631100ms (max 1147.831200), cycle 5.336400ms END]
+     9604 [GC<0x00000259CBD50110>: epilogue 0.224200ms]
+     9806 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3767.77ms]
++++ diagnosis 13.2 default, 20 ms heartbeat: flat grey 4312.27 ms, gradient 3771.43 ms, Ran 30 tests across 1 file. [24.65s] | FLAT png=2882 encode1=894 recode=372 gaps=[3770ms@+0 383ms@+3770] | first test after 17.1 s | over 250 ms: long headers:1958, flat grey surv:4312, gradient round:3771 | GC E1144 E14 E248 E10 E102 E89 E6
++++ diagnosis 13.3 upstream protocol: flat grey 4531.7 ms, gradient 3660.77 ms, Ran 30 tests across 1 file. [25.15s] | FLAT png=3077 encode1=833 recode=393 gaps=[] | first test after 17.4 s | over 250 ms: long headers:2035, flat grey surv:4532, gradient round:3661 | GC E402c1503 E22 E235 E16 E62c357 E74c196 E27 | walked/skipped 14177/88 -> 22638/188, discards/freed 41/9 -> 56/44, purges 155 -> 219, commits 169 -> 236
++++ diagnosis 13.4 no full sweep of holes: flat grey 4240.44 ms, gradient 3760.8 ms, Ran 30 tests across 1 file. [24.55s] | FLAT png=3000 encode1=724 recode=384 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1974, flat grey surv:4240, gradient round:3761 | GC E1139 E15 E250 E10 E97 E88 E5
++++ diagnosis 13.5 no purge of holes: flat grey 6303.56 ms, gradient 3668.94 ms, Ran 30 tests across 1 file. [26.50s] | FLAT png=5057 encode1=851 recode=236 gaps=[] | first test after 16.9 s | over 250 ms: long headers:1941, flat grey surv:6304, gradient round:3669 | GC E1170 E20 E250 E11 E375 E101 E6
+   -13887 [GC<0x000001E27A3F0110>: starting 127.120000ms]
+    -3080 [GC<0x000001E27A3F0110>: START M 1360kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(0)SrbBcs> tp=78.289290ms 470+0 v=43kb 333+0 v=49kb 317+0 v=102kb 103+0 v=126kb 232+0 v=138kb 186+0 v=154kb 239+0 v=160kb 237+0 v=165kb 211+0 v=408kb 218+0 v=500kb i#2:N<WsOJw>Pbc tp=14.293980ms 1+0 v=500kb i#3:P<WsOJwMsrShCsDMsm(0)SrbBcsCbDomo>Pbc => 696kb, mw=0 p=1170.117800ms (max 1170.117800), cycle 1159.956800ms END]
+    -3023 [GC<0x000001E27A3F0110>: epilogue 39.247200ms]
+    -2919 [GC<0x000001E27A3F0110>: START M 1556kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(5)SrbBcs> tp=0.620910ms 3+5 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)CsMsrShDSrbBcsCbDomoWsOJw>Pbc => 698kb, mw=0 p=19.694100ms (max 1170.117800), cycle 19.388800ms END]
+    -2917 [GC<0x000001E27A3F0110>: epilogue 1.460800ms]
+     -734 [GC<0x000001E27A3F0110>: START M 1685kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(43)SrbBcs> tp=3.920460ms 114+43 v=16kb 73+0 v=29kb 49+0 v=37kb 35+0 v=43kb 2+0 v=43kb i#2:N<WsOJw>Pbc tp=0.306360ms 0+0 v=43kb i#3:P<ShMsm(0)BcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=249.742800ms (max 1170.117800), cycle 163.436800ms END]
+     -731 [GC<0x000001E27A3F0110>: epilogue 2.481100ms]
+     -668 [GC<0x000001E27A3F0110>: START M 1719kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(3)SrbBcs> tp=0.300000ms 0+3 v=0kb i#2:N<WsOJw>Pbc tp=0.300000ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 775kb, mw=0 p=11.316000ms (max 1170.117800), cycle 11.026600ms END]
+     -667 [GC<0x000001E27A3F0110>: epilogue 0.206800ms]
+     -159 (pass) HTTP parsing — llhttp SSE4.2 PCMPESTRI > long headers [1940.90ms]
+     5853 [GC<0x000001E27A3F0110>: START M 1864kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(110)SrbBcs> tp=0.444360ms 2+110 v=16kb 98+10 v=21kb 73+10 v=26kb 51+10 v=31kb 31+10 v=47kb i#2:N<WsOJw>Pbc tp=2.054460ms 0+0 v=47kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsOJw>Pbc => 892kb, mw=0 p=375.087500ms (max 1170.117800), cycle 90.178900ms END]
+     5896 [GC<0x000001E27A3F0110>: epilogue 28.739600ms]
+     6187 FLAT start=1792650072904 png=5057 encode1=851 recode=236 gaps=[]
+     6211 (pass) JPEG > flat grey survives encode, decode, encode byte for byte [6303.56ms]
+     8984 [GC<0x000001E27A3F0110>: START M 2294kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(77)SrbBcs> tp=0.651300ms 4+77 v=2kb i#2:N<WsOJw>Pbc tp=14.327790ms 9+0 v=4kb i#3:P<JwOWs> tp=0.300000ms 1+0 v=4kb i#4:P<WsJwOMsm(0)ShBcsCsMsrDSrbCbDomo>Pbc => 929kb, mw=0 p=100.609800ms (max 1170.117800), cycle 100.341800ms END]
+     9394 [GC<0x000001E27A3F0110>: epilogue 299.315200ms]
+     9483 [GC<0x000001E27A3F0110>: START M 2285kb => EdenCollection, v=0kb i#1:N<CsMsrShDMsm(8)SrbBcs> tp=0.300000ms 0+8 v=0kb i#2:N<WsOJw>Pbc tp=0.545850ms 0+0 v=0kb i#3:P<Msm(0)ShBcsCsMsrDSrbCbDomoWsJwO>Pbc => 929kb, mw=0 p=6.058300ms (max 1170.117800), cycle 5.802300ms END]
+     9580 [GC<0x000001E27A3F0110>: epilogue 67.167500ms]
+     9880 (pass) JPEG > gradient round-trips through baseline and progressive encoders [3668.94ms]
+
+--- Skipping JIT stress fixtures (pass --jit-stress to enable)
+
+--- Summary
+    Passed: 2
+    Instruction failures: 0
+    Other failures: 0 (not CPU instruction issues)
+
+    All baseline verification passed on Nehalem (SSE4.2, no AVX/AVX2/AVX512).
+~~~ Running repository pre-exit hook
+> .buildkite\hooks\pre-exit

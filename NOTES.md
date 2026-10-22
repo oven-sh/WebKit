@@ -255,3 +255,18 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   If confirmed: not a GC regression; the lane's 5 s per test is the native default on an 80x slower emulated run (main: flat grey up to 4.6 s, gradient failed
   once at 5.1 s in 108 builds). Fix for the lane = --timeout for the emulated run in scripts/verify-baseline.ts, with the evidence in the PR body.
   The pause-limit patch (maximumSmallGCPauseMS) is DROPPED from the WebKit tree (kept in bench/wk-pause-limit.patch): the data does not ask for it.
+- 2026-10-22 06:30 UTC: diag v5 result (build 130739, bench/results/vb-diag-v5.log; 14 batches x 6 concurrent runs). THE MIMALLOC FULL-SWEEP HYPOTHESIS IS WRONG TOO.
+  * The slow mode is inside the synchronous `png()` helper of the flat grey test (2880 iterations of `raw.set(rgb(x, y), ...)`, then deflateSync, 3 crc32):
+    png = 2.6..3.4 s normally, 4.8..5.2 s in slow runs, 1.4..1.6 s in two runs whose startup was 4 s longer. No collection runs inside png()
+    (GC #5 comes during the second await). encode1 0.55..1.0 s, recode 0.22..0.4 s do not change.
+  * The times are quantized: png = k x ~1.5..1.7 s with k = 1, 2 (typical) or 3 (slow); "first test after" = 16.8 s + j x ~1.9 s with j = 0, 1, 2.
+    Upstream protocol and one marker (slot 3): j = 0 and k = 2 in 14 of 14 runs. Default protocol arms: one EXTRA event in about 1 run of 3
+    (in the startup: 12 runs, in png: 9 runs; slow png: default 8 of 28, MIMALLOC_PURGE_HOLES=0 1 of 7, other default-protocol arms 0 of 35).
+    MIMALLOC_PURGE_HOLES=0 did not remove it, so it is not the hole sweep.
+  * What upstream and one marker share and the default lacks: cycles scheduled with resumes (numberOfGCMarkers=1 sets m_isSmallSoFar=false).
+    So the extra ~1.7 s event goes with "a small cycle is one pause" (compiler threads stay suspended for the whole cycle), and it lands OUTSIDE the pauses.
+  * Heartbeat arm: after png() returns the JS thread is busy for another 0.7..0.9 s before the first timer callback (Bun.Image first use), then 0.25..0.4 s.
+  * Working guess: the events are first uses of big code under Pin (a JIT tier's compiler on a worklist thread, zlib, ...) that stall the JS thread,
+    and the one-pause cycle moves or adds one. NOT CONFIRMED.
+  * diag v6 = bun commit 2d71faeec7: times the rows of png(), deflateSync and the rest; arms default x2(+1), upstream, useJIT=0 | useDFGJIT=0,
+    useFTLJIT=0 | useConcurrentJIT=0, one marker | default; the slot of an arm rotates per batch (v5 had the default arms always in slots 0 and 1).
