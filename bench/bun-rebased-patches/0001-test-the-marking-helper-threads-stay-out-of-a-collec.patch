@@ -1,0 +1,131 @@
+From ee5fb90956c66ada7794ded4bd2d074c62b1fe71 Mon Sep 17 00:00:00 2001
+From: robobun <robobun@oven.sh>
+Date: Fri, 16 Oct 2026 17:38:16 +0000
+Subject: [PATCH 1/4] test: the marking helper threads stay out of a collection
+ that marks little, and the GC race tests make them join from the start
+
+---
+ test/js/bun/gc/gc-controller-cadence.test.ts  | 63 +++++++++++++++++++
+ .../abort/abort-controller-gc-reason.test.ts  |  9 ++-
+ .../broadcast-channel-worker-gc.test.ts       |  4 ++
+ 3 files changed, 74 insertions(+), 2 deletions(-)
+
+diff --git a/test/js/bun/gc/gc-controller-cadence.test.ts b/test/js/bun/gc/gc-controller-cadence.test.ts
+index c85142c672..ddc262d8ee 100644
+--- a/test/js/bun/gc/gc-controller-cadence.test.ts
++++ b/test/js/bun/gc/gc-controller-cadence.test.ts
+@@ -599,3 +599,66 @@ test.skipIf(!isLinux || isASAN)(
+     expect(exitCode).toBe(0);
+   },
+ );
++
++// The marking helper threads used to join every collection from its start. For a collection of a small heap that is
++// most of the pause: each helper wakes, contends for the marking lock with the collector's thread for the few hundred KB
++// there are to mark, and is seen off again. On a 12-core machine an eden collection of a 4 MB heap paused for 3 ms
++// with the 8 helpers and 0.75 ms with none (oven-sh/bun#44797). Now the helpers join once the collection has marked
++// 1 MB, or when the mutator resumes with marking left.
++// BUN_JSC_logGC prints what each visitor marked after every constraint pass: C is the collector's own visitor, P1..Pn
++// the helpers'. A fixed number of markers makes the count the same on every machine. A debug build takes over 10 s to
++// allocate the 60 MB.
++describe.skipIf(isDebug)("marking helper threads", () => {
++  async function collectionsOf(script: string) {
++    await using proc = Bun.spawn({
++      cmd: [bunExe(), "-e", script],
++      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_numberOfGCMarkers: "4", BUN_GC_TIMER_DISABLE: "1" },
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
++    const log = stdout + stderr;
++    expect(stdout, log).toContain("done");
++    expect(exitCode, log).toBe(0);
++    // One collection runs from its START line to its END]. The last visitor line of it has its totals.
++    return [...log.matchAll(/START [A-Z] \d+kb => (\w+)Collection[\s\S]*?END\]/g)].map(([block, scope]) => {
++      const lines = [...block.matchAll(/v=(\d+)kb \(C:(\d+) M:\d+((?: P\d+:\d+)+)\)/g)];
++      const [, markedKB, collectorKB, helpers] = lines[lines.length - 1];
++      const helpersKB = [...helpers.matchAll(/:(\d+)/g)].reduce((sum, [, kb]) => sum + Number(kb), 0);
++      return { scope, markedKB: Number(markedKB), collectorKB: Number(collectorKB), helpersKB };
++    });
++  }
++
++  // A ring of 1024 small objects replaced 200k times over: about 60 MB of short-lived objects, so about 7 eden
++  // collections at the 8 MB budget, each with under 1 MB to mark (the ring is written, so it is remembered). Every one
++  // is marked by the collector's thread alone. The first one is left out: what ran before the loop can leave it more.
++  test("stay out of a collection that marks little", async () => {
++    const collections = await collectionsOf(`
++      const ring = new Array(1024).fill(null);
++      for (let i = 0; i < 200000; i++) {
++        const key = "key" + i;
++        ring[i & 1023] = { v: key, i, a: new Array(24).fill(i) };
++      }
++      console.log("done", ring.length);
++    `);
++    const edens = collections.filter(c => c.scope === "Eden").slice(1);
++    expect(edens.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(3);
++    for (const eden of edens) expect(eden.markedKB, JSON.stringify(eden)).toBeLessThan(1024);
++    expect(
++      edens.map(c => c.helpersKB),
++      JSON.stringify(collections),
++    ).toEqual(edens.map(() => 0));
++  }, 20_000);
++
++  // 40 MB of live objects: a full collection has far more than 1 MB to mark, and the helpers take part in it.
++  test("join a collection that has enough to mark", async () => {
++    const collections = await collectionsOf(`
++      globalThis.keep = Array.from({ length: 400000 }, (_, i) => ({ i, s: "s" + i }));
++      Bun.gc(true);
++      console.log("done", keep.length);
++    `);
++    const fulls = collections.filter(c => c.scope === "Full" && c.markedKB > 1024);
++    expect(fulls.length, JSON.stringify(collections)).toBeGreaterThanOrEqual(1);
++    for (const full of fulls) expect(full.helpersKB, JSON.stringify(full)).toBeGreaterThan(0);
++  }, 20_000);
++});
+diff --git a/test/js/web/abort/abort-controller-gc-reason.test.ts b/test/js/web/abort/abort-controller-gc-reason.test.ts
+index 144ce6a2ab..08f0088d7a 100644
+--- a/test/js/web/abort/abort-controller-gc-reason.test.ts
++++ b/test/js/web/abort/abort-controller-gc-reason.test.ts
+@@ -38,8 +38,11 @@ describe("AbortController GC", () => {
+           BUN_JSC_verifyGC: "1",
+           BUN_JSC_collectContinuously: "1",
+           // `bun -e` sets numberOfGCMarkers=1 for one-shot startup, which
+-          // serializes marking and hides the race. Restore parallel marking.
++          // serializes marking and hides the race. Restore parallel marking, and
++          // from the start of each collection: a heap this small never shows the
++          // helpers enough work for them to join on their own.
+           BUN_JSC_numberOfGCMarkers: "8",
++          BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
+         },
+         stdout: "pipe",
+         stderr: "pipe",
+@@ -135,8 +138,10 @@ describe("AbortController GC", () => {
+       env: {
+         ...bunEnv,
+         // `bun -e` defaults to a single GC marker; the weak-handle visit has to happen on
+-        // the parallel marker threads to reach the cross-thread mutation.
++        // the parallel marker threads to reach the cross-thread mutation, so they join every
++        // collection from its start.
+         BUN_JSC_numberOfGCMarkers: "8",
++        BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
+       },
+       stdout: "pipe",
+       stderr: "pipe",
+diff --git a/test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts b/test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
+index 01e7c8d5b6..721caa24c7 100644
+--- a/test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
++++ b/test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
+@@ -267,7 +267,11 @@ test(
+       cmd: [bunExe(), "-e", script],
+       env: {
+         ...bunEnv,
++        // The parallel marker threads have to visit the cells, from the start of every
++        // collection: `bun -e` marks on one thread, and a heap this small does not show
++        // the helpers enough work for them to join on their own.
+         BUN_JSC_numberOfGCMarkers: "8",
++        BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
+         // Route bmalloc/libpas to the system allocator so ASAN can see a UAF
+         // on JSVMClientData instead of it being masked by the pool. Not set
+         // on Windows: bmalloc's SystemHeap is unimplemented there and would
+-- 
+2.47.3
+

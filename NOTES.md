@@ -159,3 +159,23 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   run_id 49c2ef2e6e00 (resume: Workflow({module: "robobun:rdr/pushback", resume_from_run_id: "49c2ef2e6e00"})). /tmp/design.json rebuilt (bench/design.json).
   Waiting for preview autobuild-preview-pr-838-20c0b1bc (bench/wait-build.sh final4 <tag> builds the arm and unpacks the debug-asan tarball to /workspace/dl/wk-final4-asan).
   Then: bench/verify-arm.sh final4 final4; bench/asan-probes.sh + stress-sample-asan.sh with the new asan jsc; pin the new tag in the bun branch; open the bun PR.
+- 2026-10-22 02:40 UTC: BIG CHANGES.
+  * bun PR opened: https://github.com/oven-sh/bun/pull/46432 (status comment id 6330975638). Its first CI (build 130582) failed at the pipeline step:
+    "This branch is too far behind main to build. Merge main into it." => the stack had to be rebased.
+  * WebKit#838: base is now `main`; branch rebased onto d6375c72 (the commit bun main pins). TWO commits: 3767944f2f = oven-sh/WebKit#800's commit (cherry-picked,
+    author kept), 1c8b23b501 = this change. Old heads: 20c0b1bc (old base, in branch ...-wip), 618674ce (measured build).
+    NOTE: #800's real base is b1e30d08 (87ee10da = b1e30d08 + 1 JIT commit), so the A/B "main" arm had one more commit than the previews.
+    The clone is shallow: .git/shallow was edited so that 2cacac75 has its parent b1e30d08 (needed for cherry-pick).
+  * New in 1c8b23b501: Collector::helpersJoinEveryCycle() = option at 0 OR collectContinuously (upstream protocol for both);
+    payForMarkerWakeupIfNeeded() no longer reads the option (didStartMarking sets the threshold to SIZE_MAX when helpers join every cycle).
+    Why cc: under the new protocol a cc cycle of a small heap is one pause (1.13 stops/cycle vs 1.85) => JSTests cc mode and Bun's 24 cc test files lose the
+    marker/mutator overlap.
+  * bun branch (local, /workspace/bun-pr, NOT pushed yet): rebased onto origin/main 2a5cbbcb08: 3 test commits of #45568 + my test commit 688413370b
+    (patches in bench/bun-rebased-patches). Review fixes from claude[bot] on #46432: LRU cases are now 4096x60 and 32768x4, skipIf(isASAN), no timeout,
+    context-switch bound Linux only (20 and 50), mw bound 2/MB; option 0 added to sourcetextmodule-link-gc (2 spawns) and zlib-estimated-size-gc.
+    With final3: 5/5 pass under load average 55; main fails (78-94 vs 20, 118-148 vs 50).
+    TODO when preview autobuild-preview-pr-838-1c8b23b5 is published: pin commit on top (scripts/build/deps/webkit.ts), push to
+    origin robobun/c4a0b0aa/marker-wakeups (force), change PR #46432 base to main (gh api -X PATCH repos/oven-sh/bun/pulls/46432 -f base=main),
+    update both PR bodies (the stack is no longer stacked; bun PR contains #45568's tests), reply to the 4 review threads and resolve them.
+  * Local builds: /workspace/bun-ab2 = bun main worktree; bench/build-arm2.sh <arm> <webkit> builds bun main arms (main2 = d6375c72 building now).
+  * Pushback run 49c2ef2e6e00 still running (broadcast sent about the rebase).
