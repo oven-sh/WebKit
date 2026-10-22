@@ -1962,9 +1962,8 @@ struct BytecodeOptimizerAccess::Mapper {
         int to = static_cast<int>(targetInsn.newOffset == UINT_MAX ? targetInsn.oldOffset : targetInsn.newOffset);
         int delta = to - from;
         if (!delta) {
-            // A forward target's offset is the previous pass's, so while the layout still moves the delta can
-            // be anything. Never zero, which would mean "out of line". The kept pass has exact offsets, and a
-            // zero there would be a jump to itself, which cannot be encoded.
+            // Zero would mean "out of line". A forward target's offset is the previous pass's, so the delta can be
+            // zero while the layout still moves. In the pass emit() keeps it would be a jump to itself.
             delta = 1;
             *usedPlaceholder = true;
         }
@@ -2007,7 +2006,7 @@ void BytecodeOptimizerAccess::emit()
     // Relaxation: instruction sizes depend on jump distances which depend on sizes. Sizes only grow across
     // iterations (minimumSize ratchets), so this terminates. A pass whose offsets match the previous pass's
     // computed every jump from exact offsets (forward targets read the previous pass, backward targets this
-    // one), so its stream is the result. Nothing runs between that verdict and the stream it applies to.
+    // one), so its stream is the result.
     JSInstructionStreamWriter newWriter;
     for (unsigned iteration = 0; ; ++iteration) {
         if (iteration == 16) {
