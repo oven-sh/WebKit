@@ -195,3 +195,17 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     new cc 119,649 vs main cc 88,878; tree 100 MB: main 62.9 ms (13,670 vcs), new 44.8 (1,013), option 0 50.5 (24,056); churn RSS main 765, new 807, option 0 743.
   * ASAN sample of the final head runs in the background: /tmp/asan2-{default,price1,sync,cc,p0}.txt and /tmp/asan2-probes.txt (jsc /workspace/dl/wk-new2-asan).
   * TODO: ASAN results -> WebKit body; objdump main2 vs new2 (drain); pushback result -> address; mark WebKit#838 ready; wrap-up; delete scratch + wip branches at the very end.
+- 2026-10-22 04:35 UTC:
+  * bun#46432 head is now d20afca6a2 (test commit 50ee5ba6ac + pin). Review round 2 (coderabbit, claude[bot]): zlib-estimated-size-gc change taken out again
+    (`bun -e` runs with ONE GC marker: ZigGlobalObject.cpp oneShotStartup), mw=0 assertion added to "stay out of a collection that marks little". All 7 review
+    threads answered and resolved. PR body = bench/bun-pr-body.md.
+  * bun CI build 130658 (for e9c994d6): the only red job was ":windows: x64 - verify-baseline": a JPEG codec test of simd-baseline.test.ts timed out at 5 s under
+    Nehalem emulation; the sibling JPEG test timed out the same way in build 130636 of an unrelated PR; main passes it. => flake, not ours. No retrigger used
+    (the push of d20afca6a2 runs CI again).
+  * The review agents of the pushback run load the machine (load average 50-65): local test runs time out at 5 s now; do not trust local timing until it ends.
+  * ASAN sample of the head (5 modes x 152 tests, bench/results/asan2-*.txt): 0 assertions, 0 ASAN reports; 11 timeouts at 180 s in the 2 modes that ran under load
+    (pairs: bigint-oom... 388 s on d6375c72 vs 407 s head; has-own-property-name-cache-string-keys 316 vs 311 s).
+  * objdump main2 vs new2 (drain): per-cell loop 55 instructions in both; +3 per round in drain, +16 in the lambda tail, +7 per 100 cells; text +7,424 bytes.
+  * WebKit#838 body updated with all of this (bench/wk838-body.md). Still draft until the pushback result is in.
+  * TODO: pushback result (run 49c2ef2e6e00) -> address; mark WebKit#838 ready; head's ASAN probes (/tmp/asan2-probes.txt) into the body; wrap-up; delete scratch + wip
+    branches (robobun/c4a0b0aa/scratch, robobun/c4a0b0aa/marker-wakeups-wip in oven-sh/WebKit; robobun/c4a0b0aa/marker-wakeups-prerebase is local only in bun).

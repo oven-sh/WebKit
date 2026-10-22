@@ -1,0 +1,14 @@
+0 27s lru.jsc.js [--numberOfGCMarkers=8] done 24218 26909 ms
+0 34s wide.jsc.js [--numberOfGCMarkers=8] done 3
+0 28s lru.jsc.js [--numberOfGCMarkers=2] done 24218 26273 ms
+0 33s wide.jsc.js [--numberOfGCMarkers=2] done 3
+0 24s lru.jsc.js [--numberOfGCMarkers=1] done 24218 23129 ms
+0 28s wide.jsc.js [--numberOfGCMarkers=1] done 3
+0 24s lru.jsc.js [--numberOfGCMarkers=8 --minimumBytesMarkedForParallelMarking=0] done 24218 22335 ms
+0 29s wide.jsc.js [--numberOfGCMarkers=8 --minimumBytesMarkedForParallelMarking=0] done 3
+0 19s lru.jsc.js [--numberOfGCMarkers=8 --minimumBytesMarkedForParallelMarking=65536] done 24218 18633 ms
+0 32s wide.jsc.js [--numberOfGCMarkers=8 --minimumBytesMarkedForParallelMarking=65536] done 3
+0 140s lru.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true] done 24218 136386 ms
+0 260s wide.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true] done 3
+0 294s lru.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true --minimumBytesMarkedForParallelMarking=0] done 24218 285620 ms
+0 175s wide.jsc.js [--numberOfGCMarkers=8 --collectContinuously=true --verifyGC=true --minimumBytesMarkedForParallelMarking=0] done 3

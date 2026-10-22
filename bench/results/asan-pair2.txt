@@ -1,0 +1,8 @@
+main2 bigint-oom-in-codegen-array-literal-context.js: 388.113 real 123.704 user 5.069 sys
+main2 bigint-oom-in-codegen-array-literal-context.js: exit 0 0 reports
+new2 bigint-oom-in-codegen-array-literal-context.js: 406.965 real 124.557 user 5.849 sys
+new2 bigint-oom-in-codegen-array-literal-context.js: exit 0 0 reports
+new2 has-own-property-name-cache-string-keys.js: 310.774 real 89.923 user 4.034 sys
+new2 has-own-property-name-cache-string-keys.js: exit 0 0 reports
+main2 has-own-property-name-cache-string-keys.js: 315.639 real 85.084 user 3.231 sys
+main2 has-own-property-name-cache-string-keys.js: exit 0 0 reports
