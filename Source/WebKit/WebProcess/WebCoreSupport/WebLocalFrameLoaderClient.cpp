@@ -1105,27 +1105,6 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
     });
 }
 
-void WebLocalFrameLoaderClient::clearLastBroadcastFrameTreeSyncData()
-{
-    m_lastBroadcastFrameGeometry = std::nullopt;
-    m_lastBroadcastFrameViewportInfo = std::nullopt;
-    m_lastAllRemoteDescendantsWereOffscreen = false;
-}
-
-void WebLocalFrameLoaderClient::broadcastFrameViewportInfoToOtherProcessesIfNeeded(const FrameViewportInfo& viewportInfo, bool hasOnScreenRemoteDescendant)
-{
-    if (m_localFrame->isMainFrame()) {
-        bool allRemoteDescendantsAreOffscreen = !hasOnScreenRemoteDescendant;
-        bool lastAllRemoteDescendantsWereOffscreen = m_lastAllRemoteDescendantsWereOffscreen;
-        m_lastAllRemoteDescendantsWereOffscreen = allRemoteDescendantsAreOffscreen;
-
-        if (allRemoteDescendantsAreOffscreen && lastAllRemoteDescendantsWereOffscreen)
-            return;
-    }
-
-    broadcastFrameViewportInfoToOtherProcesses(viewportInfo);
-}
-
 void WebLocalFrameLoaderClient::applyWebsitePolicies(WebsitePoliciesData&& websitePolicies)
 {
     RefPtr documentLoader = protect(m_localFrame->loader())->loaderForWebsitePolicies();
@@ -1175,23 +1154,8 @@ void WebLocalFrameLoaderClient::setPrinting(bool printing, FloatSize pageSize, F
     WebFrameLoaderClient::setPrinting(printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize);
 }
 
-void WebLocalFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
-{
-    WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(data);
-}
-
 void WebLocalFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeSyncSerializationData&& data)
 {
-    if (auto* frameGeometry = std::get_if<FrameGeometrySyncData>(&data.value)) {
-        if (m_lastBroadcastFrameGeometry == *frameGeometry)
-            return;
-        m_lastBroadcastFrameGeometry = *frameGeometry;
-    } else if (auto* viewportInfo = std::get_if<FrameViewportInfo>(&data.value)) {
-        if (m_lastBroadcastFrameViewportInfo == *viewportInfo)
-            return;
-        m_lastBroadcastFrameViewportInfo = *viewportInfo;
-    }
-
     WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(WTF::move(data));
 }
 
@@ -1289,7 +1253,7 @@ void WebLocalFrameLoaderClient::dispatchBackForwardItemLoading(const URL& url, c
         return;
     }
 
-    auto frameLoadRequest = loader->createFrameLoadRequest(URL { url });
+    auto frameLoadRequest = loader->createFrameLoadRequest(URL { url }, referer);
     frameLoadRequest.setTargetBackForwardItemIdentifier(item->itemID());
     childClient->dispatchDecidePolicyForBackForwardNavigationAction(WTF::move(frameLoadRequest), referer, loader->loadType());
 }
@@ -1563,6 +1527,17 @@ void WebLocalFrameLoaderClient::dispatchEnqueueHistoryTraversalDelta(int delta)
         return;
 
     webPage->send(Messages::WebPageProxy::EnqueueHistoryTraversalDelta(delta));
+}
+
+void WebLocalFrameLoaderClient::dispatchEnqueueHistoryTraversalToItem(BackForwardFrameItemIdentifier frameItemID, CompletionHandler<void(bool)>&& completionHandler)
+{
+    RefPtr webPage = m_frame->page();
+    if (!webPage) {
+        completionHandler(false);
+        return;
+    }
+
+    webPage->sendWithAsyncReply(Messages::WebPageProxy::EnqueueHistoryTraversalToItem(frameItemID), WTF::move(completionHandler));
 }
 
 bool WebLocalFrameLoaderClient::shouldFallBack(const ResourceError& error) const

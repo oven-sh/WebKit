@@ -175,7 +175,7 @@ ElementTargetingController::ElementTargetingController(Page& page)
 {
 }
 
-static inline bool elementAndAncestorsAreOnlyRenderedChildren(const Element& element)
+static inline bool LEGACY_NODELETE elementAndAncestorsAreOnlyRenderedChildren(const Element& element)
 {
     CheckedPtr renderer = element.renderer();
     if (!renderer)
@@ -737,7 +737,7 @@ static std::optional<TargetedElementInfo> targetedElementInfo(Element& element, 
 
         offsetEdges = computeOffsetEdges(renderer->style());
         positionType = renderer->style().position();
-        boundsInClientCoordinates = computeClientRect(*renderer);
+        boundsInClientCoordinates = computeClientRect(*protect(renderer));
     }
 
     bool isInVisibilityAdjustmentSubtree = [&] {

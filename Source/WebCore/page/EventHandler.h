@@ -508,7 +508,7 @@ private:
     static bool isKeyboardOptionTab(const FocusEventData&);
     static bool eventInvertsTabsToLinksClientCallResult(const FocusEventData&);
 
-    void clearLastKnownMousePosition();
+    void LEGACY_NODELETE clearLastKnownMousePosition();
 
 #if !ENABLE(IOS_TOUCH_EVENTS)
     void fakeMouseMoveEventTimerFired();
@@ -723,6 +723,7 @@ private:
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_mouseMoveTargetOverride;
     Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>, 31> m_ancestorsOfLastElementUnderMouse;
     RefPtr<LocalFrame> m_lastMouseMoveEventSubframe;
+    bool m_lastMouseMoveWasPassedToRemoteSubframe { false };
 #if PLATFORM(MAC)
     RefPtr<Frame> m_trackedPointerSubframe;
 #endif
@@ -781,7 +782,7 @@ private:
         ImmediateActionStage immediateActionStage { ImmediateActionStage::None };
     };
 
-    bool isSynthesizedContextMenuPressDuringPendingDrag(const PlatformMouseEvent&) const;
+    bool LEGACY_NODELETE isSynthesizedContextMenuPressDuringPendingDrag(const PlatformMouseEvent&) const;
     std::optional<PendingDragState> pendingDragStateToPreserveAcross(const PlatformMouseEvent&) const;
     void restorePendingDragState(const PendingDragState&);
 

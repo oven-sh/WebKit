@@ -107,38 +107,11 @@ Modules/WebGPU/GPUValidationError.cpp
 Modules/WebGPU/GPUVertexAttribute.cpp
 Modules/WebGPU/GPUVertexBufferLayout.cpp
 Modules/WebGPU/GPUVertexState.cpp
-Modules/WebGPU/Implementation/WebGPUAdapterImpl.cpp
-Modules/WebGPU/Implementation/WebGPUBindGroupImpl.cpp
-Modules/WebGPU/Implementation/WebGPUBindGroupLayoutImpl.cpp
-Modules/WebGPU/Implementation/WebGPUBufferImpl.cpp
-Modules/WebGPU/Implementation/WebGPUCommandBufferImpl.cpp
-Modules/WebGPU/Implementation/WebGPUCommandEncoderImpl.cpp
 Modules/WebGPU/Implementation/WebGPUCompositorIntegrationImpl.cpp
-Modules/WebGPU/Implementation/WebGPUComputePassEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPUComputePipelineImpl.cpp
-Modules/WebGPU/Implementation/WebGPUConvertToBackingContext.cpp
 Modules/WebGPU/Implementation/WebGPUCreateImpl.cpp
-Modules/WebGPU/Implementation/WebGPUDeviceImpl.cpp
-Modules/WebGPU/Implementation/WebGPUDowncastConvertToBackingContext.cpp
-Modules/WebGPU/Implementation/WebGPUExternalTextureImpl.cpp
 Modules/WebGPU/Implementation/WebGPUImpl.cpp
-Modules/WebGPU/Implementation/WebGPUPipelineLayoutImpl.cpp
-Modules/WebGPU/Implementation/WebGPUPresentationContextImpl.cpp
-Modules/WebGPU/Implementation/WebGPUQuerySetImpl.cpp
-Modules/WebGPU/Implementation/WebGPUQueueImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderBundleEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderBundleImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderPassEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderPipelineImpl.cpp
-Modules/WebGPU/Implementation/WebGPUSamplerImpl.cpp
-Modules/WebGPU/Implementation/WebGPUShaderModuleImpl.cpp
-Modules/WebGPU/Implementation/WebGPUTextureImpl.cpp
-Modules/WebGPU/Implementation/WebGPUTextureViewImpl.cpp
-Modules/WebGPU/Implementation/WebGPUXRBindingImpl.cpp
-Modules/WebGPU/Implementation/WebGPUXRProjectionLayerImpl.cpp
-Modules/WebGPU/Implementation/WebGPUXRSubImageImpl.cpp
-Modules/WebGPU/Implementation/WebGPUXRViewImpl.cpp
 Modules/WebGPU/WGSLLanguageFeatures.cpp
+Modules/WebGPU/WebGPUXRLayerBacking.cpp
 Modules/airplay/WebKitPlaybackTargetAvailabilityEvent.cpp
 Modules/applicationmanifest/ApplicationManifestParser.cpp
 Modules/async-clipboard/Clipboard.cpp
@@ -384,15 +357,15 @@ Modules/permissions/PermissionController.cpp
 Modules/permissions/PermissionStatus.cpp
 Modules/permissions/Permissions.cpp
 Modules/permissions/WorkerNavigatorPermissions.cpp
+Modules/phonenumberpossession/AggregatorResponseData.cpp
+Modules/phonenumberpossession/PhoneNumberPossessionCoordinator.cpp
+Modules/phonenumberpossession/PhoneNumberPossessionCredential.cpp
+Modules/phonenumberpossession/PhoneNumberPossessionRequest.cpp
 Modules/pictureinpicture/DocumentOrShadowRootPictureInPicture.cpp
 Modules/pictureinpicture/DocumentPictureInPicture.cpp
 Modules/pictureinpicture/HTMLVideoElementPictureInPicture.cpp
 Modules/pictureinpicture/PictureInPictureEvent.cpp
 Modules/pictureinpicture/PictureInPictureWindow.cpp
-Modules/proofofpossession/ProofOfPossessionCoordinator.cpp
-Modules/proofofpossession/ProofOfPossessionCredential.cpp
-Modules/proofofpossession/ProofOfPossessionProviderInfo.cpp
-Modules/proofofpossession/ProofOfPossessionRequest.cpp
 Modules/push-api/PushCrypto.cpp
 Modules/push-api/PushDatabase.cpp
 Modules/push-api/PushEvent.cpp
@@ -808,6 +781,7 @@ bindings/js/JSGPUErrorCustom.cpp
 bindings/js/JSHTMLAllCollectionCustom.cpp
 bindings/js/JSHTMLCanvasElementCustom.cpp
 bindings/js/JSHTMLElementCustom.cpp @cost:3
+bindings/js/JSHTMLMediaElementCustom.cpp
 bindings/js/JSHTMLTemplateElementCustom.cpp
 bindings/js/JSHistoryCustom.cpp
 bindings/js/JSIDBCursorCustom.cpp
@@ -2507,6 +2481,7 @@ platform/LowPowerModeNotifier.cpp
 platform/MIMETypeRegistry.cpp
 platform/MainThreadSharedTimer.cpp
 platform/MediaSamplesBlock.cpp
+platform/MediaSamplesDecoder.cpp
 platform/MediaStrategy.cpp
 platform/NotImplemented.cpp
 platform/NowPlayingManager.cpp
@@ -2901,6 +2876,7 @@ platform/graphics/iso/ISOSchemeInformationBox.cpp
 platform/graphics/iso/ISOSchemeTypeBox.cpp
 platform/graphics/iso/ISOTrackEncryptionBox.cpp
 platform/graphics/iso/ISOVTTCue.cpp
+platform/graphics/opentype/OpenTypeCPAL.cpp
 platform/graphics/opentype/OpenTypeMathData.cpp
 platform/graphics/transforms/AffineTransform.cpp
 platform/graphics/transforms/IdentityTransformOperation.cpp
@@ -3098,7 +3074,6 @@ rendering/RenderHighlight.cpp
 rendering/RenderIFrame.cpp @header:RenderStyleGetters @cost:5
 rendering/RenderImage.cpp @header:RenderStyleGetters @cost:8
 rendering/RenderImageResource.cpp @header:RenderStyleGetters @cost:5
-rendering/RenderInline.cpp @header:RenderStyleGetters @cost:7
 rendering/RenderLayer.cpp @header:RenderStyleGetters @cost:11
 rendering/RenderLayerBacking.cpp @header:RenderStyleGetters @cost:10
 rendering/RenderLayerBackingSVGAdditions.cpp @header:RenderStyleGetters @cost:7
@@ -3237,6 +3212,7 @@ rendering/svg/SVGRenderingContext.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextBoxPainter.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextChunk.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextChunkBuilder.cpp
+rendering/svg/SVGTextLayoutAlgorithm.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextLayoutAttributes.cpp
 rendering/svg/SVGTextLayoutAttributesBuilder.cpp @header:RenderStyleGetters
 rendering/svg/SVGTextLayoutEngine.cpp @header:RenderStyleGetters
@@ -4120,6 +4096,9 @@ JSCanvasElementImage.cpp
 JSCanvasFillRule.cpp
 JSCanvasFillStrokeStyles.cpp
 JSCanvasFilters.cpp
+JSCanvasFontKerning.cpp
+JSCanvasFontStretch.cpp
+JSCanvasFontVariantCaps.cpp
 JSCanvasGradient.cpp
 JSCanvasImageData.cpp
 JSCanvasImageSmoothing.cpp
@@ -4138,6 +4117,7 @@ JSCanvasText.cpp
 JSCanvasTextAlign.cpp
 JSCanvasTextBaseline.cpp
 JSCanvasTextDrawingStyles.cpp
+JSCanvasTextRendering.cpp
 JSCanvasTransform.cpp
 JSCanvasUserInterface.cpp
 JSCaptionDisplaySettingsOptions.cpp
@@ -5021,6 +5001,7 @@ JSReducerCallback.cpp
 JSRegistrationResponseJSON.cpp
 JSRemotePlayback.cpp
 JSRemotePlaybackAvailabilityCallback.cpp
+JSRenderingMode.cpp
 JSReport.cpp
 JSReportBody.cpp
 JSReportingObserver.cpp

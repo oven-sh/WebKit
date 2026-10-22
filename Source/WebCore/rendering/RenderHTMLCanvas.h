@@ -51,11 +51,11 @@ public:
     void canvasSizeChanged();
 
     RenderBlock* innerRenderer() const { return m_innerRenderer.get(); }
-    void setInnerRenderer(RenderBlock*);
+    void LEGACY_NODELETE setInnerRenderer(RenderBlock*);
 
     bool hasDrawableContent() const final;
 
-    DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&) const;
+    DisplayList::RecorderImpl* canvasDrawableRecorder(RenderElement&, GraphicsContext&, const IntRect& elementRelativeBounds) const;
     std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(RenderElement&) const;
 
 private:
@@ -63,6 +63,9 @@ private:
 
     bool requiresLayer() const override;
     ASCIILiteral renderName() const override { return "RenderHTMLCanvas"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     bool canHaveChildren() const override;
 
     void layout() override;

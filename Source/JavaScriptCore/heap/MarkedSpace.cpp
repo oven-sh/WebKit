@@ -242,7 +242,7 @@ void MarkedSpace::sweepBlocks()
     heap().sweeper().stopSweeping();
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.sweep();
+            directory.sweepAll();
             return IterationStatus::Continue;
         });
 }
@@ -393,6 +393,7 @@ MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 
 void MarkedSpace::freeBlock(MarkedBlock::Handle* block)
 {
+    heap().assertIsMutatorOrMutatorIsStopped();
     m_capacity -= MarkedBlock::blockSize;
     m_blocks.remove(&block->block());
     delete block;
@@ -479,6 +480,16 @@ void MarkedSpace::endMarking()
     }
     
     m_isMarking = false;
+}
+
+// For a space that has never been marked: each collection advances either the marking version or
+// the Eden version, so both are still initial, and every block is at nullVersion, which matches
+// neither the old version nor the new one, so no block's marks change meaning.
+void MarkedSpace::adoptMarkingVersion(HeapVersion version)
+{
+    ASSERT(!m_isMarking);
+    ASSERT(m_markingVersion == initialVersion && m_edenVersion == initialVersion);
+    m_markingVersion = version;
 }
 
 void MarkedSpace::willStartIterating()
@@ -586,7 +597,8 @@ void MarkedSpace::dumpBits(PrintStream& out)
 {
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.assertIsMutatorOrMutatorIsStopped();
+            // A diagnostic, so it may be reached from any thread.
+            Locker locker { directory.bitvectorLock().mutate() };
             out.print("Bits for ", directory, ":\n");
             directory.dumpBits(out);
             return IterationStatus::Continue;

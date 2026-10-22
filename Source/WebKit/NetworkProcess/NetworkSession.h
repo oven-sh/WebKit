@@ -72,7 +72,7 @@ enum class AdvancedPrivacyProtections : uint16_t;
 enum class IncludeHttpOnlyCookies : bool;
 enum class PermissionState : uint8_t;
 enum class ShouldSample : bool;
-enum class IsInitiatedByDedicatedWorker : bool;
+enum class IsInitiatedByWorker : bool;
 struct ClientOrigin;
 }
 
@@ -100,7 +100,6 @@ class WebSWOriginStore;
 class WebSWServerConnection;
 struct BackgroundFetchState;
 struct NetworkSessionCreationParameters;
-struct SessionSet;
 
 enum class WebsiteDataType : uint32_t;
 
@@ -163,6 +162,7 @@ public:
     void setThirdPartyCookieBlockingMode(WebCore::ThirdPartyCookieBlockingMode);
     WebCore::ThirdPartyCookieBlockingMode thirdPartyCookieBlockingMode() const { return m_thirdPartyCookieBlockingMode; }
     void setShouldEnbleSameSiteStrictEnforcement(WebCore::SameSiteStrictEnforcementEnabled);
+    void setExemptAllowlistedCookiesFromITP(bool);
     void setFirstPartyHostCNAMEDomain(String&& firstPartyHost, WebCore::RegistrableDomain&& cnameDomain);
     std::optional<WebCore::RegistrableDomain> firstPartyHostCNAMEDomain(const String& firstPartyHost);
     void setFirstPartyHostIPAddress(const String& firstPartyHost, const String& addressString);
@@ -242,9 +242,9 @@ public:
     PrefetchCache& LEGACY_NODELETE prefetchCache();
     void clearPrefetchCache() { m_prefetchCache->clear(); }
 
-    virtual RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker);
-    virtual void removeWebSocketTask(SessionSet&, WebSocketTask&) { }
-    virtual void addWebSocketTask(WebPageProxyIdentifier, WebSocketTask&) { }
+    virtual RefPtr<WebSocketTask> createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool hadMainFrameMainResourcePrivateRelayed, bool allowPrivacyProxy, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker);
+    virtual void removeWebSocketTask(WebSocketTask&) { }
+    virtual void addWebSocketTask(WebSocketTask&) { }
 
     WebCore::BlobRegistryImpl& blobRegistry() LIFETIME_BOUND { return m_blobRegistry; }
     NetworkBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
@@ -288,6 +288,8 @@ public:
     PCM::ManagerInterface& privateClickMeasurement() { return m_privateClickMeasurement.get(); }
     void setPrivateClickMeasurementDebugMode(bool);
     bool privateClickMeasurementDebugModeEnabled() const { return m_privateClickMeasurementDebugModeEnabled; }
+    void setPrivateClickMeasurementPrivateRelayEnforcement(bool);
+    bool privateClickMeasurementPrivateRelayEnforcementEnabled() const { return m_privateClickMeasurementPrivateRelayEnforcementEnabled; }
 
     void LEGACY_NODELETE setShouldSendPrivateTokenIPCForTesting(bool);
     bool shouldSendPrivateTokenIPCForTesting() const { return m_shouldSendPrivateTokenIPCForTesting; }
@@ -324,7 +326,7 @@ public:
     void setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
 
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     virtual void clearProxyConfigData() { }
     virtual void setProxyConfigData(const Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>&) { };
 #endif
@@ -392,6 +394,7 @@ protected:
     bool m_isStaleWhileRevalidateEnabled { false };
     const Ref<PCM::ManagerInterface> m_privateClickMeasurement;
     bool m_privateClickMeasurementDebugModeEnabled { false };
+    bool m_privateClickMeasurementPrivateRelayEnforcementEnabled { false };
     std::optional<WebCore::PrivateClickMeasurement> m_ephemeralMeasurement;
     bool m_isRunningEphemeralMeasurementTest { false };
 

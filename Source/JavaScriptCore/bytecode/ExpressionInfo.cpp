@@ -480,6 +480,8 @@ emitExtensionIsland:
 
 void ExpressionInfo::Encoder::encode(InstPC instPC, unsigned divot, unsigned startOffset, unsigned endOffset)
 {
+    ASSERT(instPC >= m_entry.instPC);
+
     unsigned numWides = 0;
     std::array<Wide, 4> wides;
 

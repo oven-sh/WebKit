@@ -58,7 +58,7 @@ public:
 
     FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const final { return m_intrinsicSize; }
 
-    bool hasSomethingToDraw() const final { return !m_intrinsicSize.isEmpty(); }
+    bool hasSomethingToDraw() const final;
 
     bool renderingTaintsOrigin() const final;
 
@@ -69,6 +69,12 @@ public:
 
     Page* internalPage() { return m_page.get(); }
     WEBCORE_EXPORT RefPtr<SVGSVGElement> rootElement() const;
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // Used by draws with InvertContent::FromResource. The internal page's settings are only changed by
+    // applyDocumentState(), so they stay in sync with m_appliedDocumentState.
+    void setFallbackInvertContent(bool invertContent) { m_fallbackInvertContent = invertContent; }
+#endif
 
     RefPtr<NativeImage> nativeImage(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr, ImagePaintingOptions = { });
 

@@ -25,7 +25,6 @@
 
 #include "ArrayStorage.h"
 #include "ButterflyInlines.h"
-#include "IndexingHeaderInlines.h"
 #include "JSCellButterfly.h"
 #include "JSObjectInlines.h"
 #include "SparseArrayValueMap.h"
@@ -66,7 +65,7 @@ ALWAYS_INLINE void JSObjectWithButterfly::markAuxiliaryAndVisitOutOfLineProperti
     bool hasIndexingHeader = structure->hasIndexingHeader(this);
     size_t preCapacity;
     if (hasIndexingHeader)
-        preCapacity = structure->hasElementsStartOffset() ? butterfly->indexingHeader()->elementsStartOffset(Structure::outOfLineCapacity(maxOffset)) : butterfly->indexingHeader()->preCapacity(structure);
+        preCapacity = structure->hasElementsStartOffset() ? butterfly->indexingHeader()->elementsStartOffset(Structure::outOfLineCapacity(maxOffset)) : butterfly->preCapacity(structure);
     else
         preCapacity = 0;
     

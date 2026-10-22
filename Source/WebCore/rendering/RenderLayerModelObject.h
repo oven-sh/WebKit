@@ -161,7 +161,7 @@ public:
     void invalidateCachedSVGBoundingBoxesOfAncestors() const;
     void invalidateNonScalingStrokeCachesInSubtreeForSVG(const std::optional<AffineTransform>& oldTransform, const AffineTransform& newTransform);
 
-    bool transformReferenceBoxIsSVGViewport() const;
+    bool LEGACY_NODELETE transformReferenceBoxIsSVGViewport() const;
     inline bool shouldUsePositionedClipping() const;
 
 #if ASSERT_ENABLED
@@ -186,6 +186,10 @@ protected:
 private:
     bool createLayerIfAllowed();
     void removeOnlyThisLayerWithRepaint();
+
+    std::optional<AffineTransform> svgTransformBeforeStyleChange(const Style::ComputedStyle& oldStyle) const;
+    AffineTransform svgTransformAfterStyleChange() const;
+    bool markSVGTextForRelayoutIfScaleChanged(const AffineTransform& previousTransform, const AffineTransform& currentTransform);
 
     RenderSVGResourceMarker* svgMarkerResourceFromStyle(const Style::SVGMarkerResource&) const;
 

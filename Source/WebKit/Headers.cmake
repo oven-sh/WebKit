@@ -267,13 +267,13 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     Shared/API/c/cg/WKImageCG.h
 
-    Shared/API/c/mac/WKBaseMac.h
-    Shared/API/c/mac/WKCertificateInfoMac.h
-    Shared/API/c/mac/WKObjCTypeWrapperRef.h
-    Shared/API/c/mac/WKURLRequestNS.h
-    Shared/API/c/mac/WKURLResponseNS.h
-    Shared/API/c/mac/WKWebArchiveRef.h
-    Shared/API/c/mac/WKWebArchiveResource.h
+    Shared/API/c/cocoa/WKBaseMac.h
+    Shared/API/c/cocoa/WKCertificateInfoMac.h
+    Shared/API/c/cocoa/WKObjCTypeWrapperRef.h
+    Shared/API/c/cocoa/WKURLRequestNS.h
+    Shared/API/c/cocoa/WKURLResponseNS.h
+    Shared/API/c/cocoa/WKWebArchiveRef.h
+    Shared/API/c/cocoa/WKWebArchiveResource.h
 
     UIProcess/_WKWebViewPrintFormatter.h
 
@@ -282,13 +282,13 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     UIProcess/API/C/cg/WKIconDatabaseCG.h
 
-    UIProcess/API/C/mac/WKContextPrivateMac.h
-    UIProcess/API/C/mac/WKFrameMac.h
+    UIProcess/API/C/cocoa/WKContextPrivateMac.h
+    UIProcess/API/C/cocoa/WKFrameMac.h
+    UIProcess/API/C/cocoa/WKNotificationPrivateMac.h
+    UIProcess/API/C/cocoa/WKPagePrivateMac.h
+    UIProcess/API/C/cocoa/WKProtectionSpaceNS.h
+    UIProcess/API/C/cocoa/WKWebsiteDataStoreRefPrivateMac.h
     UIProcess/API/C/mac/WKInspectorPrivateMac.h
-    UIProcess/API/C/mac/WKNotificationPrivateMac.h
-    UIProcess/API/C/mac/WKPagePrivateMac.h
-    UIProcess/API/C/mac/WKProtectionSpaceNS.h
-    UIProcess/API/C/mac/WKWebsiteDataStoreRefPrivateMac.h
 
     UIProcess/API/Cocoa/NSAttributedStringPrivate.h
     UIProcess/API/Cocoa/WKBackForwardListItemPrivate.h
@@ -508,6 +508,17 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebNavigationURLFilter.h
     WebProcess/Extensions/Cocoa/_WKWebExtensionWebRequestFilter.h
 
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMDocument.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMElement.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNode.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMNodePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRange.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMRangePrivate.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMText.h
+    WebProcess/InjectedBundle/API/Cocoa/WKDOMTextIterator.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugIn.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextController.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInBrowserContextControllerPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInCSSStyleDeclarationHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInEditingDelegate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInFrame.h
@@ -517,25 +528,13 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInNodeHandlePrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPageGroup.h
+    WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInPrivate.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInRangeHandle.h
     WebProcess/InjectedBundle/API/Cocoa/WKWebProcessPlugInScriptWorld.h
 
-    WebProcess/InjectedBundle/API/c/mac/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundleMac.h
+    WebProcess/InjectedBundle/API/c/cocoa/WKBundlePageMac.h
     WebProcess/InjectedBundle/API/c/mac/WKBundlePageBannerMac.h
-    WebProcess/InjectedBundle/API/c/mac/WKBundlePageMac.h
-
-    WebProcess/InjectedBundle/API/mac/WKDOMDocument.h
-    WebProcess/InjectedBundle/API/mac/WKDOMElement.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNode.h
-    WebProcess/InjectedBundle/API/mac/WKDOMNodePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRange.h
-    WebProcess/InjectedBundle/API/mac/WKDOMRangePrivate.h
-    WebProcess/InjectedBundle/API/mac/WKDOMText.h
-    WebProcess/InjectedBundle/API/mac/WKDOMTextIterator.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugIn.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextController.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInBrowserContextControllerPrivate.h
-    WebProcess/InjectedBundle/API/mac/WKWebProcessPlugInPrivate.h
 )
 endif ()
 
@@ -548,7 +547,7 @@ set(WebKit_PROJECT_HEADERS
 
     Platform/Logging.h
 
-    Shared/mac/SecItemRequestData.h
+    Shared/Cocoa/SecItemRequestData.h
 
     UIProcess/Cocoa/WKShareSheet.h
 

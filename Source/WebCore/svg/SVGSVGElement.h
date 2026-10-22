@@ -30,6 +30,7 @@
 namespace WebCore {
 
 struct DOMMatrix2DInit;
+struct NaturalDimensions;
 class RenderElement;
 class SMILTimeContainer;
 class SVGAngle;
@@ -61,12 +62,12 @@ public: // DOM
 
     void deselectAll();
 
-    static Ref<SVGNumber> createSVGNumber();
+    static Ref<SVGNumber> LEGACY_NODELETE createSVGNumber();
     static Ref<SVGLength> createSVGLength();
-    static Ref<SVGAngle> createSVGAngle();
-    static Ref<SVGPoint> createSVGPoint();
-    static Ref<SVGMatrix> createSVGMatrix();
-    static Ref<SVGRect> createSVGRect();
+    static Ref<SVGAngle> LEGACY_NODELETE createSVGAngle();
+    static Ref<SVGPoint> LEGACY_NODELETE createSVGPoint();
+    static Ref<SVGMatrix> LEGACY_NODELETE createSVGMatrix();
+    static Ref<SVGRect> LEGACY_NODELETE createSVGRect();
     static Ref<SVGTransform> createSVGTransform();
     static Ref<SVGTransform> createSVGTransformFromMatrix(DOMMatrix2DInit&&);
 
@@ -109,6 +110,9 @@ public:
 
     bool hasIntrinsicDimensions() const;
 
+    // https://drafts.csswg.org/css-images-3/#natural-dimensions
+    NaturalDimensions naturalDimensions() const;
+
     FloatSize currentViewportSizeExcludingZoom() const;
     void invalidateCachedViewportSizes() const
     {
@@ -121,7 +125,7 @@ public:
     FloatRect currentViewBoxRect() const;
     bool hasSynthesizedViewBoxForSVGImage() const;
 
-    bool viewBoxDisablesPainting() const;
+    bool LEGACY_NODELETE viewBoxDisablesPainting() const;
 
     AffineTransform viewBoxToViewTransform(float viewWidth, float viewHeight) const;
     bool hasTransformRelatedAttributes() const final;

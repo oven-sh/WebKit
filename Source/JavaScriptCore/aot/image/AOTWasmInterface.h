@@ -41,7 +41,7 @@ struct ModuleInformation;
     macro(operationWasmMemoryCopy) \
     macro(operationWasmMemoryInit) \
     macro(operationWasmDataDrop) \
-    macro(operationMemoryCopy) \
+    macro(operationMemoryMove) \
     macro(operationMemoryFill) \
     macro(operationMemoryAtomicWait32) \
     macro(operationMemoryAtomicWait64) \

@@ -62,7 +62,6 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayoutState.h"
 #include "RenderLineBreak.h"
@@ -193,7 +192,7 @@ static bool shouldInvalidateLineLayoutAfterChangeFor(const RenderBlockFlow& root
     }
 }
 
-static const InlineDisplay::Line& lastLineWithInflowContent(const InlineDisplay::Lines& lines)
+static const InlineDisplay::Line& LEGACY_NODELETE lastLineWithInflowContent(const InlineDisplay::Lines& lines)
 {
     // Out-of-flow/float content only don't produce lines with inline content. They should not be taken into
     // account when computing content box height/baselines.
@@ -453,7 +452,7 @@ std::pair<LayoutUnit, LayoutUnit> LineLayout::computeIntrinsicWidthConstraints()
     return { minimumContentSize, maximumContentSize };
 }
 
-static inline std::optional<Layout::BlockLayoutState::LineClamp> lineClamp(const RenderBlockFlow& rootRenderer)
+static inline std::optional<Layout::BlockLayoutState::LineClamp> LEGACY_NODELETE lineClamp(const RenderBlockFlow& rootRenderer)
 {
     auto& layoutState = *rootRenderer.view().frameView().layoutContext().layoutState();
     if (auto legacyLineClamp = layoutState.legacyLineClamp())
@@ -680,7 +679,10 @@ FloatRect LineLayout::constructContent(const Layout::InlineLayoutState& inlineLa
 {
     ensureInlineContent().setContentMayHaveInkOverflow(inlineLayoutState.contentMayHaveInkOverflow());
     m_inlineContent->setContentFitsWithinMaximumLines(layoutResult && layoutResult->lineClamp.contentFitsWithinMaximumLines);
+    auto layoutInfoForTesting = collectLayoutInfoForTesting(layoutResult.get());
     auto damagedRect = InlineContentBuilder { flow() }.build(WTF::move(layoutResult), *m_inlineContent, m_lineDamage.get());
+    if (layoutInfoForTesting) [[unlikely]]
+        setLayoutInfoForTesting(WTF::move(layoutInfoForTesting));
 
     m_inlineContent->setClearGapBeforeFirstLine(inlineLayoutState.clearGapBeforeFirstLine());
     m_inlineContent->setClearGapAfterLastLine(inlineLayoutState.clearGapAfterLastLine());
@@ -700,6 +702,37 @@ static void relayoutAfterPaginationOffset(RenderBox& renderer)
     // The box's own content may break differently at the position it moved to.
     renderer.markForPaginationRelayoutIfNeeded();
     renderer.layoutIfNeeded();
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LineLayout::LayoutInfoForTesting);
+
+static bool collectsLayoutInfoForTesting { false };
+
+void LineLayout::setCollectsLayoutInfoForTesting(bool collects)
+{
+    collectsLayoutInfoForTesting = collects;
+}
+
+std::unique_ptr<LineLayout::LayoutInfoForTesting> LineLayout::collectLayoutInfoForTesting(const Layout::InlineLayoutResult* layoutResult)
+{
+    if (!collectsLayoutInfoForTesting) [[likely]]
+        return { };
+
+    static uint64_t layoutSequenceNumber;
+    return makeUnique<LayoutInfoForTesting>(LayoutInfoForTesting {
+        ++layoutSequenceNumber,
+        layoutResult ? layoutResult->range : Layout::InlineLayoutResult::Range::Full,
+        layoutResult && layoutResult->isFromMaximumIntrinsicWidthLine,
+        layoutResult ? layoutResult->displayContent.lines.size() : 0uz,
+        0
+    });
+}
+
+void LineLayout::setLayoutInfoForTesting(std::unique_ptr<LayoutInfoForTesting>&& layoutInfo)
+{
+    auto lineCount = m_inlineContent->displayContent().lines.size();
+    layoutInfo->reusedLineCount = lineCount - std::min(layoutInfo->laidOutLineCount, lineCount);
+    m_layoutInfoForTesting = WTF::move(layoutInfo);
 }
 
 void LineLayout::updateRenderTreePositions(const Vector<LineAdjustment>& lineAdjustments, const Layout::InlineLayoutState& inlineLayoutState, bool didDiscardContent)
@@ -1514,7 +1547,7 @@ void LineLayout::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, con
     InlineContentPainter { paintInfo, paintOffset, layerRenderer, *m_inlineContent, flow() }.paint();
 }
 
-static FloatRect visibleLineRectIncludingEllipsis(const InlineDisplay::Content& displayContent, size_t lineIndex)
+static FloatRect LEGACY_NODELETE visibleLineRectIncludingEllipsis(const InlineDisplay::Content& displayContent, size_t lineIndex)
 {
     auto& line = displayContent.lines[lineIndex];
     if (line.isFullyTruncatedInBlockDirection())

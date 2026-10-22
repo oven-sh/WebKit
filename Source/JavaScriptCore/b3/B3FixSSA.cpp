@@ -91,7 +91,7 @@ bool killDeadVariables(Procedure& proc, Accesses& accesses)
     return false;
 }
 
-void fixSSALocally(Procedure& proc, Accesses& accesses)
+void fixSSALocally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& valuesToDelete)
 {
     IndexSparseSet<KeyValuePair<unsigned, Value*>> mapping(proc.variables().size());
     for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
@@ -105,9 +105,10 @@ void fixSSALocally(Procedure& proc, Accesses& accesses)
                 VariableValue* variableValue = value->as<VariableValue>();
                 Variable* variable = variableValue->variable();
 
-                if (KeyValuePair<unsigned, Value*>* replacement = mapping.get(variable->index()))
+                if (KeyValuePair<unsigned, Value*>* replacement = mapping.get(variable->index())) {
                     value->replaceWithIdentity(replacement->value);
-                else
+                    valuesToDelete.add(value);
+                } else
                     accesses.list.append(Access { variable->index(), false, block, value });
                 break;
             }
@@ -231,7 +232,7 @@ private:
     unsigned m_epoch { 0 };
 };
 
-void fixSSAGlobally(Procedure& proc, Accesses& accesses)
+void fixSSAGlobally(Procedure& proc, Accesses& accesses, IndexSet<Value*>& valuesToDelete)
 {
     LivenessByVariable livenessByVariable(proc, accesses);
     bool usesPerVariableLiveness = livenessByVariable.run() == LivenessByVariable::Outcome::Complete;
@@ -268,13 +269,12 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses)
         variableToCalcVar[variable] = calcVar;
     }
 
-    // Create Defs for all of the stores to the stack variable.
     if (usesPerVariableLiveness) {
         for (Access& access : accesses.list) {
             if (access.value->opcode() != Set)
                 continue;
             if (SSACalculator::Variable* calcVar = variableToCalcVar[proc.variables()[access.variable]])
-                ssa.newDef(calcVar, access.block, access.value->child(0));
+                ssa.newDefBlock(calcVar, access.block);
         }
     } else
     for (BasicBlock* block : proc) {
@@ -285,7 +285,7 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses)
             Variable* variable = value->as<VariableValue>()->variable();
 
             if (SSACalculator::Variable* calcVar = variableToCalcVar[variable])
-                ssa.newDef(calcVar, block, value->child(0));
+                ssa.newDefBlock(calcVar, block);
         }
     }
 
@@ -321,97 +321,101 @@ void fixSSAGlobally(Procedure& proc, Accesses& accesses)
     // Now perform the conversion.
     CompilerTimingScope timingScope("B3"_s, "fixSSA: convert"_s);
     InsertionSet insertionSet(proc);
-    IndexSparseSet<KeyValuePair<unsigned, Value*>> mapping(proc.variables().size());
-    IndexSet<Value*> valuesToDelete;
     Vector<uint8_t, 256> hasNoRemovals;
     hasNoRemovals.fill(0, proc.size());
-    for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
-        mapping.clear();
-        bool hasRemovals = false;
-        
-        auto ensureMapping = [&] (Variable* variable, unsigned valueIndex, Origin origin) -> Value* {
-            KeyValuePair<unsigned, Value*>* found = mapping.get(variable->index());
-            if (found)
-                return found->value;
-            
-            SSACalculator::Variable* calcVar = variableToCalcVar[variable];
-            SSACalculator::Def* def = ssa.reachingDefAtHead(block, calcVar);
-            if (def) {
-                mapping.set(variable->index(), def->value());
-                return def->value();
-            }
-            
-            return insertionSet.insertBottom(valueIndex, origin, variable->type());
-        };
 
-        for (SSACalculator::Def* phiDef : ssa.phisForBlock(block)) {
-            Variable* variable = calcVarToVariable[phiDef->variable()->index()];
+    Vector<Value*> reachingDefs(FillWith { }, proc.variables().size(), nullptr);
+    Vector<std::pair<unsigned, Value*>> undoLog;
+    Vector<unsigned, 16> undoLogSizeAtEntry;
+    auto setReachingDef = [&](Variable* variable, Value* value) {
+        undoLog.append({ variable->index(), reachingDefs[variable->index()] });
+        reachingDefs[variable->index()] = value;
+    };
 
-            insertionSet.insertValue(0, phiDef->value());
-            mapping.set(variable->index(), phiDef->value());
-        }
+    proc.dominators().forAllBlocksInDominatorTreePreOrder(
+        [&](BasicBlock* block) {
+            undoLogSizeAtEntry.append(undoLog.size());
+            bool hasRemovals = false;
 
-        for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-            Value* value = block->at(valueIndex);
-            for (Value*& child : value->children()) {
-                if (child->opcode() == Identity)
-                    child = child->foldIdentity();
+            auto reachingDef = [&](Variable* variable, unsigned valueIndex, Origin origin) -> Value* {
+                if (Value* def = reachingDefs[variable->index()])
+                    return def;
+                Value* bottom = insertionSet.insertBottom(valueIndex, origin, variable->type());
+                setReachingDef(variable, bottom);
+                return bottom;
+            };
+
+            for (SSACalculator::Def* phiDef : ssa.phisForBlock(block)) {
+                Variable* variable = calcVarToVariable[phiDef->variable()->index()];
+
+                insertionSet.insertValue(0, phiDef->value());
+                setReachingDef(variable, phiDef->value());
             }
 
-            switch (value->opcode()) {
-            case Get: {
-                VariableValue* variableValue = value->as<VariableValue>();
-                Variable* variable = variableValue->variable();
-
-                value->replaceWithIdentity(ensureMapping(variable, valueIndex, value->origin()));
-                valuesToDelete.add(value);
-                hasRemovals = true;
-                break;
-            }
-                
-            case Set: {
-                VariableValue* variableValue = value->as<VariableValue>();
-                Variable* variable = variableValue->variable();
-
-                mapping.set(variable->index(), value->child(0));
-                value->replaceWithNop();
-                hasRemovals = true;
-                break;
-            }
-
-            case Nop:
-                hasRemovals = true;
-                break;
-
-            default:
-                break;
-            }
-        }
-        hasNoRemovals[block->index()] = !hasRemovals;
-
-        unsigned upsilonInsertionPoint = block->size() - 1;
-        Origin upsilonOrigin = block->last()->origin();
-        for (BasicBlock* successorBlock : block->successorBlocks()) {
-            for (SSACalculator::Def* phiDef : ssa.phisForBlock(successorBlock)) {
-                Value* phi = phiDef->value();
-                SSACalculator::Variable* calcVar = phiDef->variable();
-                Variable* variable = calcVarToVariable[calcVar->index()];
-
-                Value* mappedValue = ensureMapping(variable, upsilonInsertionPoint, upsilonOrigin);
-                if (B3FixSSAInternal::verbose) {
-                    dataLog(
-                        "Mapped value for ", *variable, " with successor Phi ", *phi,
-                        " at end of ", *block, ": ", pointerDump(mappedValue), "\n");
+            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                Value* value = block->at(valueIndex);
+                for (Value*& child : value->children()) {
+                    if (child->opcode() == Identity)
+                        child = child->foldIdentity();
                 }
-                
-                insertionSet.insert<UpsilonValue>(
-                    upsilonInsertionPoint, upsilonOrigin, mappedValue->foldIdentity(), phi);
-            }
-        }
 
-        insertionSet.execute(block);
-    }
-    
+                switch (value->opcode()) {
+                case Get: {
+                    Variable* variable = value->as<VariableValue>()->variable();
+                    value->replaceWithIdentity(reachingDef(variable, valueIndex, value->origin()));
+                    valuesToDelete.add(value);
+                    hasRemovals = true;
+                    break;
+                }
+
+                case Set: {
+                    Variable* variable = value->as<VariableValue>()->variable();
+                    setReachingDef(variable, value->child(0));
+                    value->replaceWithNop();
+                    hasRemovals = true;
+                    break;
+                }
+
+                case Identity:
+                case Nop:
+                    hasRemovals = true;
+                    break;
+
+                default:
+                    break;
+                }
+            }
+            hasNoRemovals[block->index()] = !hasRemovals;
+
+            unsigned upsilonInsertionPoint = block->size() - 1;
+            Origin upsilonOrigin = block->last()->origin();
+            for (BasicBlock* successorBlock : block->successorBlocks()) {
+                for (SSACalculator::Def* phiDef : ssa.phisForBlock(successorBlock)) {
+                    Value* phi = phiDef->value();
+                    Variable* variable = calcVarToVariable[phiDef->variable()->index()];
+
+                    Value* mappedValue = reachingDef(variable, upsilonInsertionPoint, upsilonOrigin);
+                    if (B3FixSSAInternal::verbose) {
+                        dataLog(
+                            "Mapped value for ", *variable, " with successor Phi ", *phi,
+                            " at end of ", *block, ": ", pointerDump(mappedValue), "\n");
+                    }
+
+                    insertionSet.insert<UpsilonValue>(
+                        upsilonInsertionPoint, upsilonOrigin, mappedValue->foldIdentity(), phi);
+                }
+            }
+
+            insertionSet.execute(block);
+        },
+        [&](BasicBlock*) {
+            unsigned undoLogSize = undoLogSizeAtEntry.takeLast();
+            while (undoLog.size() > undoLogSize) {
+                auto [index, previous] = undoLog.takeLast();
+                reachingDefs[index] = previous;
+            }
+        });
+
     // This is isn't strictly necessary, but it leaves the IR nice and tidy, which is particularly
     // useful for phases that do size estimates.
     for (BasicBlock* block : proc) {
@@ -549,11 +553,23 @@ bool fixSSA(Procedure& proc)
     // Lots of variables have trivial local liveness. We can allocate those without any
     // trouble.
     Accesses accesses;
-    fixSSALocally(proc, accesses);
+    IndexSet<Value*> valuesToDelete;
+    fixSSALocally(proc, accesses, valuesToDelete);
     if (killDeadVariables(proc, accesses)) {
+        // Users of a forwarded Get can be in any block, so substitute everywhere before deleting.
         for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
             for (Value* value : *block)
                 value->performSubstitution();
+        }
+        for (BasicBlock* block : proc.cachedBlocksInPreOrder()) {
+            block->values().removeAllMatching(
+                [&](Value* value) -> bool {
+                    if (value->opcode() != Identity || !valuesToDelete.contains(value))
+                        return false;
+
+                    proc.deleteValue(value);
+                    return true;
+                });
         }
         forgetDemotedValues(proc);
         return false;
@@ -561,7 +577,7 @@ bool fixSSA(Procedure& proc)
 
     breakCriticalEdges(proc);
 
-    fixSSAGlobally(proc, accesses);
+    fixSSAGlobally(proc, accesses, valuesToDelete);
 
     forgetDemotedValues(proc);
     proc.deleteAllVariables();

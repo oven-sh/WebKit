@@ -82,6 +82,7 @@
 #include <WebCore/Site.h>
 #include <WebCore/WebKitJSHandle.h>
 #include <stdio.h>
+#include <wtf/Borrow.h>
 #include <wtf/CallbackAggregator.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -328,7 +329,7 @@ void WebFrameProxy::loadData(std::span<const uint8_t> data, const String& type, 
     if (baseURL.protocolIsFile())
         protect(process())->addPreviouslyApprovedFileURL(baseURL);
     // This load skips both policy decisions, which otherwise assign the agent cluster.
-    auto agentClusterAssignment = protect(page->browsingContextGroup())->assignAgentCluster(AgentClusterRequest::forNavigationAction(baseURL, page->topLevelCreationURL(baseURL, isMainFrame()), IsSubstituteData::Yes));
+    auto agentClusterAssignment = protect(page->browsingContextGroup())->assignAgentCluster(AgentClusterRequest::forNavigationAction(baseURL, page->topLevelCreationURL(baseURL, isMainFrame()), IsSubstituteData::Yes), AgentClusterKeyingRecording::Now).first;
     page->sendToProcessContainingFrame(m_frameID, Messages::WebPage::LoadDataInFrame(data, type, encodingName, baseURL, m_frameID, agentClusterAssignment));
 }
     
@@ -608,6 +609,7 @@ void WebFrameProxy::disconnect()
         }
 #endif
         parentFrame->m_childFrames.remove(*this);
+        parentFrame->m_frameGeometry.childrenFrameLayoutInfo.remove(m_frameID);
     }
     m_parentFrame = nullptr;
 }
@@ -654,7 +656,16 @@ void WebFrameProxy::prepareForProvisionalLoadInProcess(WebProcessProxy& process,
     if (isMainFrame())
         return completionHandler(*webPageIDInCurrentProcess());
 
+    // A response can send the navigation back to the process of the frame's current document.
+    if (process.coreProcessIdentifier() == this->process().coreProcessIdentifier()) {
+        m_provisionalFrame = nullptr;
+        return completionHandler(*webPageIDInCurrentProcess());
+    }
+
     Site site = effectiveOrigin ? Site { *effectiveOrigin } : Site { navigation.currentRequest().url() };
+    // A document without a site, such as a data: URL document, joins the process's site.
+    if (auto& processSite = process.site(); site.isEmpty() && processSite)
+        site = *processSite;
     RefPtr page = m_page.get();
 
     // Joining a process to a suspended page would leave content running that `_suspendPage:`
@@ -706,7 +717,7 @@ void WebFrameProxy::commitProvisionalFrame(IPC::Connection& connection, FrameIde
 {
     ASSERT(m_page);
     if (m_provisionalFrame) {
-        ASSERT(url().isEmpty() || WebCore::Site { url() } != WebCore::Site { request.url() });
+        ASSERT(url().isEmpty() || WebCore::Site { url() } != WebCore::Site { request.url() } || process().isDocumentIsolationPolicyProcess() != m_provisionalFrame->process().isDocumentIsolationPolicyProcess());
 
         // Keep FrameProcess alive until message reply, so the current active document could finish dispatching necessary events.
         protect(process())->sendWithAsyncReply(Messages::WebPage::LoadDidCommitInAnotherProcess(frameID, m_provisionalFrame->process().coreProcessIdentifier(), m_layerHostingContextIdentifier, nullptr), [keepAlive = FrameProcessRefWithExpiration::create(Ref { frameProcess() }, unloadEventsExpirationDelay)] { }, *webPageIDInCurrentProcess());
@@ -759,7 +770,7 @@ void WebFrameProxy::getFrameTree(CompletionHandler<void(std::optional<FrameTreeN
     public:
         static Ref<FrameInfoCallbackAggregator> create(CompletionHandler<void(std::optional<FrameTreeNodeData>&&)>&& completionHandler, size_t childCount) { return adoptRef(*new FrameInfoCallbackAggregator(WTF::move(completionHandler), childCount)); }
         void setCurrentFrameData(FrameInfoData&& data) { m_currentFrameData = WTF::move(data); }
-        void addChildFrameData(size_t index, FrameTreeNodeData&& data) { m_childFrameData[index] = WTF::move(data); }
+        void addChildFrameData(size_t index, FrameTreeNodeData&& data) { borrow(m_childFrameData)[index] = WTF::move(data); }
         ~FrameInfoCallbackAggregator()
         {
             // Drop child frames whose process did not reply.
@@ -822,6 +833,9 @@ void WebFrameProxy::setProcess(FrameProcess& process)
     if (RefPtr provisionalPage = m_page ? m_page->provisionalPageProxy() : nullptr)
         provisionalPage->updateFrameProcess();
     m_frameProcess->incrementFrameCount();
+
+    if (m_page)
+        m_page->inspectorController().frameDidChangeProcess(m_frameID, process.process().coreProcessIdentifier());
 }
 
 void WebFrameProxy::removeChildFrames()
@@ -844,7 +858,7 @@ Vector<Ref<WebFrameProxy>> WebFrameProxy::takeChildFrames()
 
 void WebFrameProxy::adoptChildFrames(Vector<Ref<WebFrameProxy>>&& frames)
 {
-    for (auto& frame : frames) {
+    for (auto& frame : borrow(frames)) {
         frame->m_parentFrame = *this;
         m_childFrames.add(WTF::move(frame));
     }
@@ -925,6 +939,12 @@ void WebFrameProxy::broadcastFrameTreeSyncData(Ref<FrameTreeSyncData>&& data)
     webPage->forEachWebContentProcess([&](auto& webProcess, auto pageID) {
         webProcess.send(Messages::WebPage::AllFrameTreeSyncDataChangedInAnotherProcess(m_frameID, data), pageID);
     });
+
+    if (isMainFrame()) {
+        protect(webPage->browsingContextGroup())->forEachRemotePage(*webPage, [&](auto& remotePage) {
+            remotePage.setLastSentMainFrameViewportInfo(data->frameViewportInfo);
+        });
+    }
 }
 
 void WebFrameProxy::notifyParentOfLoadCompletion(WebProcessProxy& childFrameProcess)

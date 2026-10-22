@@ -35,7 +35,6 @@
 #include "GetterSetter.h"
 #include "HeapAnalyzer.h"
 #include "ImmutablePropertyNames.h"
-#include "IndexingHeaderInlines.h"
 #include "JSCInlines.h"
 #include "IndexingTypeInlines.h"
 #include "JSCellButterfly.h"
@@ -4214,7 +4213,7 @@ void JSObject::reallocateAndShrinkButterfly(VM& vm, unsigned length)
         RELEASE_ASSERT(didReallocate);
         return;
     }
-    ASSERT(!this->butterfly()->indexingHeader()->preCapacity(structure()));
+    ASSERT(!this->butterfly()->preCapacity(structure()));
 
     DeferGC deferGC(vm);
     Butterfly* newButterfly = this->butterfly()->resizeArray(vm, this, structure(), 0, ArrayStorage::sizeFor(length));
@@ -4482,8 +4481,8 @@ void JSObject::shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM& vm, 
     size_t indexingPayloadSizeInBytes;
     bool hasIndexingHeader = this->hasIndexingHeader();
     if (hasIndexingHeader) [[unlikely]] {
-        preCapacity = structure->hasElementsStartOffset() ? 1 : oldButterfly->indexingHeader()->preCapacity(structure);
-        indexingPayloadSizeInBytes = oldButterfly->indexingHeader()->indexingPayloadSizeInBytes(structure);
+        preCapacity = structure->hasElementsStartOffset() ? 1 : oldButterfly->preCapacity(structure);
+        indexingPayloadSizeInBytes = oldButterfly->indexingPayloadSizeInBytes(structure);
     } else {
         preCapacity = 0;
         indexingPayloadSizeInBytes = 0;

@@ -163,7 +163,7 @@ public:
     using DomainInNeedOfStorageAccess = WebCore::RegistrableDomain;
     using OpenerDomain = WebCore::RegistrableDomain;
 
-    static NetworkProcess& singleton();
+    static NetworkProcess& LEGACY_NODELETE singleton();
     ~NetworkProcess();
     static constexpr WTF::AuxiliaryProcessType processType = WTF::AuxiliaryProcessType::Network;
 
@@ -326,6 +326,7 @@ public:
     void setThirdPartyCookieBlockingMode(PAL::SessionID, WebCore::ThirdPartyCookieBlockingMode, CompletionHandler<void()>&&);
     void setShouldEnbleSameSiteStrictEnforcementForTesting(PAL::SessionID, WebCore::SameSiteStrictEnforcementEnabled, CompletionHandler<void()>&&);
     void setFirstPartyWebsiteDataRemovalModeForTesting(PAL::SessionID, WebCore::FirstPartyWebsiteDataRemovalMode, CompletionHandler<void()>&&);
+    void setExemptAllowlistedCookiesFromITP(PAL::SessionID, bool, CompletionHandler<void()>&&);
     void setToSameSiteStrictCookiesForTesting(PAL::SessionID, const WebCore::RegistrableDomain&, CompletionHandler<void()>&&);
     void setFirstPartyHostCNAMEDomainForTesting(PAL::SessionID, String&& firstPartyHost, WebCore::RegistrableDomain&& cnameDomain, CompletionHandler<void()>&&);
     void setThirdPartyCNAMEDomainForTesting(PAL::SessionID, WebCore::RegistrableDomain&&, CompletionHandler<void()>&&);
@@ -335,6 +336,7 @@ public:
     void LEGACY_NODELETE setPrivateClickMeasurementEnabled(bool);
     bool LEGACY_NODELETE privateClickMeasurementEnabled() const;
     void setPrivateClickMeasurementDebugMode(PAL::SessionID, bool);
+    void setPrivateClickMeasurementPrivateRelayEnforcement(PAL::SessionID, bool);
 
 #if HAVE(ENHANCED_SECURITY_LINKS)
     void setIsEnhancedSecurityLinksEnabled(bool);
@@ -599,7 +601,7 @@ private:
     void removeWebPageNetworkParameters(PAL::SessionID, WebPageProxyIdentifier);
     void countNonDefaultSessionSets(PAL::SessionID, CompletionHandler<void(uint64_t)>&&);
 
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     void clearProxyConfigData(PAL::SessionID);
     void setProxyConfigData(PAL::SessionID, Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>&& proxyConfigurations);
 #endif

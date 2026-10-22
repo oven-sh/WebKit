@@ -50,6 +50,7 @@ struct ImageRegExp {
         case Yarr::SpecificPattern::TrailingSpacesStar:
         case Yarr::SpecificPattern::TrailingSpacesPlus:
         case Yarr::SpecificPattern::Newlines:
+        case Yarr::SpecificPattern::OptionalCRThenLF:
             return false;
         }
         RELEASE_ASSERT_NOT_REACHED();

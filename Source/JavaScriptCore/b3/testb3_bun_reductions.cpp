@@ -70,12 +70,12 @@ static void testMemoryNumberingExpandedCopy()
     constexpr unsigned expandedCopyLoadCount = 1;
     for (bool overwritesLoadedHeap : { true, false }) {
         TwoLoads loads;
-        BulkMemoryValue* copy = loads.root->appendNew<BulkMemoryValue>(loads.proc, MemoryCopy, Origin(), loads.otherPointer, loads.otherPointer, loads.graph.int64(loads.root, 8));
+        BulkMemoryValue* copy = loads.root->appendNew<BulkMemoryValue>(loads.proc, MemoryMove, Origin(), loads.otherPointer, loads.otherPointer, loads.graph.int64(loads.root, 8));
         copy->setReadRange(HeapRange(70, 71));
         copy->setWriteRange(overwritesLoadedHeap ? firstHeap : HeapRange(71, 72));
         loads.returnBothLoads(loads.root);
         CHECK_EQ(loads.reduceAndCountLoads(), expandedCopyLoadCount + (overwritesLoadedHeap ? 2u : 1u));
-        CHECK_EQ(numberOfValues(loads.proc, MemoryCopy), 0u);
+        CHECK_EQ(numberOfValues(loads.proc, MemoryMove), 0u);
         int64_t memory[1] = { 3 };
         int64_t otherMemory[1] = { 4 };
         CHECK_EQ(loads.run(memory, otherMemory, 0), 303);

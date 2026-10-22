@@ -28,11 +28,12 @@ enum class RuntimeFunction : uint32_t {
     FloorFloat,
     TruncDouble,
     TruncFloat,
-    MemoryCopy,
+    MemoryMove,
+    GCSafeMemoryMove,
     MemoryFill,
 };
 
-static constexpr uint32_t numberOfRuntimeFunctions = 9;
+static constexpr uint32_t numberOfRuntimeFunctions = 10;
 static_assert(static_cast<uint32_t>(RuntimeFunction::MemoryFill) + 1 == numberOfRuntimeFunctions);
 
 class JS_EXPORT_PRIVATE RelocatableValue final : public Value {

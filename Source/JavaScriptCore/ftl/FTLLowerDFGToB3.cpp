@@ -2031,6 +2031,9 @@ private:
             DFG_CRASH(m_graph, m_node, "Unexpected node"_s);
 #endif
             break;
+        case TypedArraySet:
+            compileTypedArraySet();
+            break;
 
         case ResolvePromiseFirstResolving:
             compileResolvePromiseFirstResolving();
@@ -10591,6 +10594,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock isFunctionBlock = m_out.newBlock();
         LBasicBlock hasRareData = m_out.newBlock();
+        LBasicBlock polyProtoCase = m_out.newBlock();
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
@@ -10600,12 +10604,19 @@ IGNORE_CLANG_WARNINGS_END
         LValue rareDataTags = m_out.loadPtr(callee, m_heaps.JSFunction_executableOrRareData);
         m_out.branch(m_out.testIsZeroPtr(rareDataTags, m_out.constIntPtr(JSFunction::rareDataTag)), rarely(slowPath), usually(hasRareData));
 
-        m_out.appendTo(hasRareData, slowPath);
+        m_out.appendTo(hasRareData, polyProtoCase);
         LValue rareData = m_out.sub(rareDataTags, m_out.constIntPtr(JSFunction::rareDataTag));
         LValue allocator = m_out.loadPtr(rareData, m_heaps.FunctionRareData_allocator);
         LValue structure = m_out.loadPtr(rareData, m_heaps.FunctionRareData_structure);
         LValue butterfly = m_out.constIntPtr(0);
-        ValueFromBlock fastResult = m_out.anchor(allocateObject(allocator, structure, butterfly, slowPath));
+        LValue fastObject = allocateObject(allocator, structure, butterfly, slowPath);
+        ValueFromBlock fastResult = m_out.anchor(fastObject);
+        m_out.branch(m_out.isZero64(m_out.load64(structure, m_heaps.Structure_prototype)), rarely(polyProtoCase), usually(continuation));
+
+        m_out.appendTo(polyProtoCase, slowPath);
+        LValue prototype = m_out.loadPtr(rareData, m_heaps.FunctionRareData_prototype);
+        m_out.store64(prototype, m_out.address(m_heaps.properties.atAnyNumber(), fastObject, offsetRelativeToBase(knownPolyProtoOffset)));
+        ValueFromBlock polyProtoResult = m_out.anchor(fastObject);
         m_out.jump(continuation);
 
         m_out.appendTo(slowPath, continuation);
@@ -10614,7 +10625,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        LValue result = m_out.phi(Int64, fastResult, slowResult);
+        LValue result = m_out.phi(Int64, fastResult, polyProtoResult, slowResult);
 
         mutatorFence();
         setJSValue(result);
@@ -12473,6 +12484,23 @@ IGNORE_CLANG_WARNINGS_END
         // const uint8_t* rightData = rightImpl->characters8();
         // size_t commonLength = std::min(leftLength, rightLength);
         // size_t index = 0;
+        // while (commonLength - index >= 4) {
+        //     size_t wordSize = commonLength - index >= 8 ? 8 : 4;
+        //     if (either word at index has a non-ASCII byte)
+        //         break;
+        //     if (the words at index are equal) {
+        //         index += wordSize;
+        //         continue;
+        //     }
+        //     size_t mismatch = index + (offset of the first differing byte in the words);
+        //     uint8_t leftWeight = ducetLevel1Weights[leftData[mismatch]];
+        //     uint8_t rightWeight = ducetLevel1Weights[rightData[mismatch]];
+        //     if ((!leftWeight) | (!rightWeight))
+        //         goto slow_path;
+        //     if (leftWeight != rightWeight)
+        //         return leftWeight > rightWeight ? 1 : -1;
+        //     index = mismatch + 1;
+        // }
         //
         // while (index < commonLength) {
         //     uint8_t leftByte = leftData[index];
@@ -12495,8 +12523,7 @@ IGNORE_CLANG_WARNINGS_END
         //     goto slow_path;
         //
         // const uint8_t* longerData = leftLength > rightLength ? leftData : rightData;
-        // size_t shorterLength = std::min(leftLength, rightLength);
-        // if (!ducetLevel1Weights[longerData[shorterLength]])
+        // if (!ducetLevel1Weights[longerData[commonLength]])
         //     goto slow_path;
         // return leftLength > rightLength ? 1 : -1;
 
@@ -12510,6 +12537,19 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock checkDUCET = m_out.newBlock();
         LBasicBlock is8Bit = m_out.newBlock();
         LBasicBlock loopSetup = m_out.newBlock();
+        LBasicBlock word8Loop = m_out.newBlock();
+        LBasicBlock word8CheckDiff = m_out.newBlock();
+        LBasicBlock word8Advance = m_out.newBlock();
+        LBasicBlock word8NonASCII = m_out.newBlock();
+        LBasicBlock word8Mismatch = m_out.newBlock();
+        LBasicBlock word8Done = m_out.newBlock();
+        LBasicBlock word4Check = m_out.newBlock();
+        LBasicBlock word4Body = m_out.newBlock();
+        LBasicBlock word4CheckDiff = m_out.newBlock();
+        LBasicBlock byteTail = m_out.newBlock();
+        LBasicBlock wordMismatch = m_out.newBlock();
+        LBasicBlock wordMismatchWeights = m_out.newBlock();
+        LBasicBlock wordMismatchResume = m_out.newBlock();
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock checkASCII = m_out.newBlock();
         LBasicBlock checkWeights = m_out.newBlock();
@@ -12539,11 +12579,16 @@ IGNORE_CLANG_WARNINGS_END
         ValueFromBlock sameImplResult = m_out.anchor(m_out.int32Zero);
         m_out.branch(m_out.equal(leftImpl, rightImpl), unsure(continuation), unsure(checkDUCET));
 
-        // Check JSGlobalObject.m_canDoASCIIUCADUCETLocaleCompare
+        // Check JSGlobalObject.m_canDoASCIIUCADUCETLocaleCompare. It is set once, when the default
+        // collator is created, and never cleared, so a true value seen here holds forever.
         m_out.appendTo(checkDUCET, is8Bit);
-        m_out.branch(
-            m_out.isZero32(m_out.load8ZeroExt32(weakPointer(globalObject), m_heaps.JSGlobalObject_canDoASCIIUCADUCETLocaleCompare)),
-            rarely(slowCase), usually(is8Bit));
+        if (globalObject->canDoASCIIUCADUCETLocaleCompare())
+            m_out.jump(is8Bit);
+        else {
+            m_out.branch(
+                m_out.isZero32(m_out.load8ZeroExt32(weakPointer(globalObject), m_heaps.JSGlobalObject_canDoASCIIUCADUCETLocaleCompare)),
+                rarely(slowCase), usually(is8Bit));
+        }
 
         // Check both are 8-bit
         m_out.appendTo(is8Bit, loopSetup);
@@ -12561,12 +12606,93 @@ IGNORE_CLANG_WARNINGS_END
         LValue rightData = m_out.loadPtr(rightImpl, m_heaps.StringImpl_data);
         LValue commonLength = m_out.select(m_out.below(leftLength, rightLength), leftLength, rightLength);
         LValue tableBase = m_out.constIntPtr(ducetLevel1Weights);
-        ValueFromBlock indexAtStart = m_out.anchor(m_out.intPtrZero);
-        m_out.branch(m_out.isNull(commonLength), unsure(loopDone), unsure(loop));
+        ValueFromBlock word8IndexAtStart = m_out.anchor(m_out.intPtrZero);
+        ValueFromBlock word4IndexAtStart = m_out.anchor(m_out.intPtrZero);
+        m_out.branch(m_out.below(commonLength, m_out.constIntPtr(8)), unsure(word4Check), unsure(word8Loop));
+
+        // Skip the equal ASCII prefix 8 bytes at a time. On a mismatch, decide from the first differing
+        // byte of the two words; if either word has a non-ASCII byte, let the byte loop decide. The exit
+        // edges get their own blocks so the loop body does not set the exit phis on every iteration.
+        m_out.appendTo(word8Loop, word8CheckDiff);
+        LValue word8Index = m_out.phi(pointerType(), word8IndexAtStart);
+        LValue leftWord8 = m_out.load64(m_out.baseIndex(m_heaps.characters8, leftData, word8Index));
+        LValue rightWord8 = m_out.load64(m_out.baseIndex(m_heaps.characters8, rightData, word8Index));
+        LValue diff8 = m_out.bitXor(leftWord8, rightWord8);
+        m_out.branch(m_out.testNonZero64(m_out.bitOr(leftWord8, rightWord8), m_out.constInt64(0x8080808080808080ULL)), rarely(word8NonASCII), usually(word8CheckDiff));
+
+        m_out.appendTo(word8CheckDiff, word8Advance);
+        m_out.branch(m_out.notZero64(diff8), unsure(word8Mismatch), unsure(word8Advance));
+
+        m_out.appendTo(word8Advance, word8NonASCII);
+        LValue nextWord8Index = m_out.add(word8Index, m_out.constIntPtr(8));
+        m_out.addIncomingToPhi(word8Index, m_out.anchor(nextWord8Index));
+        m_out.branch(m_out.belowOrEqual(m_out.add(nextWord8Index, m_out.constIntPtr(8)), commonLength), unsure(word8Loop), unsure(word8Done));
+
+        m_out.appendTo(word8NonASCII, word8Mismatch);
+        ValueFromBlock byteTailIndexFromWord8 = m_out.anchor(word8Index);
+        m_out.jump(byteTail);
+
+        m_out.appendTo(word8Mismatch, word8Done);
+        ValueFromBlock mismatchIndexFromWord8 = m_out.anchor(word8Index);
+        ValueFromBlock mismatchLeftWordFromWord8 = m_out.anchor(leftWord8);
+        ValueFromBlock mismatchDiffFromWord8 = m_out.anchor(diff8);
+        m_out.jump(wordMismatch);
+
+        m_out.appendTo(word8Done, word4Check);
+        ValueFromBlock word4IndexFromWord8 = m_out.anchor(nextWord8Index);
+        m_out.jump(word4Check);
+
+        m_out.appendTo(word4Check, word4Body);
+        LValue word4Index = m_out.phi(pointerType(), word4IndexAtStart, word4IndexFromWord8);
+        ValueFromBlock byteTailIndexFromWord4Check = m_out.anchor(word4Index);
+        m_out.branch(m_out.above(m_out.add(word4Index, m_out.constIntPtr(4)), commonLength), unsure(byteTail), unsure(word4Body));
+
+        m_out.appendTo(word4Body, word4CheckDiff);
+        LValue leftWord4 = m_out.load32(m_out.baseIndex(m_heaps.characters8, leftData, word4Index));
+        LValue rightWord4 = m_out.load32(m_out.baseIndex(m_heaps.characters8, rightData, word4Index));
+        LValue diff4 = m_out.zeroExt(m_out.bitXor(leftWord4, rightWord4), Int64);
+        ValueFromBlock byteTailIndexFromWord4 = m_out.anchor(word4Index);
+        m_out.branch(m_out.testNonZero32(m_out.bitOr(leftWord4, rightWord4), m_out.constInt32(0x80808080)), rarely(byteTail), usually(word4CheckDiff));
+
+        m_out.appendTo(word4CheckDiff, byteTail);
+        ValueFromBlock mismatchIndexFromWord4 = m_out.anchor(word4Index);
+        ValueFromBlock mismatchLeftWordFromWord4 = m_out.anchor(m_out.zeroExt(leftWord4, Int64));
+        ValueFromBlock mismatchDiffFromWord4 = m_out.anchor(diff4);
+        ValueFromBlock byteTailIndexAfterWord4 = m_out.anchor(m_out.add(word4Index, m_out.constIntPtr(4)));
+        m_out.branch(m_out.notZero64(diff4), unsure(wordMismatch), unsure(byteTail));
+
+        m_out.appendTo(byteTail, wordMismatch);
+        LValue byteTailIndex = m_out.phi(pointerType(), byteTailIndexFromWord8, byteTailIndexFromWord4Check, byteTailIndexFromWord4, byteTailIndexAfterWord4);
+        ValueFromBlock indexFromByteTail = m_out.anchor(byteTailIndex);
+        m_out.branch(m_out.below(byteTailIndex, commonLength), unsure(loop), unsure(loopDone));
+
+        m_out.appendTo(wordMismatch, wordMismatchWeights);
+        LValue mismatchIndex = m_out.phi(pointerType(), mismatchIndexFromWord8, mismatchIndexFromWord4);
+        LValue mismatchLeftWord = m_out.phi(Int64, mismatchLeftWordFromWord8, mismatchLeftWordFromWord4);
+        LValue mismatchDiff = m_out.phi(Int64, mismatchDiffFromWord8, mismatchDiffFromWord4);
+        LValue lowestDiffBit = m_out.bitAnd(mismatchDiff, m_out.neg(mismatchDiff));
+        LValue byteShift = m_out.bitAnd(m_out.bitXor(m_out.ctlz32(lowestDiffBit), m_out.constInt64(63)), m_out.constInt64(~7LL));
+        LValue byteShift32 = m_out.castToInt32(byteShift);
+        LValue mismatchLeftByte = m_out.bitAnd(m_out.lShr(mismatchLeftWord, byteShift32), m_out.constInt64(0xff));
+        LValue mismatchRightByte = m_out.bitAnd(m_out.lShr(m_out.bitXor(mismatchLeftWord, mismatchDiff), byteShift32), m_out.constInt64(0xff));
+        LValue mismatchLeftWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, mismatchLeftByte)));
+        LValue mismatchRightWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, mismatchRightByte)));
+        m_out.branch(m_out.bitOr(m_out.isZero32(mismatchLeftWeight), m_out.isZero32(mismatchRightWeight)), rarely(slowCase), usually(wordMismatchWeights));
+
+        // Equal weights (a case-only difference like A/a) resume the word pass after the differing byte.
+        m_out.appendTo(wordMismatchWeights, wordMismatchResume);
+        ValueFromBlock wordMismatchResult = m_out.anchor(m_out.select(m_out.above(mismatchLeftWeight, mismatchRightWeight), m_out.int32One, m_out.constInt32(-1)));
+        m_out.branch(m_out.notEqual(mismatchLeftWeight, mismatchRightWeight), unsure(continuation), unsure(wordMismatchResume));
+
+        m_out.appendTo(wordMismatchResume, loop);
+        LValue resumeIndex = m_out.add(mismatchIndex, m_out.add(m_out.lShr(byteShift, m_out.constInt32(3)), m_out.intPtrOne));
+        m_out.addIncomingToPhi(word8Index, m_out.anchor(resumeIndex));
+        m_out.addIncomingToPhi(word4Index, m_out.anchor(resumeIndex));
+        m_out.branch(m_out.belowOrEqual(m_out.add(resumeIndex, m_out.constIntPtr(8)), commonLength), unsure(word8Loop), unsure(word4Check));
 
         // Main loop: load bytes and branch on equality
         m_out.appendTo(loop, checkASCII);
-        LValue index = m_out.phi(pointerType(), indexAtStart);
+        LValue index = m_out.phi(pointerType(), indexFromByteTail);
         LValue leftByte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, leftData, index));
         LValue rightByte = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, rightData, index));
         m_out.branch(m_out.notEqual(leftByte, rightByte), unsure(checkWeights), unsure(checkASCII));
@@ -12602,8 +12728,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(lengthsDiffer, slowCase);
         LValue isLeftLonger = m_out.above(leftLength, rightLength);
         LValue longerData = m_out.select(isLeftLonger, leftData, rightData);
-        LValue shorterLength = m_out.select(isLeftLonger, rightLength, leftLength);
-        LValue nextChar = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, longerData, shorterLength));
+        LValue nextChar = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, longerData, commonLength));
         LValue nextCharWeight = m_out.load8ZeroExt32(TypedPointer(m_heaps.absolute.atAnyAddress(), m_out.add(tableBase, m_out.zeroExtPtr(nextChar))));
         LValue lengthResult = m_out.select(isLeftLonger, m_out.int32One, m_out.constInt32(-1));
         ValueFromBlock lengthResultPhi = m_out.anchor(lengthResult);
@@ -12616,7 +12741,7 @@ IGNORE_CLANG_WARNINGS_END
 
         // Merge results
         m_out.appendTo(continuation, lastNext);
-        setInt32(m_out.phi(Int32, sameStringResult, sameImplResult, differResultPhi, lengthResultPhi, slowResult));
+        setInt32(m_out.phi(Int32, sameStringResult, sameImplResult, wordMismatchResult, differResultPhi, lengthResultPhi, slowResult));
     }
 
     void compileStringIndexOf()
@@ -14307,8 +14432,7 @@ IGNORE_CLANG_WARNINGS_END
                     // long as the VM, and that thunk returns to our caller.
                     auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                     callLinkInfo->setCallType(CallLinkInfo::DirectTailCall);
-                    if (numAllocatedArgs > numPassedArgs)
-                        callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
+                    callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
                     CCallHelpers::Label mainPath = jit.label();
                     jit.store32(
@@ -14352,9 +14476,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                 callLinkInfo->setCallType(isConstruct ? CallLinkInfo::DirectConstruct : CallLinkInfo::DirectCall);
-
-                if (numAllocatedArgs > numPassedArgs)
-                    callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
+                callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
 
                 CCallHelpers::Label mainPath = jit.label();
                 jit.store32(
@@ -21240,6 +21362,9 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue allocatePropertyStorage(LValue object, Structure* previousStructure)
     {
+        if (previousStructure->couldHaveIndexingHeader() && previousStructure->canAllocatePropertyStorageInJIT())
+            return allocatePropertyStorageWithIndexingHeader(object, previousStructure, initialOutOfLineCapacity);
+
         if (previousStructure->couldHaveIndexingHeader()) {
             return vmCall(
                 pointerType(),
@@ -21265,6 +21390,9 @@ IGNORE_CLANG_WARNINGS_END
 
         ASSERT_UNUSED(next, newSize == next->outOfLineCapacity());
 
+        if (previous->couldHaveIndexingHeader() && previous->canAllocatePropertyStorageInJIT())
+            return allocatePropertyStorageWithIndexingHeader(object, previous, newSize);
+
         if (previous->couldHaveIndexingHeader()) {
             LValue newAllocSize = m_out.constIntPtr(newSize);
             return vmCall(pointerType(), operationAllocateComplexPropertyStorage, m_vmValue, object, newAllocSize);
@@ -21287,6 +21415,60 @@ IGNORE_CLANG_WARNINGS_END
             m_out.int64Zero, m_heaps.properties.atAnyNumber());
 
         return result;
+    }
+
+    LValue allocatePropertyStorageWithIndexingHeader(LValue object, Structure* previousStructure, size_t newSize)
+    {
+        size_t oldSize = previousStructure->outOfLineCapacity();
+
+        LBasicBlock copyLoop = m_out.newBlock();
+        LBasicBlock copyDone = m_out.newBlock();
+        LBasicBlock slowPath = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(copyLoop);
+
+        LValue oldButterfly = m_out.loadPtr(object, m_heaps.JSObject_butterfly);
+        LValue vectorLength = m_out.zeroExtPtr(m_out.load32NonNegative(oldButterfly, m_heaps.Butterfly_vectorLength));
+        size_t sizeBeforeVector = newSize * sizeof(JSValue) + sizeof(IndexingHeader);
+        LValue allocationSize = m_out.add(m_out.shl(vectorLength, m_out.constInt32(3)), m_out.constIntPtr(sizeBeforeVector));
+
+        LValue startOfStorage = allocateHeapCell(allocatorForSize(vm().auxiliarySpace(), allocationSize, slowPath), slowPath);
+        LValue fastButterfly = m_out.add(startOfStorage, m_out.constIntPtr(sizeBeforeVector));
+
+        splatWords(
+            fastButterfly,
+            m_out.constInt32(-newSize - 1), m_out.constInt32(-oldSize - 1),
+            m_out.int64Zero, m_heaps.properties.atAnyNumber());
+
+        ptrdiff_t headerSize = -sizeof(IndexingHeader) - sizeof(void*);
+        ptrdiff_t endStorage = headerSize - static_cast<ptrdiff_t>(oldSize * sizeof(JSValue));
+        for (ptrdiff_t offset = headerSize; offset > endStorage; offset -= sizeof(void*)) {
+            LValue loaded = m_out.loadPtr(m_out.address(m_heaps.properties.atAnyNumber(), oldButterfly, offset));
+            m_out.storePtr(loaded, m_out.address(m_heaps.properties.atAnyNumber(), fastButterfly, offset));
+        }
+
+        ValueFromBlock startIndex = m_out.anchor(m_out.constIntPtr(-1));
+        m_out.jump(copyLoop);
+
+        m_out.appendTo(copyLoop, copyDone);
+        LValue index = m_out.phi(pointerType(), startIndex);
+        LValue value = m_out.load64(m_out.baseIndex(m_heaps.root, oldButterfly, index, ScaleEight));
+        m_out.store64(value, m_out.baseIndex(m_heaps.root, fastButterfly, index, ScaleEight));
+        LValue nextIndex = m_out.add(index, m_out.intPtrOne);
+        m_out.addIncomingToPhi(index, m_out.anchor(nextIndex));
+        m_out.branch(m_out.notEqual(nextIndex, vectorLength), unsure(copyLoop), unsure(copyDone));
+
+        m_out.appendTo(copyDone, slowPath);
+        ValueFromBlock fastResult = m_out.anchor(fastButterfly);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowPath, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationAllocateComplexPropertyStorage, m_vmValue, object, m_out.constIntPtr(newSize)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(pointerType(), fastResult, slowResult);
     }
 
     LValue allocatePropertyStorageWithSizeImpl(size_t sizeInValues)
@@ -23187,6 +23369,33 @@ IGNORE_CLANG_WARNINGS_END
     }
 #endif // USE(BUN_JSC_ADDITIONS)
 
+    void compileTypedArraySet()
+    {
+        LValue base = lowCell(m_node->child1());
+        LValue source = lowCell(m_node->child2());
+        LValue offset = lowInt32(m_node->child3());
+
+        TypedArrayType type = m_node->typedArrayType();
+
+        LValue baseLength = typedArrayLength(base, false, type, m_node->child1());
+        LValue sourceLength = typedArrayLength(source, false, type, m_node->child2());
+        speculate(OutOfBounds, noValue(), nullptr, m_out.lessThan(offset, m_out.int32Zero));
+        LValue offsetPtr = m_out.zeroExtPtr(offset);
+        speculate(OutOfBounds, noValue(), nullptr, m_out.above(m_out.add(offsetPtr, sourceLength), baseLength));
+
+        LValue baseVector = m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector);
+        LValue sourceVector = m_out.loadPtr(source, m_heaps.JSArrayBufferView_vector);
+        speculate(BadIndexingType, jsValueValue(base), m_node->child1().node(), m_out.isNull(baseVector));
+        speculate(BadIndexingType, jsValueValue(source), m_node->child2().node(), m_out.isNull(sourceVector));
+
+        LValue shift = m_out.constInt32(logElementSize(type));
+        LValue basePointer = m_out.add(caged(Gigacage::Primitive, baseVector, base), m_out.shl(offsetPtr, shift));
+        LValue sourcePointer = caged(Gigacage::Primitive, sourceVector, source);
+        m_out.memoryMove(basePointer, sourcePointer, m_out.shl(sourceLength, shift), &m_heaps.TypedArrayProperties, &m_heaps.TypedArrayProperties);
+        ensureStillAliveHere(base);
+        ensureStillAliveHere(source);
+    }
+
     void compileDateNow()
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_node->origin.semantic);
@@ -23614,12 +23823,18 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue stringsEqual(LValue leftJSString, LValue rightJSString, Edge leftJSStringEdge = Edge(), Edge rightJSStringEdge = Edge())
     {
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-
         String leftConst = leftJSStringEdge ? leftJSStringEdge->tryGetString(m_graph) : String();
         String rightConst = rightJSStringEdge ? rightJSStringEdge->tryGetString(m_graph) : String();
         bool leftAtom = !leftConst.isNull() && leftConst.impl()->isAtom();
         bool rightAtom = !rightConst.isNull() && rightConst.impl()->isAtom();
+
+        auto isShortConstant = [](const String& string) {
+            return !string.isNull() && string.length() <= maxInlineConstantStringCompareLength;
+        };
+        if (isShortConstant(rightConst) && leftConst.isNull())
+            return stringEqualsShortConstant(leftJSString, leftJSStringEdge, rightJSString, rightConst);
+        if (isShortConstant(leftConst) && rightConst.isNull())
+            return stringEqualsShortConstant(rightJSString, rightJSStringEdge, leftJSString, leftConst);
 
         LBasicBlock notTriviallyUnequalCase = m_out.newBlock();
         LBasicBlock notEmptyCase = m_out.newBlock();
@@ -23787,7 +24002,16 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.notEqual(leftRopeCaseLength, rightRopeCaseLength), usually(falseCase), rarely(slowCase));
 
         m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(callStringEqualThunk(leftJSString, rightJSString));
+        m_out.jump(continuation);
 
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(Int32, trueResult, falseResult, slowResult);
+    }
+
+    LValue callStringEqualThunk(LValue leftJSString, LValue rightJSString)
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         VM* vmPtr = &vm();
         callPreflight();
         auto global = weakPointer(globalObject);
@@ -23807,11 +24031,151 @@ IGNORE_CLANG_WARNINGS_END
                 jit.nearCallThunk(CodeLocationLabel<JITThunkPtrTag>(vmPtr->getCTIStub(stringEqualThunkGenerator).code()));
             });
         LValue result = operationExceptionCheckAndExtractResultIfNeeded<ExceptionOperationResult<EncodedJSValue>>(thunkCall);
-        ValueFromBlock slowResult = m_out.anchor(unboxBoolean(result));
+        return unboxBoolean(result);
+    }
+
+    static constexpr unsigned maxInlineConstantStringCompareLength = 16;
+
+    // Substring ropes are decoded inline rather than calling out, so that a chain like
+    // `id === "while" || id === "break"` on a sliced identifier stays free of calls.
+    LValue stringEqualsShortConstant(LValue jsString, Edge edge, LValue constantJSString, const String& constant)
+    {
+        unsigned length = constant.length();
+        ASSERT(length <= maxInlineConstantStringCompareLength);
+        // A constant outside Latin-1 can only equal 16-bit data, so the 16-bit path is not rare for it.
+        bool fitsIn8Bit = constant.containsOnlyLatin1();
+        auto to16BitCase = fitsIn8Bit ? rarely : unsure;
+        auto to8BitCase = fitsIn8Bit ? usually : unsure;
+
+        LBasicBlock nonRopeCase = m_out.newBlock();
+        LBasicBlock nonRopeLengthMatched = m_out.newBlock();
+        LBasicBlock ropeCase = m_out.newBlock();
+        LBasicBlock ropeLengthMatched = m_out.newBlock();
+        LBasicBlock substringCase = m_out.newBlock();
+        LBasicBlock substring8BitCase = m_out.newBlock();
+        LBasicBlock substring16BitCase = m_out.newBlock();
+        LBasicBlock compare8BitCase = m_out.newBlock();
+        LBasicBlock compare16BitCase = m_out.newBlock();
+        LBasicBlock falseCase = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue value = m_out.loadPtr(jsString, m_heaps.JSString_value);
+        if (canBeRope(edge))
+            m_out.branch(m_out.testNonZeroPtr(value, m_out.constIntPtr(JSString::isRopeInPointer)), unsure(ropeCase), unsure(nonRopeCase));
+        else
+            m_out.jump(nonRopeCase);
+
+        LBasicBlock lastNext = m_out.appendTo(nonRopeCase, nonRopeLengthMatched);
+        m_out.branch(m_out.notEqual(m_out.load32(value, m_heaps.StringImpl_length), m_out.constInt32(length)), unsure(falseCase), unsure(nonRopeLengthMatched));
+
+        m_out.appendTo(nonRopeLengthMatched, ropeCase);
+        LValue nonRopeData = m_out.loadPtr(value, m_heaps.StringImpl_data);
+        ValueFromBlock nonRopeData8Bit = m_out.anchor(nonRopeData);
+        ValueFromBlock nonRopeData16Bit = m_out.anchor(nonRopeData);
+        m_out.branch(m_out.testIsZero32(m_out.load32(value, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), to16BitCase(compare16BitCase), to8BitCase(compare8BitCase));
+
+        m_out.appendTo(ropeCase, ropeLengthMatched);
+        m_out.branch(m_out.notEqual(m_out.load32NonNegative(jsString, m_heaps.JSRopeString_length), m_out.constInt32(length)), unsure(falseCase), unsure(ropeLengthMatched));
+
+        m_out.appendTo(ropeLengthMatched, substringCase);
+        m_out.branch(m_out.testIsZeroPtr(value, m_out.constIntPtr(JSRopeString::isSubstringInPointer)), rarely(slowCase), usually(substringCase));
+
+        m_out.appendTo(substringCase, substring8BitCase);
+        LValue packedLengthAndBaseLower = m_out.load64(jsString, m_heaps.JSRopeString_fiber1);
+        LValue packedBaseUpperAndOffset = m_out.load64(jsString, m_heaps.JSRopeString_fiber2);
+        LValue substringBase = m_out.bitOr(
+            m_out.lShr(packedLengthAndBaseLower, m_out.constInt32(32)),
+            m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
+        LValue baseImpl = m_out.loadPtr(substringBase, m_heaps.JSString_value);
+        LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
+        LValue baseData = m_out.loadPtr(baseImpl, m_heaps.StringImpl_data);
+        // The rope's cached is8Bit bit can go stale: atomizing the base may swap in an equal 16-bit StringImpl.
+        m_out.branch(m_out.testIsZero32(m_out.load32(baseImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), to16BitCase(substring16BitCase), to8BitCase(substring8BitCase));
+
+        m_out.appendTo(substring8BitCase, substring16BitCase);
+        ValueFromBlock substringData8Bit = m_out.anchor(m_out.add(baseData, substringOffset));
+        m_out.jump(compare8BitCase);
+
+        m_out.appendTo(substring16BitCase, compare8BitCase);
+        ValueFromBlock substringData16Bit = m_out.anchor(m_out.add(baseData, m_out.shl(substringOffset, m_out.constInt32(1))));
+        m_out.jump(compare16BitCase);
+
+        auto emitCompare = [&](IndexedAbstractHeap& heap, LValue data, std::span<const uint8_t> expected) -> LValue {
+            unsigned size = expected.size();
+            if (!size)
+                return m_out.booleanTrue;
+            auto loadChunk = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                TypedPointer pointer(heap.atAnyIndex(), m_out.add(data, m_out.constIntPtr(offset)));
+                switch (chunkSize) {
+                case 1:
+                    return m_out.load8ZeroExt32(pointer);
+                case 2:
+                    return m_out.load16ZeroExt32(pointer);
+                case 4:
+                    return m_out.load32(pointer);
+                case 8:
+                    return m_out.load64(pointer);
+                }
+                RELEASE_ASSERT_NOT_REACHED();
+                return nullptr;
+            };
+            auto expectedChunk = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                uint64_t bits = 0;
+                memcpySpan(asMutableByteSpan(bits).first(chunkSize), expected.subspan(offset, chunkSize));
+                if (chunkSize == 8)
+                    return m_out.constInt64(static_cast<int64_t>(bits));
+                return m_out.constInt32(static_cast<int32_t>(bits));
+            };
+            auto difference = [&](unsigned offset, unsigned chunkSize) -> LValue {
+                return m_out.bitXor(loadChunk(offset, chunkSize), expectedChunk(offset, chunkSize));
+            };
+
+            if (size > 8) {
+                // The last chunk overlaps the previous one when the size is not a multiple of 8.
+                LValue differences = difference(0, 8);
+                for (unsigned offset = 8; offset + 8 < size; offset += 8)
+                    differences = m_out.bitOr(differences, difference(offset, 8));
+                differences = m_out.bitOr(differences, difference(size - 8, 8));
+                return m_out.isZero64(differences);
+            }
+
+            unsigned chunkSize = size >= 8 ? 8 : size >= 4 ? 4 : size >= 2 ? 2 : 1;
+            if (size == chunkSize)
+                return m_out.equal(loadChunk(0, chunkSize), expectedChunk(0, chunkSize));
+            // The tail chunk overlaps the head chunk when the remainder is not a power of two.
+            unsigned tailSize = roundUpToPowerOfTwo(size - chunkSize);
+            return m_out.isZero32(m_out.bitOr(difference(0, chunkSize), difference(size - tailSize, tailSize)));
+        };
+
+        std::array<Latin1Character, maxInlineConstantStringCompareLength> characters8 { };
+        std::array<char16_t, maxInlineConstantStringCompareLength> characters16 { };
+        for (unsigned i = 0; i < length; ++i) {
+            characters16[i] = constant[i];
+            characters8[i] = static_cast<Latin1Character>(characters16[i]);
+        }
+
+        m_out.appendTo(compare8BitCase, compare16BitCase);
+        LValue data8Bit = m_out.phi(pointerType(), nonRopeData8Bit, substringData8Bit);
+        LValue compare8Bit = fitsIn8Bit ? emitCompare(m_heaps.characters8, data8Bit, asByteSpan(std::span { characters8 }.first(length))) : m_out.booleanFalse;
+        ValueFromBlock compare8BitResult = m_out.anchor(compare8Bit);
+        m_out.jump(continuation);
+
+        m_out.appendTo(compare16BitCase, falseCase);
+        LValue data16Bit = m_out.phi(pointerType(), nonRopeData16Bit, substringData16Bit);
+        ValueFromBlock compare16BitResult = m_out.anchor(emitCompare(m_heaps.characters16, data16Bit, asByteSpan(std::span { characters16 }.first(length))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(falseCase, slowCase);
+        ValueFromBlock falseResult = m_out.anchor(m_out.booleanFalse);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(callStringEqualThunk(jsString, constantJSString));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        return m_out.phi(Int32, trueResult, falseResult, slowResult);
+        return m_out.phi(Int32, compare8BitResult, compare16BitResult, falseResult, slowResult);
     }
 
     enum ScratchFPRUsage {

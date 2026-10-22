@@ -586,7 +586,8 @@ static std::array<int64_t, numberOfRuntimeFunctions> runtimeFunctionBits()
         std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(Math::floorFloat)),
         std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(Math::truncDouble)),
         std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(Math::truncFloat)),
-        std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(operationMemoryCopy)),
+        std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(operationMemoryMove)),
+        std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(operationGCSafeMemoryMove)),
         std::bit_cast<int64_t>(tagCFunction<OperationPtrTag>(operationMemoryFill)),
     };
 }

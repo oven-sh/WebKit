@@ -516,6 +516,20 @@ void Heap::lastChanceToFinalize()
     m_objectSpace.freeMemory();
 }
 
+#if ASSERT_ENABLED
+void Heap::assertIsMutatorOrMutatorIsStopped() const
+{
+    if (worldIsStopped())
+        return;
+    if (auto owner = vm().apiLock().ownerThread())
+        ASSERT(owner->get() == &Thread::currentSingleton());
+    else {
+        // FIXME: It feels like heap access should be tied to holding the API lock.
+        ASSERT(hasAccess());
+    }
+}
+#endif
+
 void Heap::releaseDelayedReleasedObjects()
 {
 #if USE(FOUNDATION) || defined(JSC_GLIB_API_ENABLED)
@@ -686,6 +700,11 @@ bool Heap::unprotect(JSValue k)
 
     ASSERT(k.asCell()->heap() == this);
     return m_protectedValues.remove(k.asCell());
+}
+
+void Heap::addGCAwareJITStubRoutine(GCAwareJITStubRoutine* routine)
+{
+    m_jitStubRoutines->add(routine);
 }
 
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
@@ -1446,6 +1465,22 @@ SUPPRESS_ASAN static void forEachWordInSpanConservatively(void* begin, void* end
     }
 }
 
+// A block's CanAllocate bit is written by the holder of its inUse bit (see BlockDirectory::m_bits). Returns what the bit
+// was. A block somebody else holds is left alone: it is not handed out from this bit while it is held.
+static bool exchangeCanAllocate(MarkedBlock::Handle& handle, bool value)
+{
+    BlockDirectory* directory = handle.directory();
+    size_t index = handle.index();
+    Locker locker { directory->bitvectorLock().mutate() };
+    if (!directory->claimInUse(index))
+        return false;
+    directory->assertInUse(index);
+    bool couldAllocate = directory->isCanAllocate(index);
+    directory->setIsCanAllocate(index, value);
+    directory->releaseInUse(index);
+    return couldAllocate;
+}
+
 // The live cells of a block that no allocator is in the middle of (no valid newlyAllocated bits): all of them if the block
 // was filled up since the last collection, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
 // marking, decided once per block instead of once per cell.
@@ -1608,9 +1643,7 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         for (Candidate& candidate : candidates) {
             if (candidate.isEvacuated || !candidate.couldAllocate)
                 continue;
-            BlockDirectory* directory = candidate.handle->directory();
-            Locker locker { directory->bitvectorLock() };
-            directory->setIsCanAllocate(candidate.handle, true);
+            exchangeCanAllocate(*candidate.handle, true);
         }
     });
 
@@ -1753,12 +1786,8 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         result.pinnedCells = pinned.size();
 
         // What is about to be emptied is not where the copies go.
-        for (Candidate& candidate : candidates) {
-            BlockDirectory* directory = candidate.handle->directory();
-            Locker locker { directory->bitvectorLock() };
-            candidate.couldAllocate = directory->isCanAllocate(candidate.handle);
-            directory->setIsCanAllocate(candidate.handle, false);
-        }
+        for (Candidate& candidate : candidates)
+            candidate.couldAllocate = exchangeCanAllocate(*candidate.handle, false);
     }
 
     // Compiler threads read the butterflies of constant objects. At a safepoint, which is where this parks them, they hold cells only.
@@ -2308,10 +2337,12 @@ void Heap::sweepAndClearCachesInEpilogue()
         cache->clear();
     vm().jsonCache().clearJSStrings();
 
+    // Drop the old buffers of strings no stack refers to. No GCOwnedDataScope can be reading them, and a
+    // compiler thread that read one has since stopped at a safepoint, so it no longer holds it.
     m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.removeAllMatching([&](const auto& iter) {
-        return !m_discoveredAccessedStringsFromGCOwnedDataScope.contains(iter.first);
+        return !m_stringsFoundOnStack.contains(iter.first);
     });
-    m_discoveredAccessedStringsFromGCOwnedDataScope.clear();
+    m_stringsFoundOnStack.clear();
 
     immutableButterflyToStringCache.clear();
 }

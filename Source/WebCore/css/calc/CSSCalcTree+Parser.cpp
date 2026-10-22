@@ -112,8 +112,8 @@ static std::optional<TypedChild> parseCalcSum(CSSParserTokenRange&, int depth, P
 static std::optional<TypedChild> parseCalcProduct(CSSParserTokenRange&, int depth, ParserState&);
 static std::optional<TypedChild> parseCalcValue(CSSParserTokenRange&, int depth, ParserState&);
 static std::optional<TypedChild> parseCalcKeyword(const CSSParserToken&, ParserState&);
-static std::optional<TypedChild> parseCalcNumber(const CSSParserToken&, ParserState&);
-static std::optional<TypedChild> parseCalcPercentage(const CSSParserToken&, ParserState&);
+static std::optional<TypedChild> LEGACY_NODELETE parseCalcNumber(const CSSParserToken&, ParserState&);
+static std::optional<TypedChild> LEGACY_NODELETE parseCalcPercentage(const CSSParserToken&, ParserState&);
 static std::optional<TypedChild> parseCalcDimension(const CSSParserToken&, ParserState&);
 
 std::optional<Tree> parseAndSimplify(CSSParserTokenRange& range, CSS::PropertyParserState& propertyParserState, const ParserOptions& parserOptions, const SimplificationOptions& simplificationOptions)
@@ -223,7 +223,7 @@ bool isCalcFunction(CSSValueID functionId)
     return false;
 }
 
-template<typename Op> static std::optional<TypedChild> consumeZeroArguments(CSSParserTokenRange& tokens, int, ParserState&)
+template<typename Op> static std::optional<TypedChild> LEGACY_NODELETE consumeZeroArguments(CSSParserTokenRange& tokens, int, ParserState&)
 {
     if (!tokens.atEnd()) {
         LOG_WITH_STREAM(Calc, stream << "Failed '" << nameLiteralForSerialization(Op::id) << "' function - extraneous tokens found");
@@ -1507,15 +1507,19 @@ std::optional<TypedChild> parseCalcProduct(CSSParserTokenRange& tokens, int dept
             auto invert = [](TypedChild& next, ParserState& state) -> std::optional<TypedChild> {
                 Invert invert { WTF::move(next.child) };
                 auto invertType = Type::invert(next.type);
+                if (!invertType)
+                    return std::nullopt;
 
                 if (auto* simplificationOptions = state.simplificationOptions) {
                     if (auto replacement = simplify(invert, *simplificationOptions))
-                        return TypedChild { WTF::move(*replacement), invertType };
+                        return TypedChild { WTF::move(*replacement), *invertType };
                 }
-                return TypedChild { makeChild(WTF::move(invert), invertType), invertType };
+                return TypedChild { makeChild(WTF::move(invert), *invertType), *invertType };
             };
 
             nextValue = invert(*nextValue, state);
+            if (!nextValue)
+                return std::nullopt;
         }
 
         if (firstValue) {

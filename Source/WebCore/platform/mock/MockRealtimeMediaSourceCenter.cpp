@@ -259,7 +259,7 @@ void MockDisplayCapturer::triggerMockCaptureConfigurationChange()
 
 class MockRealtimeDisplaySourceFactory : public DisplayCaptureFactory {
 public:
-    static MockRealtimeDisplaySourceFactory& singleton();
+    static MockRealtimeDisplaySourceFactory& LEGACY_NODELETE singleton();
 
     CaptureSourceOrError createDisplayCaptureSource(const CaptureDevice& device, MediaDeviceHashSalts&& hashSalts, const MediaConstraints* constraints, std::optional<PageIdentifier> pageIdentifier) final
     {
@@ -462,7 +462,7 @@ void MockRealtimeMediaSourceCenter::triggerMockCaptureConfigurationChange(bool f
         }
     }
     if (forDisplay) {
-        if (auto capturer = MockRealtimeDisplaySourceFactory::singleton().latestCapturer())
+        if (RefPtr capturer = MockRealtimeDisplaySourceFactory::singleton().latestCapturer())
             capturer->triggerMockCaptureConfigurationChange();
     }
 #elif USE(GSTREAMER)

@@ -81,6 +81,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "TextPainter.h"
+#include <wtf/NativePromise.h>
 #include <wtf/StackStats.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -140,7 +141,7 @@ void RenderImage::collectSelectionGeometries(Vector<SelectionGeometry>& geometri
             lineExtentRect.setHeight(containingBlock->borderBoxHeight());
         }
     } else {
-        auto selectionLogicalRect = LineSelection::logicalRect(*run->lineBox());
+        auto selectionLogicalRect = LineSelection::logicalRect(run->lineBox());
         int selectionTop = !containingBlock->writingMode().isBlockFlipped() ? selectionLogicalRect.y() - logicalTop() : logicalBottom() - selectionLogicalRect.maxY();
         int selectionHeight = selectionLogicalRect.height();
         imageRect = IntRect { 0,  selectionTop, logicalWidth(), selectionHeight };
@@ -369,11 +370,6 @@ IntSize RenderImage::imageContainerSize() const
     return flooredIntSize(replacedContentRect().size());
 }
 
-LayoutRect RenderImage::imagePaintRect() const
-{
-    return computePaintRectForObjectViewBox(replacedContentRect());
-}
-
 NaturalDimensions RenderImage::zoomedNaturalDimensions() const
 {
     return imageResource().naturalDimensions().zoomed(style().usedZoom());
@@ -388,14 +384,38 @@ ConcreteObjectSize RenderImage::concreteObjectSizeForPasteboard() const
 {
     static constexpr float maximumLength = 4096;
 
-    RefPtr cachedImage = this->cachedImage();
-    RefPtr image = cachedImage ? cachedImage->image() : nullptr;
-    auto naturalDimensions = image ? image->naturalDimensions() : NaturalDimensions::none();
-
-    auto size = DefaultSizing { usedImageSize() }.resolve(naturalDimensions).size();
+    auto size = defaultConcreteObjectSize().size();
     if (auto scale = maximumLength / size.maxDimension(); scale < 1)
         size.scale(scale);
     return ConcreteObjectSize::fixed(size);
+}
+
+ConcreteObjectSize RenderImage::concreteObjectSizeForAccessibility() const
+{
+    return defaultConcreteObjectSize();
+}
+
+ConcreteObjectSize RenderImage::concreteObjectSizeForImageAnalysis() const
+{
+    return defaultConcreteObjectSize();
+}
+
+ConcreteObjectSize RenderImage::concreteObjectSizeForPositionInformation() const
+{
+    return defaultConcreteObjectSize();
+}
+
+ConcreteObjectSize RenderImage::defaultConcreteObjectSize() const
+{
+    return defaultConcreteObjectSize(imageResource().naturalDimensions());
+}
+
+ConcreteObjectSize RenderImage::defaultConcreteObjectSize(NaturalDimensions naturalDimensions) const
+{
+    auto containerSize = FloatSize { imageContainerSize() };
+    if (auto usedZoom = style().usedZoom(); usedZoom != 1)
+        containerSize.scale(1 / usedZoom);
+    return DefaultSizing { containerSize }.resolve(naturalDimensions);
 }
 
 RefPtr<ShareableBitmap> RenderImage::createShareableBitmap(const CreateShareableBitmapFromImageOptions& options) const
@@ -440,11 +460,7 @@ RefPtr<ShareableBitmap> RenderImage::createShareableBitmap(const CreateShareable
     if ((naturalDimensions.width && *naturalDimensions.width <= 1) || (naturalDimensions.height && *naturalDimensions.height <= 1))
         return { };
 
-    auto containerSize = FloatSize { imageContainerSize() };
-    if (auto usedZoom = style().usedZoom(); usedZoom != 1)
-        containerSize.scale(1 / usedZoom);
-    auto concreteObjectSize = DefaultSizing { containerSize }.resolve(naturalDimensions);
-
+    auto concreteObjectSize = defaultConcreteObjectSize(naturalDimensions);
     auto bitmapSize = concreteObjectSize.size();
     if (bitmapSize.isEmpty())
         return { };
@@ -465,6 +481,33 @@ RefPtr<ShareableBitmap> RenderImage::createShareableBitmap(const CreateShareable
 
     styleImage->draw(*graphicsContext, *this, concreteObjectSize, FloatRect { { }, bitmapSize }, FloatRect { { }, concreteObjectSize.size() }, { imageOrientation() });
     return sharedBitmap;
+}
+
+Ref<NativePromise<Ref<ShareableBitmap>, void>> RenderImage::createShareableBitmapAsync(const CreateShareableBitmapFromImageOptions& options) const
+{
+    if (RefPtr shareableBitmap = createShareableBitmap(options))
+        return NativePromise<Ref<ShareableBitmap>, void>::createAndResolve(shareableBitmap.releaseNonNull());
+    return NativePromise<Ref<ShareableBitmap>, void>::createAndReject();
+}
+
+RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForHitTestResult() const
+{
+    return createShareableBitmap();
+}
+
+RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForPositionInformation(FloatSize screenSizeInPixels) const
+{
+    return createShareableBitmap({ screenSizeInPixels, CreateShareableBitmapFromImageOptions::AllowAnimatedImages::Yes, CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages::Yes });
+}
+
+RefPtr<ShareableBitmap> RenderImage::createShareableBitmapForImageBitmapRequest() const
+{
+    return createShareableBitmap();
+}
+
+Ref<NativePromise<Ref<ShareableBitmap>, void>> RenderImage::createShareableBitmapAsyncForImageAnalysis(CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages useSnapshotForTransparentImages) const
+{
+    return createShareableBitmapAsync({ std::nullopt, CreateShareableBitmapFromImageOptions::AllowAnimatedImages::No, useSnapshotForTransparentImages });
 }
 
 void RenderImage::repaintOrMarkForLayout(ImageSizeChangeType imageSizeChange, const IntRect* rect)
@@ -552,22 +595,6 @@ String RenderImage::accessibilityDescription() const
 bool RenderImage::shouldDisplayBrokenImageIcon() const
 {
     return imageResource().errorOccurred();
-}
-
-// A width or height of 0 is a natural dimension of 0 rather than an absent one,
-// except that a natural height of 0 is superseded by one derived from the natural
-// width and aspect ratio. See:
-// https://github.com/w3c/csswg-drafts/issues/6286#issuecomment-866986544 and
-// https://github.com/w3c/csswg-drafts/issues/11236#issuecomment-2718502765
-bool RenderImage::shouldRespectZeroIntrinsicWidth() const
-{
-    return imageResource().naturalDimensions().width.has_value();
-}
-
-bool RenderImage::shouldRespectZeroIntrinsicHeight() const
-{
-    auto naturalDimensions = imageResource().naturalDimensions();
-    return naturalDimensions.height && !naturalDimensions.width;
 }
 
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
@@ -757,7 +784,7 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     auto replacedContentRect = this->replacedContentRect();
     replacedContentRect.moveBy(paintOffset);
 
-    auto paintRect = imagePaintRect();
+    auto paintRect = replacedContentPaintRect();
     paintRect.moveBy(paintOffset);
 
     float snappingScaleFactor = protect(document())->pixelSnappingScaleFactor();
@@ -814,7 +841,7 @@ void RenderImage::paintAreaElementFocusRing(PaintInfo& paintInfo, const LayoutPo
     if (!areaElementStyle)
         return;
 
-    auto outlineWidth = Style::evaluate<float>(areaElementStyle->usedOutlineWidth(), areaElementStyle->usedZoomForLength(), areaElementStyle->deviceScaleFactor());
+    auto outlineWidth = Style::evaluate<float>(Style::effectiveOutlineWidth(*areaElementStyle), areaElementStyle->usedZoomForLength(), areaElementStyle->deviceScaleFactor());
     if (!outlineWidth)
         return;
 
@@ -865,7 +892,7 @@ RefPtr<NativeImage> RenderImage::createNativeImageAsPainted(float deviceScaleFac
     auto& context = imageBuffer->context();
     context.translate(-contentBoxRect.x().toFloat(), -contentBoxRect.y().toFloat());
 
-    auto paintRect = imagePaintRect();
+    auto paintRect = replacedContentPaintRect();
     if (!contentBoxRect.contains(paintRect))
         context.clip(snapRectToDevicePixels(contentBoxRect, scaleFactor));
 

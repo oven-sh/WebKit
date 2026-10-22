@@ -70,19 +70,19 @@ struct WKWebExtensionAPIActionTests {
     @Test
     func errors() async throws {
         let backgroundScript = """
-            browser.test.assertThrows(() => browser.action.setTitle({tabId: 'bad', title: 'Test'}), /'tabId' is expected to be a number, but a string was provided/i)
-            browser.test.assertThrows(() => browser.action.setTitle({windowId: 'bad', title: 'Test'}), /'windowId' is expected to be a number, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.setTitle({tabId: 'bad', title: 'Test'}), /'tabId' is expected to be a number or null, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.setTitle({windowId: 'bad', title: 'Test'}), /'windowId' is expected to be a number or null, but a string was provided/i)
             browser.test.assertThrows(() => browser.action.setIcon({path: 123}), /'path' is expected to be a string or an object or null, but a number was provided/i)
-            browser.test.assertThrows(() => browser.action.setIcon({tabId: true, path: 'icon.png'}), /'tabId' is expected to be a number, but a boolean was provided/i)
-            browser.test.assertThrows(() => browser.action.setIcon({windowId: true, path: 'icon.png'}), /'windowId' is expected to be a number, but a boolean was provided/i)
-            browser.test.assertThrows(() => browser.action.setPopup({tabId: 'bad', popup: 'popup.html'}), /'tabId' is expected to be a number, but a string was provided/i)
-            browser.test.assertThrows(() => browser.action.setPopup({windowId: 'bad', popup: 'popup.html'}), /'windowId' is expected to be a number, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.setIcon({tabId: true, path: 'icon.png'}), /'tabId' is expected to be a number or null, but a boolean was provided/i)
+            browser.test.assertThrows(() => browser.action.setIcon({windowId: true, path: 'icon.png'}), /'windowId' is expected to be a number or null, but a boolean was provided/i)
+            browser.test.assertThrows(() => browser.action.setPopup({tabId: 'bad', popup: 'popup.html'}), /'tabId' is expected to be a number or null, but a string was provided/i)
+            browser.test.assertThrows(() => browser.action.setPopup({windowId: 'bad', popup: 'popup.html'}), /'windowId' is expected to be a number or null, but a string was provided/i)
             browser.test.assertThrows(() => browser.action.setBadgeText({tabId: 1.2, text: '1'}), /'tabId' value is invalid, because it is not a tab identifier/i)
             browser.test.assertThrows(() => browser.action.setBadgeText({windowId: -3, text: '2'}), /'windowId' value is invalid, because it is not a window identifier/i)
             browser.test.assertThrows(() => browser.action.enable('bad'), /'tabId' value is invalid, because a number is expected/i)
             browser.test.assertThrows(() => browser.action.disable('bad'), /'tabId' value is invalid, because a number is expected/i)
-            browser.test.assertThrows(() => browser.action.isEnabled({tabId: Infinity}), /'tabId' is expected to be a number, but Infinity was provided/i)
-            browser.test.assertThrows(() => browser.action.isEnabled({windowId: NaN}), /'windowId' is expected to be a number, but NaN was provided/i)
+            browser.test.assertThrows(() => browser.action.isEnabled({tabId: Infinity}), /'tabId' is expected to be a number or null, but Infinity was provided/i)
+            browser.test.assertThrows(() => browser.action.isEnabled({windowId: NaN}), /'windowId' is expected to be a number or null, but NaN was provided/i)
 
             browser.test.assertThrows(() => browser.action.setTitle({tabId: 1}), /'details' value is invalid, because it is missing required keys: 'title'/i)
             browser.test.assertThrows(() => browser.action.setTitle({windowId: 1}), /'details' value is invalid, because it is missing required keys: 'title'/i)
@@ -109,6 +109,46 @@ struct WKWebExtensionAPIActionTests {
             """
 
         let manager = try loadWebExtension(manifest: actionPopupManifest, resources: ["background.js": backgroundScript])
+        try await manager.run()
+    }
+
+    @Test
+    func setPopupRejectsPathsOutsideTheExtension() async throws {
+        let backgroundScript = """
+            await browser.test.assertRejects(browser.action.setPopup({ popup: 'https://example.com/popup.html' }), /The 'popup' value is invalid, because it must be a resource within the extension/i)
+            await browser.test.assertRejects(browser.action.setPopup({ popup: 'webkit-extension://other-extension/popup.html' }), /The 'popup' value is invalid, because it must be a resource within the extension/i)
+            await browser.test.assertRejects(browser.action.setPopup({ popup: 'javascript:alert(1)' }), /The 'popup' value is invalid, because it must be a resource within the extension/i)
+
+            browser.test.assertEq(await browser.action.getPopup({ }), 'popup.html', 'Popup should be unchanged after a rejection')
+
+            await browser.action.setPopup({ popup: 'alt-popup.html' })
+            browser.test.assertEq(await browser.action.getPopup({ }), 'alt-popup.html', 'Relative popup path should be accepted')
+
+            await browser.action.setPopup({ popup: '/popup.html' })
+            browser.test.assertEq(await browser.action.getPopup({ }), '/popup.html', 'Absolute popup path should be accepted')
+
+            await browser.action.setPopup({ popup: browser.runtime.getURL('alt-popup.html') })
+            browser.test.assertEq(await browser.action.getPopup({ }), browser.runtime.getURL('alt-popup.html'), 'Full extension URL should be accepted')
+
+            await browser.action.setPopup({ popup: 'missing.html' })
+            browser.test.assertEq(await browser.action.getPopup({ }), 'missing.html', 'A path to a missing file should be accepted')
+
+            await browser.action.setPopup({ popup: '' })
+            browser.test.assertEq(await browser.action.getPopup({ }), '', 'Empty popup path should be accepted')
+
+            await browser.action.setPopup({ popup: null })
+            browser.test.assertEq(await browser.action.getPopup({ }), 'popup.html', 'Null popup path should restore the default')
+
+            browser.test.notifyPass()
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "<b>Hello World!</b>",
+            "alt-popup.html": "<b>Alternate</b>",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
         try await manager.run()
     }
 
@@ -177,6 +217,47 @@ struct WKWebExtensionAPIActionTests {
         let popupURL = try #require(popupWebView.url)
         #expect(popupURL.scheme == "webkit-extension")
         #expect(popupURL.path == "/popup.html")
+
+        action.closePopup()
+    }
+
+    @Test
+    func popupRecoversAfterPopupLoadFailure() async throws {
+        let backgroundScript = """
+            await browser.action.setPopup({ popup: 'invalid.html' })
+
+            browser.test.sendMessage('Invalid Popup Set')
+
+            // Gives the failed provisional load time to finish before the popup path is restored.
+            setTimeout(async () => {
+                await browser.action.setPopup({ popup: 'popup.html' })
+
+                browser.test.sendMessage('Popup Restored')
+            }, 1000)
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "<b>Hello World!</b>",
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Invalid Popup Set")
+
+        // The load of invalid.html fails, which closes the popup before it was ever presented.
+        context.performAction(for: manager.defaultTab)
+
+        try await manager.waitForTestMessage("Popup Restored")
+
+        // Without the fix, the failed popup web view is reused, nothing is loaded and the popup is never presented.
+        let action = try await manager.nextPresentedAction {
+            context.performAction(for: manager.defaultTab)
+        }
+
+        let popupWebView = try #require(action.popupWebView)
+        #expect(popupWebView.url?.path == "/popup.html")
 
         action.closePopup()
     }
@@ -537,6 +618,55 @@ struct WKWebExtensionAPIActionTests {
 
         secondWindowAction.closePopup()
         action.closePopup()
+    }
+
+    @Test
+    func setDefaultActionPropertiesWithNullIdentifiers() async throws {
+        let backgroundScript = """
+            const [currentTab] = await browser.tabs.query({ active: true, currentWindow: true })
+            const currentWindowId = currentTab.windowId
+
+            browser.test.assertEq(await browser.action.getTitle({ tabId: null }), 'Test Action', 'Title should be')
+            browser.test.assertEq(await browser.action.getPopup({ windowId: null }), 'popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getBadgeText({ tabId: null, windowId: null }), '', 'Badge text should be')
+            browser.test.assertTrue(await browser.action.isEnabled({ tabId: null }), 'Action should be enabled')
+
+            await browser.action.setTitle({ title: 'Modified Title', tabId: null })
+            await browser.action.setIcon({ path: 'toolbar-48.png', tabId: null })
+            await browser.action.setPopup({ popup: 'alt-popup.html', windowId: null })
+            await browser.action.setBadgeText({ text: '42', tabId: null, windowId: null })
+
+            browser.test.assertEq(await browser.action.getTitle({ }), 'Modified Title', 'Title should be')
+            browser.test.assertEq(await browser.action.getPopup({ }), 'alt-popup.html', 'Popup should be')
+            browser.test.assertEq(await browser.action.getBadgeText({ }), '42', 'Badge text should be')
+
+            await browser.action.setTitle({ title: 'Window Title', tabId: null, windowId: currentWindowId })
+
+            browser.test.assertEq(await browser.action.getTitle({ windowId: currentWindowId }), 'Window Title', 'Title should be')
+            browser.test.assertEq(await browser.action.getTitle({ }), 'Modified Title', 'Title should be')
+
+            browser.test.sendMessage('Properties Set')
+            """
+
+        let resources: [String: Any] = [
+            "background.js": backgroundScript,
+            "popup.html": "<b>Hello World!</b>",
+            "alt-popup.html": "<b>Hello Alternate World!</b>",
+            "toolbar-32.png": makePNGData(size: CGSize(width: 32, height: 32), color: .blue),
+            "toolbar-48.png": makePNGData(size: CGSize(width: 48, height: 48), color: .yellow),
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        try await manager.waitForTestMessage("Properties Set")
+
+        let defaultAction = try #require(context.action(for: nil))
+        #expect(defaultAction.label == "Modified Title")
+        #expect(defaultAction.badgeText == "42")
+
+        let icon = try #require(defaultAction.icon(for: CGSize(width: 48, height: 48)))
+        #expect(icon.size == CGSize(width: 48, height: 48))
     }
 
     @Test
@@ -1507,6 +1637,47 @@ struct WKWebExtensionAPIActionTests {
         #expect(tabConfiguration.window === manager.defaultWindow)
         #expect(tabConfiguration.index == 1)
         #expect(tabConfiguration.shouldBeActive)
+        #endif
+    }
+
+    @Test
+    func windowOpenWithBlockedSchemeDoesNotOpenNewTabOrWindow() async throws {
+        let popupScript = """
+            browser.test.runWithUserGesture(() => {
+              window.open('file:///Users/Shared/test.html', '_blank')
+              window.open('javascript:void(0)', '_blank')
+              window.open('https://example.com/', '_blank')
+            })
+            """
+
+        let resources: [String: Any] = [
+            "background.js": "browser.test.sendMessage('Open Popup')",
+            "popup.html": "<script type='module' src='popup.js'></script>",
+            "popup.js": popupScript,
+        ]
+
+        let manager = try loadWebExtension(manifest: actionPopupManifest, resources: resources)
+        let context = try #require(manager.context)
+
+        manager.internalDelegate.presentPopupForAction = { _ in
+            // Do nothing so the popup web view will stay loaded.
+        }
+
+        try await manager.waitForTestMessage("Open Popup")
+
+        // The first requested tab or window must be for the https URL, since the earlier schemes are rejected.
+        #if WTF_PLATFORM_MAC
+        let windowConfiguration = try await manager.nextRequestedWindow {
+            context.performAction(for: manager.defaultTab)
+        }
+
+        #expect(windowConfiguration.tabURLs == [URL(string: "https://example.com/")!])
+        #else
+        let tabConfiguration = try await manager.nextRequestedTab {
+            context.performAction(for: manager.defaultTab)
+        }
+
+        #expect(tabConfiguration.url == URL(string: "https://example.com/"))
         #endif
     }
 

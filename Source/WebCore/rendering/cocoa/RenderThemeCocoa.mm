@@ -145,7 +145,7 @@ static void drawFocusRingForPathForVectorBasedControls(const RenderObject& box, 
     // macOS controls have never honored outline offset.
 #if PLATFORM(IOS_FAMILY)
     auto deviceScaleFactor = box.style().deviceScaleFactor();
-    auto outlineOffset = Style::evaluate<float>(box.style().usedOutlineOffset(), box.style().usedZoomForLength(), deviceScaleFactor);
+    auto outlineOffset = Style::evaluate<float>(Style::effectiveOutlineOffset(box.style()), box.style().usedZoomForLength(), deviceScaleFactor);
 
     if (outlineOffset > 0) {
         const auto center = rect.center();
@@ -220,19 +220,19 @@ constexpr auto logicalSwitchHeight = 31.f;
 constexpr auto logicalSwitchHeight = 18.f;
 #endif
 
-static float easeInOut(float progress)
+static float LEGACY_NODELETE easeInOut(float progress)
 {
     return -2.0f * pow(progress, 3.0f) + 3.0f * pow(progress, 2.0f);
 }
 
-static float switchTrackScale(const FloatSize& size, bool isVertical, float logicalSwitchWidthForMode)
+static float LEGACY_NODELETE switchTrackScale(const FloatSize& size, bool isVertical, float logicalSwitchWidthForMode)
 {
     auto switchWidth = isVertical ? logicalSwitchHeight : logicalSwitchWidthForMode;
     auto switchHeight = isVertical ? logicalSwitchWidthForMode : logicalSwitchHeight;
     return std::min(size.width() / switchWidth, size.height() / switchHeight);
 }
 
-static const FloatRect switchTrackRect(const FloatRect& rect, float scale, bool isVertical, float logicalSwitchWidthForMode)
+static const FloatRect LEGACY_NODELETE switchTrackRect(const FloatRect& rect, float scale, bool isVertical, float logicalSwitchWidthForMode)
 {
     auto logicalHeight = logicalSwitchHeight * scale;
     auto logicalWidth = logicalSwitchWidthForMode * scale;
@@ -242,7 +242,7 @@ static const FloatRect switchTrackRect(const FloatRect& rect, float scale, bool 
     return isVertical ? logicalRect.transposedRect() : logicalRect;
 }
 
-static HTMLInputElement& switchElement(const RenderObject& renderer)
+static HTMLInputElement& LEGACY_NODELETE switchElement(const RenderObject& renderer)
 {
     return downcast<HTMLInputElement>(*renderer.node());
 }
@@ -417,7 +417,7 @@ static constexpr auto switchDisabledOpacity = 0.5f;
 static constexpr FloatSize idealSwitchSize = { 64, 28 };
 static constexpr auto logicalRefreshedSwitchWidth = logicalSwitchHeight * (idealSwitchSize.width() / idealSwitchSize.height());
 
-static float thumbHeightForLogicalTrackHeight(float logicalTrackHeight)
+static float LEGACY_NODELETE thumbHeightForLogicalTrackHeight(float logicalTrackHeight)
 {
 #if PLATFORM(IOS_FAMILY)
     return 0.85714285714f * logicalTrackHeight; // ratio of 6:7
@@ -2294,7 +2294,7 @@ bool RenderThemeCocoa::paintColorWellSwatchForVectorBasedControls(const RenderEl
     GraphicsContextStateSaver stateSaver(context);
 
     auto inputValueIsOpaque = true;
-    auto primarySwatchColor = box.style().backgroundColor().resolvedColor();
+    auto primarySwatchColor = box.style().usedBackgroundColorResolvingCurrentColor();
     auto secondarySwatchColor = primarySwatchColor;
 
     const auto borderWidth = box.style().usedZoom() * 0.5f;
@@ -2614,7 +2614,7 @@ static float LEGACY_NODELETE spinButtonIndicatorWidthRatio(ControlSize controlSi
     }
 }
 
-static FloatRect spinButtonRectForContentRect(const RenderElement& box, const FloatRect& contentRect)
+static FloatRect LEGACY_NODELETE spinButtonRectForContentRect(const RenderElement& box, const FloatRect& contentRect)
 {
     const auto isHorizontal = !box.writingMode().isVertical();
     const auto isInlineFlipped = box.writingMode().isInlineFlipped();
@@ -3854,7 +3854,7 @@ bool RenderThemeCocoa::paintProgressBarForVectorBasedControls(const RenderElemen
     return true;
 }
 
-static bool hasVisibleSliderThumbDescendant(const RenderElement& box)
+static bool LEGACY_NODELETE hasVisibleSliderThumbDescendant(const RenderElement& box)
 {
     CheckedPtr renderBox = dynamicDowncast<RenderBox>(box);
     if (!renderBox)
@@ -4230,7 +4230,7 @@ bool RenderThemeCocoa::paintSearchFieldForVectorBasedControls(const RenderElemen
 
     const auto& style = box.style();
     const auto borderThickness = style.usedZoom();
-    auto backgroundColor = style.backgroundColor().resolvedColor();
+    auto backgroundColor = style.usedBackgroundColorResolvingCurrentColor();
 
     const auto states = RenderTheme::singleton().extractControlStyleStatesForRenderer(box);
     const auto isEnabled = states.contains(ControlStyle::State::Enabled);

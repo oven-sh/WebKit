@@ -50,6 +50,7 @@
 #include <WebCore/ViewportSegments.h>
 #include <pal/SessionID.h>
 #include <wtf/CheckedPtr.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
@@ -172,7 +173,7 @@ class PaymentCoordinator;
 class PerformanceLogging;
 class PerformanceLoggingClient;
 class PerformanceMonitor;
-class ProofOfPossessionCoordinator;
+class PhoneNumberPossessionCoordinator;
 class PluginData;
 class PluginInfoProvider;
 class PointerCaptureController;
@@ -247,6 +248,8 @@ struct ClientOrigin;
 struct CueMatch;
 struct DocumentSyncSerializationData;
 struct FixedContainerEdges;
+struct FrameGeometrySyncData;
+struct FrameViewportInfo;
 struct ResolvedCaptionDisplaySettingsOptions;
 struct SystemPreviewInfo;
 struct TextRecognitionResult;
@@ -426,7 +429,7 @@ public:
 
     WEBCORE_EXPORT void setNeedsRecalcStyleInAllFrames();
 
-    WEBCORE_EXPORT OptionSet<DisabledAdaptations> disabledAdaptations() const;
+    WEBCORE_EXPORT OptionSet<DisabledAdaptations> LEGACY_NODELETE disabledAdaptations() const;
     WEBCORE_EXPORT ViewportArguments viewportArguments() const;
 
     WEBCORE_EXPORT void reloadExecutionContextsForOrigin(const ClientOrigin&, std::optional<FrameIdentifier> triggeringFrame) const;
@@ -447,7 +450,7 @@ public:
 
     WEBCORE_EXPORT LocalFrame* LEGACY_NODELETE localMainFrame() const;
     WEBCORE_EXPORT bool hasAnyLocalFrame() const;
-    WEBCORE_EXPORT Document* localTopDocument() const;
+    WEBCORE_EXPORT Document* LEGACY_NODELETE localTopDocument() const;
 
     // localMainFrame() normally; under Site Isolation the main frame can be remote in this process,
     // so falls back to the local root frame. Document overlays and their geometry are relative to it.
@@ -496,7 +499,7 @@ public:
     const RegistrableDomain& openedByScriptDomain() const LIFETIME_BOUND { return m_openedByScriptDomain; }
     void setOpenedByScriptDomain(RegistrableDomain&& domain) { m_openedByScriptDomain = WTF::move(domain); }
 
-    WEBCORE_EXPORT void goToItem(LocalFrame& rootFrame, HistoryItem&, FrameLoadType, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified);
+    WEBCORE_EXPORT void goToItem(LocalFrame& rootFrame, HistoryItem&, FrameLoadType, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, CompletionHandler<void()>&& = [] { });
     void goToItemForNavigationAPI(LocalFrame& rootFrame, HistoryItem&, FrameLoadType, LocalFrame& triggeringFrame, NavigationAPIMethodTracker*);
 
     WEBCORE_EXPORT void setGroupName(const String&);
@@ -638,7 +641,7 @@ public:
     const std::unique_ptr<WTF::SchedulePairHashSet> m_scheduledRunLoopPairs;
 #endif
 
-    WEBCORE_EXPORT const VisibleSelection& selection() const LIFETIME_BOUND;
+    WEBCORE_EXPORT const VisibleSelection& LEGACY_NODELETE selection() const LIFETIME_BOUND;
 
     WEBCORE_EXPORT void setDefersLoading(bool);
     bool defersLoading() const { return m_defersLoading; }
@@ -696,7 +699,7 @@ public:
     };
     static constexpr OptionSet<PreferredRenderingUpdateOption> allPreferredRenderingUpdateOptions = { PreferredRenderingUpdateOption::IncludeThrottlingReasons, PreferredRenderingUpdateOption::IncludeAnimationsFrameRate };
     WEBCORE_EXPORT std::optional<FramesPerSecond> preferredRenderingUpdateFramesPerSecond(OptionSet<PreferredRenderingUpdateOption> = allPreferredRenderingUpdateOptions) const;
-    WEBCORE_EXPORT Seconds preferredRenderingUpdateInterval() const;
+    WEBCORE_EXPORT Seconds LEGACY_NODELETE preferredRenderingUpdateInterval() const;
 
     void addGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext&);
     void removeGPUCanvasRequestingRenderingUpdatePacing(CanvasRenderingContext&);
@@ -755,7 +758,7 @@ public:
     WEBCORE_EXPORT void setVerticalScrollElasticity(ScrollElasticity);
     ScrollElasticity verticalScrollElasticity() const { return static_cast<ScrollElasticity>(m_verticalScrollElasticity); }
 
-    WEBCORE_EXPORT void setHorizontalScrollElasticity(ScrollElasticity);
+    WEBCORE_EXPORT void LEGACY_NODELETE setHorizontalScrollElasticity(ScrollElasticity);
     ScrollElasticity horizontalScrollElasticity() const { return static_cast<ScrollElasticity>(m_horizontalScrollElasticity); }
 
     WEBCORE_EXPORT void accessibilitySettingsDidChange();
@@ -775,7 +778,7 @@ public:
     WEBCORE_EXPORT unsigned pageCount() const;
     WEBCORE_EXPORT unsigned pageCountAssumingLayoutIsUpToDate() const;
 
-    WEBCORE_EXPORT DiagnosticLoggingClient& diagnosticLoggingClient() const;
+    WEBCORE_EXPORT DiagnosticLoggingClient& LEGACY_NODELETE diagnosticLoggingClient() const;
 
     WEBCORE_EXPORT void logMediaDiagnosticMessage(const RefPtr<FormData>&) const;
 
@@ -824,8 +827,8 @@ public:
 #if ENABLE(WEB_AUTHN)
     AuthenticatorCoordinator& authenticatorCoordinator() LIFETIME_BOUND { return m_authenticatorCoordinator.get(); }
     CredentialRequestCoordinator& credentialRequestCoordinator() { return m_credentialRequestCoordinator.get(); }
-#if ENABLE(PROOF_OF_POSSESSION)
-    ProofOfPossessionCoordinator& proofOfPossessionCoordinator() LIFETIME_BOUND { return m_proofOfPossessionCoordinator.get(); }
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    PhoneNumberPossessionCoordinator& phoneNumberPossessionCoordinator() LIFETIME_BOUND { return m_phoneNumberPossessionCoordinator.get(); }
 #endif
 #endif
 
@@ -842,10 +845,10 @@ public:
     bool isServiceWorkerPage() const { return m_isServiceWorkerPage; }
     void markAsServiceWorkerPage() { m_isServiceWorkerPage = true; }
 
-    WEBCORE_EXPORT static Page* serviceWorkerPage(ScriptExecutionContextIdentifier);
+    WEBCORE_EXPORT static Page* LEGACY_NODELETE serviceWorkerPage(ScriptExecutionContextIdentifier);
 
     // Service worker pages have an associated ServiceWorkerGlobalScope on the main thread.
-    void setServiceWorkerGlobalScope(ServiceWorkerGlobalScope&);
+    void LEGACY_NODELETE setServiceWorkerGlobalScope(ServiceWorkerGlobalScope&);
     WEBCORE_EXPORT JSC::JSGlobalObject* serviceWorkerGlobalObject(DOMWrapperWorld&);
     WEBCORE_EXPORT RefPtr<ServiceWorkerThread> serviceWorkerThread() const;
 
@@ -1471,7 +1474,13 @@ public:
     AcceleratedTimelinesUpdater& ensureAcceleratedTimelinesUpdater() LIFETIME_BOUND;
 #endif
 
-    void syncLocalFrameInfoToRemote();
+    WEBCORE_EXPORT void enumerateLocalFrameGeometry(NOESCAPE const Function<void(LocalFrame&, FrameViewportInfo&&, FrameGeometrySyncData&&)>&);
+
+    void didSendFrameViewportInfoForTesting() { ++m_sentFrameViewportInfoCountForTesting; }
+    void didSendFrameGeometryForTesting() { ++m_sentFrameGeometryCountForTesting; }
+    unsigned sentFrameViewportInfoCountForTesting() const { return m_sentFrameViewportInfoCountForTesting; }
+    unsigned sentFrameGeometryCountForTesting() const { return m_sentFrameGeometryCountForTesting; }
+
     RenderingUpdateScheduler& renderingUpdateScheduler() LIFETIME_BOUND;
 
 private:
@@ -1729,6 +1738,9 @@ private:
     unsigned m_renderingUpdateCount { 0 };
     bool m_isTrackingRenderingUpdates { false };
 
+    unsigned m_sentFrameViewportInfoCountForTesting { 0 };
+    unsigned m_sentFrameGeometryCountForTesting { 0 };
+
     bool m_isRestoringCachedPage { false };
 
     MediaProducerMediaStateFlags m_mediaState;
@@ -1807,8 +1819,8 @@ private:
 #if ENABLE(WEB_AUTHN)
     const UniqueRef<AuthenticatorCoordinator> m_authenticatorCoordinator;
     const Ref<CredentialRequestCoordinator> m_credentialRequestCoordinator;
-#if ENABLE(PROOF_OF_POSSESSION)
-    const UniqueRef<ProofOfPossessionCoordinator> m_proofOfPossessionCoordinator;
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+    const UniqueRef<PhoneNumberPossessionCoordinator> m_phoneNumberPossessionCoordinator;
 #endif
 #endif // ENABLE(WEB_AUTHN)
 

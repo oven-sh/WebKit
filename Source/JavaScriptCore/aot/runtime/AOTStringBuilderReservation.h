@@ -16,7 +16,7 @@ inline constexpr uint32_t maxStringBuilderReservation = 4096;
 inline constexpr uint32_t jsonTokenBytes = 8;
 inline constexpr uint32_t jsonBooleanBytes = 8;
 inline constexpr uint32_t jsonIntegerBytes = 24;
-inline constexpr uint32_t jsonNumberBytes = 32;
+inline constexpr uint32_t jsonNumberBytes = 40;
 inline constexpr uint32_t jsonDateBytes = 32;
 
 static_assert(jsonDateBytes <= maxStringBuilderReservation && jsonNumberBytes <= maxStringBuilderReservation);

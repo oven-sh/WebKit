@@ -121,7 +121,7 @@ private:
     enum class Type { CopyAndPaste, DragAndDropData, DragAndDropFiles, InputEvent };
     DataTransfer(StoreMode, std::unique_ptr<Pasteboard>, Type = Type::CopyAndPaste, String&& effectAllowed = "uninitialized"_s);
 
-    bool allowsFileAccess() const;
+    bool LEGACY_NODELETE allowsFileAccess() const;
 
 #if ENABLE(DRAG_SUPPORT)
     bool forDrag() const { return m_type == Type::DragAndDropData || m_type == Type::DragAndDropFiles; }
@@ -149,6 +149,7 @@ private:
     String m_dropEffect;
     String m_effectAllowed;
     CachedResourceHandle<CachedImage> m_dragImage;
+    float m_dragImageDensity { 1 };
     RefPtr<Element> m_dragImageElement;
     RefPtr<DragImageLoader> m_dragImageLoader;
     IntPoint m_dragLocation;

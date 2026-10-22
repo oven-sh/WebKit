@@ -240,7 +240,7 @@ inline std::unique_ptr<Compilation> generateAndLink(Procedure& proc, Vector<uint
     generate(proc, jit);
     if (bytes) {
         AssemblerBuffer& buffer = jit.m_assembler.buffer();
-        *bytes = Vector<uint8_t>(unsafeMakeSpan(static_cast<const uint8_t*>(buffer.data()), buffer.codeSize()));
+        *bytes = Vector<uint8_t>(unsafeMakeSpan(static_cast<const uint8_t*>(buffer.readOnlyData()), buffer.codeSize()));
     }
     LinkBuffer linkBuffer(jit, nullptr);
     auto code = FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation");

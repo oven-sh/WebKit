@@ -39,7 +39,7 @@ Lock QuerySet::querySetLock;
 __attribute__((no_destroy)) std::unique_ptr<Vector<id<MTLCounterSampleBuffer>>> QuerySet::m_counterSampleBuffers;
 __attribute__((no_destroy)) std::unique_ptr<Vector<RangeSet<Range<uint32_t>>>> QuerySet::m_counterSampleBufferFreeRanges;
 
-Ref<QuerySet> Device::createQuerySet(const WebGPU::QuerySetDescriptor& descriptor)
+RefPtr<WebGPU::QuerySet> Device::createQuerySet(const WebGPU::QuerySetDescriptor& descriptor)
 {
     QuerySet::createContainersIfNeeded();
 
@@ -56,11 +56,11 @@ Ref<QuerySet> Device::createQuerySet(const WebGPU::QuerySetDescriptor& descripto
         if (!querySetWithOffset.buffer)
             return QuerySet::createInvalid(*this);
 
-        return QuerySet::create(WTF::move(querySetWithOffset), count, WGPUQueryType_Timestamp, *this);
+        return QuerySet::create(WTF::move(querySetWithOffset), count, WebGPU::QueryType::Timestamp, *this);
     } case WebGPU::QueryType::Occlusion: {
         auto buffer = safeCreateBuffer(sizeof(uint64_t) * count, MTLStorageModePrivate);
         buffer.label = descriptor.label.createNSString().get();
-        return QuerySet::create(buffer, count, WGPUQueryType_Occlusion, *this);
+        return QuerySet::create(buffer, count, WebGPU::QueryType::Occlusion, *this);
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -68,27 +68,24 @@ Ref<QuerySet> Device::createQuerySet(const WebGPU::QuerySetDescriptor& descripto
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(QuerySet);
 
-QuerySet::QuerySet(id<MTLBuffer> buffer, uint32_t count, WGPUQueryType type, Device& device)
+QuerySet::QuerySet(id<MTLBuffer> buffer, uint32_t count, WebGPU::QueryType type, Device& device)
     : m_device(device)
     , m_visibilityBuffer(buffer)
     , m_count(count)
     , m_type(type)
 {
-    RELEASE_ASSERT(m_type != WGPUQueryType_Force32);
 }
 
-QuerySet::QuerySet(CounterSampleBuffer&& buffer, uint32_t count, WGPUQueryType type, Device& device)
+QuerySet::QuerySet(CounterSampleBuffer&& buffer, uint32_t count, WebGPU::QueryType type, Device& device)
     : m_device(device)
     , m_timestampBufferWithOffset(WTF::move(buffer))
     , m_count(count)
     , m_type(type)
 {
-    RELEASE_ASSERT(m_type != WGPUQueryType_Force32);
 }
 
 QuerySet::QuerySet(Device& device)
     : m_device(device)
-    , m_type(WGPUQueryType_Force32)
 {
 }
 
@@ -250,5 +247,6 @@ uint32_t wgpuQuerySetGetCount(WGPUQuerySet querySet)
 
 WGPUQueryType wgpuQuerySetGetType(WGPUQuerySet querySet)
 {
-    return WebGPU::Metal::fromAPI(querySet).type();
+    auto type = WebGPU::Metal::fromAPI(querySet).type();
+    return type ? WebGPU::Metal::toAPI(*type) : WGPUQueryType_Force32;
 }

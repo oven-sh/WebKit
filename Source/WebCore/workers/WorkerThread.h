@@ -26,8 +26,10 @@
 #pragma once
 
 #include <JavaScriptCore/RuntimeFlags.h>
+#include <WebCore/CanBeCrossOriginIsolated.h>
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/FetchRequestCredentials.h>
 #include <WebCore/IsSecureContext.h>
 #include <WebCore/NetworkLoadPolicy.h>
@@ -96,6 +98,8 @@ public:
     NetworkLoadPolicy networkLoadPolicy;
     IsSecureContext isSecureContext;
     bool hasUnpartitionedStorageAccess { false };
+    CanBeCrossOriginIsolated canBeCrossOriginIsolated { CanBeCrossOriginIsolated::No };
+    DocumentIsolationPolicy documentIsolationPolicy { DocumentIsolationPolicy::None };
 
     WorkerParameters isolatedCopy() const;
 };
@@ -122,7 +126,7 @@ public:
     // The callback is called on the worker thread before the worker script is evaluated. It is not called
     // for a worker that was stopped before it started.
     using GlobalScopeCreatedCallback = void(WorkerGlobalScope&);
-    WEBCORE_EXPORT static void setGlobalScopeCreatedCallbackForTesting(GlobalScopeCreatedCallback*);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setGlobalScopeCreatedCallbackForTesting(GlobalScopeCreatedCallback*);
 
 protected:
     WorkerThread(const WorkerParameters&, const ScriptBuffer& sourceCode, WorkerLoaderProxy&, WorkerDebuggerProxy&, WorkerReportingProxy&, WorkerBadgeProxy&, WorkerThreadStartMode, const SecurityOrigin& topOrigin, IDBClient::IDBConnectionProxy*, SocketProvider*, JSC::RuntimeFlags);

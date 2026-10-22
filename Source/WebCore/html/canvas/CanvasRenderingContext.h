@@ -50,6 +50,7 @@ class HTMLImageElement;
 class HTMLVideoElement;
 class ImageBitmap;
 class NativeImage;
+class PlaceholderRenderingContextSource;
 class SVGImageElement;
 class WebGLObject;
 enum class PixelFormat : uint8_t;
@@ -107,9 +108,14 @@ public:
     virtual bool delegatesDisplay() const { return false; }
     virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate();
     virtual void setContentsToLayer(GraphicsLayer&);
+    virtual void clearContentsFromLayer() { }
 
     // Returns the drawing buffer and runs the compositing steps of transferToImageBitmap.
     virtual RefPtr<ImageBuffer> transferToImageBuffer();
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    virtual bool commitToPlaceholder(PlaceholderRenderingContextSource&) { return false; }
+#endif
 
     bool hasActiveInspectorCanvasCallTracer() const { return m_hasActiveInspectorCanvasCallTracer; }
     void setHasActiveInspectorCanvasCallTracer(bool hasActiveInspectorCanvasCallTracer) { m_hasActiveInspectorCanvasCallTracer = hasActiveInspectorCanvasCallTracer; }
@@ -136,6 +142,7 @@ public:
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     bool isHDR() const { return pixelFormat() == PixelFormat::RGBA16F; }
     virtual void setDynamicRangeLimit(PlatformDynamicRangeLimit) { };
+    virtual ImagePaintingOptions paintingOptionsForDisplay() const { return { }; }
 #endif
     virtual std::optional<double> getEffectiveDynamicRangeLimitValue() const { return std::nullopt; };
 

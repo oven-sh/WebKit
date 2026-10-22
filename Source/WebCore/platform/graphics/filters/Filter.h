@@ -74,11 +74,11 @@ public:
     virtual FloatPoint3D resolvedPoint3D(const FloatPoint3D& point) const { return point; }
 
     FloatPoint LEGACY_NODELETE scaledByFilterScale(const FloatPoint&) const;
-    FloatSize scaledByFilterScale(const FloatSize&) const;
-    FloatRect scaledByFilterScale(const FloatRect&) const;
+    FloatSize LEGACY_NODELETE scaledByFilterScale(const FloatSize&) const;
+    FloatRect LEGACY_NODELETE scaledByFilterScale(const FloatRect&) const;
 
-    FloatRect maxEffectRect(const FloatRect& primitiveSubregion) const;
-    FloatRect clipToMaxEffectRect(const FloatRect& imageRect, const FloatRect& primitiveSubregion) const;
+    FloatRect LEGACY_NODELETE maxEffectRect(const FloatRect& primitiveSubregion) const;
+    FloatRect LEGACY_NODELETE clipToMaxEffectRect(const FloatRect& imageRect, const FloatRect& primitiveSubregion) const;
 
 #if USE(CORE_IMAGE)
     // When CSS filter has a mixture of CSS and SVG filters, we need to compute CI filter geometry

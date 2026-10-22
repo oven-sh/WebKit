@@ -3168,6 +3168,141 @@ private:
         dataLogLnIf(B3LowerToAirInternal::verbose, "  ccmp optimization successful!");
         return true;
     }
+
+    // A BitOr tree of BitXor leaves is zero exactly when every leaf's operands are equal, so it can be
+    // tested as cmp + ccmp chain instead of materializing the eor/orr tree.
+    bool collectXorOrChain(Value* value, Vector<Value*, 8>& leaves, Vector<Value*, 16>& internals)
+    {
+        // Each of the at most maxCompareChainSize + 1 leaves can carry a ZExt32, so this bounds both the
+        // node count and the recursion depth on long left-deep BitOr chains.
+        static constexpr unsigned maxNodes = 3 * (Limits::maxCompareChainSize + 1);
+        if (internals.size() >= maxNodes)
+            return false;
+        if (!value->type().isInt() || !canBeInternal(value))
+            return false;
+        internals.append(value);
+        switch (value->opcode()) {
+        case BitXor:
+            if (leaves.size() > Limits::maxCompareChainSize)
+                return false;
+            leaves.append(value);
+            return true;
+        case ZExt32:
+            return collectXorOrChain(value->child(0), leaves, internals);
+        case BitOr:
+            return collectXorOrChain(value->child(0), leaves, internals) && collectXorOrChain(value->child(1), leaves, internals);
+        default:
+            return false;
+        }
+    }
+
+    // On success, the flags satisfy Equal if value is zero and NotEqual otherwise.
+    bool tryAppendXorOrChainCompare(Value* value)
+    {
+        if (value->opcode() != BitOr)
+            return false;
+
+        Vector<Value*, 8> leaves;
+        Vector<Value*, 16> internals;
+        if (!collectXorOrChain(value, leaves, internals))
+            return false;
+
+        auto operands = [](Value* leaf) -> std::pair<Value*, Value*> {
+            if (leaf->child(0)->hasInt() && !leaf->child(1)->hasInt())
+                return { leaf->child(1), leaf->child(0) };
+            return { leaf->child(0), leaf->child(1) };
+        };
+
+        // cmp takes a much wider immediate than ccmp, so start with a constant only cmp can encode.
+        auto needsCompareImmediate = [&](Value* leaf) {
+            Value* right = operands(leaf).second;
+            return imm(right) && !isValidConditionalCompareImmediate(right->asInt());
+        };
+        if (!needsCompareImmediate(leaves[0])) {
+            for (unsigned i = 1; i < leaves.size(); ++i) {
+                if (needsCompareImmediate(leaves[i])) {
+                    std::swap(leaves[0], leaves[i]);
+                    break;
+                }
+            }
+        }
+
+        auto compareImmediate = [&](unsigned index) -> Arg {
+            Value* right = operands(leaves[index]).second;
+            Type type = leaves[index]->type();
+            if (!index) {
+                if (Arg rightImm = imm(right); rightImm && isValidForm(compareOnFlagsOpcodeForType(type), Arg::Tmp, Arg::Imm))
+                    return rightImm;
+                return { };
+            }
+            if (right->hasInt() && isValidConditionalCompareImmediate(right->asInt()) && isValidForm(compareConditionallyOnFlagsOpcodeForType(type), Arg::Tmp, Arg::Imm, Arg::Imm, Arg::RelCond))
+                return imm(right);
+            return { };
+        };
+
+        // The cmp/ccmp chain saves one instruction per leaf over eor/orr + tst, but eor also encodes
+        // bitmask immediates, which cmp and ccmp would have to materialize into a register first.
+        unsigned extraMaterializations = 0;
+        for (unsigned i = 0; i < leaves.size(); ++i) {
+            Value* right = operands(leaves[i]).second;
+            if (!right->hasInt() || compareImmediate(i))
+                continue;
+            bool is32Bit = leaves[i]->type() == Int32;
+            uint64_t bits = is32Bit ? static_cast<uint32_t>(right->asInt()) : static_cast<uint64_t>(right->asInt());
+            if (!(is32Bit ? Arg::isValidBitImmForm(right->asInt()) : Arg::isValidBitImm64Form(right->asInt())))
+                continue;
+            unsigned halfwords = is32Bit ? 2 : 4;
+            unsigned zeroHalfwords = 0;
+            unsigned onesHalfwords = 0;
+            for (unsigned j = 0; j < halfwords; ++j) {
+                uint16_t halfword = static_cast<uint16_t>(bits >> (16 * j));
+                zeroHalfwords += !halfword;
+                onesHalfwords += halfword == 0xffff;
+            }
+            extraMaterializations += std::max(1u, halfwords - std::max(zeroHalfwords, onesHalfwords));
+        }
+        if (extraMaterializations >= leaves.size())
+            return false;
+
+        for (Value* internal : internals)
+            commitInternal(internal);
+
+        auto [firstLeft, firstRight] = operands(leaves[0]);
+        if (Arg rightImm = compareImmediate(0))
+            append(compareOnFlagsOpcodeForType(leaves[0]->type()), tmp(firstLeft), rightImm);
+        else
+            append(compareOnFlagsOpcodeForType(leaves[0]->type()), tmp(firstLeft), tmp(firstRight));
+
+        Arg mismatchFlags = imm(nzcvForCondition(MacroAssembler::NotEqual));
+        for (unsigned i = 1; i < leaves.size(); ++i) {
+            auto [left, right] = operands(leaves[i]);
+            Air::Opcode ccmpOpcode = compareConditionallyOnFlagsOpcodeForType(leaves[i]->type());
+            if (Arg rightImm = compareImmediate(i))
+                append(ccmpOpcode, tmp(left), rightImm, mismatchFlags, Arg::relCond(MacroAssembler::Equal));
+            else
+                append(ccmpOpcode, tmp(left), tmp(right), mismatchFlags, Arg::relCond(MacroAssembler::Equal));
+        }
+        return true;
+    }
+
+    bool tryEmitXorOrChainBranch(Value* branchValue)
+    {
+        Value* condition = branchValue->child(0);
+        MacroAssembler::RelationalCondition branchCondition = MacroAssembler::NotEqual;
+        Value* comparison = nullptr;
+        if ((condition->opcode() == Equal || condition->opcode() == NotEqual) && condition->child(1)->isInt(0)) {
+            if (condition->opcode() == Equal)
+                branchCondition = MacroAssembler::Equal;
+            comparison = condition;
+            condition = condition->child(0);
+        }
+
+        if (!tryAppendXorOrChainCompare(condition))
+            return false;
+        commitInternal(comparison);
+        append(Air::BranchOnFlags, Arg::relCond(branchCondition));
+        return true;
+    }
 #endif // CPU(ARM64)
 
     Inst createBranch(Value* value, bool inverted = false)
@@ -5348,7 +5483,7 @@ private:
             return;
         }
 
-        case MemoryCopy:
+        case MemoryMove:
         case MemoryFill: {
             // They should be lowered already.
             RELEASE_ASSERT_NOT_REACHED();
@@ -5748,33 +5883,27 @@ private:
             return;
         case B3::VectorOr: {
 #if CPU(ARM64)
-            // Try to match XAR (XOR-and-rotate-right) pattern for i64x2.
-            // Pattern: VectorOr(VectorShl(x, constK), VectorShr(x, constK))
-            // or VectorOr(VectorAdd(x, x), VectorShr(x, constK)) after strength reduction.
-            // When x = VectorXor(a, b), emit XAR(a, b, rotateRight).
+            // Match XAR (XOR-and-rotate-right) for i64x2: VectorOr of a left shift and an unsigned
+            // right shift of the same x = VectorXor(a, b), with constant amounts summing to 64,
+            // becomes XAR(a, b, rotateRight). Strength reduction turns a left shift by 1 into
+            // VectorAdd(x, x), so that counts as a left shift too.
             if (m_procedure.policy().supportsSHA3()) {
                 Value* left = m_value->child(0);
                 Value* right = m_value->child(1);
 
                 auto tryMatchXAR = [&]() -> bool {
-                    // Each child of VectorOr should be either:
-                    // - VectorShl:i64x2(x, constK) — a left shift by constant
-                    // - VectorShr:i64x2(x, constK) — a right shift by constant
-                    // - VectorAdd:i64x2(x, x) — equivalent to shl-by-1 (from strength reduction)
-                    // We need one left-shift and one right-shift on the same value x,
-                    // with shift amounts summing to 64.
-
                     struct ShiftInfo {
                         Value* shiftedValue { nullptr };
                         int8_t amount { 0 }; // positive = left shift, negative = right shift
                     };
 
                     auto extractShift = [&](Value* v) -> std::optional<ShiftInfo> {
+                        // Vector shifts use the shift amount modulo the lane width.
                         if (v->opcode() == B3::VectorShl && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->child(1)->hasInt32())
-                            return ShiftInfo { v->child(0), static_cast<int8_t>(v->child(1)->asInt32()) };
+                            return ShiftInfo { v->child(0), static_cast<int8_t>(v->child(1)->asInt32() & 63) };
 
-                        if (v->opcode() == B3::VectorShr && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->child(1)->hasInt32())
-                            return ShiftInfo { v->child(0), static_cast<int8_t>(-v->child(1)->asInt32()) };
+                        if (v->opcode() == B3::VectorShr && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->as<SIMDValue>()->signMode() == SIMDSignMode::Unsigned && v->child(1)->hasInt32())
+                            return ShiftInfo { v->child(0), static_cast<int8_t>(-(v->child(1)->asInt32() & 63)) };
 
                         // We lowered left-shift by 1 to VectorAdd(x, x)
                         if (v->opcode() == B3::VectorAdd && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2
@@ -5846,8 +5975,8 @@ private:
         }
         case B3::VectorXor: {
 #if CPU(ARM64)
-            // VectorXor(VectorXor(a, b), c) → EOR3(a, b, c)
-            // VectorXor(a, VectorXor(b, c)) → EOR3(b, c, a)
+            // VectorXor(VectorXor(a, b), c) -> EOR3(a, b, c)
+            // VectorXor(a, VectorXor(b, c)) -> EOR3(b, c, a)
             if (m_procedure.policy().supportsSHA3()) {
                 for (unsigned childIdx = 0; childIdx < 2; ++childIdx) {
                     Value* inner = m_value->child(childIdx);
@@ -6281,7 +6410,14 @@ private:
                 appendCAS(m_value->child(0), m_value->opcode() == NotEqual);
                 return;
             }
-                
+
+#if CPU(ARM64)
+            if (m_value->child(1)->isInt(0) && tryAppendXorOrChainCompare(m_value->child(0))) {
+                append(Air::SetOnFlags, Arg::relCond(m_value->opcode() == Equal ? MacroAssembler::Equal : MacroAssembler::NotEqual), tmp(m_value));
+                return;
+            }
+#endif
+
             m_insts.last().append(createCompare(m_value));
             return;
         }
@@ -6823,6 +6959,8 @@ private:
                     return;
 #if CPU(ARM64)
                 if (tryEmitConditionalCompareChain(m_value))
+                    return;
+                if (tryEmitXorOrChainBranch(m_value))
                     return;
 #endif
 

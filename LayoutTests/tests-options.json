@@ -2972,6 +2972,9 @@
     "imported/w3c/web-platform-tests/focus/activeelement-after-calling-window-focus.sub.html": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/fullscreen/api/keyboard-lock-cross-origin-iframe.sub.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/geolocation/enabled-by-permission-policy-attribute-redirect-on-load.https.sub.html": [
         "slow"
     ],
@@ -3639,6 +3642,15 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking-041.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking-form-stack-removal.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking-insert-named-anchor.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/html/dom/render-blocking/element-render-blocking-top-of-document.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/editing/the-hidden-attribute/beforematch-scroll-to-text-fragment.html": [

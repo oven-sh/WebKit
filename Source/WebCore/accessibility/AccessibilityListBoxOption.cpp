@@ -48,7 +48,7 @@ namespace WebCore {
 using namespace HTMLNames;
 
 // This needs to match how AccessibilityRenderObject and AccessibilityNodeObject add the children of a select.
-static bool listItemsAreChildrenOfSelect(const HTMLSelectElement& select)
+static bool LEGACY_NODELETE listItemsAreChildrenOfSelect(const HTMLSelectElement& select)
 {
     if (CheckedPtr renderer = select.renderer())
         return is<RenderListBox>(*renderer);
@@ -191,7 +191,7 @@ String AccessibilityListBoxOption::stringValue() const
         return ariaLabel;
 
     if (RefPtr option = dynamicDowncast<HTMLOptionElement>(*m_node))
-        return option->label();
+        return option->displayLabel();
 
     if (RefPtr optgroup = dynamicDowncast<HTMLOptGroupElement>(*m_node))
         return optgroup->groupLabelText();

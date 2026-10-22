@@ -75,7 +75,6 @@
 #include "RenderGrid.h"
 #include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
@@ -142,7 +141,7 @@ float opacity(const RenderElement& renderer)
 
 static_assert(sizeof(RenderElement) == sizeof(SameSizeAsRenderElement), "RenderElement should stay small");
 
-static Visibility visibilityIncludingForceHidden(const Style::ComputedStyle& style)
+static Visibility LEGACY_NODELETE visibilityIncludingForceHidden(const Style::ComputedStyle& style)
 {
     return style.isForceHidden() ? Visibility::Hidden : style.visibility();
 }
@@ -182,7 +181,7 @@ const Layout::ElementBox* RenderElement::layoutBox() const
     return downcast<Layout::ElementBox>(RenderObject::layoutBox());
 }
 
-static RefPtr<Style::Image> minimallySupportedContentDataImage(const Style::Content& content)
+static RefPtr<Style::Image> LEGACY_NODELETE minimallySupportedContentDataImage(const Style::Content& content)
 {
     // Minimal support for content properties replacing an entire element.
     // Works only if we have exactly one piece of content and it's a URL.
@@ -222,7 +221,7 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
     case Style::DisplayType::InlineFlow:
         if (rendererTypeOverride.contains(ConstructBlockLevelRendererFor::Inline))
             return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::BlockFlow:
     case Style::DisplayType::BlockFlowRoot:
     case Style::DisplayType::InlineFlowRoot:
@@ -245,11 +244,11 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
             return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
         return createRenderer<RenderDeprecatedFlexibleBox>(element, WTF::move(style));
     case Style::DisplayType::RubyBase:
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::RubyText:
         return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
     case Style::DisplayType::InlineRuby:
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::BlockRuby:
         return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
 
@@ -521,7 +520,7 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
             return RequiredRepaint::RendererOnly;
 
         auto deviceScaleFactor = newStyle.deviceScaleFactor();
-        if (newStyle.usedOutlineSize(newStyle.usedZoomForLength(), deviceScaleFactor) < oldStyle.usedOutlineSize(oldStyle.usedZoomForLength(), deviceScaleFactor))
+        if (Style::effectiveOutlineSize(newStyle, newStyle.usedZoomForLength(), deviceScaleFactor) < Style::effectiveOutlineSize(oldStyle, oldStyle.usedZoomForLength(), deviceScaleFactor))
             return RequiredRepaint::RendererOnly;
 
         if (auto* modelObject = dynamicDowncast<RenderLayerModelObject>(*this)) {
@@ -695,6 +694,7 @@ void RenderElement::didAttachChild(RenderObject& child, RenderObject*)
 
 RenderObject* RenderElement::attachRendererInternal(RenderPtr<RenderObject> child, RenderObject* beforeChild)
 {
+    document().incRenderTreeVersion();
     child->setParent(this);
 
     if (m_firstChild == beforeChild)
@@ -721,6 +721,7 @@ RenderObject* RenderElement::attachRendererInternal(RenderPtr<RenderObject> chil
 
 RenderPtr<RenderObject> RenderElement::detachRendererInternal(RenderObject& renderer)
 {
+    document().incRenderTreeVersion();
     CheckedPtr parent = renderer.parent();
     ASSERT(parent);
     CheckedPtr nextSibling = renderer.nextSibling();
@@ -756,7 +757,7 @@ void RenderElement::setMayHaveNonScalingStrokeInSubtreeIncludingAncestors()
         renderer->m_mayHaveNonScalingStrokeInSubtree = true;
 }
 
-static RenderLayer* findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
+static RenderLayer* LEGACY_NODELETE findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
 {
     // Step 1: If our layer is a child of the desired parent, then return our layer.
     SUPPRESS_UNCOUNTED_LOCAL auto* ourLayer = currRenderer.hasLayer() ? downcast<RenderLayerModelObject>(currRenderer).layer() : nullptr;
@@ -1190,11 +1191,10 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
 #endif
 
     bool hadOutlineAuto = oldStyle && oldStyle->outlineStyle() == OutlineStyle::Auto;
-    bool hasOutlineAuto = outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto;
+    bool hasOutlineAuto = style().outlineStyle() == OutlineStyle::Auto;
     if (hasOutlineAuto != hadOutlineAuto) {
         updateOutlineAutoAncestor(hasOutlineAuto);
-        auto deviceScaleFactor = style().deviceScaleFactor();
-        issueRepaintForOutlineAuto(hasOutlineAuto ? outlineStyleForRepaint().usedOutlineSize(outlineStyleForRepaint().usedZoomForLength(), deviceScaleFactor) : oldStyle->usedOutlineSize(oldStyle->usedZoomForLength(), deviceScaleFactor));
+        issueRepaintForOutlineAuto(hasOutlineAuto ? usedStyle().outlineSize() : Style::effectiveOutlineSize(*oldStyle, oldStyle->usedZoomForLength(), style().deviceScaleFactor()));
     }
 
     auto isLayoutDiff = [](Style::Difference diff) {
@@ -1670,11 +1670,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
     // It's not really correct to do math here with oldOutlineBoundsRect/newOutlineBoundsRect and local shadow/radius values, since
     // oldOutlineBoundsRect/newOutlineBoundsRect are in the coordinate space of the repaint container, and have been mapped through ancestor transforms.
 
-    auto deviceScaleFactor = style().deviceScaleFactor();
-
-    CheckedRef outlineStyle = outlineStyleForRepaint();
-    auto outlineZoom = outlineStyle->usedZoomForLength();
-    auto outlineWidth = LayoutUnit { outlineStyle->usedOutlineSize(outlineZoom, deviceScaleFactor) };
+    auto outlineWidth = LayoutUnit { usedStyle().outlineSize() };
 
     CheckedRef style = this->style();
     auto zoom = style->usedZoomForLength();
@@ -1698,7 +1694,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 });
             };
             auto outlineRightInsetExtent = [&] -> LayoutUnit {
-                auto offset = Style::evaluate<LayoutUnit>(outlineStyle->usedOutlineOffset(), outlineZoom, deviceScaleFactor);
+                auto offset = usedStyle().outlineOffset();
                 return offset < 0 ? -offset : 0_lu;
             };
             auto boxShadowRightInsetExtent = [&] {
@@ -1742,7 +1738,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 });
             };
             auto outlineBottomInsetExtent = [&] -> LayoutUnit {
-                auto offset = Style::evaluate<LayoutUnit>(outlineStyle->usedOutlineOffset(), outlineZoom, deviceScaleFactor);
+                auto offset = usedStyle().outlineOffset();
                 return offset < 0 ? -offset : 0_lu;
             };
             auto boxShadowBottomInsetExtent = [&]() -> LayoutUnit {
@@ -2322,7 +2318,7 @@ void RenderElement::updateOutlineAutoAncestor(bool hasOutlineAuto)
         if (hasOutlineAuto == child->hasOutlineAutoAncestor())
             continue;
         child->setHasOutlineAutoAncestor(hasOutlineAuto);
-        bool childHasOutlineAuto = child->outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto;
+        bool childHasOutlineAuto = child->style().outlineStyle() == OutlineStyle::Auto;
         if (childHasOutlineAuto)
             continue;
         if (auto* element = dynamicDowncast<RenderElement>(child.get()))

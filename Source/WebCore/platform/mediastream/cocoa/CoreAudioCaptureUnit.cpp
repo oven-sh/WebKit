@@ -249,7 +249,7 @@ void CoreAudioCaptureUnit::forEach(NOESCAPE const Function<void(CoreAudioCapture
     allCoreAudioCaptureUnits().forEach(callback);
 }
 
-static Function<void(CoreAudioCaptureUnit&)>& coreAudioCaptureNewUnitCallback()
+static Function<void(CoreAudioCaptureUnit&)>& LEGACY_NODELETE coreAudioCaptureNewUnitCallback()
 {
     ASSERT(isMainThread());
 
@@ -829,8 +829,8 @@ void CoreAudioCaptureUnit::prewarmAudioUnitCreation(CompletionHandler<void()>&& 
     m_audioUnitCreationWarmupPromise = invokeAsync(WorkQueue::create("CoreAudioCaptureUnit AudioUnit creation"_s, WorkQueue::QOS::UserInitiated).get(), [] {
         return createAudioUnit(true);
     })->whenSettled(RunLoop::mainSingleton(), [weakThis = WeakPtr { *this }, callback = WTF::move(callback)] (auto&& vpioUnitOrError) mutable {
-        if (weakThis && vpioUnitOrError.has_value())
-            weakThis->setStoredVPIOUnit(WTF::move(vpioUnitOrError.value()));
+        if (RefPtr protectedThis = weakThis; protectedThis && vpioUnitOrError.has_value())
+            protectedThis->setStoredVPIOUnit(WTF::move(vpioUnitOrError.value()));
         callback();
         return GenericNonExclusivePromise::createAndResolve();
     });

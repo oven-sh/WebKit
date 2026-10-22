@@ -130,7 +130,7 @@
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/TextStream.h>
 
-#include "PDFKitSoftLink.h"
+#include <pal/cocoa/PDFKitSoftLink.h>
 
 #if PLATFORM(IOS_FAMILY)
 @interface NSObject (AXPriv)
@@ -477,13 +477,13 @@ void UnifiedPDFPlugin::enableDataDetection()
 #endif
 }
 
-void UnifiedPDFPlugin::handleClickForDataDetectionResult(const DataDetectorElementInfo& dataDetectorElementInfo, const IntPoint& clickPointInPluginSpace)
+void UnifiedPDFPlugin::handleClickForDataDetectionResult(const DataDetectorElementInfo& dataDetectorElementInfo, const IntPoint& clickPointInMainFrameView)
 {
     RefPtr page = this->page();
     if (!page)
         return;
 
-    page->chrome().client().handleClickForDataDetectionResult(dataDetectorElementInfo, clickPointInPluginSpace);
+    page->chrome().client().handleClickForDataDetectionResult(dataDetectorElementInfo, clickPointInMainFrameView);
 }
 
 bool UnifiedPDFPlugin::canShowDataDetectorHighlightOverlays() const
@@ -2437,7 +2437,7 @@ void UnifiedPDFPlugin::finishTrackingAnnotation(PDFAnnotation *annotationUnderMo
 
 void UnifiedPDFPlugin::revealPDFDestination(PDFDestination *destination)
 {
-    auto unspecifiedValue = get_PDFKit_kPDFDestinationUnspecifiedValueSingleton();
+    auto unspecifiedValue = PAL::get_PDFKit_kPDFDestinationUnspecifiedValueSingleton();
 
     auto pageIndex = [m_pdfDocument indexForPage:[destination page]];
     auto pointInPDFPageSpace = [destination point];
@@ -2970,7 +2970,7 @@ void UnifiedPDFPlugin::performContextMenuAction(ContextMenuItemTag tag, const In
 void UnifiedPDFPlugin::performCopyLinkOperation(const IntPoint& contextMenuEventRootViewPoint) const
 {
     if (![m_pdfDocument allowsCopying]) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:get_PDFKit_PDFViewCopyPermissionNotificationSingleton() object:nil];
+        [[NSNotificationCenter defaultCenter] postNotificationName:PAL::get_PDFKit_PDFViewCopyPermissionNotificationSingleton() object:nil];
         return;
     }
 
@@ -3052,7 +3052,7 @@ bool UnifiedPDFPlugin::performCopyEditingOperation() const
         return false;
 
     if (![m_pdfDocument allowsCopying]) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:get_PDFKit_PDFViewCopyPermissionNotificationSingleton() object:nil];
+        [[NSNotificationCenter defaultCenter] postNotificationName:PAL::get_PDFKit_PDFViewCopyPermissionNotificationSingleton() object:nil];
         return false;
     }
 
@@ -3605,7 +3605,7 @@ bool UnifiedPDFPlugin::findString(const String& target, WebCore::FindOptions opt
         RetainPtr nsTarget = target.createNSString();
         RetainPtr foundSelection = [m_pdfDocument findString:nsTarget.get() fromSelection:m_currentSelection.get() withOptions:compareOptions];
         if (!foundSelection && wrapSearch) {
-            RetainPtr emptySelection = adoptNS([allocPDFSelectionInstance() initWithDocument:m_pdfDocument.get()]);
+            RetainPtr emptySelection = adoptNS([PAL::allocPDFSelectionInstance() initWithDocument:m_pdfDocument.get()]);
             foundSelection = [m_pdfDocument findString:nsTarget.get() fromSelection:emptySelection.get() withOptions:compareOptions];
         }
         return foundSelection;
@@ -4554,6 +4554,8 @@ void UnifiedPDFPlugin::installDataDetectorOverlay(PageOverlay& overlay)
     if (!webPage)
         return;
 
+    Ref rootFrame { frame->coreLocalFrame()->rootFrame() };
+    overlay.setAssociatedFrame(rootFrame.ptr());
     webPage->corePage()->pageOverlayController().installPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
 }
 
@@ -4568,6 +4570,15 @@ void UnifiedPDFPlugin::uninstallDataDetectorOverlay(PageOverlay& overlay)
         return;
 
     webPage->corePage()->pageOverlayController().uninstallPageOverlay(overlay, PageOverlay::FadeMode::DoNotFade);
+}
+
+IntRect UnifiedPDFPlugin::rectForSelectionInRootViewContentsSpace(PDFSelection *selection) const
+{
+    RefPtr rootView { this->rootView() };
+    if (!rootView)
+        return { };
+
+    return rootView->rootViewToContents(roundedIntRect(rectForSelectionInRootView(selection)));
 }
 
 #endif

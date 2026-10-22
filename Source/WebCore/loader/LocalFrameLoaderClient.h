@@ -113,7 +113,6 @@ struct BackForwardFrameItemIdentifierType;
 using BackForwardFrameItemIdentifier = ProcessQualified<ObjectIdentifier<BackForwardFrameItemIdentifierType>>;
 
 struct BackForwardItemIdentifierType;
-struct FrameViewportInfo;
 struct StringWithDirection;
 
 using BackForwardItemIdentifier = ProcessQualified<ObjectIdentifier<BackForwardItemIdentifierType>>;
@@ -237,6 +236,7 @@ public:
     virtual void shouldGoToHistoryItemAsync(HistoryItem&, CompletionHandler<void(ShouldGoToHistoryItem)>&&) const = 0;
     virtual void dispatchGoToBackForwardItemAtIndex(int steps) = 0;
     virtual void dispatchEnqueueHistoryTraversalDelta(int delta) = 0;
+    virtual void dispatchEnqueueHistoryTraversalToItem(BackForwardFrameItemIdentifier, CompletionHandler<void(bool)>&&) = 0;
 
     virtual bool shouldFallBack(const ResourceError&) const = 0;
 
@@ -397,8 +397,6 @@ public:
     virtual void applyMonitorUnloadToOwnerFrame(IFrameUnloadReason);
 
     virtual bool shouldSuppressLayoutMilestones() const { return false; }
-
-    virtual void broadcastFrameViewportInfoToOtherProcessesIfNeeded(const FrameViewportInfo&, bool hasOnScreenRemoteDescendant);
 
 protected:
     explicit LocalFrameLoaderClient(FrameLoader&);

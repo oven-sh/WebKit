@@ -119,6 +119,11 @@ private:
         CharacterReferenceInAttributeValueState,
         AfterAttributeValueQuotedState,
         SelfClosingStartTagState,
+        ProcessingInstructionOpenState,
+        ProcessingInstructionTargetState,
+        AfterProcessingInstructionTargetState,
+        ProcessingInstructionDataState,
+        ProcessingInstructionQuestionMarkState,
         BogusCommentState,
         ContinueBogusCommentState, // Not in the HTML spec, used internally to track whether we started the bogus comment token.
         MarkupDeclarationOpenState,
@@ -161,8 +166,11 @@ private:
     void bufferCharacters(ASCIILiteral literal) { bufferCharacters(literal.span8()); }
 
     bool emitAndResumeInDataState(SegmentedString&);
+    bool emitProcessingInstruction(SegmentedString&);
+    void rewindToBogusCommentForProcessingInstructionTarget();
     bool emitAndReconsumeInDataState();
     bool emitEndOfFile(SegmentedString&);
+    bool emitReplacedNullCharacter(SegmentedString&, State);
 
     // Return true if we wil emit a character token before dealing with the buffered end tag.
     void flushBufferedEndTag();

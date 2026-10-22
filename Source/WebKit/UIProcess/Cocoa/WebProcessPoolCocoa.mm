@@ -55,6 +55,7 @@
 #import "WebPageGroup.h"
 #import "WebPageMessages.h"
 #import "WebPageProxy.h"
+#import "WebPreferences.h"
 #import "WebPreferencesDefaultValues.h"
 #import "WebPreferencesKeys.h"
 #import "WebPrivacyHelpers.h"
@@ -314,7 +315,7 @@ void WebProcessPool::setMediaAccessibilityPreferences(WebProcessProxy& process)
 
 static void logProcessPoolState(const WebProcessPool& pool)
 {
-    for (Ref process : borrow(pool.processes()).get()) {
+    for (Ref process : borrow(pool.processes())) {
         WTF::TextStream processDescription;
         processDescription << process;
 
@@ -322,7 +323,7 @@ static void logProcessPoolState(const WebProcessPool& pool)
         String domainString = domain.isEmpty() ? "unknown"_s : domain.string();
 
         WTF::TextStream pageURLs;
-        auto pages = process->pages();
+        const Vector pages = process->pages();
         if (pages.isEmpty())
             pageURLs << "none";
         else {
@@ -551,7 +552,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     for (auto&& entry : StorageAccessPromptQuirkController::sharedSingleton().cachedListData()) {
         if (!entry.triggerPages.isEmpty()) {
-            for (auto&& page : entry.triggerPages)
+            for (auto&& page : borrow(entry.triggerPages))
                 parameters.storageAccessPromptQuirksDomains.add(RegistrableDomain { page });
             continue;
         }
@@ -696,7 +697,7 @@ void WebProcessPool::colorPreferencesDidChangeCallback(CFNotificationCenterRef, 
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
 void WebProcessPool::hardwareConsoleStateChanged()
 {
-    for (auto& process : m_processes)
+    for (auto& process : borrow(m_processes))
         process->hardwareConsoleStateChanged();
 }
 #endif
@@ -743,7 +744,7 @@ void WebProcessPool::hardwareKeyboardAvailabilityChangedCallback(CFNotificationC
 
 void WebProcessPool::hardwareKeyboardAvailabilityChanged()
 {
-    for (Ref process : borrow(this->processes()).get()) {
+    for (Ref process : borrow(this->processes())) {
         auto pages = process->mainPages();
         for (auto& page : pages)
             page->hardwareKeyboardAvailabilityChanged(cachedHardwareKeyboardState());
@@ -818,7 +819,7 @@ void WebProcessPool::registerNotificationObservers()
                     return;
                 protectedThis->setNotifyState(message, status, state);
                 String messageString(message);
-                for (auto& process : protectedThis->m_processes) {
+                for (auto& process : borrow(protectedThis->m_processes)) {
                     if (process->auditToken() && !WTF::hasEntitlement(process->auditToken().value(), "com.apple.developer.web-browser-engine.restrict.notifyd"_s))
                         continue;
                     process->send(Messages::WebProcess::PostNotification(messageString, (status == NOTIFY_STATUS_OK) ? std::optional<uint64_t>(state) : std::nullopt), 0);
@@ -847,7 +848,7 @@ void WebProcessPool::registerNotificationObservers()
                 return;
             if (!protectedThis->m_processes.isEmpty()) {
                 String messageString(message.get());
-                for (auto& process : protectedThis->m_processes)
+                for (auto& process : borrow(protectedThis->m_processes))
                     process->send(Messages::WebProcess::PostObserverNotification(messageString), 0);
             }
         }];
@@ -933,7 +934,7 @@ void WebProcessPool::registerNotificationObservers()
             if (RefPtr gpuProcess = GPUProcessProxy::singletonIfCreated())
                 gpuProcess->send(Messages::GPUProcess::OpenDirectoryCacheInvalidated(WTF::move(*handle)), 0);
 #endif
-            for (auto& process : m_processes) {
+            for (auto& process : borrow(m_processes)) {
                 if (!process->canSendMessage())
                     continue;
                 auto handle = SandboxExtension::createHandleForMachLookup("com.apple.system.opendirectoryd.libinfo"_s, std::nullopt);
@@ -1280,6 +1281,30 @@ void setLockdownModeEnabledGloballyForTesting(std::optional<bool> enabledForTest
         processPool->lockdownModeStateChanged();
 }
 
+void WebProcessPool::setHasEnhancedSecurityDefaultOptOutEntitlementForTesting(std::optional<bool> hasEntitlement)
+{
+    if (!isRunningTest(retainPtr([[NSBundle mainBundle] bundleIdentifier]).get()))
+        return;
+    m_hasEnhancedSecurityDefaultOptOutEntitlementForTesting = hasEntitlement;
+}
+
+static bool hasEnhancedSecurityDefaultOptOutEntitlement()
+{
+    static bool hasEntitlement = WTF::processHasEntitlement("com.apple.private.security.webkit.disable-enhanced-security-default"_s);
+    return hasEntitlement;
+}
+
+bool WebProcessPool::shouldEnableEnhancedSecurityByDefault(const WebPreferences& preferences) const
+{
+    bool platformDefault = preferences.enhancedSecurityEnabledByDefault();
+    bool systemAppsDefault = preferences.enhancedSecurityEnabledByDefaultForSystemApps();
+    if (!platformDefault && !systemAppsDefault)
+        return false;
+    if (m_hasEnhancedSecurityDefaultOptOutEntitlementForTesting ? *m_hasEnhancedSecurityDefaultOptOutEntitlementForTesting : hasEnhancedSecurityDefaultOptOutEntitlement())
+        return false;
+    return platformDefault || (isSystemApplicationOrRunningTest() && !isSafariOrWebApp());
+}
+
 #if PLATFORM(IOS_FAMILY)
 
 void WebProcessPool::applicationIsAboutToSuspend()
@@ -1622,7 +1647,7 @@ template <typename Collection>
 static Vector<SandboxExtension::Handle> sandboxExtensionsForFonts(const Collection& fontPathURLs, std::optional<audit_token_t> auditToken)
 {
     Vector<SandboxExtension::Handle> handles;
-    for (auto& fontPathURL : fontPathURLs) {
+    for (auto& fontPathURL : borrow(fontPathURLs)) {
         std::optional<SandboxExtension::Handle> sandboxExtensionHandle;
         if (auditToken)
             sandboxExtensionHandle = SandboxExtension::createHandleForReadByAuditToken(fontPathURL.fileSystemPath(), *auditToken);
@@ -1748,7 +1773,7 @@ void WebProcessPool::registerAssetFonts(WebProcessProxy& process)
     Vector<ASCIILiteral> assetFonts = { "Canela Text"_s, "Proxima Nova"_s, "Publico Text"_s };
 
     RetainPtr<NSMutableArray> descriptions = [NSMutableArray array];
-    for (auto& fontName : assetFonts)
+    for (auto& fontName : borrow(assetFonts))
         [descriptions addObject:(__bridge id)fontDescription(fontName).get()];
 
     auto blockPtr = makeBlockPtr([assetFonts = WTF::move(assetFonts), weakProcess = WeakPtr { process }, weakThis = WeakPtr { *this }](CTFontDescriptorMatchingState state, CFDictionaryRef progressParameter) mutable {
@@ -1761,7 +1786,7 @@ void WebProcessPool::registerAssetFonts(WebProcessProxy& process)
                 return;
             if (!protectedThis->m_assetFontURLs) {
                 protectedThis->m_assetFontURLs = Vector<URL> { };
-                for (auto& fontName : assetFonts) {
+                for (auto& fontName : borrow(assetFonts)) {
                     URL fontURL = fontURLFromName(fontName);
                     RELEASE_LOG(Process, "Registering font name %s with url %s", fontName.characters(), fontURL.string().utf8());
                     protectedThis->m_assetFontURLs->append(WTF::move(fontURL));

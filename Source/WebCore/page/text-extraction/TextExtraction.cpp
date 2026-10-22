@@ -90,6 +90,7 @@
 #include "SVGSVGElement.h"
 #include "SVGTitleElement.h"
 #include "Settings.h"
+#include "ShadowRoot.h"
 #include "SimpleRange.h"
 #include "StaticRange.h"
 #include "StringEntropyHelpers.h"
@@ -141,7 +142,7 @@ static String normalizeText(const String& string, unsigned maxDescriptionLength 
 static constexpr auto minimumClassOrIdLength = 6;
 static constexpr auto maximumClassOrIdLength = 24;
 
-static bool isCandidateClassOrId(StringView text)
+static bool LEGACY_NODELETE isCandidateClassOrId(StringView text)
 {
     if (text.length() < minimumClassOrIdLength)
         return false;
@@ -324,7 +325,7 @@ struct TraversalContext {
         return !rectInRootView || rectInRootView->intersects(rect);
     }
 
-    unsigned currentVisualBlockContainerNumber() const
+    unsigned LEGACY_NODELETE currentVisualBlockContainerNumber() const
     {
         return visualBlockContainerStack.isEmpty() ? 0 : visualBlockContainerStack.last();
     }
@@ -349,15 +350,29 @@ struct TraversalContext {
     }
 };
 
+static RefPtr<ShadowRoot> authorShadowRoot(Node& node)
+{
+    RefPtr element = dynamicDowncast<Element>(node);
+    if (!element)
+        return nullptr;
+
+    RefPtr shadowRoot = element->shadowRoot();
+    if (!shadowRoot || shadowRoot->mode() == ShadowRootMode::UserAgent)
+        return nullptr;
+
+    return shadowRoot;
+}
+
 static inline TextAndSelectedRangeMap collectText(Node& node, IncludeTextInAutoFilledControls includeTextInAutoFilledControls)
 {
-    auto nodeRange = makeRangeSelectingNodeContents(node);
+    RefPtr shadowRoot = authorShadowRoot(node);
+    auto nodeRange = makeRangeSelectingNodeContents(shadowRoot ? *shadowRoot : node);
     auto selection = node.document().selection().selection();
     TextNodesAndText textBeforeRangedSelection;
     TextNodesAndText textInRangedSelection;
     TextNodesAndText textAfterRangedSelection;
     bool populatedRangesAroundSelection = [&] {
-        if (!selection.isRange())
+        if (shadowRoot || !selection.isRange())
             return false;
 
         auto selectionStart = makeBoundaryPoint(selection.start());
@@ -553,7 +568,7 @@ static inline bool paintsVisibleContent(const RenderObject& renderer)
 }
 
 template<typename RectOrSize>
-static inline bool isNearlyEmpty(const RectOrSize& rectOrSize)
+static inline bool LEGACY_NODELETE isNearlyEmpty(const RectOrSize& rectOrSize)
 {
     return rectOrSize.width() <= 1 || rectOrSize.height() <= 1;
 }
@@ -638,7 +653,7 @@ static inline RefPtr<Node> visualProxyForTransparentControl(const HTMLInputEleme
 }
 
 template<typename T>
-RefPtr<T> shadowHostOrSelfInclusiveParent(Node& node)
+RefPtr<T> LEGACY_NODELETE shadowHostOrSelfInclusiveParent(Node& node)
 {
     if (node.isInUserAgentShadowTree())
         return dynamicDowncast<T>(node.shadowHost());
@@ -1120,7 +1135,7 @@ static bool containsInteractiveDescendant(const Element& element)
     return false;
 }
 
-static bool isProbablyNotInteractiveBasedOnTagName(const Element& element)
+static bool LEGACY_NODELETE isProbablyNotInteractiveBasedOnTagName(const Element& element)
 {
     return is<HTMLHeadingElement>(element)
         || element.hasTagName(HTMLNames::addressTag)
@@ -3171,18 +3186,19 @@ static void scrollBy(LocalFrame& frame, std::optional<NodeIdentifier>&& identifi
     if (!foundNode)
         return completion(false, invalidNodeIdentifierDescription(WTF::move(identifier)));
 
-    WeakPtr scroller = CheckedRef { frame.eventHandler() }->enclosingScrollableArea(foundNode.get());
-    if (!scroller)
+    WeakPtr weakScroller = CheckedRef { frame.eventHandler() }->enclosingScrollableArea(foundNode.get());
+    if (!weakScroller)
         return completion(false, "No scrollable area found"_s);
 
     String fallbackDescription;
-    if (auto fallbackResult = redirectToLargeScrollableContainerIfNeeded(protect(frame), identifierProvided, protect(scroller), stringsToValidate)) {
+    if (auto fallbackResult = redirectToLargeScrollableContainerIfNeeded(protect(frame), identifierProvided, protect(weakScroller), stringsToValidate)) {
         fallbackDescription = WTF::move(fallbackResult->first);
         foundNode = WTF::move(fallbackResult->second.element);
-        scroller = WTF::move(fallbackResult->second.scrollableArea);
+        weakScroller = WTF::move(fallbackResult->second.scrollableArea);
     }
 
     addBoxShadowIfNeeded(*foundNode, "#34c759"_s);
+    CheckedPtr scroller = weakScroller;
     scroller->scrollToOffsetWithoutAnimation(FloatPoint { scroller->scrollOffset() } + scrollDelta);
 
     String summary;
@@ -3199,19 +3215,20 @@ static void scrollToNextPage(LocalFrame& frame, std::optional<NodeIdentifier>&& 
     if (!foundNode)
         return completion(false, invalidNodeIdentifierDescription(WTF::move(identifier)));
 
-    WeakPtr scroller = CheckedRef { frame.eventHandler() }->enclosingScrollableArea(foundNode.get());
-    if (!scroller)
+    WeakPtr weakScroller = CheckedRef { frame.eventHandler() }->enclosingScrollableArea(foundNode.get());
+    if (!weakScroller)
         return completion(false, "No scrollable area found"_s);
 
     String fallbackDescription;
-    if (auto fallbackResult = redirectToLargeScrollableContainerIfNeeded(frame, identifierProvided, protect(scroller), stringsToValidate)) {
+    if (auto fallbackResult = redirectToLargeScrollableContainerIfNeeded(frame, identifierProvided, protect(weakScroller), stringsToValidate)) {
         fallbackDescription = WTF::move(fallbackResult->first);
         foundNode = WTF::move(fallbackResult->second.element);
-        scroller = WTF::move(fallbackResult->second.scrollableArea);
+        weakScroller = WTF::move(fallbackResult->second.scrollableArea);
     }
 
     addBoxShadowIfNeeded(*foundNode, "#34c759"_s);
 
+    CheckedPtr scroller = weakScroller;
     auto currentOffset = scroller->scrollOffset();
     auto maxOffset = scroller->maximumScrollOffset();
 

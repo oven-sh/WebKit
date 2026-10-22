@@ -269,6 +269,8 @@ namespace JSC::B3 {
     macro(HeapForValue, m_heapForFenceRead) \
     macro(HeapForValue, m_heapForFenceWrite) \
     macro(HeapForValue, m_heapForFencedAccess) \
+    macro(HeapForValue, m_heapForBulkMemoryRead) \
+    macro(HeapForValue, m_heapForBulkMemoryWrite) \
     macro(HeapForValue, m_heapForWasmStructGet) \
     macro(HeapForValue, m_heapForWasmStructSet) \
     macro(HeapForValue, m_heapForWasmStructNew) \
@@ -373,6 +375,8 @@ public:
     void decorateFenceRead(const AbstractHeap*, Value*);
     void decorateFenceWrite(const AbstractHeap*, Value*);
     void decorateFencedAccess(const AbstractHeap*, Value*);
+    void decorateBulkMemoryRead(const AbstractHeap*, Value*);
+    void decorateBulkMemoryWrite(const AbstractHeap*, Value*);
     void decorateWasmStructGet(const AbstractHeap*, Value*);
     void decorateWasmStructSet(const AbstractHeap*, Value*);
     void decorateWasmStructNew(const AbstractHeap*, Value*);

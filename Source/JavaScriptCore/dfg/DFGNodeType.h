@@ -671,6 +671,7 @@ namespace JSC { namespace DFG {
     macro(BufferReadInt, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     macro(BufferReadFloat, NodeResultDouble | NodeMustGenerate | NodeHasVarArgs) \
     macro(BufferWrite, NodeMustGenerate | NodeHasVarArgs) \
+    macro(TypedArraySet, NodeMustGenerate) \
     /* Date access */ \
     macro(DateNow, NodeMustGenerate | NodeResultDouble) \
     macro(DateGetStorage, NodeResultStorage) \

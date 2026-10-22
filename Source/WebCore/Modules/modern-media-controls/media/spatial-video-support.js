@@ -57,6 +57,8 @@ class SpatialVideoSupport extends MediaControllerSupport
         if (!host || !host.spatialVideoRenderingEnabled)
             return;
         super.enable();
+        if (this._active === false)
+            this._maybeEnable();
     }
 
     handleEvent()
@@ -571,6 +573,12 @@ class SpatialVideoSupport extends MediaControllerSupport
             this._canvas.remove();
             this._canvas = null;
         }
+        this._gl = null;
+        this._program = null;
+        this._texture = null;
+        this._mesh = null;
+        this._mvpLocation = null;
+        this._featherLocation = null;
         if (media)
             media.style.visibility = "";
     }

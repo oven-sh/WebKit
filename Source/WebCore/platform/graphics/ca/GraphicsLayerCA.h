@@ -136,6 +136,7 @@ public:
 
     WEBCORE_EXPORT bool setFilters(const FilterOperations&) override;
     virtual bool filtersCanBeComposited(const FilterOperations&);
+    WEBCORE_EXPORT void setFilterSamplingOutsets(const IntOutsets&) override;
 
     WEBCORE_EXPORT bool setBackdropFilters(const FilterOperations&) override;
     WEBCORE_EXPORT void setBackdropFiltersRect(const FloatRoundedRect&) override;
@@ -575,7 +576,7 @@ private:
 #endif
     };
     bool ensureStructuralLayer(StructuralLayerPurpose);
-    StructuralLayerPurpose structuralLayerPurpose() const;
+    StructuralLayerPurpose LEGACY_NODELETE structuralLayerPurpose() const;
 
     // This represents the animation of a single property. There may be multiple transform animations for
     // a single transition or keyframe animation, so index is used to distinguish these.

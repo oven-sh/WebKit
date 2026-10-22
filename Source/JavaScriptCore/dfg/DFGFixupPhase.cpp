@@ -1790,8 +1790,12 @@ private:
             blessArrayOperation(arrayEdge, Edge(), storageEdge);
             fixEdge<KnownCellUse>(arrayEdge);
 
-            // Convert `array.push()` to GetArrayLength.
+            // Convert `array.push()` to GetArrayLength. It must still throw when length is not
+            // writable, which only ArrayStorage arrays can be, so those exit and let the baseline
+            // code do the push.
             if (!elementCount && node->arrayMode().supportsSelfLength()) {
+                if (!arrayModeImpliesWritableLength(node->arrayMode().type()))
+                    m_insertionSet.insertNode(m_indexInBlock, SpecNone, ForceOSRExit, node->origin);
                 node->setOpAndDefaultFlags(GetArrayLength);
                 node->child1() = arrayEdge;
                 node->child2() = storageEdge;
@@ -3830,6 +3834,13 @@ private:
 #else
             DFG_CRASH(m_graph, node, "Unexpected node type"_s);
 #endif
+            break;
+        }
+
+        case TypedArraySet: {
+            fixEdge<KnownCellUse>(node->child1());
+            fixEdge<KnownCellUse>(node->child2());
+            fixEdge<Int32Use>(node->child3());
             break;
         }
 

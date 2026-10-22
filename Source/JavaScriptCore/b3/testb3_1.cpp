@@ -648,6 +648,19 @@ void run(const TestConfig* config)
     RUN_UNARY(testInt52RoundTripUnary, int32Operands());
     RUN(testInt52RoundTripBinary());
     RUN(testTruncSShrAddUnalignedConstant());
+    RUN(testTruncSShrShlSExt32(-64));
+    RUN(testTruncSShrShlSExt32(-33));
+    RUN(testTruncSShrShlSExt32(-32));
+    RUN(testTruncSShrShlSExt32(-31));
+    RUN(testTruncSShrShlSExt32(-1));
+    RUN(testTruncSShrShlSExt32(0));
+    RUN(testTruncSShrShlSExt32(1));
+    RUN(testTruncSShrShlSExt32(12));
+    RUN(testTruncSShrShlSExt32(30));
+    RUN(testTruncSShrShlSExt32(31));
+    RUN(testTruncSShrShlSExt32(32));
+    RUN(testTruncSShrShlSExt32(63));
+    RUN(testTruncSShrShlSExt32(64));
 
     RUN_UNARY(testCheckAddRemoveCheckWithSExt8, int8Operands());
     RUN_UNARY(testCheckAddRemoveCheckWithSExt16, int16Operands());
@@ -955,6 +968,7 @@ void run(const TestConfig* config)
 
     RUN(testSwitchTargettingSameBlock());
     RUN(testSwitchTargettingSameBlockFoldPathConstant());
+    RUN(testBranchOnPhiOfTakenComparesFoldPathConstant());
     for (bool is64Bit : { false, true }) {
         RUN(testSwitchOnConstant(3, is64Bit));
         RUN(testSwitchOnConstant(13, is64Bit));
@@ -1012,6 +1026,7 @@ void run(const TestConfig* config)
 
     RUN(testBasicSelect());
     RUN(testSelectTest());
+    RUN(testSelectTestHighBits());
     RUN(testSelectCompareDouble());
     RUN_BINARY(testSelectCompareFloat, floatingPointOperands<float>(), floatingPointOperands<float>());
     RUN_BINARY(testSelectCompareFloatToDouble, floatingPointOperands<float>(), floatingPointOperands<float>());
@@ -1458,6 +1473,35 @@ void run(const TestConfig* config)
     RUN(testCCmpChainRollback(200, 8, 5, 5, 5, 10)); // i>=len; pre-fix wrongly returns 1
     RUN(testCCmpChainRollback(5, 8, 5, 5, 5, -10)); // c>d, expected 1
 
+    for (B3::Opcode opcode : { Equal, NotEqual }) {
+        RUN(testXorOrCompareChain32(opcode, 1, 1, 2, 2));
+        RUN(testXorOrCompareChain32(opcode, 1, 2, 2, 2));
+        RUN(testXorOrCompareChain32(opcode, 1, 1, 2, 3));
+        RUN(testXorOrCompareChain32(opcode, -1, -1, 0, 0));
+        RUN(testXorOrCompareChain64(opcode, 0x123, 7, 0x123));
+        RUN(testXorOrCompareChain64(opcode, 0x124, 7, 0x124));
+        RUN(testXorOrCompareChain64(opcode, 0x123, 8, 0x123));
+        RUN(testXorOrCompareChain64(opcode, 0x123, 7, 0x223));
+    }
+    RUN(testXorOrCompareChainZExt64(0x123456789abcLL, 0x61));
+    RUN(testXorOrCompareChainZExt64(0x123456789abdLL, 0x61));
+    RUN(testXorOrCompareChainZExt64(0x123456789abcLL, 0x62));
+    RUN(testXorOrCompareChainBitImmediate32(0x0f0f0f0f, 0x30303030));
+    RUN(testXorOrCompareChainBitImmediate32(0x0f0f0f0f, 0x30303031));
+    RUN(testXorOrCompareChainBranch64(1, 1, 0x100000000LL, 0x100000000LL));
+    RUN(testXorOrCompareChainBranch64(1, 1, 0x100000000LL, 0));
+    RUN(testXorOrCompareChainBranch64(0x100000000LL, 0, 2, 2));
+    RUN(testXorOrCompareChainBranchEqualZero32(3, 3, 4, 4));
+    RUN(testXorOrCompareChainBranchEqualZero32(3, 3, 4, 5));
+    RUN(testXorOrCompareChainBranchEqualZero32(3, 4, 4, 4));
+    RUN(testXorOrCompareChainSharedLeaf32(5, 5, 6, 6));
+    RUN(testXorOrCompareChainSharedLeaf32(5, 9, 6, 6));
+    RUN(testXorOrCompareChainSharedLeaf32(5, 5, 6, 7));
+    for (unsigned leafCount = 2; leafCount <= 6; ++leafCount) {
+        for (unsigned mismatchIndex = 0; mismatchIndex <= leafCount; ++mismatchIndex)
+            RUN(testXorOrCompareChainLoads64(leafCount, mismatchIndex));
+    }
+
     RUN_UNARY(testSShrCompare32, int32OperandsMore());
     RUN_UNARY(testSShrCompare64, int64OperandsMore());
 
@@ -1527,6 +1571,7 @@ void run(const TestConfig* config)
         RUN(testVectorShrZipToExtend());
         RUN(testVectorShrZipToExtendI32());
         RUN(testVectorShrZipToExtendI64());
+        RUN(testVectorShrZipWithMismatchedLane());
         RUN_UNARY(testVectorXorOrAllOnesConstantToVectorAndXor, v128Operands());
         RUN_UNARY(testVectorXorAndAllOnesConstantToVectorOrXor, v128Operands());
         RUN_BINARY(testVectorOrConstants, v128Operands(), v128Operands());
@@ -1536,6 +1581,7 @@ void run(const TestConfig* config)
         RUN(testVectorFmulByElementFloat());
         RUN(testVectorFmulByElementDouble());
         RUN(testVectorXorRotateRight64());
+        RUN(testVectorXorRotateRight64ShiftKindAndAmount());
         RUN(testVectorXor3());
         RUN(testVectorShlImmediate());
         RUN(testVectorShrImmediate());
@@ -1558,10 +1604,11 @@ void run(const TestConfig* config)
         RUN(testMulHigh64());
         RUN(testUMulHigh32());
         RUN(testUMulHigh64());
-        RUN(testMemoryCopy());
+        RUN(testMemoryMove());
         RUN(testMemoryFill());
-        RUN(testMemoryCopyConstant());
+        RUN(testMemoryMoveConstant());
         RUN(testMemoryFillConstant());
+        RUN(testGCSafeMemoryMove());
     }
 
     Lock lock;
