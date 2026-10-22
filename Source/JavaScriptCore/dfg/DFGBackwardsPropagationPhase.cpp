@@ -92,7 +92,7 @@ public:
             
                 // Prevent a tower of overflowing additions from creating a value that is out of the
                 // safe 2^48 range.
-                m_allowNestedOverflowingAdditions = block->size() < (1 << 16);
+                m_allowNestedOverflowingAdditions = block->size() < (1 << maxNestedAdditionsPower);
             
                 for (unsigned indexInBlock = block->size(); indexInBlock--;)
                     propagate(block->at(indexInBlock));
@@ -272,6 +272,44 @@ private:
     static_assert(!(VariableIsUsed & NodeBytecodeBackPropMask));
     static_assert(VariableIsUsed > NodeBytecodeBackPropMask, "Verify the above doesn't overflow");
     
+    // The additions of a block that leave their operands truncated are fewer than 2^maxNestedAdditionsPower,
+    // and each of them adds a value below 2^32. Together they add less than 2^48. On top of the product of
+    // an int32 and a factor, the sum is exact, that is at most 2^53, if the factor is at most
+    // maxFactorUnderAdditions.
+    static constexpr unsigned maxNestedAdditionsPower = 16;
+    static constexpr int64_t maxFactorUnderAdditions = ((static_cast<int64_t>(1) << 53) - (static_cast<int64_t>(1) << (maxNestedAdditionsPower + 32))) >> 31;
+    static_assert(maxFactorUnderAdditions == 4063232);
+
+    // Tests if the absolute value is at most maxFactorUnderAdditions.
+    bool leavesRoomForAdditions(Node* node)
+    {
+        if (isWithinPowerOfTwo<21>(node))
+            return true;
+
+        auto isConstantBetween = [](Node* constant, double min, double max) {
+            if (!constant->isNumberConstant())
+                return false;
+            double immediate = constant->asNumber();
+            return immediate >= min && immediate <= max;
+        };
+
+        switch (node->op()) {
+        case ArithBitRShift:
+        case ValueBitRShift:
+            // The absolute value of x >> 10 is at most 2^21, while x >>> 10 can be 2^22 - 1.
+            return isWithinPowerOfTwo<22>(node);
+
+        case ValueBitAnd:
+        case ArithBitAnd:
+            // As in isWithinPowerOfTwo, only a mask that is not negative bounds the result.
+            return isConstantBetween(node->child1().node(), 0, maxFactorUnderAdditions)
+                || isConstantBetween(node->child2().node(), 0, maxFactorUnderAdditions);
+
+        default:
+            return isConstantBetween(node, -maxFactorUnderAdditions, maxFactorUnderAdditions) && isInteger(node->asNumber());
+        }
+    }
+
     void propagate(Node* node)
     {
         NodeFlags flags = node->flags() & NodeBytecodeBackPropMask;
@@ -521,9 +559,17 @@ private:
             // itself unless we can prove that there is no way for the values
             // produced to cause double rounding.
             
-            if (!isWithinPowerOfTwo<22>(node->child1().node())
-                && !isWithinPowerOfTwo<22>(node->child2().node()))
-                flags |= NodeBytecodeUsesAsNumber;
+            // An int32 times a value below 2^22 is below 2^53. That is enough when
+            // the product itself is truncated. Only the addition arms ask an operand
+            // that they leave truncated for NaN and Infinity: then the sums on top of
+            // the product are what is truncated, and they have to be exact too.
+            if (!(flags & NodeBytecodeUsesAsNumber)) {
+                bool staysExact = (flags & NodeBytecodeNeedsNaNOrInfinity)
+                    ? leavesRoomForAdditions(node->child1().node()) || leavesRoomForAdditions(node->child2().node())
+                    : isWithinPowerOfTwo<22>(node->child1().node()) || isWithinPowerOfTwo<22>(node->child2().node());
+                if (!staysExact)
+                    flags |= NodeBytecodeUsesAsNumber;
+            }
             
             node->mergeFlags(flags);
             
