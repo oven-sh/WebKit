@@ -111,6 +111,8 @@ public:
     void setColumn(unsigned column) { m_lineColumn.column = column; }
     void setStackFrames(VM& vm, WTF::Vector<JSC::StackFrame>&& stackFrames);
     bool hasMaterializedErrorInfo() const { return m_errorInfoMaterialized; }
+    // The frames VM::onComputeErrorInfo() wrote, for as long as the stack is unread. Null otherwise.
+    String collectedStackString() const { return m_collectedStackFrames ? m_stackString : String(); }
     // The stack is then the error's name and message followed by m_stackString, with no call to VM::onComputeCollectedErrorInfoJSValue().
     void clearCollectedStackFrames();
 
