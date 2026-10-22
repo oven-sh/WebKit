@@ -197,6 +197,16 @@ count(labels, "Kind.inner.B", 1);
 count(labels, "return 11", 1);
 count(labels, "name:", 0);
 
+let object = {
+    labels(s) {
+        switch (s) {
+        case super.kind: return 7;
+        }
+    }
+};
+object.labels(0);
+count(object.labels, "super.kind", 0);
+
 function tests(s, object) {
     switch (s) {
     case object && object.a: return 1;

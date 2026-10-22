@@ -353,7 +353,7 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
-    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
+    // One character early, on whatever is before the expression: the basic block of an arrow
     // function's own code starts at the expression, and two basic blocks with the same range share a counter.
     inline int startOffsetOfBasicBlock(ExpressionNode* node)
     {
@@ -696,13 +696,14 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
 
         void emitProfileControlFlow(int);
-        // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
-        // it is in goes on after it.
+        // For what does not run as often as the text around it: a part of an expression or of the head of a loop, or a
+        // statement that is a part of another. The basic block it is in goes on after it.
         void emitProfileControlFlow(int textOffset, int textEndOffset)
         {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
+        void emitProfileControlFlow(ExpressionNode* node) { emitProfileControlFlow(startOffsetOfBasicBlock(node), node->endOffset()); }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)

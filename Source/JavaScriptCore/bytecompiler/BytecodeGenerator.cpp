@@ -1312,7 +1312,7 @@ void BytecodeGenerator::initializeDefaultParameterValuesAndSetupFunctionScopeSta
             if (parameter.second) {
                 Ref<Label> skipDefaultParameterBecauseNotUndefined = newLabel();
                 emitJumpIfFalse(emitIsUndefined(newTemporary(), temp.get()), skipDefaultParameterBecauseNotUndefined.get());
-                emitProfileControlFlow(startOffsetOfBasicBlock(parameter.second), parameter.second->endOffset());
+                emitProfileControlFlow(parameter.second);
                 emitNode(temp.get(), parameter.second);
                 emitLabel(skipDefaultParameterBecauseNotUndefined.get());
             }
