@@ -6484,8 +6484,10 @@ class YarrGenerator final : public YarrJITInfo {
                 if (term->quantityType == QuantifierType::Greedy) {
                     if (!term->quantityMinCount)
                         m_jit.jump(endOp.m_reentry);
-                    else
-                        m_jit.branch32(MacroAssembler::AboveOrEqual, frameAddress().withOffset((parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex()) * sizeof(void*)), MacroAssembler::Imm32(term->quantityMinCount)).linkTo(endOp.m_reentry, &m_jit);
+                    else {
+                        loadFromFrame(parenthesesFrameLocation + BackTrackInfoParenthesesFixedWidth::matchAmountIndex(), m_regs.regT0);
+                        m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT0, MacroAssembler::Imm32(term->quantityMinCount)).linkTo(endOp.m_reentry, &m_jit);
+                    }
                 }
 
                 // A required iteration failed, or the iteration a non-greedy group was asked for
