@@ -91,6 +91,8 @@ public:
     // With its gaps, a basic block has the text of the basic blocks and of the functions that are in it.
     enum class Gaps : bool { Without, With };
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without) const;
+    // Every BasicBlockLocation stays where it is: code points at it.
+    void clearExecutionCounts();
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 

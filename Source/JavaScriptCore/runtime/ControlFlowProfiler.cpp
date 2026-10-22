@@ -55,6 +55,14 @@ BasicBlockLocation* ControlFlowProfiler::getBasicBlockLocation(SourceID sourceID
     return addResultForBasicBlock.iterator->value;
 }
 
+void ControlFlowProfiler::clearExecutionCounts()
+{
+    for (const BlockLocationCache& cache : m_sourceIDBuckets.values()) {
+        for (BasicBlockLocation* block : cache.values())
+            block->clearExecutionCount();
+    }
+}
+
 void ControlFlowProfiler::dumpData() const
 {
     auto iter = m_sourceIDBuckets.begin();

@@ -88,6 +88,15 @@ void TypeSet::invalidateCache(VM& vm)
     m_structureSet.genericFilter(keepMarkedStructuresFilter);
 }
 
+void TypeSet::clear()
+{
+    ConcurrentJSLocker locker(m_lock);
+    m_isOverflown = false;
+    m_seenTypes = TypeNothing;
+    m_structureHistory.clear();
+    m_structureSet.clear();
+}
+
 String TypeSet::dumpTypes() const
 {
     if (m_seenTypes == TypeNothing)
