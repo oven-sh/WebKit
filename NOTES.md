@@ -333,3 +333,10 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
   on main2 and 14 on new2, so not worse with the PR), nth-anplusb-ident, spawn-stdin-readable-stream, process.hrtime, filesink,
   test-cluster-shared-leak (Windows timeout), node-net (mimalloc page count).
   No push, no retrigger (still unused): a retrigger would throw away 179 passed jobs while the build only waits for macOS x64 agents.
+- 2026-10-22 11:10 UTC: second "CI failed" wake for build 130797. Same cause: the two ":darwin: any x64 - test-bun" jobs expired again (11:05) and
+  were scheduled a third time. EVERY recent build of every branch has these two jobs stuck in "scheduled" (30 builds listed: x64 scheduled,
+  aarch64 passed): there are no macOS x64 test agents right now. Not ours, nothing to fix, no retrigger (unused; it cannot help).
+  Build 130797 otherwise: 179 script jobs passed, no red test, same 7 yellow tests as before.
+  The pushback run 49c2ef2e6e00 is alive and probing (processes: lru-gc.mjs A/B, jsc, /tmp/probe838r4/idle-rss.mjs, bun test marking helper, gh api).
+  Plan when it returns: address its concerns, add the "Self-reviewed" bullet, mark WebKit#838 ready, status comment, then hand off
+  (the bun PR needs WebKit#838 merged and the pin moved to the merged sha before it can merge).
