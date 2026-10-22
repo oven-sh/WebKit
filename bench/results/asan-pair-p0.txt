@@ -1,0 +1,9 @@
+main string-regexp-methods-cross-realm-dfg.js: 157.535 real 67.305 user 14.279 sys
+main string-regexp-methods-cross-realm-dfg.js: exit 0
+pr   string-regexp-methods-cross-realm-dfg.js: 374.256 real 202.454 user 22.861 sys
+pr   string-regexp-methods-cross-realm-dfg.js: exit 0
+main typedarray-construct-from-array-mutated-by-tonumber.js: 540.322 real 201.563 user 76.962 sys
+main typedarray-construct-from-array-mutated-by-tonumber.js: exit 0
+pr   typedarray-construct-from-array-mutated-by-tonumber.js: 574.813 real 286.290 user 46.859 sys
+pr   typedarray-construct-from-array-mutated-by-tonumber.js: exit 0
+DONE

@@ -129,3 +129,18 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
    F 100 MB full GC ms (9 runs): tree main 78.4 wk800 52.8 final 42.4 one 105.1; records 30.5 / 25.7 / 31.3 / 94.9; map 51.5 / 55.6 / 53.0 / 78.6; wide 24.5 / 27.0 / 21.7 / 57.1;
      list 86.9 / 193.4 / 86.6 / 84.4; list 2M: 52.9 / 116.9 / 52.8.
   NEXT: debug-asan jsc probes; PR bodies; mark WebKit#838 ready + new title; open bun PR; status comment; issue comment; self-review.
+- 2026-10-22 00:55 UTC (same turn as the 23:25 entry; the container was NOT reset):
+  bun branch head is now e1161fe5a3 (tests commit amended: 131072 case limits switchesPerCollection 200, collectionsOver2MB 3; comments say "2 times", "3 to 5 (100 to 150 before)", "50 to 80 (200 to 560 before)").
+  With final3: marking tests 5/5 in 6 runs; on main 4 of 5 fail (102-123 vs 30, 300-438 vs 200).
+  ALL TABLES RE-MEASURED WITH final3 (= 618674ce): bench/results/final3-{A,B,C,D,D2,E,F,W,K}.txt (driver bench/final-tables.sh). The host was busy (steal 2.5-4x the CPU
+  the benchmark got), so 8-marker wall-clock numbers are up to 2x slower than in the 22:40 session; context switches and system CPU are the robust signals.
+  D is now measured by bench/churn-phases.mjs (definitions in its header): "in-pause %" = share of marked bytes that are marked while the mutator is stopped.
+  gdb samples of the JS thread (bench/gdb-sample2.sh + gs-classify.mjs, 400 per arm, bench-app 20000 8): main 32 samples = allocation slow path parked on m_markingMutex
+  (Collector::runConcurrentPhase -> SlotVisitor::didReachTermination), PR 0. In pauses: main 55 samples in a lock or a wake-up call, PR 13 (12 in requestThread).
+  => the mutator allocates 1.5x faster while a cycle marks (0.62 vs 0.40 MB/ms), uses up the headroom in 78% vs 27% of collections, peak RSS 798-814 vs 678-706 MB.
+  Debug+ASAN sample (every 40th JSTests/stress test, 151 tests, 3 modes): no crash, no assertion, no ASAN report. Timeouts at 180 s: 2 tests loop forever without their
+  --watchdog option; has-own-property-name-cache-symbol-keys (main 379 s, PR 192 s), regress-158411 (main 54-426 s, PR 121-284 s),
+  string-regexp-methods-cross-realm-dfg (cc+verifyGC: main 157 s, PR option 0 374 s), typedarray-construct-from-array-mutated-by-tonumber (main 540 s, PR option 0 575 s).
+  Drafts: bench/wk838-body-draft.md, bench/bun-pr-body-draft.md (placeholders PRICE_SWEEP, ASAN_SAMPLE_TIMEOUTS, SWITCHES_MAIN).
+  NEXT: asan-trio result (is option 0 slow in collectContinuously?), price sweep (bench/price-sweep.sh final3 final3), PATCH WebKit#838 (title, body, ready),
+  open bun PR (base robobun/6d0d11d3/lazy-parallel-markers), status comment, issue comment, pushback self-review on oven-sh/WebKit#838, wrap-up.
