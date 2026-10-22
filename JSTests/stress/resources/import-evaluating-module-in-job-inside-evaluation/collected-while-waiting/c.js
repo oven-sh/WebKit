@@ -1,0 +1,2 @@
+fullGC();
+log.push("c");

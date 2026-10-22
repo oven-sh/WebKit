@@ -46,6 +46,7 @@
 #include "ControlFlowProfiler.h"
 #include "CrossTaskToken.h"
 #include "CustomGetterSetterInlines.h"
+#include "CyclicModuleRecord.h"
 #include "DOMAttributeGetterSetterInlines.h"
 #include "DateInstance.h"
 #include "Debugger.h"
@@ -2182,6 +2183,10 @@ void VM::visitAggregateImpl(Visitor& visitor)
             visitor.appendUnbarriered(t.arg2);
             visitor.appendUnbarriered(t.arg3);
         }
+    }
+    for (auto& [module, promise] : m_moduleEvaluationWaiters) {
+        visitor.appendUnbarriered(module);
+        visitor.appendUnbarriered(promise);
     }
 #endif
     numericStrings.visitAggregate(visitor);

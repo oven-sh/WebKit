@@ -116,6 +116,9 @@ class CompactTDZEnvironmentMap;
 class ConservativeRoots;
 class ControlFlowProfiler;
 class CrossTaskToken;
+#if USE(BUN_JSC_ADDITIONS)
+class CyclicModuleRecord;
+#endif
 class Exception;
 class ExceptionScope;
 class FuzzerAgent;
@@ -1492,6 +1495,11 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+
+    // The promise that an Evaluate() of a module record returned while the record was on the stack of another
+    // Evaluate() (CyclicModuleRecord::evaluationWaiter). That other Evaluate() takes the promise out when it takes
+    // the record off its stack. VM::visitAggregateImpl marks the records and the promises.
+    UncheckedKeyHashMap<CyclicModuleRecord*, JSPromise*> m_moduleEvaluationWaiters;
 private:
 #endif
 

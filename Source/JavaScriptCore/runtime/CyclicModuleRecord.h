@@ -90,6 +90,16 @@ public:
     void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // For the Evaluate() that takes records off its stack, when VM::m_moduleEvaluationWaiters is not empty (see
+    // evaluationWaiter()). Step 16 of InnerModuleEvaluation calls the first one for the root of a cycle before it
+    // pops the cycle, which is the end of `stack` from that root on, and the second one after the pop if the first
+    // one returned true. Step 9.a of Evaluate() calls the third one for each record that it gives the error to.
+    bool adoptEvaluationWaiters(VM&, const Vector<AbstractModuleRecord*, 8>& stack);
+    void settleAdoptedEvaluationWaiter(VM&);
+    void rejectEvaluationWaiter(VM&);
+#endif
+
 protected:
     CyclicModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
@@ -98,6 +108,12 @@ protected:
     unsigned m_dfsAncestorIndex { 0 };
     Status m_status { Status::New };
     bool m_initialized { false };
+
+#if USE(BUN_JSC_ADDITIONS)
+private:
+    JSPromise* evaluationWaiter(JSGlobalObject*);
+    bool adoptEvaluationWaiter(VM&, JSPromise*);
+#endif
 };
 
 } // namespace JSC
