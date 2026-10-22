@@ -3,7 +3,8 @@
 arm=$1; tag=$2
 url=https://github.com/oven-sh/WebKit/releases/download/$tag/bun-webkit-linux-amd64-lto.tar.gz
 for i in $(seq 1 200); do
-  code=$(curl -sIL -o /dev/null -w '%{http_code}' "$url")
+  # A HEAD request gets 401 from the asset host, so ask for the first bytes.
+  code=$(curl -sL -r 0-99 -o /dev/null -w '%{http_code}' "$url"); [ "$code" = 206 ] && code=200
   [ "$code" = 200 ] && break
   sleep 30
 done

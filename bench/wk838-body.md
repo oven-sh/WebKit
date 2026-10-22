@@ -1,27 +1,27 @@
-Related to oven-sh/bun#44893. Stacked on #800.
+Related to oven-sh/bun#44893. The first commit is #800.
 
 ### Problem
 - An LRU cache collection marks 1 to 10 MB with about 220 thread wake-ups. One marker is twice as fast. Each donation (`SlotVisitor::donateKnownParallel`) wakes every parked helper under `m_markingMutex`. #800 covers collections under 1 MB.
-- With #800 a long linked list takes 120 ms, not 54: `drain` reads the clock per cell.
+- With #800 a long list takes 120 ms, not 54: `drain` reads the clock per cell.
 
 ### Fix
 - Marking pays for wake-ups: one per 2 MB a visitor visits (`minimumBytesMarkedForParallelMarking`). A donation wakes what is paid for, with the lock released.
 - No helper parks. An idle one polls for 50 µs, then leaves. `ParallelHelperClient::requestThread` brings one back.
-- A cycle stays in its pause until the first payment. `drain` reads the clock once per 100 cells. Option 0 keeps the upstream protocol.
-- Verified: the issue's program (60,056 to 821 context switches, 2.53 to 0.15 s system CPU), JSTests on CI, Bun's GC tests.
+- A cycle stays in its pause until the first payment. `drain` reads the clock once per 100 cells. Option 0 and `collectContinuously` keep the upstream protocol.
+- Verified: the issue's program (60,056 to 821 context switches, 2.53 to 0.15 s system CPU), JSTests, Bun's GC tests.
 
 ### Background
 - Helpers are `ParallelHelperPool` threads that steal from shared mark stacks. On main all join each cycle and park when idle.
 - Considered a higher #800 threshold: wide 10 MB collections then mark on one thread.
 
 ### Downsides
-- Peak RSS grows 10 to 20% in a GC-bound churn (798 MB against 706, 125 MB live). The JS thread no longer waits for the marking lock and allocates 1.5 times faster during a cycle.
+- Peak RSS grows 10 to 20% in a GC-bound churn (798 MB against 706). The JS thread no longer waits for the marking lock and allocates 1.5 times faster during a cycle.
 - Wide collections get fewer helpers: 1 of 7 at 3 MB marked, 6 at 54 MB.
 - Measured on one busy KVM guest. With cheap futex wakes, helpers that start later can be a net loss.
 
 <details><summary>Notes</summary>
 
-**The base branch** is the branch of #800, so the diff here is on top of it. This change replaces most of what #800 adds to the Collector (the start of all helpers at 1 MB, the hook in the stochastic scheduler). It keeps the option, the GC log format and the tests. If #800 is not wanted by itself, this branch contains it.
+**Two commits.** The first one is #800, unchanged. The second one is this change. It replaces most of what #800 adds to the Collector (the start of all helpers at 1 MB, the hook in the stochastic scheduler). It keeps the option, the GC log format and the tests. The branch is on `d6375c72`, the commit that Bun pins: Bun's CI does not build a branch that is far behind its main. If #800 merges first, a rebase drops the first commit.
 
 **How a wake-up is paid for.**
 - `SlotVisitor::drain` checks once per 100 cells if the visitor has visited 2 MB more (`payForMarkerWakeupIfNeeded`). If so, `Collector::didPayForMarkerWakeup` adds one to `m_numberOfMarkerWakeupsPaidFor`.
@@ -30,17 +30,19 @@ Related to oven-sh/bun#44893. Stacked on #800.
 - A marker that was woken pays after an eighth of the price (`didWakeUpForMarking`). So a graph that gives each new marker work has all markers after about 2 MB more. A linked list, where a woken marker finds a cell or two, gets one wake-up per 2 MB.
 - One wake-up needs no payment. A thread that stops marking while the mutator runs wakes one marker if none is at work or on its way (`chooseMarkerToWakeIfNoneIsMarking`). The callers are the resume of the mutator, `donateAll` and `drainInParallelPassively`.
 
-**The option at 0** keeps the upstream protocol (`Collector::helpersJoinEveryCycle`): the helpers join every cycle at its start, park in it, and every donation wakes all of them. `SlotVisitor::drainFromShared` keeps its upstream body for that, and calls `drainFromSharedWithHelpersOnRequest` otherwise. It is the way back if this change hurts a workload. Bun's tests for marking races also use it, to have a small heap marked by several threads at once. An earlier revision let 0 mean that no wake-up needs a payment. A 100 MB tree then took 309 ms to collect, against 176 on main: each helper that ran dry left and was asked for again.
+**The option at 0, and `collectContinuously`,** keep the upstream protocol (`Collector::helpersJoinEveryCycle`): the helpers join every cycle at its start, park in it, and every donation wakes all of them. `SlotVisitor::drainFromShared` keeps its upstream body for that, and calls `drainFromSharedWithHelpersOnRequest` otherwise.
+- The option at 0 is the way back if this change hurts a workload. Bun's tests for marking races use it, to have a small heap marked by several threads at once. An earlier revision let 0 mean that no wake-up needs a payment. A 100 MB tree then took 309 ms to collect, against 176 on main: each helper that ran dry left and was asked for again.
+- `collectContinuously` is there to have marking threads overlap the mutator. With the new protocol a collection of a small heap is one pause, also in that mode: 1.13 stops per collection against 1.85 on main in `stress/string-regexp-methods-cross-realm-dfg.js`. That takes the overlap away from the collect-continuously mode of JSTests and from the 24 test files of Bun that use the option. So that mode keeps the protocol it had.
 
-**A small collection** (`Collector::isSmallSoFar`). Until the first payment or the first resume, the conductor's visitor shares nothing, and `runFixpointPhase` keeps the mutator stopped: each time the scheduler wants to resume, the cycle marks for `minimumGCPauseMS` more. #800 did this in the stochastic scheduler only. Here every scheduler gets it. It is off with one marker, with `collectContinuously`, and with `minimumGCPauseMS=0` (there the cycle would not mark at all, `stress/array-unshift-moved-cell-barrier.js` found it).
+**A small collection** (`Collector::isSmallSoFar`). Until the first payment or the first resume, the conductor's visitor shares nothing, and `runFixpointPhase` keeps the mutator stopped: each time the scheduler wants to resume, the cycle marks for `minimumGCPauseMS` more. #800 did this in the stochastic scheduler only. Here every scheduler gets it. It is off with one marker, with the upstream protocol, and with `minimumGCPauseMS=0` (there the cycle would not mark at all, `stress/array-unshift-moved-cell-barrier.js` found it).
 
 **An idle helper.** `drainFromShared(HelperDrain)` does not wait on `m_markingConditionVariable`. A helper with no shared cell and no task looks at the shared stacks without the lock for up to `gcMarkerPollMS` (50 µs) if another marker is at work (`pollSharedMarkStacks`). Then it leaves `runMarkingHelper`. It polls again only after it has marked something. The thread in `MainDrain` polls the same way before it parks. So a `notifyAll` on that condition wakes the conductor at most. The poll reads `MarkStackArray::size()`, as `donateKnownParallel` already does without the lock. It must not read `isEmpty()`, which follows the head segment.
 
 **The pool.** `ParallelHelperClient::setTaskOnRequest` sets a task that no pool thread runs until `requestThread` asks for one. The Collector sets it at the first request of a cycle. A collection that asks for nobody does not take the pool's lock, and `runEndPhase` calls `finish()` only if the task was set.
 
-**Cost for a collection that never shares.** Disassembly of `SlotVisitor::drain` in LTO builds of Bun, main against this PR: the loop that visits one cell has the same 55 instructions. The two lock-free checks of `donateKnownParallel` are inline in `drain` in both (12 and 5 to 6 instructions). Per round of up to 100 cells the PR adds 15 instructions after the loop and 8 for the payment check. The text of the Bun binary grows by 4,416 bytes (106,754,509 to 106,758,925). `SlotVisitor` grows by 16 bytes, `Collector` by about 32, `ParallelHelperClient` by 8 (by reading, not measured).
+**Cost for a collection that never shares.** Disassembly of `SlotVisitor::drain` in LTO builds of Bun, main against this PR: the loop that visits one cell has the same 55 instructions. The two lock-free checks of `donateKnownParallel` are inline in `drain` in both (12 and 5 to 6 instructions). Per round of up to 100 cells the PR adds 15 instructions after the loop and 8 for the payment check (measured with `618674ce`; the head checks one value less there). The text of the Bun binary grows by 4,416 bytes (106,754,509 to 106,758,925). `SlotVisitor` grows by 16 bytes, `Collector` by about 32, `ParallelHelperClient` by 8 (by reading, not measured).
 
-**Measurements.** LTO builds of Bun (`590035462`) with WebKit main (`87ee10da`), the preview of #800 (`2cacac75`) and this PR (`618674ce`). Linux x64 KVM guest, 12 vCPUs, 8 GC markers. Fresh processes, arms interleaved, medians. The host was busy: in a sample, steal time was 2.5 to 4 times the CPU time that the benchmark got. So the context switch counts and the system CPU time are the signals to trust. The wall-clock numbers of the arms with 8 markers move by up to 2 times between sessions.
+**Measurements.** LTO builds of Bun (`590035462`) with WebKit `87ee10da` (main on Oct 16), the preview of #800 (`2cacac75`) and an earlier head of this PR (`618674ce`). Since that head the branch was rebased, the option at 0 and `collectContinuously` got the upstream protocol, and the payment check lost a load. The new protocol is the same code. Linux x64 KVM guest, 12 vCPUs, 8 GC markers. Fresh processes, arms interleaved, medians. The host was busy: in a sample, steal time was 2.5 to 4 times the CPU time that the benchmark got. So the context switch counts and the system CPU time are the signals to trust. The wall-clock numbers of the arms with 8 markers move by up to 2 times between sessions.
 
 The program of oven-sh/bun#44893 (`lru-gc.mjs 500`, 4,096 entries), 7 runs:
 
@@ -124,7 +126,7 @@ Four workers that each run the program of the issue: 412.6 ns/op and 6,500 conte
 
 The linked programs get faster up to 4 MB. The wide collections get slower above 2 MB. The peak RSS of the large churn is 798 to 835 MB at each of these prices, so the price does not cause it.
 
-**`collectContinuously`.** A collection of a small heap is one pause now, also in this mode, so more collections run per second. On a release `jsc` three sampled stress tests run 4 to 7 times faster in this mode (0.6 s against 3.7 to 5.2 s for `has-own-property-name-cache-symbol-keys.js`). On a Debug+ASAN `jsc` with `verifyGC`, where each collection has a fixed pause, `string-regexp-methods-cross-realm-dfg.js` takes 388 to 415 s against 279 to 320 s on main: 2,756 collections in 100 s against 1,527, with 1.13 stops per collection against 1.85.
+**`collectContinuously` with the new protocol** (the earlier head `618674ce`, where that mode did not select the upstream protocol). On a release `jsc` three sampled stress tests ran 4 to 7 times faster in that mode (0.6 s against 3.7 to 5.2 s for `has-own-property-name-cache-symbol-keys.js`). On a Debug+ASAN `jsc` with `verifyGC`, where each collection has a fixed pause, `string-regexp-methods-cross-realm-dfg.js` took 388 to 415 s against 279 to 320 s on main: 2,756 collections in 100 s against 1,527.
 
 **Where the wake-ups were.** Counters in a build of #800, per collection of the issue's program: 0.9 starts of all helpers, 3.3 constraint solver tasks (13.8 sleepers woken), 32.8 donations (146.5 sleepers woken), 1.4 `donateAll` (7.3), 6.9 termination notices from helpers (41.9), 1 end of cycle (6.1). A wake-up of a thread that sleeps in a futex costs the waker 44 µs on this guest (median of 2000).
 
@@ -133,9 +135,9 @@ The linked programs get faster up to 4 MB. The wide collections get slower above
 **Thread safety.** The lock order is `m_markingMutex`, then the pool's lock (`setTaskOnRequest` in `chooseMarkersToWake`). `wakeMarkers` takes the pool's lock alone. `m_numberOfActiveParallelMarkers` is atomic: the poll reads it without the lock, and every write is under the lock. `finish()` clears the task and its open requests and waits for the threads that run it, so no helper runs across the end of a cycle. A thread that was asked for and comes after the cycle ended finds no task to claim. If `requestThread` returns false, `wakeMarkers` takes the request back from `m_numberOfRequestedParallelMarkers`. #824 makes `AutomaticThreadCondition::notifyOne` report a thread that did not start. `requestThread` can return that when both changes are in.
 
 **Tests.**
-- CI of this pull request: every lane builds, and the JSTests jobs pass on Linux x64 and arm64.
+- CI: every lane builds, and the JSTests jobs pass on Linux x64 and arm64 (the earlier head `618674ce`; the run for the current head has not finished).
 - Locally, every `JSTests/stress` test with the release `jsc`, in the default mode and with `collectContinuously`: no timeout that main does not have.
-- The Debug+ASAN `jsc` of this PR at 8 markers: every 40th `JSTests/stress` test (151 tests) in three modes. The modes are `collectContinuously` with `verifyGC` and no generational GC, `collectContinuously` with `verifyGC` and the option at 0, and the defaults. No assertion and no ASAN report. 11 of the 453 runs reach the limit of 180 s: 2 tests loop without their `--watchdog` option, and 4 tests take 2 to 10 minutes in these modes on main too.
+- The Debug+ASAN `jsc` of `618674ce` at 8 markers: every 40th `JSTests/stress` test (151 tests) in three modes. The modes are `collectContinuously` with `verifyGC` and no generational GC, `collectContinuously` with `verifyGC` and the option at 0, and the defaults. No assertion and no ASAN report. 11 of the 453 runs reach the limit of 180 s: 2 tests loop without their `--watchdog` option, and 4 tests take 2 to 10 minutes in these modes on main too.
 - The same `jsc` on an LRU program and a wide program with 14 sets of options (1, 2 and 8 markers, the option at 0 and at 64 KB, `collectContinuously` with `verifyGC`, no concurrent GC, the space-time scheduler, `gcIncrementScale=1`, `minimumGCPauseMS=0`, `gcMarkerPollMS=0`, `slowPathAllocsBetweenGCs`): no assertion and no ASAN report.
 - Bun with this build: `test/js/bun/gc/gc-controller-cadence.test.ts` (the three tests of oven-sh/bun#45568 and two new ones, which fail on main), `abort-controller-gc-reason.test.ts`, `broadcast-channel-worker-gc.test.ts`, `dynamic-import-evaluation-error-gc.test.ts`, `module-children-concurrent-gc.test.ts`.
 
@@ -144,3 +146,4 @@ The linked programs get faster up to 4 MB. The wide collections get slower above
 - The design asked for the RSS of the large churn to stay where it is on main. It does not (table above).
 
 </details>
+

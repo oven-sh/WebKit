@@ -1,0 +1,17 @@
+ 5 pass  0 fail 
+ 5 pass  0 fail 
+ 5 pass  0 fail 
+--- main arm:
+Expected: < 20 Received: 75.83333333333333 Expected: < 50 Received: 127.27272727272727  1 pass  4 fail 
+test/js/bun/gc/gc-controller-cadence.test.ts: (fail) idle release lets FTL code age out > the idle collections drop the warmed-up code [5000.12ms] (fail) idle release lets FTL code age out > collections the program forces itself do not [5040.12ms] (fail) Bun.gc(true) returns what is free to the OS while the purge thread is at work [5013.79ms]  20 pass  3 fail 
+test/js/web/abort/abort-controller-gc-reason.test.ts:  6 pass  0 fail 
+test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts:  4 pass  0 fail 
+test/js/bun/resolve/dynamic-import-evaluation-error-gc.test.ts:  1 pass  0 fail 
+test/js/node/vm/sourcetextmodule-link-gc.test.ts:  3 pass  0 fail 
+test/js/node/zlib/zlib-estimated-size-gc.test.ts:  6 pass  0 fail 
+test/js/node/module/module-children-concurrent-gc.test.ts:  1 pass  0 fail 
+test/js/node/module/esm-registry-concurrent-gc.test.ts:  1 pass  0 fail 
+test/regression/issue/29519.test.ts:  2 pass  0 fail 
+test/regression/issue/30205.test.ts:  4 pass  0 fail 
+test/js/bun/gc/error-stack-finalizer-exception.test.ts:  3 pass  0 fail 
+test/js/web/broadcastchannel/message-event-init-gc.test.ts:  1 pass  0 fail 

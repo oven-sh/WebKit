@@ -179,3 +179,19 @@ Peak RSS 101 MB churn: main 540, #800 533, old #838 676, one marker 610. Wide ed
     update both PR bodies (the stack is no longer stacked; bun PR contains #45568's tests), reply to the 4 review threads and resolve them.
   * Local builds: /workspace/bun-ab2 = bun main worktree; bench/build-arm2.sh <arm> <webkit> builds bun main arms (main2 = d6375c72 building now).
   * Pushback run 49c2ef2e6e00 still running (broadcast sent about the rebase).
+- 2026-10-22 04:20 UTC: SHIPPED STATE.
+  * WebKit#838: head 0b2110fe90 (= 1c8b23b5 re-committed to trigger CI), base main, 2 commits, ALL 52 CHECKS GREEN (JSTests included). Still DRAFT
+    (waiting for the pushback result). Preview: autobuild-preview-pr-838-0b2110fe (published 03:03 UTC).
+    NOTE: `curl -I` (HEAD) on a release asset gives 401; probe with `curl -r 0-99` (206). wait-build*.sh fixed.
+    NOTE: a push while the PR had conflicts with its base started no CI run; a base change does not start one either: push again (amend) after the base change.
+  * bun#46432: base main, head e9c994d6a6 = main 2a5cbbcb08 + 3 test commits of #45568 + my test commit 688413370b + pin commit (preview 0b2110fe).
+    Body updated (bench/bun-pr-body.md). The 4 claude[bot] review threads are answered and resolved. Issue comment posted:
+    https://github.com/oven-sh/bun/issues/44893#issuecomment-6332554058
+  * Final build verified locally: arms /workspace/bins/main2 (bun main + d6375c72) and /workspace/bins/new2 (bun main + preview 0b2110fe), results bench/results/v2-*.txt:
+    marking tests 5/5 x3 (main2: 4 fail, 76 vs 20 and 127 vs 50); abort-controller 6/6, broadcast-channel 4/4, dynamic-import 1/1, sourcetextmodule 3/3, zlib 6/6,
+    module-children 1/1, esm-registry 1/1, 29519 2/2, 30205 4/4, error-stack-finalizer 3/3, message-event-init-gc 1/1. The "idle release lets FTL code age out"
+    tests of gc-controller-cadence time out at 5 s on BOTH arms when the machine is loaded (not related).
+    Under load (ASAN sample + review agents running): repro main 30,006 vcs / 1.84 s sys; new 855 / 0.38; new option 0: 32,162 / 2.02 (= main, upstream protocol);
+    new cc 119,649 vs main cc 88,878; tree 100 MB: main 62.9 ms (13,670 vcs), new 44.8 (1,013), option 0 50.5 (24,056); churn RSS main 765, new 807, option 0 743.
+  * ASAN sample of the final head runs in the background: /tmp/asan2-{default,price1,sync,cc,p0}.txt and /tmp/asan2-probes.txt (jsc /workspace/dl/wk-new2-asan).
+  * TODO: ASAN results -> WebKit body; objdump main2 vs new2 (drain); pushback result -> address; mark WebKit#838 ready; wrap-up; delete scratch + wip branches at the very end.
