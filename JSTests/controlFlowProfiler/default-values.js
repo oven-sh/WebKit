@@ -90,7 +90,7 @@ arrowFunction();
 arrowFunction();
 assert(basicBlockExecutionCount(testArrowFunctionInAPattern, "foo()") === 2, "the arrow function ran twice");
 
-// No basic block in the test of a `case`: its text belongs to the clause.
+// The test of a `case` runs when it is compared, and its clause when it matches.
 function testCaseTest(o) {
     let a;
     switch (2) {
@@ -98,7 +98,7 @@ function testCaseTest(o) {
     }
 }
 testCaseTest({ });
-checkBasicBlock(testCaseTest, "foo(1)", ShouldNotHaveExecuted);
+checkBasicBlock(testCaseTest, "foo(1)", ShouldHaveExecuted);
 checkBasicBlock(testCaseTest, "foo(2)", ShouldNotHaveExecuted);
 
 function testCount(a = foo()) {

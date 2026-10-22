@@ -703,15 +703,6 @@ namespace JSC {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 emitProfileControlFlowSlow(textOffset, textEndOffset);
         }
-        // For what `?.`, a logical assignment or a default value can skip. The text of the test of a `case` is in the basic
-        // block of its clause, where a basic block of its own would mark a part of a clause that did not run as executed.
-        // `&&`, `||`, `??` and `?:` have theirs there.
-        void emitProfileControlFlowOutsideOfCaseTest(int textOffset, int textEndOffset)
-        {
-            if (!m_isInCaseTest)
-                emitProfileControlFlow(textOffset, textEndOffset);
-        }
-        bool& isInCaseTest() { return m_isInCaseTest; }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -1476,7 +1467,6 @@ namespace JSC {
         int m_nextConstantOffset { 0 };
         int m_statementsEndOffset { 0 };
         StatementNode* m_lastStatementWithProfileControlFlowAfter { nullptr };
-        bool m_isInCaseTest { false };
         
         // Constant pool
         IdentifierMap m_identifierMap;

@@ -932,6 +932,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseWhileStatemen
     semanticFailIfTrue(match(CLOSEPAREN), "Must provide an expression as a while loop condition");
     TreeExpression expr = parseExpression(context);
     failIfFalse(expr, "Unable to parse while loop condition");
+    context.setEndOffset(expr, m_lastTokenLocation.endOffset);
     recordPauseLocation(context.breakpointLocation(expr));
     handleProductionOrFail(CLOSEPAREN, ")", "end", "while loop condition");
 
@@ -1679,6 +1680,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         if (!match(SEMICOLON)) {
             condition = parseExpression(context);
             failIfFalse(condition, "Cannot parse for loop condition expression");
+            context.setEndOffset(condition, m_lastTokenLocation.endOffset);
             recordPauseLocation(context.breakpointLocation(condition));
         }
         consumeOrFail(SEMICOLON, "Expected a ';' after the for loop condition expression");
@@ -1687,6 +1689,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         if (!match(CLOSEPAREN)) {
             increment = parseExpression(context);
             failIfFalse(increment, "Cannot parse for loop iteration expression");
+            context.setEndOffset(increment, m_lastTokenLocation.endOffset);
             recordPauseLocation(context.breakpointLocation(increment));
         }
         handleProductionOrFail(CLOSEPAREN, ")", "end", "for-loop header");
@@ -1922,6 +1925,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
     next();
     TreeExpression condition = parseExpression(context);
     failIfFalse(condition, "Cannot parse switch clause");
+    context.setEndOffset(condition, m_lastTokenLocation.endOffset);
     consumeOrFail(COLON, "Expected a ':' after switch clause expression");
     TreeSourceElements statements = parseSourceElements(context, DontCheckForStrictMode);
     failIfFalse(statements, "Cannot parse the body of a switch clause");
@@ -1936,6 +1940,7 @@ template <class TreeBuilder> TreeClauseList Parser<LexerType>::parseSwitchClause
         next();
         TreeExpression condition = parseExpression(context);
         failIfFalse(condition, "Cannot parse switch case expression");
+        context.setEndOffset(condition, m_lastTokenLocation.endOffset);
         consumeOrFail(COLON, "Expected a ':' after switch clause expression");
         TreeSourceElements statements = parseSourceElements(context, DontCheckForStrictMode);
         failIfFalse(statements, "Cannot parse the body of a switch clause");

@@ -6115,7 +6115,7 @@ void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int textOffset)
     ASSERT(m_optionalChainTargetStack.size());
     auto& target = m_optionalChainTargetStack.last();
     emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), target.label.get());
-    emitProfileControlFlowOutsideOfCaseTest(textOffset, target.textEndOffset);
+    emitProfileControlFlow(textOffset, target.textEndOffset);
 }
 
 template <typename OldOpType, typename NewOpType, typename TupleType>
