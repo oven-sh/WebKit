@@ -60,6 +60,7 @@
 #include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSFunctionWithFields.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
@@ -501,12 +502,68 @@ static ALWAYS_INLINE BytecodeIndex bytecodeIndexOfSuspendedBody(CodeBlock* codeB
     return bytecodeIndex;
 }
 
-// The async frames of what waits for the promise to settle: the async functions, and the module whose top-level
-// await ends the chain.
-void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise* start, size_t maxStackSize)
+// The async function that resumes at the end of the links, each of which settles the next, or the module in awaitingModule.
+static NEVER_INLINE JSAsyncFunctionGenerator* awaitingGeneratorSlow(AsyncStackTraceLink link, JSModuleRecord*& awaitingModule, AsyncStackTraceRule rule)
+{
+    // A link from a promise to the promise that it settles adds no frame, so the size of the trace does not bound the
+    // links. Promises that settle each other in a circle have no end. A serial queue (`tail = tail.then(job)`) is a
+    // chain as long as the queue, and each Error that a job makes walks it: the limit keeps that walk to a few times
+    // the cost of the Error. It counts the links from one async function to the next, not those of the trace: the
+    // answer for a promise must not depend on what the walk did before (walkAwaitChain asks again in a cycle).
+    static constexpr unsigned maxLinksWithoutFrame = 64;
+
+    for (unsigned links = 0; links < maxLinksWithoutFrame; ++links) {
+        switch (link.kind) {
+        case AsyncStackTraceLinkKind::AsyncFunction:
+            return uncheckedDowncast<JSAsyncFunctionGenerator>(link.cell);
+        case AsyncStackTraceLinkKind::Module:
+            awaitingModule = uncheckedDowncast<JSModuleRecord>(link.cell);
+            return nullptr;
+        case AsyncStackTraceLinkKind::AsyncGenerator:
+            link = JSPromise::asyncStackTraceLinkForEntryContext(link.cell);
+            continue;
+        case AsyncStackTraceLinkKind::Promise:
+            // As in V8, which follows no promise that has more than one reaction. An await and an element of
+            // Promise.all, allSettled, any or race keep the rule they had: the newest reaction counts.
+            if (!link.isOnlyReaction && rule == AsyncStackTraceRule::Script)
+                return nullptr;
+            [[fallthrough]];
+        case AsyncStackTraceLinkKind::Combinator:
+            link = uncheckedDowncast<JSPromise>(link.cell)->asyncStackTraceLink(rule);
+            continue;
+        case AsyncStackTraceLinkKind::None:
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+
+static ALWAYS_INLINE JSAsyncFunctionGenerator* awaitingGenerator(AsyncStackTraceLink link, JSModuleRecord*& awaitingModule, AsyncStackTraceRule rule)
+{
+    if (link.kind == AsyncStackTraceLinkKind::AsyncFunction) [[likely]]
+        return uncheckedDowncast<JSAsyncFunctionGenerator>(link.cell);
+    if (link.kind == AsyncStackTraceLinkKind::None)
+        return nullptr;
+    // `await Promise.all([...])` and the like: one combinator, and the async function that awaits it.
+    if (link.kind == AsyncStackTraceLinkKind::Combinator) {
+        link = uncheckedDowncast<JSPromise>(link.cell)->asyncStackTraceLink(rule);
+        if (link.kind == AsyncStackTraceLinkKind::AsyncFunction) [[likely]]
+            return uncheckedDowncast<JSAsyncFunctionGenerator>(link.cell);
+    }
+    return awaitingGeneratorSlow(link, awaitingModule, rule);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSPromise* promise, size_t maxStackSize)
+{
+    ASSERT(promise);
+    getAsyncStackTrace(owner, results, AsyncStackTraceLink { promise, AsyncStackTraceLinkKind::Promise }, maxStackSize, AsyncStackTraceRule::NativeRejection);
+}
+#endif
+
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, AsyncStackTraceLink start, size_t maxStackSize, AsyncStackTraceRule rule)
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
-    ASSERT(start);
 
     AssertNoGC assertNoGC;
 
@@ -515,75 +572,22 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     // The module whose top-level await is the end of the chain.
     JSModuleRecord* awaitingModule = nullptr;
 
-    auto getContextValueFromPromise = [&](JSPromise* promise) -> JSValue {
-        if (!promise)
-            return { };
-        JSValue context = promise->asyncStackTraceContext();
-#if USE(BUN_JSC_ADDITIONS)
-        // JSPromise::resolveWithInternalMicrotaskForAsyncAwait stores
-        // InternalFieldTuple(context, asyncContext) when ALS is active.
-        if (context) {
-            if (auto* tuple = dynamicDowncast<InternalFieldTuple>(context))
-                return tuple->getInternalField(0);
-        }
-#endif
-        return context;
-    };
-
-    // The context of a reaction that is not the await of an async function: a module that awaits at its top level
-    // ends the chain.
-    auto noteAwaitingModule = [&](JSValue context) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
-        if (auto* module = dynamicDowncast<JSModuleRecord>(context))
-            awaitingModule = module;
-        return nullptr;
-    };
-
-    // The async function that awaits the promise, directly or through one combinator.
-    auto awaitingGenerator = [&](JSPromise* awaitedPromise) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
-        JSValue promiseContext = getContextValueFromPromise(awaitedPromise);
-
-        if (!promiseContext)
-            return nullptr;
-
-        // handle simple `await`
-        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
-            return generator;
-
-        // handle `Promise.all`, `Promise.allSettled`, and `Promise.any`
-        if (auto* globalContext = dynamicDowncast<JSPromiseCombinatorsGlobalContext>(promiseContext)) {
-            JSValue promiseValue = globalContext->promise();
-            ASSERT(promiseValue);
-            if (auto* promise = dynamicDowncast<JSPromise>(promiseValue)) {
-                if (JSValue promiseContext = getContextValueFromPromise(promise)) {
-                    if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(promiseContext))
-                        return generator;
-                    return noteAwaitingModule(promiseContext);
-                }
-            }
-            return nullptr;
-        }
-
-        // handle and `Promise.race`
-        if (auto* contextPromise = dynamicDowncast<JSPromise>(promiseContext)) {
-            if (JSValue parentContext = getContextValueFromPromise(contextPromise)) {
-                if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(parentContext))
-                    return generator;
-                return noteAwaitingModule(parentContext);
-            }
-            return nullptr;
-        }
-
-        return noteAwaitingModule(promiseContext);
-    };
-
-    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* generator) ALWAYS_INLINE_LAMBDA -> JSAsyncFunctionGenerator* {
         // What waits for the promise of the async function.
-        JSValue generatorContext = gen->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
-        ASSERT(generatorContext);
-        return awaitingGenerator(dynamicDowncast<JSPromise>(generatorContext));
+        JSValue promiseValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
+        ASSERT(promiseValue);
+        auto* promise = dynamicDowncast<JSPromise>(promiseValue);
+        if (!promise)
+            return nullptr;
+        return awaitingGenerator(promise->asyncStackTraceLink(rule), awaitingModule, rule);
     };
 
-    walkAwaitChain(owner, results, awaitingGenerator(start), maxStackSize, getParentGenerator);
+    // The start is a promise, and what waits for it is the first frame. The exception is the job that calls the
+    // then() of a thenable which an async function or a module awaits: that function or module is the first frame.
+    JSAsyncFunctionGenerator* firstGenerator = start.kind == AsyncStackTraceLinkKind::Promise
+        ? awaitingGenerator(uncheckedDowncast<JSPromise>(start.cell)->asyncStackTraceLink(rule), awaitingModule, rule)
+        : awaitingGenerator(start, awaitingModule, rule);
+    walkAwaitChain(owner, results, firstGenerator, maxStackSize, getParentGenerator);
 
     if (!awaitingModule || results.size() >= maxStackSize)
         return;
@@ -599,13 +603,6 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     else
         results.append(StackFrame(vm, owner, awaitingModule, /* isAsyncFrame */ true));
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-void Interpreter::appendAsyncStackFrames(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* firstGenerator, size_t maxStackSize, const ScopedLambda<JSAsyncFunctionGenerator*(JSAsyncFunctionGenerator*)>& getParentGenerator)
-{
-    walkAwaitChain(owner, results, firstGenerator, maxStackSize, getParentGenerator);
-}
-#endif
 
 template<typename GetParentGenerator>
 void Interpreter::walkAwaitChain(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* currentGenerator, size_t maxStackSize, const GetParentGenerator& getParentGenerator)
@@ -745,9 +742,9 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 
     bool foundCaller = !caller;
     // The VM entries on the stack that run a job. The context of such an entry says what the job settles: it is the
-    // generator of a resumed async function, or the promise that the job of a then(), catch() or finally() handler
-    // settles. The async frames of a job go where the frames of its entry end. More than one job is on the stack
-    // only when a job drains the microtask queue: asyncStackTraceOrigin is the innermost one.
+    // generator of a resumed async function, or what another job gave (JSPromise::asyncStackTraceLinkForEntryContext).
+    // The async frames of a job go where the frames of its entry end. More than one job is on the stack only when
+    // a job drains the microtask queue: asyncStackTraceOrigin is the innermost one.
     struct AsyncStackTraceOrigin {
         JSCell* context { nullptr };
         size_t insertPosition { 0 };
@@ -764,7 +761,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             return;
         // Any other context says nothing about a job.
         JSCell* context = vmEntryRecord(previousEntryFrame)->m_context;
-        if (!context || !(context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSPromise>()))
+        if (!context || !(context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSPromise>() || context->inherits<JSAsyncGenerator>() || context->inherits<JSFunctionWithFields>()))
             return;
         if (!asyncStackTraceOrigin.context) [[likely]]
             asyncStackTraceOrigin = { context, results.size() };
@@ -848,16 +845,16 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     const AsyncStackTraceOrigin* origin = &asyncStackTraceOrigin;
     for (unsigned nextOuterOrigin = 0; remainingAsyncStackSize;) {
         // The walk starts at what the job settles. The resumption of an async function settles its promise.
-        JSPromise* start;
+        AsyncStackTraceLink start;
         if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(origin->context)) {
             JSValue promiseValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Context)).get();
             ASSERT(promiseValue);
-            start = dynamicDowncast<JSPromise>(promiseValue);
+            start = { dynamicDowncast<JSPromise>(promiseValue), AsyncStackTraceLinkKind::Promise };
         } else
-            start = uncheckedDowncast<JSPromise>(origin->context);
-        if (start) {
+            start = JSPromise::asyncStackTraceLinkForEntryContext(origin->context);
+        if (start.cell) {
             Vector<StackFrame> asyncFrames;
-            getAsyncStackTrace(owner, asyncFrames, start, remainingAsyncStackSize);
+            getAsyncStackTrace(owner, asyncFrames, start, remainingAsyncStackSize, AsyncStackTraceRule::Script);
             if (!asyncFrames.isEmpty()) {
                 results.insertVector(origin->insertPosition + insertedFrames, asyncFrames);
                 insertedFrames += asyncFrames.size();
@@ -984,7 +981,8 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
     // The call of the body of an async generator (asyncGeneratorBodyCall) does the same with the request that
     // the body works on, and its context is the generator.
     // The job that calls a handler of then(), catch() or finally() does the same with the promise that the
-    // call returned, which is its context.
+    // call returned, which is its context. So does the job that calls the then() of a thenable, with the resolve
+    // and reject functions that it passes: its context is that resolve function.
     if (leavesVMEntry) {
         EntryFrame* entryFrame = vm.topEntryFrame;
         JSCell* context = vmEntryRecord(entryFrame)->m_context;
@@ -998,7 +996,7 @@ bool Interpreter::isExceptionCaughtByUserCatchClause()
                 context = vmEntryRecord(jobEntryFrame)->m_context;
         }
         if (context)
-            return context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSAsyncGenerator>() || context->inherits<JSPromise>();
+            return context->inherits<JSAsyncFunctionGenerator>() || context->inherits<JSAsyncGenerator>() || context->inherits<JSPromise>() || context->inherits<JSFunctionWithFields>();
     }
     return result;
 }
